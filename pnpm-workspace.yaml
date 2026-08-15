@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+
+allowBuilds:
+  esbuild: set this to true or false
+
+# Dev resolution goes through tsconfig paths against the sibling deepseek-harness
+# checkout; stale registry peer versions must not block install. Published
+# bundles resolve peers from the registry at the end-user install site.
+autoInstallPeers: false
+onlyBuiltDependencies:
+  - esbuild

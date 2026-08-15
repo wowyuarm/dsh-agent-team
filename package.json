@@ -1,0 +1,31 @@
+{
+  "name": "@deepseek-ai/dsh-agent-team-bundle",
+  "version": "0.1.0",
+  "description": "Opt-in Agent Team collaboration bundle for DeepSeek Harness",
+  "private": false,
+  "type": "module",
+  "files": [
+    "cordis.patch.yml",
+    "packages/*/lib",
+    "packages/*/package.json",
+    "README.md",
+    "README.zh.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p packages/agent-team/tsconfig.json && tsc -p packages/command-agent-team/tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vite-tsconfig-paths": "^5.0.0",
+    "vitest": "^4.1.8"
+  }
+}

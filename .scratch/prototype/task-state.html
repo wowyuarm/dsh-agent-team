@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-agent-team · task 状态机 + claim 原型</title>
+<style>
+  :root { --bg:#111418; --panel:#1a1e24; --ink:#e6e8eb; --dim:#9aa1a9; --line:#2a3038; --ok:#4ade80; --err:#f87171; --warn:#fbbf24; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  header b { font-size:15px; }
+  .tag { font-size:11px; color:var(--dim); border:1px solid var(--line); padding:1px 8px; border-radius:99px; }
+  main { display:flex; min-height:calc(100vh - 46px); }
+  #left { width:340px; border-right:1px solid var(--line); padding:12px; overflow-y:auto; }
+  #right { flex:1; padding:12px; overflow-y:auto; }
+  section { margin-bottom:14px; }
+  section h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 6px; }
+  button { background:#242a33; color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:5px 9px; font-size:12px; cursor:pointer; margin:2px; }
+  button:hover { border-color:#4b5563; }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  select, input { background:#11151a; color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-size:12px; }
+  input { width:100%; margin:4px 0; }
+  .task { border:1px solid var(--line); border-radius:8px; margin-bottom:10px; padding:10px; background:var(--panel); }
+  .task.closed { opacity:.45; }
+  .task h4 { margin:0 0 6px; font-size:14px; display:flex; gap:8px; align-items:center; }
+  .status { font-size:11px; padding:1px 8px; border-radius:99px; border:1px solid var(--line); }
+  .status.todo { color:var(--dim); } .status.in_progress { color:var(--warn); } .status.in_review { color:#60a5fa; } .status.done { color:var(--ok); } .status.closed { color:var(--dim); }
+  .claim { font-size:12px; padding:2px 6px; border-radius:5px; background:rgba(128,128,128,.12); margin:2px 3px 2px 0; display:inline-block; }
+  .msg { font-size:12px; padding:3px 0; border-bottom:1px dashed var(--line); }
+  .msg .who { color:var(--dim); }
+  .err { color:var(--err); font-size:12px; } .ok { color:var(--ok); font-size:12px; }
+  #log { font-size:12px; color:var(--dim); }
+  #log div { padding:1px 0; }
+  .hidden-note { font-size:11px; color:var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <b>dsh-agent-team · task 状态机 + 多 claim 原型</b>
+  <span class="tag">THROWAWAY — 状态模型推演用</span>
+  <button onclick="resetAll()">重置全部</button>
+  <button onclick="toggleClosed()">显示/隐藏 closed</button>
+</header>
+<main>
+  <div id="left">
+    <section><h3>成员</h3>
+      <select id="actor"><option value="human">human（人类）</option><option value="architect">@architect（讨论）</option><option value="engineer">@engineer（coding）</option><option value="qa">@qa（review）</option></select>
+    </section>
+    <section><h3>动作</h3>
+      <button onclick="act('newTask')">发消息 → 默认建 task</button><br>
+      <input id="text" placeholder="消息正文 / 新 task 标题">
+      <select id="role"><option value="coding">coding</option><option value="review">review</option><option value="discuss">讨论</option></select>
+      <button onclick="act('claim')">claim（声明方向）</button>
+      <button onclick="act('unclaim')">unclaim</button>
+      <select id="status"><option value="in_progress">in_progress</option><option value="in_review">in_review</option><option value="done">done（仅 human 验收）</option><option value="closed">closed</option><option value="reopen">reopen</option></select>
+      <button onclick="act('setStatus')">改变状态</button><br>
+      <button onclick="act('reply')">thread 回复（带 baseRevision）</button>
+      <button onclick="act('staleReply')">用旧 revision 回复（触发并发拒绝）</button>
+    </section>
+    <section><h3>事件日志</h3><div id="log"></div></section>
+  </div>
+  <div id="right"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">board（默认隐藏 closed）</h3><div id="board"></div></div>
+</main>
+<script>
+// —— 状态模型（被推演的假设，非实现契约） ——
+let state = { nextNum: 1, tasks: [], closedHidden: true };
+const ACTORS = ['human','architect','engineer','qa'];
+const ALL_ROLES = ['coding','review','discuss'];
+const ORDER = ['todo','in_progress','in_review','done','closed'];
+
+function resetAll(){ state = { nextNum:1, tasks:[], closedHidden:true }; log('已重置'); render(); }
+function toggleClosed(){ state.closedHidden=!state.closedHidden; log(state.closedHidden?'closed 已隐藏':'closed 已显示'); render(); }
+
+function task(num){ return state.tasks.find(t=>t.num===num); }
+function activeClaims(t){ return (t.claims||[]).filter(c=>!c.released); }
+function claimedBy(t, role){ return activeClaims(t).some(c=>c.role===role); }
+function claimedByActor(t, actor){ return activeClaims(t).some(c=>c.actor===actor); }
+
+function newTask(text){
+  const t = { num:state.nextNum++, title:text||('任务 #'+state.nextNum), status:'todo', claims:[], thread:[], rev:0 };
+  state.tasks.unshift(t); log(`human 发消息 → task #${t.num}（默认建 task，初始 todo）`);
+  return t;
+}
+function claim(actor, role, t){
+  if (t.status==='done') { fail(`#${t.num} 已 done，不能再 claim`); return; }
+  if (t.status==='closed') { fail(`#${t.num} 已 closed，先 reopen`); return; }
+  if (claimedBy(t, role)) { fail(`#${t.num} 的「${role}」方向已被 ${activeClaims(t).find(c=>c.role===role).actor} claim —— 同方向互斥（D5）`); return; }
+  t.claims.push({actor, role, released:false, at:Date.now()});
+  if (t.status==='todo') t.status='in_progress';
+  log(`${actor} claim #${t.num}（${role}）✓ 任务进入 in_progress`);
+}
+function unclaim(actor, t){
+  const c = activeClaims(t).find(c=>c.actor===actor);
+  if(!c) { fail(`${actor} 在 #${t.num} 没有 active claim`); return; }
+  c.released = true;
+  if (activeClaims(t).length===0 && t.status==='in_progress') t.status='todo';
+  log(`${actor} unclaim #${t.num}（${c.role}）；剩余 active claim ${activeClaims(t).length}，状态 ${t.status}`);
+}
+function setStatus(actor, to, t){
+  const s=t.status;
+  if (to==='in_review' && s!=='in_progress') { fail(`#${t.num} 只有 in_progress 才能 in_review（当前 ${s}）`); return; }
+  if (to==='done'){
+    if (actor!=='human') { fail(`done 是验收动作，只有 human 能执行（${actor} 不能）`); return; }
+    if (s!=='in_review') { fail(`#${t.num} 只有 in_review 才能 done（当前 ${s}）`); return; }
+  }
+  if (to==='closed'){
+    if (s==='done') { fail(`#${t.num} 已 done，不能 closed`); return; }
+    t.status='closed'; t.claims.forEach(c=>c.released=true);
+    log(`${actor} close #${t.num}（无承诺收束，board 默认隐藏）`); return;
+  }
+  if (to==='reopen'){
+    if (s!=='closed') { fail(`#${t.num} 不是 closed，不能 reopen`); return; }
+    t.status='todo'; log(`${actor} reopen #${t.num} → todo`); return;
+  }
+  t.status=to;
+  if (to==='done') t.claims.forEach(c=>c.released=true);
+  log(`${actor} 将 #${t.num} ${s} → ${to}${to==='done'?'（claims 全部释放）':''}`);
+}
+function reply(actor, t, text, base){
+  if (!text) { fail('正文为空'); return; }
+  if (base !== t.rev) {
+    const fresh = t.thread.filter(m=>m.rev>base).map(m=>`${m.sender}: ${m.text}`).join('；');
+    fail(`#${t.num} 并发拒绝：组织时看到 rev=${base}，当前 rev=${t.rev}。新消息：${fresh||'（无）'} —— 请重新组织后再发（R11）`);
+    return;
+  }
+  t.rev++; t.thread.push({rev:t.rev, sender:actor, text});
+  log(`${actor} 回复 #${t.num}（rev ${t.rev}）✓`);
+}
+
+function act(kind){
+  const actor = document.getElementById('actor').value;
+  const text = document.getElementById('text').value.trim();
+  const role = document.getElementById('role').value;
+  const want = document.getElementById('status').value;
+  if (kind==='newTask'){ if(text) newTask(text); else fail('先输入消息正文'); }
+  else {
+    const nums = state.tasks.filter(t=>!(state.closedHidden&&t.status==='closed')).map(t=>t.num);
+    if (!nums.length) { fail('board 为空，先发消息建 task'); return; }
+    const t = task(nums[0]);
+    if (kind==='claim') claim(actor, role, t);
+    if (kind==='unclaim') unclaim(actor, t);
+    if (kind==='setStatus') setStatus(actor, want, t);
+    if (kind==='reply') reply(actor, t, text, t.rev);
+    if (kind==='staleReply') reply(actor, t, text||'基于旧上下文的回复', Math.max(0, t.rev-1));
+  }
+  render();
+}
+
+function fail(msg){ log('✗ ' + msg); }
+function log(msg){ const d=document.getElementById('log'); const el=document.createElement('div'); el.textContent=msg; d.prepend(el); }
+
+function render(){
+  const board=document.getElementById('board');
+  const visible = state.tasks.filter(t=>!(state.closedHidden && t.status==='closed'));
+  board.innerHTML='';
+  if (!visible.length){ board.innerHTML='<div class="hidden-note">board 为空——左边发一条消息（默认建 task）。</div>'; return; }
+  for (const t of visible){
+    const el=document.createElement('div'); el.className='task'+(t.status==='closed'?' closed':'');
+    const h=document.createElement('h4');
+    h.innerHTML=`#${t.num} <span class="status ${t.status}">${t.status}</span> <span style="color:var(--dim);font-weight:400">${esc(t.title)}</span> <span class="hidden-note">rev=${t.rev}</span>`;
+    el.appendChild(h);
+    const claims=document.createElement('div');
+    const list = t.claims.length? t.claims.map(c=>`<span class="claim">${c.actor} · ${c.role}${c.released?'（已释放）':''}</span>`).join('') : '<span class="hidden-note">无 claim</span>';
+    claims.innerHTML=list; el.appendChild(claims);
+    const thr=document.createElement('div'); thr.style.marginTop='6px';
+    if (!t.thread.length) thr.innerHTML='<span class="hidden-note">thread 为空（回复落在这里，任务消息本身是 anchor）</span>';
+    for (const m of t.thread){ const d=document.createElement('div'); d.className='msg'; d.innerHTML=`<span class="who">[rev${m.rev}] ${m.sender}:</span> ${esc(m.text)}`; thr.appendChild(d); }
+    el.appendChild(thr);
+    board.appendChild(el);
+  }
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// —— 引导走查（一个完整剧本） ——
+function guided(){
+  resetAll();
+  log('—— 走查开始：多方向 claim + 状态机 + 并发 ——');
+  const t1 = newTask('实现登录页');
+  claim('engineer','coding',t1);
+  claim('qa','review',t1);
+  claim('architect','discuss',t1);
+  claim('engineer','coding',t1);   // 应失败：同方向互斥
+  reply('architect',t1,'登录页需要支持 OAuth 吗？', t1.rev);
+  reply('engineer',t1,'第一版先做账号密码，OAuth 下一版。', t1.rev);
+  setStatus('engineer','in_review',t1);
+  reply('engineer',t1,'已实现并自测通过，代码见 PR。', t1.rev);
+  setStatus('engineer','done',t1); // 应失败：只有 human 能验收
+  setStatus('human','done',t1);
+  claim('engineer','coding',t1);   // 应失败：done 不可 claim
+  const t2 = newTask('明天下午开周会');
+  reply('qa',t2,'我准备一份回归清单。', t2.rev);
+  reply('architect',t2,'基于旧上下文的回复', 0); // 应失败：并发拒绝（rev 已变）
+  reply('architect',t2,'补一条：会前把部署流水线状态发群里。', t2.rev);
+  setStatus('human','closed',t2);  // 无承诺收束
+  log('—— 走查结束：观察 board 上 #2 已隐藏（toggle 可看） ——');
+  render();
+}
+guided();
+</script>
+</body>
+</html>

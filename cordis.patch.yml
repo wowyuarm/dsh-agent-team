@@ -1,0 +1,5 @@
+- insert:
+    - id: dsh-agent-team
+      name: '@deepseek-ai/dsh-agent-team'
+    - id: dsh-command-agent-team
+      name: '@deepseek-ai/dsh-command-agent-team'
