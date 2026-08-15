@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   AgentTeamChannelRef,
+  AgentTeamMemberId,
   AgentTeamRequestId,
 } from '@deepseek-ai/dsh-agent-team'
 import type {} from '@deepseek-ai/dsh-commands'
@@ -11,20 +12,48 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 export const name = 'command-agent-team'
 export const inject = ['agentTeam', 'commands']
 
-export const USAGE = 'usage: /team status | /team channel create <workspaceId> <name> | /team send <workspaceId> <channelRef> <body> | /team view <workspaceId> [channelRef] [limit] [cursor]'
+export const USAGE = 'usage: /team status | /team member add <workspaceId> <handle> <presetId> <description> | /team member suspend|resume <memberRef> | /team channel create <workspaceId> <name> | /team send <workspaceId> <channelRef> <body> | /team view <workspaceId> [channelRef] [limit] [cursor]'
 
 /** Register `/team` and derive business idempotency from commandId. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.commands.register({
     name: 'team',
     description: 'Inspect and manage the Agent Team',
-    input: { hint: 'status | channel create | send | view' },
+    input: { hint: 'status | member add|suspend|resume | channel create | send | view' },
     handler: async ({ rawInput, commandId }) => {
       const parts = rawInput.trim().split(/\s+/)
       if (parts.length === 1 && (parts[0] === '' || parts[0] === 'status')) {
         return statusResult(ctx)
       }
       try {
+        if (parts[0] === 'member' && parts[1] === 'add' && parts.length >= 6) {
+          const result = await ctx.agentTeam.addMember({
+            requestId: commandId as unknown as AgentTeamRequestId,
+            workspaceId: WorkspaceId(parts[2]!),
+            handle: parts[3]!,
+            presetId: parts[4]!,
+            description: parts.slice(5).join(' '),
+          })
+          const detail = result.status.diagnostic === undefined ? '' : `: ${result.status.diagnostic}`
+          return {
+            kind: result.status.availability === 'unavailable' ? 'error' as const : 'success' as const,
+            text: `Agent Member ${result.status.member.memberId} is ${result.status.availability}${detail}`,
+          }
+        }
+        if (parts[0] === 'member' && (parts[1] === 'suspend' || parts[1] === 'resume') && parts.length === 3) {
+          const request = {
+            requestId: commandId as unknown as AgentTeamRequestId,
+            memberId: parts[2] as AgentTeamMemberId,
+          }
+          const result = parts[1] === 'suspend'
+            ? await ctx.agentTeam.suspendMember(request)
+            : await ctx.agentTeam.resumeMember(request)
+          const detail = result.status.diagnostic === undefined ? '' : `: ${result.status.diagnostic}`
+          return {
+            kind: result.status.availability === 'unavailable' ? 'error' as const : 'success' as const,
+            text: `Agent Member ${result.status.member.memberId} is ${result.status.availability}${detail}`,
+          }
+        }
         if (parts[0] === 'channel' && parts[1] === 'create' && parts.length >= 4) {
           const result = await ctx.agentTeam.createChannel({
             requestId: commandId as unknown as AgentTeamRequestId,

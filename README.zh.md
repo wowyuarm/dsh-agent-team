@@ -24,7 +24,9 @@ profile 必须提供当前组合所需的 Harness 服务。发布包包含构建
 
 ## 组合内容
 
-Host 包提供 `agentTeam` Service 和 operation ledger，command 包注册 `/team`。Agent 工具与 team-enabled preset 属于独立的可选行，将在后续 M1 票据中加入。
+Host 包提供 `agentTeam` Service、operation ledger 和 Team 管理的 Agent 生命周期，command 包注册 `/team`。正式 Agent 工具与随包提供的 team-enabled preset 属于独立的可选行，将在剩余 M1 票据中加入。
+
+Bundle 使用 profile 已有的 Host provider，不替换 `agents`、`tools`、filesystem/shell、sandbox policy、session persistence、Workspace registry 或 storage；这些服务保持 singleton。Team 管理的 session 持久使用 `danger-full-access`，普通 session 继续使用 profile 原有策略。Preset tool 冲突会在 unpublished setup 内失败，只让对应 Member unavailable。
 
 一个 DSH home 对应一个协作域。operation ledger 是持久权威；Channel、Message、Task、Thread、Follow 和 Delivery 投影都由已提交 Operation 派生。
 
@@ -43,4 +45,4 @@ pnpm build
 
 ## 已知限制与延后工作
 
-M1 的 03-09 票据会加入成员生命周期、Agent preset provision、团队工具、投递恢复和真实组合测试。目前的包只包含初始 ledger 与 Human command adapter。
+M1 的 04-09 票据会加入正式 Team tool package/preset、投递恢复、协作状态转换和最终可安装组合。Issue 01-03 已提供 ledger、Human command adapter，以及真实 Agent Member create/suspend/resume 生命周期。

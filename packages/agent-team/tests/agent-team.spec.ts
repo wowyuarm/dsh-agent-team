@@ -46,9 +46,15 @@ async function harness(
   ctx.storage.mount('domain', facility)
   ctx.provide('storageDomain', facility)
   ctx.provide('workspaceRegistry', {
-    get: (id: WorkspaceId) => workspaceIds.includes(id) ? { id } : undefined,
-    list: () => workspaceIds.map(id => ({ id })),
+    get: (id: WorkspaceId) => workspaceIds.includes(id)
+      ? { id, path: process.cwd(), attachSession: async () => {} }
+      : undefined,
+    list: () => workspaceIds.map(id => ({ id, path: process.cwd() })),
   })
+  ctx.provide('agents', { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') } })
+  ctx.provide('agentPresets', { mount: async () => { throw new Error('unused') } })
+  ctx.provide('tools', { schemas: () => [] })
+  ctx.provide('sessionPersistence', { list: async () => [] })
   const fiber = await ctx.plugin(AgentTeam)
   cleanups.push(async () => {
     await fiber.dispose()

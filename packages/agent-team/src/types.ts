@@ -1,4 +1,5 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 
 /** Stable identifier of one Agent Team operation. */
@@ -30,6 +31,25 @@ export interface AgentTeamHumanActor {
   readonly kind: 'human'
   readonly memberId: AgentTeamMemberId
   readonly handle: string
+}
+
+/** Durable identity and lifecycle intent of one team-managed Agent. */
+export interface AgentTeamAgentMember {
+  readonly memberId: AgentTeamMemberId
+  readonly sessionId: SessionId
+  readonly workspaceId: WorkspaceId
+  readonly handle: string
+  readonly description: string
+  readonly presetId: string
+  readonly privateMemoryPath: string
+  readonly state: 'enabled' | 'suspended'
+}
+
+/** Host projection combining durable intent with process-local availability. */
+export interface AgentTeamAgentMemberStatus {
+  readonly member: AgentTeamAgentMember
+  readonly availability: 'active' | 'suspended' | 'unavailable'
+  readonly diagnostic?: string
 }
 
 interface AgentTeamOperationBase {
@@ -122,11 +142,38 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   }
 }
 
+/** Durable creation intent for one team-managed Agent Member. */
+export interface AgentTeamMemberAddedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-added'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+  }
+}
+
+/** Durable suspension of one existing Agent Member. */
+export interface AgentTeamMemberSuspendedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-suspended'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+  }
+}
+
+/** Durable re-enablement of one suspended Agent Member. */
+export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-resumed'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+  }
+}
+
 /** Closed union of durable Agent Team operations. */
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
   | AgentTeamChannelCreatedOperation
   | AgentTeamMessageSentOperation
+  | AgentTeamMemberAddedOperation
+  | AgentTeamMemberSuspendedOperation
+  | AgentTeamMemberResumedOperation
 
 /** Receipt returned after an operation is durable or an identical retry resolves it. */
 export interface AgentTeamOperationReceipt {
@@ -165,6 +212,27 @@ export interface AgentTeamSendMessageResult {
   readonly thread: AgentTeamThread
   readonly follows: readonly AgentTeamFollow[]
   readonly recipientIntents: readonly AgentTeamRecipientIntent[]
+}
+
+/** Human intent to provision one team-managed Agent Member. */
+export interface AgentTeamAddMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly handle: string
+  readonly description: string
+  readonly presetId: string
+}
+
+/** Human intent to suspend or resume one Agent Member. */
+export interface AgentTeamSetMemberStateRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly memberId: AgentTeamMemberId
+}
+
+/** Result of a Member lifecycle operation. */
+export interface AgentTeamMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly status: AgentTeamAgentMemberStatus
 }
 
 /** One bounded Workspace view item. */

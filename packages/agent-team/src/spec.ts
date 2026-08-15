@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamChannelRef,
@@ -17,6 +18,7 @@ const operationIdSchema = z.string().regex(/^operation:[^:]+$/).transform(value 
 const requestIdSchema = z.string().min(1).transform(value => value as AgentTeamRequestId)
 const memberIdSchema = z.string().regex(/^member:[^:]+$/).transform(value => value as AgentTeamMemberId)
 const workspaceIdSchema = z.string().min(1).transform(value => value as WorkspaceId)
+const sessionIdSchema = z.string().min(1).transform(value => value as SessionId)
 const channelRefSchema = z.string().regex(/^channel:[^:]+$/).transform(value => value as AgentTeamChannelRef)
 const messageRefSchema = z.string().regex(/^message:[^:]+$/).transform(value => value as AgentTeamMessageRef)
 const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value as AgentTeamTaskRef)
@@ -34,6 +36,17 @@ const operationBase = {
     handle: z.string().min(1),
   }).strict(),
 }
+
+const memberSchema = z.object({
+  memberId: memberIdSchema,
+  sessionId: sessionIdSchema,
+  workspaceId: workspaceIdSchema,
+  handle: z.string().min(1),
+  description: z.string().min(1),
+  presetId: z.string().min(1),
+  privateMemoryPath: z.string().min(1),
+  state: z.union([z.literal('enabled'), z.literal('suspended')]),
+}).strict()
 
 const channelSchema = z.object({
   channelRef: channelRefSchema,
@@ -58,6 +71,24 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
       workspaceId: workspaceIdSchema,
       channel: channelSchema,
     }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-added'),
+    data: z.object({ member: memberSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-suspended'),
+    data: z.object({ member: memberSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-resumed'),
+    data: z.object({ member: memberSchema }).strict(),
   }).strict(),
   z.object({
     ...operationBase,

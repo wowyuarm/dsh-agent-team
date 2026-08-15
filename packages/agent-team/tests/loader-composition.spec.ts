@@ -80,9 +80,15 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
   // Host-side registry in real deployments; the composition under test mounts
   // only the bundle rows, so provide it directly as the host would.
   ctx.provide('workspaceRegistry', {
-    get: (id: string) => id.startsWith('workspace:') ? { id: id as never } : undefined,
+    get: (id: string) => id.startsWith('workspace:')
+      ? { id: id as never, path: root, attachSession: async () => {} }
+      : undefined,
     list: () => [],
   })
+  ctx.provide('agents', { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') } })
+  ctx.provide('agentPresets', { mount: async () => { throw new Error('unused') } })
+  ctx.provide('tools', { schemas: () => [] })
+  ctx.provide('sessionPersistence', { list: async () => [] })
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   ctx.loader.internal = {

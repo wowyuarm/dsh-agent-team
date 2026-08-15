@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
+  AgentTeamAddMemberRequest,
+  AgentTeamAgentMember,
   AgentTeamChannel,
   AgentTeamChannelCreatedOperation,
   AgentTeamChannelRef,
@@ -12,6 +14,9 @@ import type {
   AgentTeamMemberId,
   AgentTeamMessage,
   AgentTeamMessageRef,
+  AgentTeamMemberAddedOperation,
+  AgentTeamMemberResumedOperation,
+  AgentTeamMemberSuspendedOperation,
   AgentTeamMessageSentOperation,
   AgentTeamOperation,
   AgentTeamOperationId,
@@ -20,6 +25,7 @@ import type {
   AgentTeamRecipientIntentRef,
   AgentTeamRequestId,
   AgentTeamSendMessageResult,
+  AgentTeamSetMemberStateRequest,
   AgentTeamStatus,
   AgentTeamTask,
   AgentTeamTaskRef,
@@ -61,6 +67,17 @@ export interface AgentTeamAuthorizedCreateChannelRequest {
   readonly name: string
 }
 
+/** Internal authorized Agent Member creation request. */
+export interface AgentTeamAuthorizedAddMemberRequest extends AgentTeamAddMemberRequest {
+  readonly actor: AgentTeamHumanActor
+  readonly member: AgentTeamAgentMember
+}
+
+/** Internal authorized Member lifecycle request. */
+export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMemberStateRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
 /** Internal authorized top-level Message request. */
 export interface AgentTeamAuthorizedSendMessageRequest {
   readonly requestId: AgentTeamRequestId
@@ -84,11 +101,17 @@ export interface AgentTeamLedgerResult<T> {
   readonly committed: boolean
 }
 
+interface AgentTeamDurableMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly member: AgentTeamAgentMember
+}
+
 /** Replay and append logic behind the Agent Team service interface. */
 export class AgentTeamLedger {
   private readonly byRequest = new Map<AgentTeamRequestId, AgentTeamOperation>()
   private readonly ordered: AgentTeamOperation[] = []
   private readonly channels = new Map<AgentTeamChannelRef, AgentTeamChannel>()
+  private readonly members = new Map<AgentTeamMemberId, AgentTeamAgentMember>()
   private readonly messages: AgentTeamMessage[] = []
   private readonly tasks = new Map<AgentTeamTaskRef, AgentTeamTask>()
   private readonly threads = new Map<AgentTeamThreadRef, AgentTeamThread>()
@@ -182,6 +205,55 @@ export class AgentTeamLedger {
       this.channels.set(channel.channelRef, channel)
       return this.committed(this.channelResult(operation))
     })
+  }
+
+  /** Commit one new Agent Member before its unpublished live setup begins. */
+  addMember(request: AgentTeamAuthorizedAddMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameMemberAdd(existing, request)
+        return this.resolved(this.memberResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const handle = request.handle.trim()
+      const description = request.description.trim()
+      const presetId = request.presetId.trim()
+      if (handle === '') throw new Error('member handle must not be empty')
+      if (description === '') throw new Error('member description must not be empty')
+      if (presetId === '') throw new Error('member preset must not be empty')
+      this.assertHandleAvailable(request.workspaceId, handle)
+      const member = Object.freeze({ ...request.member, handle, description, presetId, state: 'enabled' as const })
+      const operation: AgentTeamMemberAddedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()),
+        kind: 'team/member-added',
+        data: Object.freeze({ member }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.members.set(member.memberId, member)
+      return this.committed(this.memberResult(operation))
+    })
+  }
+
+  /** Suspend one enabled Member while preserving its exact session identity. */
+  suspendMember(request: AgentTeamAuthorizedSetMemberStateRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.setMemberState(request, 'suspended')
+  }
+
+  /** Re-enable one suspended Member for exact-session resume. */
+  resumeMember(request: AgentTeamAuthorizedSetMemberStateRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.setMemberState(request, 'enabled')
+  }
+
+  /** Return one durable Member projection. */
+  getMember(memberId: AgentTeamMemberId): AgentTeamAgentMember | undefined {
+    return this.members.get(memberId)
+  }
+
+  /** Return all durable Agent Members in creation order. */
+  listMembers(): readonly AgentTeamAgentMember[] {
+    return Object.freeze([...this.members.values()])
   }
 
   /**
@@ -309,7 +381,7 @@ export class AgentTeamLedger {
       sequence: this.ordered.length,
       operationCount: this.ordered.length,
       channelCount: this.channels.size,
-      agentMemberCount: 0,
+      agentMemberCount: this.members.size,
       humanMemberId: initialization.data.humanMemberId,
     })
   }
@@ -332,6 +404,10 @@ export class AgentTeamLedger {
         this.channels.set(operation.data.channel.channelRef, operation.data.channel)
       } else if (operation.kind === 'team/message-sent') {
         this.projectMessage(operation)
+      } else if (operation.kind === 'team/member-added') {
+        this.members.set(operation.data.member.memberId, operation.data.member)
+      } else if (operation.kind === 'team/member-suspended' || operation.kind === 'team/member-resumed') {
+        this.members.set(operation.data.member.memberId, operation.data.member)
       }
     }
   }
@@ -341,6 +417,7 @@ export class AgentTeamLedger {
     const requestIds = new Set<AgentTeamRequestId>()
     const refs = new Set<string>()
     const channels = new Map<AgentTeamChannelRef, AgentTeamChannel>()
+    const members = new Map<AgentTeamMemberId, AgentTeamAgentMember>()
     let previousOperationId: AgentTeamOperationId | null = null
     let humanMemberId: AgentTeamMemberId | undefined
     for (const [index, [key, operation]] of records.entries()) {
@@ -365,7 +442,7 @@ export class AgentTeamLedger {
         humanMemberId = operation.data.humanMemberId
       } else {
         if (humanMemberId === undefined) throw new Error('agent-team ledger has no Human Member')
-        this.assertHumanOperation(operation, humanMemberId, channels, refs)
+        this.assertHumanOperation(operation, humanMemberId, channels, members, refs)
       }
       operationIds.add(operation.operationId)
       requestIds.add(operation.requestId)
@@ -377,6 +454,7 @@ export class AgentTeamLedger {
     operation: AgentTeamOperation,
     humanMemberId: AgentTeamMemberId,
     channels: Map<AgentTeamChannelRef, AgentTeamChannel>,
+    members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
     refs: Set<string>,
   ): void {
     if (operation.kind === 'team/initialized') {
@@ -393,6 +471,33 @@ export class AgentTeamLedger {
       }
       this.addRef(refs, channel.channelRef)
       channels.set(channel.channelRef, channel)
+      return
+    }
+    if (operation.kind === 'team/member-added') {
+      const { member } = operation.data
+      if (members.has(member.memberId)) throw new Error(`agent-team repeats Member '${member.memberId}'`)
+      const normalized = this.normalizeHandle(member.handle)
+      if ([...members.values()].some(candidate => candidate.sessionId === member.sessionId)) {
+        throw new Error(`agent-team repeats Agent session '${member.sessionId}'`)
+      }
+      if ([...members.values()].some(candidate => candidate.workspaceId === member.workspaceId
+        && this.normalizeHandle(candidate.handle) === normalized)) {
+        throw new Error(`agent-team repeats active handle '${member.handle}' in Workspace '${member.workspaceId}'`)
+      }
+      this.addRef(refs, member.memberId)
+      members.set(member.memberId, member)
+      return
+    }
+    if (operation.kind === 'team/member-suspended' || operation.kind === 'team/member-resumed') {
+      const next = operation.data.member
+      const member = members.get(next.memberId)
+      const expected = operation.kind === 'team/member-suspended' ? 'enabled' : 'suspended'
+      const nextState = operation.kind === 'team/member-suspended' ? 'suspended' : 'enabled'
+      if (member === undefined || member.state !== expected || next.state !== nextState
+        || !this.sameMemberIdentity(member, next)) {
+        throw new Error(`agent-team Member lifecycle operation ${operation.sequence} has an invalid transition`)
+      }
+      members.set(next.memberId, next)
       return
     }
     const { message, task, thread, follows, recipientIntents } = operation.data
@@ -465,6 +570,33 @@ export class AgentTeamLedger {
     }
   }
 
+  private assertSameMemberAdd(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedAddMemberRequest,
+  ): asserts operation is AgentTeamMemberAddedOperation {
+    if (operation.kind !== 'team/member-added'
+      || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.workspaceId !== request.workspaceId
+      || operation.data.member.handle !== request.handle.trim()
+      || operation.data.member.description !== request.description.trim()
+      || operation.data.member.presetId !== request.presetId.trim()) {
+      this.throwRequestCollision(request.requestId)
+    }
+  }
+
+  private assertSameMemberState(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedSetMemberStateRequest,
+    state: 'enabled' | 'suspended',
+  ): asserts operation is AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation {
+    const kind = state === 'suspended' ? 'team/member-suspended' : 'team/member-resumed'
+    if (operation.kind !== kind
+      || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.memberId !== request.memberId) {
+      this.throwRequestCollision(request.requestId)
+    }
+  }
+
   private assertSameMessage(
     operation: AgentTeamOperation,
     request: AgentTeamAuthorizedSendMessageRequest,
@@ -515,6 +647,63 @@ export class AgentTeamLedger {
     return channel
   }
 
+  private async setMemberState(
+    request: AgentTeamAuthorizedSetMemberStateRequest,
+    state: 'enabled' | 'suspended',
+  ): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameMemberState(existing, request, state)
+        return this.resolved(this.memberResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const member = this.members.get(request.memberId)
+      if (member === undefined) throw new Error(`unknown Agent Member '${request.memberId}'`)
+      const prior = state === 'suspended' ? 'enabled' : 'suspended'
+      if (member.state !== prior) throw new Error(`Agent Member '${request.memberId}' is already ${member.state}`)
+      const sequence = this.nextSequence()
+      const next = Object.freeze({ ...member, state })
+      const operation: AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation = state === 'suspended'
+        ? Object.freeze({
+            ...this.operationBase(request, sequence),
+            kind: 'team/member-suspended',
+            data: Object.freeze({ member: next }),
+          })
+        : Object.freeze({
+            ...this.operationBase(request, sequence),
+            kind: 'team/member-resumed',
+            data: Object.freeze({ member: next }),
+          })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.members.set(next.memberId, next)
+      return this.committed(this.memberResult(operation))
+    })
+  }
+
+  private sameMemberIdentity(left: AgentTeamAgentMember, right: AgentTeamAgentMember): boolean {
+    return left.memberId === right.memberId
+      && left.sessionId === right.sessionId
+      && left.workspaceId === right.workspaceId
+      && left.handle === right.handle
+      && left.description === right.description
+      && left.presetId === right.presetId
+      && left.privateMemoryPath === right.privateMemoryPath
+  }
+
+  private assertHandleAvailable(workspaceId: WorkspaceId, handle: string): void {
+    const normalized = this.normalizeHandle(handle)
+    if ([...this.members.values()].some(member => member.workspaceId === workspaceId
+      && this.normalizeHandle(member.handle) === normalized)) {
+      throw new Error(`Agent Member handle '${handle}' is already active in Workspace '${workspaceId}'`)
+    }
+  }
+
+  private normalizeHandle(handle: string): string {
+    return handle.normalize('NFKC').trim().toLocaleLowerCase()
+  }
+
   private projectMessage(operation: AgentTeamMessageSentOperation): void {
     this.messages.push(operation.data.message)
     this.tasks.set(operation.data.task.taskRef, operation.data.task)
@@ -523,6 +712,13 @@ export class AgentTeamLedger {
 
   private channelResult(operation: AgentTeamChannelCreatedOperation): AgentTeamCreateChannelResult {
     return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel })
+  }
+
+  private memberResult(
+    operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation,
+  ): AgentTeamDurableMemberResult {
+    const member = operation.data.member
+    return Object.freeze({ receipt: this.receipt(operation), member })
   }
 
   private messageResult(operation: AgentTeamMessageSentOperation): AgentTeamSendMessageResult {

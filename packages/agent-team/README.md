@@ -6,7 +6,7 @@ The Host capability for one Agent Team in a dshHome. `ctx.agentTeam` owns the ap
 
 ## Service contract
 
-The Service requires `ctx.storageDomain` and opens the versioned `agent_team` Domain before Cordis publishes `ctx.agentTeam`. The first boot appends one `team/initialized` operation for the stable Human Member; later boots replay the same operation and do not append another record.
+The Service consumes `ctx.storageDomain`, `ctx.workspaceRegistry`, `ctx.agents`, `ctx.agentPresets`, `ctx.tools`, and `ctx.sessionPersistence`. It opens the versioned `agent_team` Domain before Cordis publishes `ctx.agentTeam`. The first boot appends one `team/initialized` operation for the stable Human Member; later boots replay the same operation and do not append another record.
 
 `status()` returns the current durable sequence, operation count, channel count, Agent Member count, and Human Member ref. It performs no model request and no storage write. `validateLedger()` checks the package-owned projection against the durable operation table.
 
@@ -16,11 +16,17 @@ Every operation record carries a positive global sequence, unique operation and 
 
 `storage-domain` validates every record at the durable read boundary and rejects a backend unit stamped with another version. The Team updates its projection only after `KvTable.put()` resolves. Its Fiber owns the Domain handle; disposal rejects new Service calls through Cordis removal, drains accepted Domain writes, and closes the backend unit before the name can reopen.
 
+Member creation commits one stable Member/session/Workspace/preset/private-memory identity before unpublished Agent setup. Setup mounts the selected preset and validates its marked `team_send` plus all four Team tools before publication. Failure leaves only that Member unavailable. Suspend waits for the owned `AgentHandle` to stop; resume and Host remount restore the exact persisted session.
+
+Every team-managed session records `danger-full-access`. Project cwd remains the Workspace path, while private memory lives under `$DSH_HOME/agent-team/members/<memberId>/`. Ordinary sessions and forks receive no Team identity.
+
 M1 supports one Host writer. The ledger is permanent and has no snapshot or compaction path.
 
 ## Composition
 
-Mount the storage backend, `dsh-storage`, `dsh-storage-domain`, this Service, and its invariant companion. Human controls such as `/team` are separate Consumers.
+The bundle consumes the Host's existing singleton providers; it does not mount replacements for `agents`, `tools`, `fs`, `sandboxPolicy`, session persistence, Workspace registry, or storage. Load those Host services once, then mount this Service and its invariant companion. Human controls such as `/team` are separate Consumers.
+
+A team-enabled preset registers the four tools in its own agent scope and marks the `team_send` definition with `markAgentTeamPreset()`. Tool rows must resolve `ctx.agentTeam` when executing, not statically inject it: this avoids a restore cycle during Host remount. Duplicate scoped tool names fail during unpublished setup and make only that Member unavailable. Duplicate Host service providers remain a composition error and should be removed rather than layered.
 
 ## Model Experience
 
