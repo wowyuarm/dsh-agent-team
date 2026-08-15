@@ -4,13 +4,15 @@
 
 **Blocked by:** 01 — Boot an empty Agent Team.
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] The current Harness human resolves to one stable Human Member with management authority independent of MessageSource fields.
-- [ ] `/team channel create` validates the Workspace and creates a Channel whose refs remain stable across restart.
-- [ ] `/team send` creates one top-level Message, Task, Thread, Follow state, and recipient-intent set in one atomic Operation.
-- [ ] Every Channel top-level Message creates a Task; Thread Messages do not create another Task.
-- [ ] `/team view` returns bounded results with typed opaque refs, a sequence cursor, and current Thread revision.
-- [ ] The Human Member can inspect all Channels in the Workspace, while unknown, cross-type, or cross-Workspace refs are rejected.
-- [ ] Restart replay reconstructs identical Channel, Message, Task, Thread, sequence, and revision views.
-- [ ] Package tests cover immutable records, default pagination, exact limits, cursor continuation, and invalid refs.
+- [x] The current Harness human resolves to one stable Human Member with management authority independent of MessageSource fields.
+- [x] `/team channel create` validates the Workspace and creates a Channel whose refs remain stable across restart.
+- [x] `/team send` creates one top-level Message, Task, Thread, Follow state, and recipient-intent set in one atomic Operation.
+- [x] Every Channel top-level Message creates a Task; Thread Messages do not create another Task.
+- [x] `/team view` returns bounded results with typed opaque refs, a sequence cursor, and current Thread revision.
+- [x] The Human Member can inspect all Channels in the Workspace, while unknown, cross-type, or cross-Workspace refs are rejected.
+- [x] Restart replay reconstructs identical Channel, Message, Task, Thread, sequence, and revision views.
+- [x] Package tests cover immutable records, default pagination, exact limits, cursor continuation, and invalid refs.
+
+Implementation note: the Message Operation persists only caller-owned and derived collaboration facts. The operation receipt is returned from the ledger boundary and is not duplicated inside `operation.data`. Identical request retries return the original value with no new operation; replay reconstructs the same refs and projection.
