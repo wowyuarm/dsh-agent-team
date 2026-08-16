@@ -124,6 +124,7 @@ async function realHarness(): Promise<{
   pool: MemoryMediaPool
   adapter: ScriptAdapter
   slow: SlowToolGate
+  archive: { failures: number }
 }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
@@ -193,13 +194,17 @@ async function realHarness(): Promise<{
   ctx.provide('storageDomain', facility)
   const workspaceId = WorkspaceId('workspace:member-test')
   const archivedSessionIds: SessionId[] = []
+  const archive = { failures: 0 }
   ctx.provide('workspaceRegistry', {
     get: (id: typeof workspaceId) => id === workspaceId
       ? { id, path: project, attachSession: async () => {} }
       : undefined,
     list: () => [],
     archivedSessionIds,
-    archiveSession: async (sessionId: SessionId) => { if (!archivedSessionIds.includes(sessionId)) archivedSessionIds.push(sessionId) },
+    archiveSession: async (sessionId: SessionId) => {
+      if (archive.failures > 0) { archive.failures -= 1; throw new Error('injected archive failure') }
+      if (!archivedSessionIds.includes(sessionId)) archivedSessionIds.push(sessionId)
+    },
   })
   const teamFiber = await ctx.plugin(AgentTeam)
 
@@ -208,7 +213,7 @@ async function realHarness(): Promise<{
     await facility.closeAll()
     await rm(root, { recursive: true, force: true })
   })
-  return { ctx, workspaceId, presetFile, root, teamFiber, pool, adapter, slow }
+  return { ctx, workspaceId, presetFile, root, teamFiber, pool, adapter, slow, archive }
 }
 
 describe('Agent Team Member real composition', () => {
@@ -736,6 +741,54 @@ describe('Agent Team Member real composition', () => {
     ctx.agentTeam.validateLedger()
   })
 
+  it('settles concurrent claim/close and send/remove into legal durable projections', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:race-channel'), workspaceId, name: 'race' })
+    const first = await ctx.agentTeam.addMember({ requestId: requestId('request:race-first'), workspaceId,
+      handle: 'race-first', presetId: 'team-member', description: 'Race first' })
+    const second = await ctx.agentTeam.addMember({ requestId: requestId('request:race-second'), workspaceId,
+      handle: 'race-second', presetId: 'team-member', description: 'Race second' })
+    for (const member of [first, second]) await ctx.agentTeam.joinChannel({
+      requestId: requestId(`request:race-join:${member.status.member.handle}`), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    const sent = await ctx.agentTeam.sendMessage({ requestId: requestId('request:race-task'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'race task', recipients: [first.status.member.memberId, second.status.member.memberId] })
+    const firstAgent = ctx.agents.get(first.status.member.sessionId)!
+    const secondAgent = ctx.agents.get(second.status.member.sessionId)!
+    const base = { workspaceId, taskRef: sent.task.taskRef }
+    const [claim, close] = await Promise.allSettled([
+      executeTool(ctx, firstAgent, 'call:race-claim', 'team_claim', { ...base, action: 'claim', direction: 'race claim' }),
+      ctx.agentTeam.changeTask({ requestId: requestId('request:race-close'), ...base, action: 'close' }),
+    ])
+    expect([claim.status, close.status]).toContain('fulfilled')
+    expect(ctx.agentTeam.view({ workspaceId }).items[0]!.task.status).toBe('closed')
+
+    const reopened = await ctx.agentTeam.changeTask({ requestId: requestId('request:race-reopen'), ...base, action: 'reopen' })
+    const [reply, removal] = await Promise.allSettled([
+      executeTool(ctx, secondAgent, 'call:race-send-remove', 'team_send', {
+        ...base, body: 'send during removal', baseRevision: reopened.thread.revision,
+      }),
+      ctx.agentTeam.removeMember({ requestId: requestId('request:race-remove'), memberId: first.status.member.memberId }),
+    ])
+    expect(removal.status).toBe('fulfilled')
+    expect(reply.status).toBe('fulfilled')
+    ctx.agentTeam.validateLedger()
+    await ctx.agentTeam.validateDeliveryEvidence()
+    expect(ctx.agentTeam.members().find(status => status.member.memberId === first.status.member.memberId))
+      .toMatchObject({ availability: 'inactive' })
+
+    const [sentDuringSuspend, suspended] = await Promise.all([
+      ctx.agentTeam.sendMessage({ requestId: requestId('request:race-send-suspend'), workspaceId,
+        channelRef: channel.channel.channelRef, body: 'send during suspend', recipients: [second.status.member.memberId] }),
+      ctx.agentTeam.suspendMember({ requestId: requestId('request:race-suspend'), memberId: second.status.member.memberId }),
+    ])
+    expect(sentDuringSuspend.deliveries[0]?.state === 'queued' || sentDuringSuspend.deliveries[0]?.state === 'admitted').toBe(true)
+    expect(suspended.status.availability).toBe('suspended')
+    await ctx.agentTeam.resumeMember({ requestId: requestId('request:race-resume'), memberId: second.status.member.memberId })
+    ctx.agentTeam.validateLedger()
+    await ctx.agentTeam.validateDeliveryEvidence()
+  })
+
   it('removes a Member during a running Agent interval and reaches quiescence', async () => {
     const { ctx, workspaceId, adapter, slow } = await realHarness()
     adapter.responses.push(slowToolResponse())
@@ -757,6 +810,20 @@ describe('Agent Team Member real composition', () => {
     expect(ctx.agents.get(member.status.member.sessionId)).toBeUndefined()
     expect(ctx.workspaceRegistry.archivedSessionIds).toContain(member.status.member.sessionId)
     expect(ctx.agentTeam.members()[0]).toMatchObject({ availability: 'inactive' })
+  })
+
+  it('retries remove side effects after archive failure without duplicating durable cleanup', async () => {
+    const { ctx, workspaceId, archive } = await realHarness()
+    const member = await ctx.agentTeam.addMember({ requestId: requestId('request:archive-member'), workspaceId,
+      handle: 'archive-retry', presetId: 'team-member', description: 'Archive retry' })
+    archive.failures = 1
+    const request = { requestId: requestId('request:archive-remove'), memberId: member.status.member.memberId }
+    await expect(ctx.agentTeam.removeMember(request)).rejects.toThrow(/injected archive failure/)
+    const count = ctx.agentTeam.status().operationCount
+    expect(ctx.agentTeam.members()[0]).toMatchObject({ availability: 'inactive' })
+    await expect(ctx.agentTeam.removeMember(request)).resolves.toMatchObject({ member: { state: 'inactive' } })
+    expect(ctx.agentTeam.status().operationCount).toBe(count)
+    expect(ctx.workspaceRegistry.archivedSessionIds).toContain(member.status.member.sessionId)
   })
 
   it('queues subscribed Thread delivery at next-step without aborting a running tool call', async () => {

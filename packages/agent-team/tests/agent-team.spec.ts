@@ -1,8 +1,12 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
+import { SqliteStorageBackend } from '@deepseek-ai/dsh-storage-sqlite'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -65,6 +69,26 @@ async function harness(
   return { ctx, fiber, facility }
 }
 
+async function sqliteHarness(path: string): Promise<TeamHarness> {
+  const ctx = new Context()
+  await ctx.plugin(Storage)
+  const backend = new SqliteStorageBackend({ path, journalMode: 'delete' })
+  ctx.storage.backend.register('sqlite', backend)
+  const facility = new DomainFacility(ctx, { backend: 'sqlite', routes: {} })
+  ctx.storage.mount('domain', facility)
+  ctx.provide('storageDomain', facility)
+  ctx.provide('workspaceRegistry', { get: (id: WorkspaceId) => ({ id, path: process.cwd(), attachSession: async () => {} }), list: () => [] })
+  ctx.provide('agents', { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') } })
+  ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
+  ctx.provide('agentPresets', { mount: async () => { throw new Error('unused') } })
+  ctx.provide('tools', { schemas: () => [] })
+  ctx.provide('sessions', { flush: async () => true })
+  ctx.provide('sessionPersistence', { list: async () => [] })
+  const fiber = await ctx.plugin(AgentTeam)
+  cleanups.push(async () => { await fiber.dispose(); await facility.closeAll(); await backend.close() })
+  return { ctx, fiber, facility }
+}
+
 function storedPool(records: Array<[string, unknown]>, version = 4): MemoryMediaPool {
   const pool = new MemoryMediaPool()
   pool.versions.set('agent_team', version)
@@ -97,6 +121,33 @@ describe('AgentTeam', () => {
     const replayed = [...pool.media.get('agent_team')!.tables.get('operations')!.values()]
     expect(replayed).toEqual(stored)
     await secondFiber.dispose()
+  })
+
+  it('replays the same durable projection from a SQLite file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-team-sqlite-'))
+    cleanups.push(() => rm(root, { recursive: true, force: true }))
+    const path = join(root, 'team.sqlite')
+    const first = await sqliteHarness(path)
+    const channel = await first.ctx.agentTeam.createChannel({ requestId: requestId('request:sqlite-channel'), workspaceId: alpha, name: 'sqlite' })
+    await first.ctx.agentTeam.sendMessage({ requestId: requestId('request:sqlite-message'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'persist in sqlite' })
+    const before = first.ctx.agentTeam.view({ workspaceId: alpha })
+    await first.fiber.dispose(); await first.facility.closeAll()
+    const second = await sqliteHarness(path)
+    expect(second.ctx.agentTeam.view({ workspaceId: alpha })).toEqual(before)
+    expect(second.ctx.agentTeam.status()).toMatchObject({ operationCount: 3, sequence: 3 })
+  })
+
+  it('leaves no business effect before durability and commits one effect on retry', async () => {
+    const pool = new MemoryMediaPool()
+    const test = await harness(pool)
+    pool.failNextWrites = 1
+    const request = { requestId: requestId('request:durability-retry'), workspaceId: alpha, name: 'retry' }
+    await expect(test.ctx.agentTeam.createChannel(request)).rejects.toThrow(/injected write failure/)
+    expect(test.ctx.agentTeam.status()).toMatchObject({ operationCount: 1, channelCount: 0 })
+    const created = await test.ctx.agentTeam.createChannel(request)
+    expect(created.receipt.sequence).toBe(2)
+    expect(test.ctx.agentTeam.status()).toMatchObject({ operationCount: 2, channelCount: 1 })
   })
 
   it('fails loud on a mismatched ledger version', async () => {

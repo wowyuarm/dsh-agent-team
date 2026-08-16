@@ -41,6 +41,9 @@
       "@deepseek-ai/dsh-tool-agent-team": [
         "./packages/tool-agent-team/src/index.ts"
       ],
+      "@deepseek-ai/dsh-storage-sqlite": [
+        "../deepseek-harness/packages/storage/storage-sqlite/lib/types/index.d.ts"
+      ],
       "@deepseek-ai/cordis": [
         "../deepseek-harness/vendor/cordis/lib/types"
       ],

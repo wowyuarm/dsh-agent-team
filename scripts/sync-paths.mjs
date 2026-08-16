@@ -32,7 +32,9 @@ const own = {
   '@deepseek-ai/dsh-tool-agent-team': ['./packages/tool-agent-team/src/index.ts'],
 }
 
-const harnessSrc = {}
+const harnessSrc = {
+  '@deepseek-ai/dsh-storage-sqlite': ['../deepseek-harness/packages/storage/storage-sqlite/src/index.ts'],
+}
 for (const [key, value] of Object.entries(base.compilerOptions.paths)) {
   harnessSrc[key] = (Array.isArray(value) ? value : [value])
     .map(p => p.replace(/^\.\//, '../deepseek-harness/'))
