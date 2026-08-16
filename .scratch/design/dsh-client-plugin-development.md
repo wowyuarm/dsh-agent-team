@@ -310,7 +310,7 @@ real Loader
 
 当前实现已验证：Team Client 使用 `@deepseek-ai/dsh-client-runtime/client` 的类型、真实 Cordis + SlotRegistry composition test、真实 React renderer DOM snapshot，以及根项目显式 `tsc` + Harness `tsdown` bundle。M2-01 的 Chromium browser journey 与完整 Team 流程由 M2-06 统一覆盖。
 
-M2-02 当前 blocker：Typert generator 的 package/workspace discovery 只认 Harness aggregate workspace 下的 package registrations；独立安装的 `dsh-agent-team` bundle 无法在不修改 Harness core 或手写 generated artifact 的前提下产出 `./remote`。因此 Client 不得直接导入 `ctx.agentTeam` 或临时伪造 RPC。后续 compaction 先读 M2-02 ticket 的 blocker，再回到本文件 §1-5。
+M2-02 Host Remote boundary 已完成。独立 package 不能直接运行 Typert generator，因此 `scripts/generate-typert.mjs` 会在本地 Harness checkout 的 `packages/` 下创建隔离的临时 package registration，复用 Harness 完整 Host project inventory 分析 Agent Team，生成确定性的 `./typert`、`./remote` 后写回 bundle，并在 `finally` 中删除临时目录。该流程不手写 generated artifact、不修改 Harness core；`typecheck`、`test`、`build` 都先执行生成门禁。Client 只 value-import `@deepseek-ai/dsh-agent-team/remote` 并通过 `ctx.remote.$mount()` 挂载，不 value-import Host Service。后续 compaction 先读 M2-02 ticket，再回到本文件 §1-5。
 
 ## 来源
 

@@ -18,6 +18,7 @@ import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
@@ -27,6 +28,7 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
+  AgentTeamMembersRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
@@ -129,7 +131,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Host owner of the single Agent Team in one dshHome. */
-export default class AgentTeam extends Service {
+export default class AgentTeam extends TypertRemoteService {
   static inject = [
     'storageDomain',
     'workspaceRegistry',
@@ -191,6 +193,12 @@ export default class AgentTeam extends Service {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
   }
 
+  /** Return only the current Workspace's members to the Client projection. */
+  @Remote('members')
+  membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamAgentMemberStatus[] {
+    return this.members().filter(status => status.member.workspaceId === request.workspaceId)
+  }
+
   /** Return the current Human-facing Team status without starting a model turn. */
   status(): AgentTeamStatus {
     return this.requireLedger().status()
@@ -206,6 +214,7 @@ export default class AgentTeam extends Service {
   }
 
   /** Provision one durable Member, then publish its Agent only after preset validation succeeds. */
+  @Remote('addMember')
   async addMember(request: AgentTeamAddMemberRequest): Promise<AgentTeamMemberResult> {
     return this.enqueueLifecycle(async () => {
       const workspace = this.requireWorkspace(request.workspaceId)

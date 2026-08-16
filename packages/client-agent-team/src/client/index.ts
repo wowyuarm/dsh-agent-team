@@ -1,4 +1,6 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import agentTeamRemote from '@deepseek-ai/dsh-agent-team/remote'
+import type {} from '@deepseek-ai/dsh-agent-team/remote'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -19,7 +21,7 @@ export { TeamNavigation } from './navigation.ts'
 const NS = 'team'
 
 export const inject = [
-  'slots', 'workspaces', 'locale',
+  'slots', 'workspaces', 'locale', 'remote',
 ]
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -79,7 +81,9 @@ function registerModeShadow<T extends object>(
   })
 }
 
-export function apply(ctx: ClientContext): void {
+export async function apply(ctx: ClientContext): Promise<void> {
+  const disposeRemote = await ctx.remote.$mount(agentTeamRemote)
+  ctx.effect(() => () => { void disposeRemote() }, 'agent-team: remote')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agent-team: dictionaries')
 
   const navigation = new TeamNavigation(ctx)

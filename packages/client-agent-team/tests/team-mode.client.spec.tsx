@@ -37,6 +37,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   runtime.provide('locale', locale)
   runtime.slots.installLocale(locale)
   runtime.provide('layout', { toggleSidebar: vi.fn() })
+  runtime.provide('remote', { $mount: async () => async () => {} } as never)
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [

@@ -237,6 +237,7 @@ describe('Agent Team Member real composition', () => {
       data: { mode: 'danger-full-access' },
     }))
     expect(ctx.agentTeam.memberForAgent(live!)).toEqual(added.status.member)
+    expect(ctx.agentTeam.membersForClient({ workspaceId })).toEqual([added.status])
 
     await expect(ctx.agentTeam.addMember({
       requestId: requestId('request:add-duplicate-handle'),

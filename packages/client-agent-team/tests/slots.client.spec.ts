@@ -20,6 +20,7 @@ async function bench(persisted: string | null = null) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   ctx.provide('locale', new LocaleRuntime(ctx))
+  ctx.provide('remote', { $mount: async () => async () => {} } as never)
   ctx.provide('workspaces', {
     list: workspaceFeed(),
     pickDirectory: vi.fn(async () => null),

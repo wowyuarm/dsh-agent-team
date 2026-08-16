@@ -4,9 +4,9 @@
 
 **Blocked by:** 01 — Enter and Leave Team Mode.
 
-**Implementation blocker:** Host `AgentTeam` already exposes the required member projection and lifecycle API, but the independent bundle cannot currently generate a Typert `./remote` artifact. Harness Typert generation only discovers packages registered under its own workspace aggregate (`tsconfig.host.json` and package project references); running it against this external bundle does not register `@deepseek-ai/dsh-typert-protocol`, so it emits no Remote methods. Hand-writing the generated artifact or modifying Harness core would violate the documented package boundary. Resume this ticket after a dedicated external-bundle Typert build integration is designed and accepted.
+**Implementation status:** Host Remote boundary is complete. `AgentTeam` exposes generated `members` and `addMember` methods through `./typert` and `./remote`; the Client mounts the generated contribution through `ctx.remote.$mount()`. `scripts/generate-typert.mjs` creates an isolated temporary package registration under the local Harness checkout, analyzes it with the existing Harness Host project inventory, writes deterministic artifacts back to this package, and always removes the temporary package. No generated artifact is hand-written and Harness core remains unchanged.
 
-**Status:** blocked-on-client-remote-build-boundary
+**Status:** in-progress-agents-ui
 
 - [ ] Every Workspace has an Agents tab beside Channels, and its add action opens a DSH-styled creation panel for name and description.
 - [ ] First-stage Agent creation binds the Member to the selected Workspace and uses the shipped team-member preset plus Host default model; model, provider and preset selectors are absent.

@@ -77,6 +77,11 @@ export interface AgentTeamAgentMemberStatus {
   readonly diagnostic?: string
 }
 
+/** Workspace-scoped request used by the Client Remote projection. */
+export interface AgentTeamMembersRequest {
+  readonly workspaceId: WorkspaceId
+}
+
 interface AgentTeamOperationBase {
   readonly sequence: number
   readonly operationId: AgentTeamOperationId
