@@ -86,8 +86,10 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
     list: () => [],
   })
   ctx.provide('agents', { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') } })
+  ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   ctx.provide('agentPresets', { mount: async () => { throw new Error('unused') } })
   ctx.provide('tools', { schemas: () => [] })
+  ctx.provide('sessions', { flush: async () => true })
   ctx.provide('sessionPersistence', { list: async () => [] })
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include

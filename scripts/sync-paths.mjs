@@ -29,6 +29,7 @@ const own = {
   '@deepseek-ai/dsh-agent-team/types': ['./packages/agent-team/src/types.ts'],
   '@deepseek-ai/dsh-command-agent-team': ['./packages/command-agent-team/src/index.ts'],
   '@deepseek-ai/dsh-command-agent-team/invariant': ['./packages/command-agent-team/src/invariant.ts'],
+  '@deepseek-ai/dsh-tool-agent-team': ['./packages/tool-agent-team/src/index.ts'],
 }
 
 const harnessSrc = {}

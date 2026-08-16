@@ -12,7 +12,7 @@
     "README.zh.md"
   ],
   "scripts": {
-    "typecheck": "tsc -p packages/agent-team/tsconfig.json && tsc -p packages/command-agent-team/tsconfig.json",
+    "typecheck": "tsc -p packages/agent-team/tsconfig.json && tsc -p packages/command-agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json",
     "test": "vitest run",
     "lint": "eslint ."
   },

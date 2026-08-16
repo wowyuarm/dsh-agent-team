@@ -8,7 +8,10 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
+import { freezeMessage } from '@deepseek-ai/dsh-llm'
+import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
@@ -17,7 +20,7 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
+import { AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -25,6 +28,9 @@ import type {
   AgentTeamAgentMemberStatus,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamDelivery,
+  AgentTeamJoinChannelRequest,
+  AgentTeamJoinChannelResult,
   AgentTeamMemberId,
   AgentTeamMemberResult,
   AgentTeamOperationReceipt,
@@ -34,6 +40,7 @@ import type {
   AgentTeamStatus,
   AgentTeamView,
   AgentTeamViewRequest,
+  AgentTeamMessage,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -62,6 +69,20 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
 ] as const)
 
 /** Data emitted after one new Team operation has become durable and projected. */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'agent-team-relay': {
+      readonly kind: 'agent-team-relay'
+      readonly form: 'relay'
+      readonly sender: AgentTeamMemberId
+      readonly channelRef: import('./types.ts').AgentTeamChannelRef
+      readonly taskRef: import('./types.ts').AgentTeamTaskRef
+      readonly messageRef: import('./types.ts').AgentTeamMessageRef
+      readonly revision: number
+    }
+  }
+}
+
 export interface AgentTeamCommitted {
   readonly receipt: AgentTeamOperationReceipt
 }
@@ -87,8 +108,10 @@ export default class AgentTeam extends Service {
     'storageDomain',
     'workspaceRegistry',
     'agents',
+    'agentDefaultModel',
     'agentPresets',
     'tools',
+    'sessions',
     'sessionPersistence',
   ]
 
@@ -97,6 +120,7 @@ export default class AgentTeam extends Service {
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private lifecycleTail: Promise<void> = Promise.resolve()
+  private deliveryTail: Promise<void> = Promise.resolve()
   private accepting = true
 
   /** Create the service; Cordis runs durable initialization before publication. */
@@ -110,6 +134,7 @@ export default class AgentTeam extends Service {
     this.ctx.effect(() => async () => {
       this.accepting = false
       await this.lifecycleTail
+      await this.deliveryTail
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
       await domain.close()
@@ -123,6 +148,7 @@ export default class AgentTeam extends Service {
     for (const member of ledger.listMembers()) {
       if (member.state === 'enabled') await this.activateMember(member)
     }
+    await this.recoverDeliveries()
   }
 
   /** Resolve one exact live Agent to its Team Member; forks and bare sessions do not inherit identity. */
@@ -201,8 +227,18 @@ export default class AgentTeam extends Service {
       const result = await this.requireLedger().resumeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
       await this.activateMember(result.value.member)
+      await this.recoverDeliveries()
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
+  }
+
+  /** Add one Agent Member to a Channel without replaying historical Messages. */
+  async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().joinChannel({ ...request, actor: agentTeamHumanActor() })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
   }
 
   /** Resolve Human authority and send one atomic top-level Message bundle. */
@@ -211,7 +247,19 @@ export default class AgentTeam extends Service {
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().sendMessage({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({
+      ...result.value,
+      deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+        this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)),
+    })
+  }
+
+  /** Return a bounded view authorized by the exact live Agent identity. */
+  viewForAgent(agent: Agent, request: AgentTeamViewRequest): AgentTeamView {
+    const member = this.memberForAgent(agent)
+    if (member === undefined) throw new Error('Agent is not an active Team Member')
+    return this.requireLedger().view(request, member.memberId)
   }
 
   /** Return a bounded Human-authorized Workspace view. */
@@ -223,6 +271,88 @@ export default class AgentTeam extends Service {
   /** Validate the durable ledger against the current in-memory projection. */
   validateLedger(): void {
     this.requireLedger().validate()
+  }
+
+  /** Prove every admitted Delivery still has matching target-session evidence. */
+  async validateDeliveryEvidence(): Promise<void> {
+    for (const delivery of this.requireLedger().listDeliveries()) {
+      if (delivery.state !== 'admitted') continue
+      const member = this.requireLedger().getMember(delivery.recipient)
+      if (member === undefined) throw new Error(`Delivery '${delivery.deliveryId}' has no target Member`)
+      const live = this.ctx.agents.get(member.sessionId)
+      const events = live?.session.events ?? (await this.ctx.sessionPersistence.inspect(member.sessionId)).events
+      if (!this.eventsContainMessage(events, delivery.messageId)) {
+        throw new Error(`admitted Delivery '${delivery.deliveryId}' has no target-session evidence`)
+      }
+    }
+  }
+
+  private async recoverDeliveries(): Promise<void> {
+    for (const delivery of this.requireLedger().queuedDeliveries()) await this.admitDelivery(delivery)
+  }
+
+  private admitDelivery(delivery: AgentTeamDelivery): Promise<void> {
+    const result = this.deliveryTail.then(() => this.admitDeliveryCore(delivery))
+    this.deliveryTail = result.then(() => {}, () => {})
+    return result
+  }
+
+  private async admitDeliveryCore(delivery: AgentTeamDelivery): Promise<void> {
+    const member = this.requireLedger().getMember(delivery.recipient)
+    const handle = this.handles.get(delivery.recipient)
+    const message = this.requireLedger().messageForDelivery(delivery.deliveryId)
+    if (member?.state !== 'enabled' || handle === undefined || message === undefined) return
+    let evidence = this.deliveryEvidence(handle.agent, delivery.messageId)
+    if (evidence === undefined) {
+      handle.agent.send(this.relayMessage(message, delivery.messageId), 'next-step', true)
+      evidence = this.deliveryEvidence(handle.agent, delivery.messageId)
+    }
+    if (evidence === undefined) throw new Error(`Delivery '${delivery.deliveryId}' has no Inbox evidence`)
+    const durable = await this.ctx.sessions.flush(handle.agent.session)
+    if (!durable) throw new Error(`Delivery '${delivery.deliveryId}' has no session persistence durability barrier`)
+    const result = await this.requireLedger().admitDelivery({
+      requestId: `agent-team:admit:${delivery.deliveryId}` as import('./types.ts').AgentTeamRequestId,
+      actor: agentTeamHostActor(),
+      deliveryId: delivery.deliveryId,
+      evidence,
+    })
+    if (result.committed) this.emitCommitted(result.value)
+  }
+
+  private eventsContainMessage(events: readonly { readonly type: string; readonly data: unknown }[], messageId: MessageId): boolean {
+    return events.some((event) => {
+      if (event.type === 'user/message') return (event.data as { id?: unknown }).id === messageId
+      if (event.type !== 'agent/inbox/spliced') return false
+      const inserted = (event.data as { inserted?: readonly { id?: unknown }[] }).inserted
+      return inserted?.some(message => message.id === messageId) === true
+    })
+  }
+
+  private deliveryEvidence(agent: Agent, messageId: MessageId): 'agent/inbox/spliced' | 'user/message' | undefined {
+    for (const event of agent.session.events) {
+      if (event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.id === messageId)) {
+        return 'agent/inbox/spliced'
+      }
+      if (event.type === 'user/message' && event.data.id === messageId) return 'user/message'
+    }
+    return undefined
+  }
+
+  private relayMessage(message: AgentTeamMessage, messageId: MessageId) {
+    return freezeMessage({
+      id: messageId,
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text: message.body }],
+      source: {
+        kind: 'agent-team-relay' as const,
+        form: 'relay' as const,
+        sender: message.sender,
+        channelRef: message.channelRef,
+        taskRef: message.taskRef,
+        messageRef: message.messageRef,
+        revision: message.sequence,
+      },
+    })
   }
 
   private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string): Promise<void> {
@@ -247,11 +377,13 @@ export default class AgentTeam extends Service {
           },
         }
       }
+      const agentOptions = this.ctx.agentDefaultModel.currentSelection()
       created = persisted
-        ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, setup })
+        ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup })
         : await this.ctx.agents.create({
             sessionId: member.sessionId,
             meta: { cwd: workspacePath, agentPreset: member.presetId },
+            agentOptions,
             setup,
           })
       await workspace.attachSession(member.sessionId)

@@ -49,6 +49,44 @@ describe('@deepseek-ai/dsh-command-agent-team', () => {
     expect(ctx.commands.find(agent, 'team')).toBeUndefined()
   })
 
+  it('routes Channel membership and structured mentions without parsing body handles', async () => {
+    const ctx = new Context()
+    await ctx.plugin(CommandRuntime)
+    const calls: unknown[] = []
+    ctx.provide('agentTeam', {
+      joinChannel: async (request: unknown) => {
+        calls.push(['join', request])
+        return { memberId: 'member:builder', channelRef: 'channel:work', receipt: { sequence: 1 } }
+      },
+      sendMessage: async (request: unknown) => {
+        calls.push(['send', request])
+        return {
+          message: { messageRef: 'message:one' },
+          task: { taskRef: 'task:one' },
+          thread: { threadRef: 'thread:one', revision: 2 },
+        }
+      },
+    } as unknown as AgentTeam)
+    await ctx.plugin(commandAgentTeam)
+    const definition = ctx.commands.find(agent, 'team')!
+
+    await definition.handler({
+      rawInput: 'channel join workspace:alpha channel:work member:builder', commandId: 'command:join',
+    } as never)
+    await definition.handler({
+      rawInput: 'send workspace:alpha channel:work --mention member:builder,member:reviewer -- inspect @nobody',
+      commandId: 'command:mention',
+    } as never)
+    expect(calls).toEqual([
+      ['join', expect.objectContaining({
+        workspaceId: 'workspace:alpha', channelRef: 'channel:work', memberId: 'member:builder',
+      })],
+      ['send', expect.objectContaining({
+        body: 'inspect @nobody', recipients: ['member:builder', 'member:reviewer'],
+      })],
+    ])
+  })
+
   it('routes Human Member lifecycle commands through the Agent Team service', async () => {
     const ctx = new Context()
     await ctx.plugin(CommandRuntime)

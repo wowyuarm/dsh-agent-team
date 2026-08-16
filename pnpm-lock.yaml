@@ -32,6 +32,8 @@ importers:
 
   packages/command-agent-team: {}
 
+  packages/tool-agent-team: {}
+
 packages:
 
   '@esbuild/aix-ppc64@0.28.2':

@@ -9,7 +9,8 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
-import LlmRuntime from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { CallId, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -18,6 +19,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
+import { apply as applyAgentTeamTools } from '@deepseek-ai/dsh-tool-agent-team'
 import type { AgentTeamRequestId } from '../src/types.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 
@@ -34,8 +36,68 @@ function requestId(value: string): AgentTeamRequestId {
   return value as AgentTeamRequestId
 }
 
-function teamTools(ctx: Context): void {
-  for (const name of AGENT_TEAM_TOOL_NAMES) {
+interface SlowToolGate {
+  readonly started: PromiseWithResolvers<void>
+  readonly release: PromiseWithResolvers<void>
+  aborted: boolean
+}
+
+class ScriptAdapter extends LlmAdapter {
+  readonly responses: StreamChunk[][] = []
+
+  override resolveModel(provider: string, model: string) {
+    return Promise.resolve({ provider, id: model, name: model })
+  }
+
+  async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const chunks = this.responses.shift() ?? textResponse('done')
+    for (const chunk of chunks) {
+      options.signal?.throwIfAborted()
+      yield chunk
+    }
+  }
+}
+
+function textResponse(text: string): StreamChunk[] {
+  return [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text },
+    { type: 'block-end', index: 0, block: { type: 'text', text } },
+    { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]
+}
+
+function slowToolResponse(): StreamChunk[] {
+  return [
+    { type: 'block-start', index: 0, blockType: 'tool-call' },
+    { type: 'block-end', index: 0, block: {
+      type: 'tool-call', id: CallId('call:slow-member-work'), name: 'slow_member_work', arguments: '{}',
+    } },
+    { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ]
+}
+
+function teamTools(ctx: Context, slow: SlowToolGate): void {
+  applyAgentTeamTools(ctx)
+  ctx.tools.register(defineContentToolFixture({
+    name: 'slow_member_work',
+    description: 'Controlled slow member work.',
+    parameters: {},
+    async execute(_args, exec) {
+      slow.started.resolve()
+      const markAborted = (): void => { slow.aborted = true }
+      exec.signal.addEventListener('abort', markAborted, { once: true })
+      try {
+        await slow.release.promise
+      } finally {
+        exec.signal.removeEventListener('abort', markAborted)
+      }
+      return [{ type: 'text', text: 'slow work complete' }]
+    },
+  }))
+  for (const name of AGENT_TEAM_TOOL_NAMES.filter(name => name !== 'team_view')) {
     const definition = defineContentToolFixture({
       name,
       description: `${name} fixture`,
@@ -52,6 +114,9 @@ async function realHarness(): Promise<{
   presetFile: string
   root: string
   teamFiber: Awaited<ReturnType<Context['plugin']>>
+  pool: MemoryMediaPool
+  adapter: ScriptAdapter
+  slow: SlowToolGate
 }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
@@ -64,11 +129,19 @@ async function realHarness(): Promise<{
   await writeFile(presetFile, "- id: team-tools\n  name: 'test-team-tools'\n")
 
   const ctx = new Context()
+  const adapter = new ScriptAdapter()
+  const slow: SlowToolGate = {
+    started: Promise.withResolvers<void>(),
+    release: Promise.withResolvers<void>(),
+    aborted: false,
+  }
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   const modules = new Map<string, unknown>([
-    ['test-team-tools', { name: 'test-team-tools', inject: ['tools'], apply: teamTools }],
+    ['test-team-tools', {
+      name: 'test-team-tools', inject: ['tools'], apply: (scope: Context) => teamTools(scope, slow),
+    }],
     ['test-bad-team-tools', {
       name: 'test-bad-team-tools',
       inject: ['tools'],
@@ -92,11 +165,13 @@ async function realHarness(): Promise<{
   } as unknown as NonNullable<typeof ctx.loader.internal>
 
   await ctx.plugin(LlmRuntime)
+  ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SessionStore)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
+  ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   await ctx.plugin(AgentPresets, {
     default: 'team-member',
@@ -123,7 +198,7 @@ async function realHarness(): Promise<{
     await facility.closeAll()
     await rm(root, { recursive: true, force: true })
   })
-  return { ctx, workspaceId, presetFile, root, teamFiber }
+  return { ctx, workspaceId, presetFile, root, teamFiber, pool, adapter, slow }
 }
 
 describe('Agent Team Member real composition', () => {
@@ -205,6 +280,191 @@ describe('Agent Team Member real composition', () => {
       }),
     ]))
     expect(ctx.agents.get(added.status.member.sessionId)).toBeDefined()
+    await remounted.dispose()
+  })
+
+  it('joins without history replay, admits one mentioned Message, and enforces Agent view membership', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({
+      requestId: requestId('request:delivery-channel'),
+      workspaceId,
+      name: 'delivery',
+    })
+    await ctx.agentTeam.sendMessage({
+      requestId: requestId('request:historical-message'),
+      workspaceId,
+      channelRef: channel.channel.channelRef,
+      body: 'historical message',
+    })
+    const joined = await ctx.agentTeam.addMember({
+      requestId: requestId('request:joined-member'),
+      workspaceId,
+      handle: 'joined',
+      presetId: 'team-member',
+      description: 'Receives mentioned work',
+    })
+    const outsider = await ctx.agentTeam.addMember({
+      requestId: requestId('request:outsider-member'),
+      workspaceId,
+      handle: 'outsider',
+      presetId: 'team-member',
+      description: 'Has not joined the Channel',
+    })
+    const joinedAgent = ctx.agents.get(joined.status.member.sessionId)!
+    const outsiderAgent = ctx.agents.get(outsider.status.member.sessionId)!
+    await ctx.agentTeam.joinChannel({
+      requestId: requestId('request:join-channel'),
+      workspaceId,
+      channelRef: channel.channel.channelRef,
+      memberId: joined.status.member.memberId,
+    })
+    expect(joinedAgent.session.events.some(event => JSON.stringify(event).includes('historical message'))).toBe(false)
+    expect(() => ctx.agentTeam.viewForAgent(outsiderAgent, {
+      workspaceId,
+      channelRef: channel.channel.channelRef,
+    })).toThrow(/not authorized/)
+
+    const sent = await ctx.agentTeam.sendMessage({
+      requestId: requestId('request:mentioned-message'),
+      workspaceId,
+      channelRef: channel.channel.channelRef,
+      body: 'please inspect this task',
+      recipients: [joined.status.member.memberId],
+    })
+    expect(sent.deliveries).toEqual([
+      expect.objectContaining({
+        recipient: joined.status.member.memberId,
+        state: 'admitted',
+      }),
+    ])
+    const retried = await ctx.agentTeam.sendMessage({
+      requestId: requestId('request:mentioned-message'),
+      workspaceId,
+      channelRef: channel.channel.channelRef,
+      body: 'please inspect this task',
+      recipients: [joined.status.member.memberId],
+    })
+    expect(retried.message.messageRef).toBe(sent.message.messageRef)
+    expect(retried.deliveries).toEqual(sent.deliveries)
+    const delivery = sent.deliveries[0]!
+    const evidence = joinedAgent.session.events.find(event =>
+      (event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.id === delivery.messageId))
+      || (event.type === 'user/message' && event.data.id === delivery.messageId))
+    expect(evidence).toBeDefined()
+    const relay = evidence?.type === 'agent/inbox/spliced'
+      ? evidence.data.inserted.find(message => message.id === delivery.messageId)
+      : evidence?.type === 'user/message' ? evidence.data : undefined
+    expect(relay?.source).toEqual({
+      kind: 'agent-team-relay',
+      form: 'relay',
+      sender: sent.message.sender,
+      channelRef: sent.message.channelRef,
+      taskRef: sent.task.taskRef,
+      messageRef: sent.message.messageRef,
+      revision: sent.thread.revision,
+    })
+    expect(ctx.agentTeam.viewForAgent(joinedAgent, {
+      workspaceId,
+      channelRef: channel.channel.channelRef,
+    }).items.map(item => item.message.body)).toEqual([
+      'historical message',
+      'please inspect this task',
+    ])
+    const toolResult = await ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: CallId('call:team-view'),
+      name: 'team_view',
+      arguments: { workspaceId, channelRef: channel.channel.channelRef },
+      agent: joinedAgent,
+    })
+    expect(toolResult).toMatchObject({
+      isError: false,
+      value: {
+        items: [
+          expect.objectContaining({ body: 'historical message' }),
+          expect.objectContaining({ body: 'please inspect this task' }),
+        ],
+      },
+    })
+    expect(ctx.agentTeam.status().operationCount).toBe(8)
+    ctx.agentTeam.validateLedger()
+    await ctx.agentTeam.validateDeliveryEvidence()
+  })
+
+  it('queues a mention at next-step without aborting a running tool call', async () => {
+    const { ctx, workspaceId, adapter, slow } = await realHarness()
+    adapter.responses.push(slowToolResponse(), textResponse('finished after steering'))
+    const channel = await ctx.agentTeam.createChannel({
+      requestId: requestId('request:running-channel'), workspaceId, name: 'running',
+    })
+    const member = await ctx.agentTeam.addMember({
+      requestId: requestId('request:running-member'), workspaceId,
+      handle: 'runner', presetId: 'team-member', description: 'Runs controlled work',
+    })
+    await ctx.agentTeam.joinChannel({
+      requestId: requestId('request:running-join'), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId,
+    })
+    await ctx.agentTeam.sendMessage({
+      requestId: requestId('request:start-running'), workspaceId,
+      channelRef: channel.channel.channelRef,
+      body: 'start slow work', recipients: [member.status.member.memberId],
+    })
+    await slow.started.promise
+    const agent = ctx.agents.get(member.status.member.sessionId)!
+    expect(agent.status).toBe('running')
+
+    const steering = await ctx.agentTeam.sendMessage({
+      requestId: requestId('request:steer-running'), workspaceId,
+      channelRef: channel.channel.channelRef,
+      body: 'new information while working', recipients: [member.status.member.memberId],
+    })
+    expect(steering.deliveries[0]?.state).toBe('admitted')
+    expect(slow.aborted).toBe(false)
+    expect(agent.status).toBe('running')
+    slow.release.resolve()
+    await agent.whenIdle()
+    expect(slow.aborted).toBe(false)
+  })
+
+  it('recovers existing Inbox evidence after the admitted ledger write fails', async () => {
+    const { ctx, workspaceId, teamFiber, pool } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({
+      requestId: requestId('request:recovery-channel'), workspaceId, name: 'recovery',
+    })
+    const member = await ctx.agentTeam.addMember({
+      requestId: requestId('request:recovery-member'), workspaceId,
+      handle: 'recovery', presetId: 'team-member', description: 'Tests admission recovery',
+    })
+    await ctx.agentTeam.joinChannel({
+      requestId: requestId('request:recovery-join'), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId,
+    })
+    const agent = ctx.agents.get(member.status.member.sessionId)!
+    let deliveredMessageId: string | undefined
+    const stop = ctx.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'agent/inbox/spliced' || event.data.inserted.length === 0) return
+      deliveredMessageId = event.data.inserted[0]!.id
+      pool.failNextWrites = 1
+    })
+    await expect(ctx.agentTeam.sendMessage({
+      requestId: requestId('request:recovery-message'), workspaceId,
+      channelRef: channel.channel.channelRef,
+      body: 'recover this exact relay', recipients: [member.status.member.memberId],
+    })).rejects.toThrow(/injected write failure/)
+    stop()
+    expect(deliveredMessageId).toBeDefined()
+    expect(agent.session.events.filter(event => event.type === 'agent/inbox/spliced'
+      && event.data.inserted.some(message => message.id === deliveredMessageId))).toHaveLength(1)
+
+    await teamFiber.dispose()
+    const remounted = await ctx.plugin(AgentTeam)
+    const restored = ctx.agents.get(member.status.member.sessionId)!
+    expect(restored.session.events.filter(event => event.type === 'agent/inbox/spliced'
+      && event.data.inserted.some(message => message.id === deliveredMessageId))).toHaveLength(1)
+    expect(ctx.agentTeam.status().operationCount).toBe(6)
+    ctx.agentTeam.validateLedger()
+    await ctx.agentTeam.validateDeliveryEvidence()
     await remounted.dispose()
   })
 

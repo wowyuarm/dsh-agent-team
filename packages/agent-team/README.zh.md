@@ -6,7 +6,7 @@
 
 ## Service 约定
 
-Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`ctx.agentPresets`、`ctx.tools` 和 `ctx.sessionPersistence`，并在 Cordis 发布 `ctx.agentTeam` 前打开带版本的 `agent_team` Domain。首次启动为稳定 Human Member 追加一条 `team/initialized` operation；后续启动重放同一 operation，不追加新记录。
+Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`ctx.agentDefaultModel`、`ctx.agentPresets`、`ctx.tools`、`ctx.sessions` 和 `ctx.sessionPersistence`，并在 Cordis 发布 `ctx.agentTeam` 前打开带版本的 `agent_team` Domain。首次启动为稳定 Human Member 追加一条 `team/initialized` operation；后续启动重放同一 operation，不追加新记录。
 
 `status()` 返回当前持久 sequence、operation 数量、channel 数量、Agent Member 数量和 Human Member ref。它不发起模型请求，也不写 storage。`validateLedger()` 对照持久 operation table 检查包内 projection。
 
@@ -20,11 +20,13 @@ Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`c
 
 每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。普通 session 和 fork 不获得 Team 身份。
 
+把 Member 加入 Channel 只授予之后的 read/send authority，不向 Member session 注入历史 Message。Structured mention 会在 Message operation 内保存一个 queued Delivery，并固定 DeliveryId 与 MessageId。Host 使用 wakeup 将 member-authored `agent-team-relay` 送入 `next-step`，只有目标 session 出现匹配的 `agent/inbox/spliced` 或 `user/message` evidence 后才提交 `delivery-admitted`。重启恢复会复用已有 evidence，或使用同一个 MessageId 重试。Admitted 只表示已进入 Inbox，不表示模型已经处理。
+
 M1 支持单个 Host writer。Ledger 永久保留，不提供 snapshot 或 compaction。
 
 ## Composition
 
-Bundle 使用 Host 已有的 singleton provider，不重复挂载 `agents`、`tools`、`fs`、`sandboxPolicy`、session persistence、Workspace registry 或 storage 的替代实现。Host services 只挂载一次，再挂载本 Service 及 invariant companion。`/team` 等 Human control 是独立 Consumer。
+Bundle 使用 Host 已有的 singleton provider，不重复挂载 `agents`、默认模型选择、`tools`、`fs`、`sandboxPolicy`、Session store/persistence、Workspace registry 或 storage 的替代实现。Host services 只挂载一次，再挂载本 Service 及 invariant companion。`/team` 等 Human control 是独立 Consumer。
 
 Team-enabled preset 在自身 Agent scope 注册四个工具，并用 `markAgentTeamPreset()` 标记 `team_send` definition。Tool row 应在执行时读取 `ctx.agentTeam`，不能静态 inject；否则 Host remount 恢复成员时会形成启动环。Scoped tool 重名会在 unpublished setup 阶段失败，只使对应 Member unavailable。Host service provider 重复则仍是 composition error，应删除重复行，不做叠加。
 

@@ -1,4 +1,5 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 
@@ -23,8 +24,8 @@ export type AgentTeamTaskRef = Branded<'AgentTeamTaskRef'>
 /** Stable identifier of one Task Thread. */
 export type AgentTeamThreadRef = Branded<'AgentTeamThreadRef'>
 
-/** Stable identifier of one recipient intent. */
-export type AgentTeamRecipientIntentRef = Branded<'AgentTeamRecipientIntentRef'>
+/** Stable identifier of one Delivery intent. */
+export type AgentTeamDeliveryId = Branded<'AgentTeamDeliveryId'>
 
 /** Snapshot of the actor authorized for an operation. */
 export interface AgentTeamHumanActor {
@@ -32,6 +33,14 @@ export interface AgentTeamHumanActor {
   readonly memberId: AgentTeamMemberId
   readonly handle: string
 }
+
+/** Host actor used only for durable observations such as Inbox admission. */
+export interface AgentTeamHostActor {
+  readonly kind: 'host'
+  readonly handle: 'agent-team'
+}
+
+export type AgentTeamActor = AgentTeamHumanActor | AgentTeamHostActor
 
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
@@ -57,7 +66,7 @@ interface AgentTeamOperationBase {
   readonly operationId: AgentTeamOperationId
   readonly requestId: AgentTeamRequestId
   readonly occurredAt: string
-  readonly actor: AgentTeamHumanActor
+  readonly actor: AgentTeamActor
   readonly previousOperationId: AgentTeamOperationId | null
 }
 
@@ -103,12 +112,15 @@ export interface AgentTeamFollow {
   readonly following: true
 }
 
-/** Durable intent to deliver a committed fact to one recipient. */
-export interface AgentTeamRecipientIntent {
-  readonly intentRef: AgentTeamRecipientIntentRef
+/** Durable delivery state for one Message recipient. */
+export interface AgentTeamDelivery {
+  readonly deliveryId: AgentTeamDeliveryId
+  readonly messageRef: AgentTeamMessageRef
+  readonly messageId: MessageId
   readonly threadRef: AgentTeamThreadRef
+  readonly taskRef: AgentTeamTaskRef
   readonly recipient: AgentTeamMemberId
-  readonly state: 'queued'
+  readonly state: 'queued' | 'admitted'
 }
 
 /** The first durable operation in every Agent Team ledger. */
@@ -130,6 +142,23 @@ export interface AgentTeamChannelCreatedOperation extends AgentTeamOperationBase
 }
 
 /** Durable atomic facts created by one top-level Message. */
+export interface AgentTeamChannelMemberAddedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/channel-member-added'
+  readonly data: {
+    readonly channelRef: AgentTeamChannelRef
+    readonly memberId: AgentTeamMemberId
+  }
+}
+
+/** Durable admission proof for one queued Delivery. */
+export interface AgentTeamDeliveryAdmittedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/delivery-admitted'
+  readonly data: {
+    readonly delivery: AgentTeamDelivery
+    readonly evidence: 'agent/inbox/spliced' | 'user/message'
+  }
+}
+
 export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   readonly kind: 'team/message-sent'
   readonly data: {
@@ -138,7 +167,7 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly follows: readonly AgentTeamFollow[]
-    readonly recipientIntents: readonly AgentTeamRecipientIntent[]
+    readonly deliveries: readonly AgentTeamDelivery[]
   }
 }
 
@@ -171,6 +200,8 @@ export type AgentTeamOperation =
   | AgentTeamInitializedOperation
   | AgentTeamChannelCreatedOperation
   | AgentTeamMessageSentOperation
+  | AgentTeamChannelMemberAddedOperation
+  | AgentTeamDeliveryAdmittedOperation
   | AgentTeamMemberAddedOperation
   | AgentTeamMemberSuspendedOperation
   | AgentTeamMemberResumedOperation
@@ -205,13 +236,26 @@ export interface AgentTeamSendMessageRequest {
 }
 
 /** Result of atomically creating a Message and its derived collaboration facts. */
+export interface AgentTeamJoinChannelRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  readonly memberId: AgentTeamMemberId
+}
+
+export interface AgentTeamJoinChannelResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly channelRef: AgentTeamChannelRef
+  readonly memberId: AgentTeamMemberId
+}
+
 export interface AgentTeamSendMessageResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly message: AgentTeamMessage
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly follows: readonly AgentTeamFollow[]
-  readonly recipientIntents: readonly AgentTeamRecipientIntent[]
+  readonly deliveries: readonly AgentTeamDelivery[]
 }
 
 /** Human intent to provision one team-managed Agent Member. */
@@ -243,6 +287,10 @@ export interface AgentTeamViewItem {
 }
 
 /** Workspace-authorized bounded view request. */
+export interface AgentTeamAgentViewRequest extends AgentTeamViewRequest {
+  readonly memberId: AgentTeamMemberId
+}
+
 export interface AgentTeamViewRequest {
   readonly workspaceId: WorkspaceId
   readonly channelRef?: AgentTeamChannelRef

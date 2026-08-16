@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { MessageId } from '@deepseek-ai/dsh-llm'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
@@ -6,9 +7,14 @@ import type {
   AgentTeamAgentMember,
   AgentTeamChannel,
   AgentTeamChannelCreatedOperation,
+  AgentTeamChannelMemberAddedOperation,
   AgentTeamChannelRef,
   AgentTeamCreateChannelResult,
+  AgentTeamDelivery,
+  AgentTeamDeliveryAdmittedOperation,
+  AgentTeamDeliveryId,
   AgentTeamFollow,
+  AgentTeamHostActor,
   AgentTeamHumanActor,
   AgentTeamInitializedOperation,
   AgentTeamMemberId,
@@ -21,8 +27,8 @@ import type {
   AgentTeamOperation,
   AgentTeamOperationId,
   AgentTeamOperationReceipt,
-  AgentTeamRecipientIntent,
-  AgentTeamRecipientIntentRef,
+  AgentTeamJoinChannelRequest,
+  AgentTeamJoinChannelResult,
   AgentTeamRequestId,
   AgentTeamSendMessageResult,
   AgentTeamSetMemberStateRequest,
@@ -41,6 +47,8 @@ export const AGENT_TEAM_HUMAN_MEMBER_ID = 'member:human' as AgentTeamMemberId
 /** Idempotency identity of the one Host bootstrap operation. */
 export const AGENT_TEAM_INITIALIZE_REQUEST_ID = 'agent-team:initialize:v1' as AgentTeamRequestId
 
+const HOST_ACTOR: AgentTeamHostActor = Object.freeze({ kind: 'host', handle: 'agent-team' })
+
 const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
   kind: 'human',
   memberId: AGENT_TEAM_HUMAN_MEMBER_ID,
@@ -50,6 +58,11 @@ const HUMAN_ACTOR: AgentTeamHumanActor = Object.freeze({
 /** Resolve the one Human authority owned by this Team. */
 export function agentTeamHumanActor(): AgentTeamHumanActor {
   return HUMAN_ACTOR
+}
+
+/** Resolve Host authority for durable delivery observations. */
+export function agentTeamHostActor(): AgentTeamHostActor {
+  return HOST_ACTOR
 }
 
 /** Caller-owned payload of the idempotent Team initialization request. */
@@ -78,6 +91,19 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
   readonly actor: AgentTeamHumanActor
 }
 
+/** Internal authorized Channel membership request. */
+export interface AgentTeamAuthorizedJoinChannelRequest extends AgentTeamJoinChannelRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+/** Internal authorized Inbox-admission observation. */
+export interface AgentTeamAuthorizedAdmitDeliveryRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly actor: AgentTeamHostActor
+  readonly deliveryId: AgentTeamDeliveryId
+  readonly evidence: 'agent/inbox/spliced' | 'user/message'
+}
+
 /** Internal authorized top-level Message request. */
 export interface AgentTeamAuthorizedSendMessageRequest {
   readonly requestId: AgentTeamRequestId
@@ -92,7 +118,7 @@ export interface AgentTeamAuthorizedSendMessageRequest {
 export interface AgentTeamLedgerOptions {
   readonly operationId?: () => AgentTeamOperationId
   readonly occurredAt?: () => string
-  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'intent') => string
+  readonly ref?: (kind: 'channel' | 'message' | 'task' | 'thread' | 'delivery') => string
 }
 
 /** Internal append result indicating whether this call committed a new record. */
@@ -112,12 +138,14 @@ export class AgentTeamLedger {
   private readonly ordered: AgentTeamOperation[] = []
   private readonly channels = new Map<AgentTeamChannelRef, AgentTeamChannel>()
   private readonly members = new Map<AgentTeamMemberId, AgentTeamAgentMember>()
+  private readonly memberships = new Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>()
+  private readonly deliveries = new Map<AgentTeamDeliveryId, AgentTeamDelivery>()
   private readonly messages: AgentTeamMessage[] = []
   private readonly tasks = new Map<AgentTeamTaskRef, AgentTeamTask>()
   private readonly threads = new Map<AgentTeamThreadRef, AgentTeamThread>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
-  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'intent') => string
+  private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'delivery') => string
   private operationTail: Promise<void> = Promise.resolve()
 
   /**
@@ -256,6 +284,83 @@ export class AgentTeamLedger {
     return Object.freeze([...this.members.values()])
   }
 
+  /** Grant one Agent Member future visibility in a Channel without replaying history. */
+  joinChannel(
+    request: AgentTeamAuthorizedJoinChannelRequest,
+  ): Promise<AgentTeamLedgerResult<AgentTeamJoinChannelResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameChannelJoin(existing, request)
+        return this.resolved(this.joinResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const channel = this.requireChannel(request.workspaceId, request.channelRef)
+      const member = this.requireMember(request.memberId)
+      if (member.workspaceId !== request.workspaceId) throw new Error('Member and Channel must belong to one Workspace')
+      if (this.isChannelMember(channel.channelRef, member.memberId)) {
+        throw new Error(`Agent Member '${member.memberId}' already belongs to Channel '${channel.channelRef}'`)
+      }
+      const operation: AgentTeamChannelMemberAddedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()),
+        kind: 'team/channel-member-added',
+        data: Object.freeze({ channelRef: channel.channelRef, memberId: member.memberId }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.projectJoin(operation)
+      return this.committed(this.joinResult(operation))
+    })
+  }
+
+  /** Return every current Delivery projection in creation order. */
+  listDeliveries(): readonly AgentTeamDelivery[] {
+    return Object.freeze([...this.deliveries.values()])
+  }
+
+  /** Return one current Delivery projection. */
+  getDelivery(deliveryId: AgentTeamDeliveryId): AgentTeamDelivery | undefined {
+    return this.deliveries.get(deliveryId)
+  }
+
+  /** Return queued Deliveries in ledger order for Host recovery. */
+  queuedDeliveries(): readonly AgentTeamDelivery[] {
+    return Object.freeze([...this.deliveries.values()].filter(delivery => delivery.state === 'queued'))
+  }
+
+  /** Return the immutable Message that owns one Delivery. */
+  messageForDelivery(deliveryId: AgentTeamDeliveryId): AgentTeamMessage | undefined {
+    const delivery = this.deliveries.get(deliveryId)
+    return delivery === undefined ? undefined : this.messages.find(message => message.messageRef === delivery.messageRef)
+  }
+
+  /** Commit durable Inbox evidence for one queued Delivery. */
+  admitDelivery(
+    request: AgentTeamAuthorizedAdmitDeliveryRequest,
+  ): Promise<AgentTeamLedgerResult<AgentTeamOperationReceipt>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameDeliveryAdmission(existing, request)
+        return this.resolved(this.receipt(existing))
+      }
+      if (request.actor.kind !== 'host') throw new Error('Delivery admission requires Host authority')
+      const delivery = this.deliveries.get(request.deliveryId)
+      if (delivery === undefined) throw new Error(`unknown Delivery '${request.deliveryId}'`)
+      if (delivery.state !== 'queued') throw new Error(`Delivery '${request.deliveryId}' is already admitted`)
+      const admitted: AgentTeamDelivery = Object.freeze({ ...delivery, state: 'admitted' })
+      const operation: AgentTeamDeliveryAdmittedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()),
+        kind: 'team/delivery-admitted',
+        data: Object.freeze({ delivery: admitted, evidence: request.evidence }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.deliveries.set(admitted.deliveryId, admitted)
+      return this.committed(this.receipt(operation))
+    })
+  }
+
   /**
    * Atomically append one top-level Message and every fact derived from it.
    * @param request - Authorized send intent.
@@ -294,13 +399,26 @@ export class AgentTeamLedger {
         topLevel: true,
         sequence,
       })
-      const follows: readonly AgentTeamFollow[] = Object.freeze([
-        Object.freeze({ memberId: request.actor.memberId, threadRef, following: true }),
-      ])
-      const recipientIntents: readonly AgentTeamRecipientIntent[] = Object.freeze(
-        recipients.map(recipient => Object.freeze({
-          intentRef: this.ref('intent'),
+      const follows: readonly AgentTeamFollow[] = Object.freeze(
+        [request.actor.memberId, ...recipients].map(memberId => Object.freeze({
+          memberId,
           threadRef,
+          following: true as const,
+        })),
+      )
+      for (const recipient of recipients) {
+        const member = this.requireMember(recipient)
+        if (member.workspaceId !== request.workspaceId || !this.isChannelMember(channel.channelRef, recipient)) {
+          throw new Error(`Agent Member '${recipient}' is not authorized for Channel '${channel.channelRef}'`)
+        }
+      }
+      const deliveries: readonly AgentTeamDelivery[] = Object.freeze(
+        recipients.map(recipient => Object.freeze({
+          deliveryId: this.ref('delivery'),
+          messageRef: message.messageRef,
+          messageId: MessageId(`agent-team:${randomUUID()}`),
+          threadRef,
+          taskRef,
           recipient,
           state: 'queued' as const,
         })),
@@ -314,7 +432,7 @@ export class AgentTeamLedger {
           task,
           thread,
           follows,
-          recipientIntents,
+          deliveries,
         }),
       })
       await this.table.put(operation.operationId, operation)
@@ -329,7 +447,7 @@ export class AgentTeamLedger {
    * @param request - Workspace scope, optional Channel filter, and continuation.
    * @returns Channels and Message-derived facts after the supplied sequence.
    */
-  view(request: AgentTeamViewRequest): AgentTeamView {
+  view(request: AgentTeamViewRequest, memberId?: AgentTeamMemberId): AgentTeamView {
     const limit = request.limit ?? 20
     const cursor = request.cursor ?? 0
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -339,14 +457,23 @@ export class AgentTeamLedger {
       throw new Error('cursor must be a non-negative integer sequence')
     }
     const channels = [...this.channels.values()]
-      .filter(channel => channel.workspaceId === request.workspaceId)
+      .filter(channel => channel.workspaceId === request.workspaceId
+        && (memberId === undefined || this.isChannelMember(channel.channelRef, memberId)))
+    if (memberId !== undefined) {
+      const member = this.requireMember(memberId)
+      if (member.workspaceId !== request.workspaceId) throw new Error('Member cannot view another Workspace')
+    }
     if (request.channelRef !== undefined) {
       this.requireChannel(request.workspaceId, request.channelRef)
+      if (memberId !== undefined && !this.isChannelMember(request.channelRef, memberId)) {
+        throw new Error(`Agent Member '${memberId}' is not authorized for Channel '${request.channelRef}'`)
+      }
     }
     const candidates = this.messages.filter(message => {
       if (message.sequence <= cursor) return false
       const channel = this.channels.get(message.channelRef)
       if (channel?.workspaceId !== request.workspaceId) return false
+      if (memberId !== undefined && !this.isChannelMember(message.channelRef, memberId)) return false
       return request.channelRef === undefined || message.channelRef === request.channelRef
     })
     const selected = candidates.slice(0, limit)
@@ -402,8 +529,12 @@ export class AgentTeamLedger {
       this.commit(operation)
       if (operation.kind === 'team/channel-created') {
         this.channels.set(operation.data.channel.channelRef, operation.data.channel)
+      } else if (operation.kind === 'team/channel-member-added') {
+        this.projectJoin(operation)
       } else if (operation.kind === 'team/message-sent') {
         this.projectMessage(operation)
+      } else if (operation.kind === 'team/delivery-admitted') {
+        this.deliveries.set(operation.data.delivery.deliveryId, operation.data.delivery)
       } else if (operation.kind === 'team/member-added') {
         this.members.set(operation.data.member.memberId, operation.data.member)
       } else if (operation.kind === 'team/member-suspended' || operation.kind === 'team/member-resumed') {
@@ -418,6 +549,9 @@ export class AgentTeamLedger {
     const refs = new Set<string>()
     const channels = new Map<AgentTeamChannelRef, AgentTeamChannel>()
     const members = new Map<AgentTeamMemberId, AgentTeamAgentMember>()
+    const memberships = new Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>()
+    const deliveries = new Map<AgentTeamDeliveryId, AgentTeamDelivery>()
+    const messageIds = new Set<string>()
     let previousOperationId: AgentTeamOperationId | null = null
     let humanMemberId: AgentTeamMemberId | undefined
     for (const [index, [key, operation]] of records.entries()) {
@@ -442,7 +576,7 @@ export class AgentTeamLedger {
         humanMemberId = operation.data.humanMemberId
       } else {
         if (humanMemberId === undefined) throw new Error('agent-team ledger has no Human Member')
-        this.assertHumanOperation(operation, humanMemberId, channels, members, refs)
+        this.assertOperation(operation, humanMemberId, channels, members, memberships, deliveries, messageIds, refs)
       }
       operationIds.add(operation.operationId)
       requestIds.add(operation.requestId)
@@ -450,15 +584,29 @@ export class AgentTeamLedger {
     }
   }
 
-  private assertHumanOperation(
+  private assertOperation(
     operation: AgentTeamOperation,
     humanMemberId: AgentTeamMemberId,
     channels: Map<AgentTeamChannelRef, AgentTeamChannel>,
     members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
+    memberships: Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>,
+    deliveries: Map<AgentTeamDeliveryId, AgentTeamDelivery>,
+    messageIds: Set<string>,
     refs: Set<string>,
   ): void {
     if (operation.kind === 'team/initialized') {
       throw new Error('agent-team initialization must be the first and only initialization operation')
+    }
+    if (operation.kind === 'team/delivery-admitted') {
+      if (operation.actor.kind !== 'host') throw new Error(`agent-team operation ${operation.sequence} has invalid Host authority`)
+      const previous = deliveries.get(operation.data.delivery.deliveryId)
+      const admitted = operation.data.delivery
+      if (previous === undefined || previous.state !== 'queued' || admitted.state !== 'admitted'
+        || !this.sameDelivery(previous, admitted)) {
+        throw new Error(`agent-team Delivery admission ${operation.sequence} has an invalid transition`)
+      }
+      deliveries.set(admitted.deliveryId, admitted)
+      return
     }
     if (operation.actor.kind !== 'human' || operation.actor.memberId !== humanMemberId) {
       throw new Error(`agent-team operation ${operation.sequence} has invalid Human authority`)
@@ -471,6 +619,18 @@ export class AgentTeamLedger {
       }
       this.addRef(refs, channel.channelRef)
       channels.set(channel.channelRef, channel)
+      return
+    }
+    if (operation.kind === 'team/channel-member-added') {
+      const channel = channels.get(operation.data.channelRef)
+      const member = members.get(operation.data.memberId)
+      const joined = memberships.get(operation.data.channelRef) ?? new Set<AgentTeamMemberId>()
+      if (channel === undefined || member === undefined || channel.workspaceId !== member.workspaceId
+        || joined.has(member.memberId)) {
+        throw new Error(`agent-team Channel membership operation ${operation.sequence} is invalid`)
+      }
+      joined.add(member.memberId)
+      memberships.set(channel.channelRef, joined)
       return
     }
     if (operation.kind === 'team/member-added') {
@@ -500,7 +660,7 @@ export class AgentTeamLedger {
       members.set(next.memberId, next)
       return
     }
-    const { message, task, thread, follows, recipientIntents } = operation.data
+    const { message, task, thread, follows, deliveries: queued } = operation.data
     const channel = channels.get(message.channelRef)
     if (channel === undefined || channel.workspaceId !== operation.data.workspaceId) {
       throw new Error(`agent-team Message operation ${operation.sequence} references an invalid Channel`)
@@ -518,20 +678,34 @@ export class AgentTeamLedger {
     this.addRef(refs, message.messageRef)
     this.addRef(refs, task.taskRef)
     this.addRef(refs, thread.threadRef)
-    if (follows.length !== 1
-      || follows[0]?.memberId !== operation.actor.memberId
-      || follows[0].threadRef !== thread.threadRef) {
-      throw new Error(`agent-team Message operation ${operation.sequence} has invalid Follow state`)
-    }
     const recipients = new Set<AgentTeamMemberId>()
-    for (const intent of recipientIntents) {
-      this.addRef(refs, intent.intentRef)
-      if (intent.threadRef !== thread.threadRef
-        || intent.recipient === operation.actor.memberId
-        || recipients.has(intent.recipient)) {
-        throw new Error(`agent-team Message operation ${operation.sequence} has invalid recipient intents`)
+    for (const delivery of queued) {
+      this.addRef(refs, delivery.deliveryId)
+      if (messageIds.has(delivery.messageId)) {
+        throw new Error(`agent-team repeats Inbox MessageId '${delivery.messageId}'`)
       }
-      recipients.add(intent.recipient)
+      messageIds.add(delivery.messageId)
+      const recipient = members.get(delivery.recipient)
+      if (delivery.messageRef !== message.messageRef
+        || delivery.threadRef !== thread.threadRef
+        || delivery.taskRef !== task.taskRef
+        || delivery.state !== 'queued'
+        || recipient === undefined
+        || recipient.workspaceId !== operation.data.workspaceId
+        || !memberships.get(channel.channelRef)?.has(recipient.memberId)
+        || delivery.recipient === operation.actor.memberId
+        || recipients.has(delivery.recipient)) {
+        throw new Error(`agent-team Message operation ${operation.sequence} has invalid Deliveries`)
+      }
+      recipients.add(delivery.recipient)
+      deliveries.set(delivery.deliveryId, delivery)
+    }
+    const expectedFollows = [operation.actor.memberId, ...recipients]
+    if (follows.length !== expectedFollows.length || follows.some((follow, index) =>
+      follow.memberId !== expectedFollows[index]
+      || follow.threadRef !== thread.threadRef
+      || follow.following !== true)) {
+      throw new Error(`agent-team Message operation ${operation.sequence} has invalid Follow state`)
     }
   }
 
@@ -570,6 +744,30 @@ export class AgentTeamLedger {
     }
   }
 
+  private assertSameChannelJoin(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedJoinChannelRequest,
+  ): asserts operation is AgentTeamChannelMemberAddedOperation {
+    if (operation.kind !== 'team/channel-member-added'
+      || !this.sameActor(operation.actor, request.actor)
+      || operation.data.channelRef !== request.channelRef
+      || operation.data.memberId !== request.memberId) {
+      this.throwRequestCollision(request.requestId)
+    }
+  }
+
+  private assertSameDeliveryAdmission(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedAdmitDeliveryRequest,
+  ): asserts operation is AgentTeamDeliveryAdmittedOperation {
+    if (operation.kind !== 'team/delivery-admitted'
+      || operation.actor.kind !== 'host'
+      || operation.data.delivery.deliveryId !== request.deliveryId
+      || operation.data.evidence !== request.evidence) {
+      this.throwRequestCollision(request.requestId)
+    }
+  }
+
   private assertSameMemberAdd(
     operation: AgentTeamOperation,
     request: AgentTeamAuthorizedAddMemberRequest,
@@ -603,7 +801,7 @@ export class AgentTeamLedger {
     recipients: readonly AgentTeamMemberId[],
   ): asserts operation is AgentTeamMessageSentOperation {
     const storedRecipients = operation.kind === 'team/message-sent'
-      ? operation.data.recipientIntents.map(intent => intent.recipient)
+      ? operation.data.deliveries.map(delivery => delivery.recipient)
       : []
     if (operation.kind !== 'team/message-sent'
       || !this.sameActor(operation.actor, request.actor)
@@ -636,6 +834,16 @@ export class AgentTeamLedger {
       throw new Error('sender cannot be a recipient intent')
     }
     return Object.freeze([...unique].sort())
+  }
+
+  private requireMember(memberId: AgentTeamMemberId): AgentTeamAgentMember {
+    const member = this.members.get(memberId)
+    if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
+    return member
+  }
+
+  private isChannelMember(channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): boolean {
+    return this.memberships.get(channelRef)?.has(memberId) === true
   }
 
   private requireChannel(workspaceId: WorkspaceId, channelRef: AgentTeamChannelRef): AgentTeamChannel {
@@ -682,6 +890,15 @@ export class AgentTeamLedger {
     })
   }
 
+  private sameDelivery(left: AgentTeamDelivery, right: AgentTeamDelivery): boolean {
+    return left.deliveryId === right.deliveryId
+      && left.messageRef === right.messageRef
+      && left.messageId === right.messageId
+      && left.threadRef === right.threadRef
+      && left.taskRef === right.taskRef
+      && left.recipient === right.recipient
+  }
+
   private sameMemberIdentity(left: AgentTeamAgentMember, right: AgentTeamAgentMember): boolean {
     return left.memberId === right.memberId
       && left.sessionId === right.sessionId
@@ -708,6 +925,21 @@ export class AgentTeamLedger {
     this.messages.push(operation.data.message)
     this.tasks.set(operation.data.task.taskRef, operation.data.task)
     this.threads.set(operation.data.thread.threadRef, operation.data.thread)
+    for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
+  }
+
+  private projectJoin(operation: AgentTeamChannelMemberAddedOperation): void {
+    const members = this.memberships.get(operation.data.channelRef) ?? new Set<AgentTeamMemberId>()
+    members.add(operation.data.memberId)
+    this.memberships.set(operation.data.channelRef, members)
+  }
+
+  private joinResult(operation: AgentTeamChannelMemberAddedOperation): AgentTeamJoinChannelResult {
+    return Object.freeze({
+      receipt: this.receipt(operation),
+      channelRef: operation.data.channelRef,
+      memberId: operation.data.memberId,
+    })
   }
 
   private channelResult(operation: AgentTeamChannelCreatedOperation): AgentTeamCreateChannelResult {
@@ -728,12 +960,12 @@ export class AgentTeamLedger {
       task: operation.data.task,
       thread: operation.data.thread,
       follows: operation.data.follows,
-      recipientIntents: operation.data.recipientIntents,
+      deliveries: operation.data.deliveries,
     })
   }
 
   private operationBase(
-    request: { readonly requestId: AgentTeamRequestId; readonly actor: AgentTeamHumanActor },
+    request: { readonly requestId: AgentTeamRequestId; readonly actor: AgentTeamHumanActor | AgentTeamHostActor },
     sequence: number,
   ) {
     return {
@@ -760,8 +992,8 @@ export class AgentTeamLedger {
   private ref(kind: 'message'): AgentTeamMessageRef
   private ref(kind: 'task'): AgentTeamTaskRef
   private ref(kind: 'thread'): AgentTeamThreadRef
-  private ref(kind: 'intent'): AgentTeamRecipientIntentRef
-  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'intent') {
+  private ref(kind: 'delivery'): AgentTeamDeliveryId
+  private ref(kind: 'channel' | 'message' | 'task' | 'thread' | 'delivery') {
     return this.createRef(kind)
   }
 
@@ -770,10 +1002,9 @@ export class AgentTeamLedger {
     refs.add(ref)
   }
 
-  private sameActor(left: AgentTeamHumanActor, right: AgentTeamHumanActor): boolean {
-    return left.kind === right.kind
-      && left.memberId === right.memberId
-      && left.handle === right.handle
+  private sameActor(left: AgentTeamHumanActor | AgentTeamHostActor, right: AgentTeamHumanActor | AgentTeamHostActor): boolean {
+    if (left.kind !== right.kind || left.handle !== right.handle) return false
+    return left.kind === 'host' || (right.kind === 'human' && left.memberId === right.memberId)
   }
 
   private sameList<T>(left: readonly T[], right: readonly T[]): boolean {

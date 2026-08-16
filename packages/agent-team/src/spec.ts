@@ -1,14 +1,15 @@
 import { z } from 'zod'
+import { MessageId } from '@deepseek-ai/dsh-llm'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamChannelRef,
+  AgentTeamDeliveryId,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamOperation,
   AgentTeamOperationId,
-  AgentTeamRecipientIntentRef,
   AgentTeamRequestId,
   AgentTeamTaskRef,
   AgentTeamThreadRef,
@@ -23,18 +24,22 @@ const channelRefSchema = z.string().regex(/^channel:[^:]+$/).transform(value => 
 const messageRefSchema = z.string().regex(/^message:[^:]+$/).transform(value => value as AgentTeamMessageRef)
 const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value as AgentTeamTaskRef)
 const threadRefSchema = z.string().regex(/^thread:[^:]+$/).transform(value => value as AgentTeamThreadRef)
-const intentRefSchema = z.string().regex(/^intent:[^:]+$/).transform(value => value as AgentTeamRecipientIntentRef)
+const deliveryIdSchema = z.string().regex(/^delivery:[^:]+$/).transform(value => value as AgentTeamDeliveryId)
+const messageIdSchema = z.string().min(1).transform(MessageId)
 
 const operationBase = {
   sequence: z.number().int().positive(),
   operationId: operationIdSchema,
   requestId: requestIdSchema,
   occurredAt: z.string().datetime(),
-  actor: z.object({
-    kind: z.literal('human'),
-    memberId: memberIdSchema,
-    handle: z.string().min(1),
-  }).strict(),
+  actor: z.union([
+    z.object({
+      kind: z.literal('human'),
+      memberId: memberIdSchema,
+      handle: z.string().min(1),
+    }).strict(),
+    z.object({ kind: z.literal('host'), handle: z.literal('agent-team') }).strict(),
+  ]),
 }
 
 const memberSchema = z.object({
@@ -70,6 +75,29 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
     data: z.object({
       workspaceId: workspaceIdSchema,
       channel: channelSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/channel-member-added'),
+    data: z.object({ channelRef: channelRefSchema, memberId: memberIdSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/delivery-admitted'),
+    data: z.object({
+      delivery: z.object({
+        deliveryId: deliveryIdSchema,
+        messageRef: messageRefSchema,
+        messageId: messageIdSchema,
+        threadRef: threadRefSchema,
+        taskRef: taskRefSchema,
+        recipient: memberIdSchema,
+        state: z.literal('admitted'),
+      }).strict(),
+      evidence: z.union([z.literal('agent/inbox/spliced'), z.literal('user/message')]),
     }).strict(),
   }).strict(),
   z.object({
@@ -122,9 +150,12 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
         threadRef: threadRefSchema,
         following: z.literal(true),
       }).strict()),
-      recipientIntents: z.array(z.object({
-        intentRef: intentRefSchema,
+      deliveries: z.array(z.object({
+        deliveryId: deliveryIdSchema,
+        messageRef: messageRefSchema,
+        messageId: messageIdSchema,
         threadRef: threadRefSchema,
+        taskRef: taskRefSchema,
         recipient: memberIdSchema,
         state: z.literal('queued'),
       }).strict()),
@@ -135,7 +166,7 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
 /** Versioned durable Agent Team ledger declaration. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 0,
+  version: 1,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },

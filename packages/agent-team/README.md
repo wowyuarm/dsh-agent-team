@@ -6,7 +6,7 @@ The Host capability for one Agent Team in a dshHome. `ctx.agentTeam` owns the ap
 
 ## Service contract
 
-The Service consumes `ctx.storageDomain`, `ctx.workspaceRegistry`, `ctx.agents`, `ctx.agentPresets`, `ctx.tools`, and `ctx.sessionPersistence`. It opens the versioned `agent_team` Domain before Cordis publishes `ctx.agentTeam`. The first boot appends one `team/initialized` operation for the stable Human Member; later boots replay the same operation and do not append another record.
+The Service consumes `ctx.storageDomain`, `ctx.workspaceRegistry`, `ctx.agents`, `ctx.agentDefaultModel`, `ctx.agentPresets`, `ctx.tools`, `ctx.sessions`, and `ctx.sessionPersistence`. It opens the versioned `agent_team` Domain before Cordis publishes `ctx.agentTeam`. The first boot appends one `team/initialized` operation for the stable Human Member; later boots replay the same operation and do not append another record.
 
 `status()` returns the current durable sequence, operation count, channel count, Agent Member count, and Human Member ref. It performs no model request and no storage write. `validateLedger()` checks the package-owned projection against the durable operation table.
 
@@ -20,11 +20,13 @@ Member creation commits one stable Member/session/Workspace/preset/private-memor
 
 Every team-managed session records `danger-full-access`. Project cwd remains the Workspace path, while private memory lives under `$DSH_HOME/agent-team/members/<memberId>/`. Ordinary sessions and forks receive no Team identity.
 
+Adding a Member to a Channel grants future read/send authority but injects no historical Messages into the member session. A structured mention is stored as one queued Delivery inside the Message operation with stable DeliveryId and MessageId. The Host sends a member-authored `agent-team-relay` to `next-step` with wakeup enabled, then commits `delivery-admitted` only after the target session contains matching `agent/inbox/spliced` or `user/message` evidence. Restart recovery reuses existing evidence or retries the same MessageId. Admitted means Inbox admission, not model processing.
+
 M1 supports one Host writer. The ledger is permanent and has no snapshot or compaction path.
 
 ## Composition
 
-The bundle consumes the Host's existing singleton providers; it does not mount replacements for `agents`, `tools`, `fs`, `sandboxPolicy`, session persistence, Workspace registry, or storage. Load those Host services once, then mount this Service and its invariant companion. Human controls such as `/team` are separate Consumers.
+The bundle consumes the Host's existing singleton providers; it does not mount replacements for `agents`, default model selection, `tools`, `fs`, `sandboxPolicy`, Session store/persistence, Workspace registry, or storage. Load those Host services once, then mount this Service and its invariant companion. Human controls such as `/team` are separate Consumers.
 
 A team-enabled preset registers the four tools in its own agent scope and marks the `team_send` definition with `markAgentTeamPreset()`. Tool rows must resolve `ctx.agentTeam` when executing, not statically inject it: this avoids a restore cycle during Host remount. Duplicate scoped tool names fail during unpublished setup and make only that Member unavailable. Duplicate Host service providers remain a composition error and should be removed rather than layered.
 

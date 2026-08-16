@@ -52,8 +52,10 @@ async function harness(
     list: () => workspaceIds.map(id => ({ id, path: process.cwd() })),
   })
   ctx.provide('agents', { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') } })
+  ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   ctx.provide('agentPresets', { mount: async () => { throw new Error('unused') } })
   ctx.provide('tools', { schemas: () => [] })
+  ctx.provide('sessions', { flush: async () => true })
   ctx.provide('sessionPersistence', { list: async () => [] })
   const fiber = await ctx.plugin(AgentTeam)
   cleanups.push(async () => {
@@ -63,7 +65,7 @@ async function harness(
   return { ctx, fiber, facility }
 }
 
-function storedPool(records: Array<[string, unknown]>, version = 0): MemoryMediaPool {
+function storedPool(records: Array<[string, unknown]>, version = 1): MemoryMediaPool {
   const pool = new MemoryMediaPool()
   pool.versions.set('agent_team', version)
   pool.media.set('agent_team', {
@@ -98,7 +100,7 @@ describe('AgentTeam', () => {
   })
 
   it('fails loud on a mismatched ledger version', async () => {
-    await expect(harness(storedPool([], 99))).rejects.toThrow(/stamped v99, descriptor wants v0/)
+    await expect(harness(storedPool([], 99))).rejects.toThrow(/stamped v99, descriptor wants v1/)
   })
 
   it('fails loud when a durable operation does not match its schema', async () => {
@@ -161,7 +163,7 @@ describe('AgentTeam', () => {
       task: { status: 'todo' },
       thread: { revision: 3 },
       follows: [{ memberId: AGENT_TEAM_HUMAN_MEMBER_ID, following: true }],
-      recipientIntents: [],
+      deliveries: [],
     })
     expect(sent.message.taskRef).toBe(sent.task.taskRef)
     expect(sent.message.threadRef).toBe(sent.thread.threadRef)

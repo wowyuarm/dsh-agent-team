@@ -24,9 +24,9 @@ The profile must include the Harness packages that provide the injected services
 
 ## Composition
 
-The Host package provides the `agentTeam` Service, operation ledger, and team-managed Agent lifecycle. The command package registers `/team`. Agent tools and the shipped team-enabled preset are separate opt-in rows added by the remaining M1 tickets.
+The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Inbox admission. The command package registers `/team`. `@deepseek-ai/dsh-tool-agent-team` provides the membership-authorized `team_view`; the remaining tools and shipped preset are added by later M1 tickets.
 
-The bundle consumes the profile's existing Host providers instead of replacing them: `agents`, `tools`, filesystem/shell, sandbox policy, session persistence, Workspace registry, and storage remain singletons. Team-managed sessions persist `danger-full-access`; ordinary sessions keep the profile's normal policy. A conflicting preset tool registration fails inside unpublished setup and makes only that Member unavailable.
+The bundle consumes the profile's existing Host providers instead of replacing them: `agents`, default model selection, `tools`, filesystem/shell, sandbox policy, Session store/persistence, Workspace registry, and storage remain singletons. Team-managed sessions persist `danger-full-access`; ordinary sessions keep the profile's normal policy. A conflicting preset tool registration fails inside unpublished setup and makes only that Member unavailable.
 
 The Team is one collaboration domain per DSH home. Its operation ledger is the durable authority; Channel, Message, Task, Thread, Follow, and Delivery projections are derived from committed operations.
 
@@ -45,4 +45,4 @@ This repository targets the public DSH plugin and bundle interfaces. It does not
 
 ## Known Limitations and Deferred Work
 
-M1 tickets 04-09 add the production team tool package/preset, delivery recovery, collaboration state transitions, and the final installable composition. Issues 01-03 now provide the ledger, Human command adapter, and real Agent Member create/suspend/resume lifecycle.
+M1 tickets 05-09 add Agent replies, Claims, attention controls, completion/removal, broader failure recovery, and the final installable composition. Issues 01-04 provide the ledger, Human command adapter, Agent Member lifecycle, Channel membership, durable mention delivery, and `team_view`.

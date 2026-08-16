@@ -38,6 +38,9 @@
       "@deepseek-ai/dsh-command-agent-team/invariant": [
         "./packages/command-agent-team/src/invariant.ts"
       ],
+      "@deepseek-ai/dsh-tool-agent-team": [
+        "./packages/tool-agent-team/src/index.ts"
+      ],
       "@deepseek-ai/cordis": [
         "../deepseek-harness/vendor/cordis/lib/types"
       ],

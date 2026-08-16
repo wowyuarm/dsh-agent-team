@@ -11,16 +11,21 @@ export const name = 'agent-team-invariant'
 export const inject = ['invariants']
 
 const install: InvariantInstaller = Object.assign(
-  (ctx: Context, fail: (message: string) => never) => {
-    const validate = (): void => {
+  async (ctx: Context, fail: (message: string) => never) => {
+    const validateLedger = (): void => {
       try {
         ctx.agentTeam.validateLedger()
       } catch (error) {
         fail(`durable ledger and Team projection diverged: ${String(error)}`)
       }
     }
-    validate()
-    ctx.on('agent-team/committed', validate)
+    validateLedger()
+    try {
+      await ctx.agentTeam.validateDeliveryEvidence()
+    } catch (error) {
+      fail(`Delivery admission evidence is invalid: ${String(error)}`)
+    }
+    ctx.on('agent-team/committed', validateLedger)
   },
   { inject: ['agentTeam'] },
 )
