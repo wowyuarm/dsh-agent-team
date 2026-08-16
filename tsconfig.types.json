@@ -41,6 +41,12 @@
       "@deepseek-ai/dsh-tool-agent-team": [
         "./packages/tool-agent-team/src/index.ts"
       ],
+      "@deepseek-ai/dsh-client-agent-team": [
+        "./packages/client-agent-team/src/index.ts"
+      ],
+      "@deepseek-ai/dsh-client-agent-team/client": [
+        "./packages/client-agent-team/src/client/index.ts"
+      ],
       "@deepseek-ai/dsh-storage-sqlite": [
         "../deepseek-harness/packages/storage/storage-sqlite/lib/types/index.d.ts"
       ],
@@ -87,13 +93,13 @@
         "../deepseek-harness/packages/typert/registry/lib/types/index.d.ts"
       ],
       "@deepseek-ai/dsh-typert-registry/client": [
-        "../deepseek-harness/packages/typert/registry/src/client/index.ts"
+        "../deepseek-harness/packages/typert/registry/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-api-gateway": [
         "../deepseek-harness/packages/api/gateway/lib/types/index.d.ts"
       ],
       "@deepseek-ai/dsh-api-gateway/client": [
-        "../deepseek-harness/packages/api/gateway/src/client/index.ts"
+        "../deepseek-harness/packages/api/gateway/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-api-gateway/invariant": [
         "../deepseek-harness/packages/api/gateway/lib/types/invariant.d.ts"
@@ -309,7 +315,7 @@
         "../deepseek-harness/packages/bundle/web-app/lib/types/startup.d.ts"
       ],
       "@deepseek-ai/dsh-client-*/client": [
-        "../deepseek-harness/packages/client/*/src/client"
+        "../deepseek-harness/packages/client/*/lib/types/client"
       ],
       "@deepseek-ai/dsh-host-apiproxy": [
         "../deepseek-harness/packages/host/apiproxy/lib/types"
@@ -318,31 +324,31 @@
         "../deepseek-harness/packages/host/directory-picker/lib/types"
       ],
       "@deepseek-ai/dsh-host-directory-picker/*": [
-        "../deepseek-harness/packages/host/directory-picker/src/*"
+        "../deepseek-harness/packages/host/directory-picker/lib/types/*"
       ],
       "@deepseek-ai/dsh-host-directory-picker-browse": [
         "../deepseek-harness/packages/host/directory-picker-browse/lib/types"
       ],
       "@deepseek-ai/dsh-host-directory-picker-browse/*": [
-        "../deepseek-harness/packages/host/directory-picker-browse/src/*"
+        "../deepseek-harness/packages/host/directory-picker-browse/lib/types/*"
       ],
       "@deepseek-ai/dsh-host-directory-picker-native": [
         "../deepseek-harness/packages/host/directory-picker-native/lib/types"
       ],
       "@deepseek-ai/dsh-host-directory-picker-native/*": [
-        "../deepseek-harness/packages/host/directory-picker-native/src/*"
+        "../deepseek-harness/packages/host/directory-picker-native/lib/types/*"
       ],
       "@deepseek-ai/dsh-host-directory-picker-auto": [
         "../deepseek-harness/packages/host/directory-picker-auto/lib/types"
       ],
       "@deepseek-ai/dsh-host-directory-picker-auto/*": [
-        "../deepseek-harness/packages/host/directory-picker-auto/src/*"
+        "../deepseek-harness/packages/host/directory-picker-auto/lib/types/*"
       ],
       "@deepseek-ai/dsh-host-apiproxy/client": [
-        "../deepseek-harness/packages/host/apiproxy/src/fetch/client.ts"
+        "../deepseek-harness/packages/host/apiproxy/lib/types/fetch/client.d.ts"
       ],
       "@deepseek-ai/dsh-host-apiproxy/*": [
-        "../deepseek-harness/packages/host/apiproxy/src/*"
+        "../deepseek-harness/packages/host/apiproxy/lib/types/*"
       ],
       "@deepseek-ai/dsh-host-webserver": [
         "../deepseek-harness/packages/host/webserver/lib/types"
@@ -381,7 +387,7 @@
         "../deepseek-harness/packages/api/remotes/lib/types"
       ],
       "@deepseek-ai/dsh-api-remotes/client": [
-        "../deepseek-harness/packages/api/remotes/src/client/index.ts"
+        "../deepseek-harness/packages/api/remotes/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-client-hmr": [
         "../deepseek-harness/packages/client/hmr/lib/types"
@@ -393,13 +399,13 @@
         "../deepseek-harness/packages/client/runtime/lib/types"
       ],
       "@deepseek-ai/dsh-client-runtime/client": [
-        "../deepseek-harness/packages/client/runtime/src/client"
+        "../deepseek-harness/packages/client/runtime/lib/types/client"
       ],
       "@deepseek-ai/dsh-cordis-client-runner": [
         "../deepseek-harness/packages/extensions/cordis-client-runner/lib/types"
       ],
       "@deepseek-ai/dsh-cordis-client-runner/client": [
-        "../deepseek-harness/packages/extensions/cordis-client-runner/src/client"
+        "../deepseek-harness/packages/extensions/cordis-client-runner/lib/types/client"
       ],
       "@deepseek-ai/dsh-cordis-client-runner/invariant": [
         "../deepseek-harness/packages/extensions/cordis-client-runner/lib/types/invariant.d.ts"
@@ -408,7 +414,7 @@
         "../deepseek-harness/packages/extensions/ui-cordis/lib/types"
       ],
       "@deepseek-ai/dsh-client-ui-cordis/client": [
-        "../deepseek-harness/packages/extensions/ui-cordis/src/client"
+        "../deepseek-harness/packages/extensions/ui-cordis/lib/types/client"
       ],
       "@deepseek-ai/dsh-client-ui-cordis/invariant": [
         "../deepseek-harness/packages/extensions/ui-cordis/lib/types/invariant.d.ts"

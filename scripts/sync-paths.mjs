@@ -30,6 +30,8 @@ const own = {
   '@deepseek-ai/dsh-command-agent-team': ['./packages/command-agent-team/src/index.ts'],
   '@deepseek-ai/dsh-command-agent-team/invariant': ['./packages/command-agent-team/src/invariant.ts'],
   '@deepseek-ai/dsh-tool-agent-team': ['./packages/tool-agent-team/src/index.ts'],
+  '@deepseek-ai/dsh-client-agent-team': ['./packages/client-agent-team/src/index.ts'],
+  '@deepseek-ai/dsh-client-agent-team/client': ['./packages/client-agent-team/src/client/index.ts'],
 }
 
 const harnessSrc = {
@@ -41,7 +43,8 @@ for (const [key, value] of Object.entries(base.compilerOptions.paths)) {
 }
 
 const toTypes = p => p
-  .replace(/\/src\/([^/]+)\.ts$/, '/lib/types/$1.d.ts')
+  .replace(/\/src\/(.+)\.ts$/, '/lib/types/$1.d.ts')
+  .replace(/\/src\/(.+)$/, '/lib/types/$1')
   .replace(/\/src$/, '/lib/types')
 
 const harnessTypes = Object.fromEntries(
@@ -49,6 +52,8 @@ const harnessTypes = Object.fromEntries(
 )
 
 const buildOwn = {
+  '@deepseek-ai/dsh-client-agent-team': ['./packages/client-agent-team/lib/types/index.d.ts'],
+  '@deepseek-ai/dsh-client-agent-team/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
   '@deepseek-ai/dsh-agent-team': ['./packages/agent-team/lib/types/index.d.ts'],
   '@deepseek-ai/dsh-agent-team/invariant': ['./packages/agent-team/lib/types/invariant.d.ts'],
   '@deepseek-ai/dsh-agent-team/types': ['./packages/agent-team/lib/types/types.d.ts'],

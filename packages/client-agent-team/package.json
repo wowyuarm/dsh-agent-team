@@ -1,0 +1,58 @@
+{
+  "name": "@deepseek-ai/dsh-client-agent-team",
+  "description": "Team mode navigation and Workspace surface for DeepSeek Harness",
+  "version": "0.1.0-rc.5",
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/dsh-agent-team.git",
+    "directory": "packages/client-agent-team"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "bundle": "tsdown",
+    "watch": "tsdown --watch"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-locale": "^0.1.0",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-workspace": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-settings-general": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0"
+  },
+  "files": ["lib/index.js", "lib/client.js", "lib/types/**/*.d.ts"]
+}

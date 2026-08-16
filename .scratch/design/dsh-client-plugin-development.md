@@ -308,7 +308,7 @@ real Loader
 5. 验证策略：本文件 §5。
 6. 代码开始修改前，再读 Harness 上游路径表中的对应 contract，确认没有漂移。
 
-当前未解决的实现问题不写成假定：Team Client package 的具体 `ClientContext` 导出路径、React test runtime 组装方法和 bundle 在本仓库的根构建接入点，必须以实际类型检查和真实 composition test 验证后再固定。
+当前实现已验证：Team Client 使用 `@deepseek-ai/dsh-client-runtime/client` 的类型、真实 Cordis + SlotRegistry composition test，以及根项目显式 `tsc` + Harness `tsdown` bundle。剩余验证边界是完整 Web/Playwright browser journey：collapsed sidebar、ordinary Session 保持、refresh stale Workspace 和最终 M2 journey。
 
 ## 来源
 

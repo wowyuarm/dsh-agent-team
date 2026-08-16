@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.types.json",
+  "include": ["src", "tests"],
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  }
+}

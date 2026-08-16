@@ -3,6 +3,8 @@
       name: '@deepseek-ai/dsh-agent-team'
     - id: dsh-command-agent-team
       name: '@deepseek-ai/dsh-command-agent-team'
+    - id: dsh-client-agent-team
+      name: '@deepseek-ai/dsh-client-agent-team'
     - id: dsh-agent-team-invariant
       name: '@deepseek-ai/dsh-agent-team/invariant'
     - id: dsh-command-agent-team-invariant

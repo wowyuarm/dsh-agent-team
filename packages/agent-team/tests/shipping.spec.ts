@@ -16,6 +16,7 @@ describe('Agent Team shipping contract', () => {
     ])
     expect(patch).toContain("name: '@deepseek-ai/dsh-agent-team'")
     expect(patch).toContain("name: '@deepseek-ai/dsh-command-agent-team'")
+    expect(patch).toContain("name: '@deepseek-ai/dsh-client-agent-team'")
     expect(patch).toContain("name: '@deepseek-ai/dsh-agent-team/invariant'")
     expect(patch).toContain("name: '@deepseek-ai/dsh-command-agent-team/invariant'")
     expect(patch).not.toContain('dsh-tool-agent-team')
@@ -32,6 +33,14 @@ describe('Agent Team shipping contract', () => {
     const manifest = JSON.parse(manifestText) as { files: string[]; dsh: { bundle: { patch: string } } }
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.files).toContain('agent-presets/team-member/agent.cordis.yml')
+    expect(manifest.files).toContain('packages/*/lib/**/*')
+
+    const clientManifest = JSON.parse(await readFile(resolve(root, 'packages/client-agent-team/package.json'), 'utf8')) as {
+      exports: Record<string, { default?: string }>
+      dsh: { client: { platform: string; immediately?: boolean } }
+    }
+    expect(clientManifest.dsh.client).toEqual(expect.objectContaining({ platform: 'web', immediately: true }))
+    expect(clientManifest.exports['./client']?.default).toBe('./lib/client.js')
 
     const ctx = new Context()
     await ctx.plugin(Loader)
