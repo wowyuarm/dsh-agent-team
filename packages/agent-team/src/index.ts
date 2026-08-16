@@ -147,6 +147,7 @@ export default class AgentTeam extends TypertRemoteService {
   private ledger?: AgentTeamLedger
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
+  private readonly runtimeErrors = new Map<SessionId, string>()
   private lifecycleTail: Promise<void> = Promise.resolve()
   private deliveryTail: Promise<void> = Promise.resolve()
   private accepting = true
@@ -158,6 +159,13 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Open the ledger, bind teardown, and restore every enabled Member independently. */
   protected async [Service.init](): Promise<void> {
+    this.ctx.on('agent/error', ({ agent, error }) => {
+      if (this.memberForAgent(agent) === undefined) return
+      this.runtimeErrors.set(agent.id, error instanceof Error ? error.message : String(error))
+    })
+    this.ctx.on('agent/status', ({ agent, status }) => {
+      if (status === 'running' && this.memberForAgent(agent) !== undefined) this.runtimeErrors.delete(agent.id)
+    })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
       this.accepting = false
@@ -560,11 +568,19 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
-    if (member.state === 'inactive') return Object.freeze({ member, availability: 'inactive' })
-    if (member.state === 'suspended') return Object.freeze({ member, availability: 'suspended' })
+    if (member.state === 'inactive') return Object.freeze({ member, availability: 'inactive', presence: 'unavailable' })
+    if (member.state === 'suspended') return Object.freeze({ member, availability: 'suspended', presence: 'unavailable' })
     const diagnostic = this.diagnostics.get(member.memberId)
-    if (diagnostic !== undefined) return Object.freeze({ member, availability: 'unavailable', diagnostic })
-    return Object.freeze({ member, availability: this.handles.has(member.memberId) ? 'active' : 'unavailable' })
+    if (diagnostic !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic })
+    const handle = this.handles.get(member.memberId)
+    if (handle === undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable' })
+    const runtimeError = this.runtimeErrors.get(handle.agent.id)
+    if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
+    return Object.freeze({
+      member,
+      availability: 'active',
+      presence: handle.agent.status === 'running' ? 'working' : 'available',
+    })
   }
 
   private requireWorkspace(workspaceId: AgentTeamViewRequest['workspaceId']) {

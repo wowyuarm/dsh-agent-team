@@ -101,7 +101,6 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
               <button
                 aria-label="成员"
                 class="footerAction"
-                disabled=""
                 type="button"
               >
                 <svg

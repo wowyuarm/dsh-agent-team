@@ -1,4 +1,5 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { AgentTeamAddMemberRequest, AgentTeamMembersRequest } from '@deepseek-ai/dsh-agent-team/types'
 import agentTeamRemote from '@deepseek-ai/dsh-agent-team/remote'
 import type {} from '@deepseek-ai/dsh-agent-team/remote'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -57,6 +58,8 @@ function registerModeShadow<T extends object>(
             navigation,
             ...navigation.actions(),
             ...(name === 'sidebar.workspaces' ? {
+              loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
+              addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
               hooks: {
                 directoryFlow: {
                   getSnapshot: () => ctx.slots.entries('sidebar.workspaces.directoryFlow').length > 0,
@@ -98,7 +101,19 @@ export async function apply(ctx: ClientContext): Promise<void> {
     id: 'agent-team',
     order: 100,
     locale: NS,
-    inject: () => ({ navigation, ...navigation.actions() }),
+    inject: () => ({
+      navigation,
+      ...navigation.actions(),
+      loadMemberGroups: async () => {
+        const workspaces = ctx.workspaces.list.getSnapshot().items
+        const groups = await Promise.all(workspaces.map(async workspace => {
+          const result = await ctx.remote.agentTeam.members({ workspaceId: workspace.workspaceId })
+          if (!result.ok) throw new Error(result.error.message)
+          return { workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, members: result.value }
+        }))
+        return groups.filter(group => group.members.length > 0)
+      },
+    }),
   }, TeamFooterAction as never))
 
   registerModeShadow(ctx, navigation, 'sidebar.workspaces', TeamWorkspaceBrowser as never, {

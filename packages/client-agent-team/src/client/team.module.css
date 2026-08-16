@@ -20,6 +20,41 @@
   outline: none;
 }
 
+.membersPanel {
+  background: var(--dsw-alias-surface-primary);
+  border: 1px solid var(--dsw-alias-border-default);
+  border-radius: 8px;
+  bottom: 76px;
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--dsw-alias-text-primary) 14%, transparent);
+  left: 8px;
+  max-height: min(520px, calc(100vh - 140px));
+  overflow: auto;
+  padding: 10px;
+  position: fixed;
+  width: min(320px, calc(100vw - 24px));
+  z-index: 20;
+}
+
+.membersHeader {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 4px 8px;
+}
+
+.memberGroup {
+  border-top: 1px solid var(--dsw-alias-border-default);
+  padding-top: 7px;
+}
+
+.memberGroup h3 {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  margin: 0;
+  padding: 4px 8px;
+}
+
 .workspaceBrowser {
   display: flex;
   flex-direction: column;
@@ -152,6 +187,168 @@
   height: 26px;
   justify-content: center;
   width: 26px;
+}
+
+.workspaceSection {
+  border-top: 1px solid var(--dsw-alias-border-default);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: 8px;
+}
+
+.workspaceTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 0 4px 8px;
+}
+
+.workspaceTabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-default);
+  color: var(--dsw-alias-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 7px 4px;
+}
+
+.workspaceTabs button[aria-selected='true'] {
+  border-bottom-color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-text-primary);
+  font-weight: 600;
+}
+
+.agentsPanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agentToolbar {
+  align-items: center;
+  color: var(--dsw-alias-text-secondary);
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+  padding: 0 8px 6px;
+}
+
+.textButton {
+  background: transparent;
+  border: 0;
+  color: var(--dsw-alias-text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.agentForm {
+  background: var(--dsw-alias-surface-secondary);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0 4px 8px;
+  padding: 10px;
+}
+
+.agentForm label {
+  color: var(--dsw-alias-text-secondary);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 5px;
+}
+
+.agentForm input,
+.agentForm textarea {
+  background: var(--dsw-alias-surface-primary);
+  border: 1px solid var(--dsw-alias-border-default);
+  border-radius: 5px;
+  color: var(--dsw-alias-text-primary);
+  font: inherit;
+  padding: 7px 8px;
+  resize: vertical;
+}
+
+.primaryButton {
+  align-self: flex-end;
+  background: var(--dsw-alias-text-primary);
+  border: 0;
+  border-radius: 5px;
+  color: var(--dsw-alias-surface-primary);
+  cursor: pointer;
+  font-size: 11px;
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.primaryButton:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.retryError {
+  align-items: center;
+  color: var(--dsw-alias-state-error-primary);
+  display: flex;
+  font-size: 11px;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px;
+}
+
+.agentList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.agentRow {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  min-height: 42px;
+  padding: 5px 9px;
+}
+
+.presenceTarget {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 14px;
+  justify-content: center;
+}
+
+.unavailableDot {
+  background: var(--dsw-alias-text-disabled);
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  width: 7px;
+}
+
+.agentCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentCopy strong {
+  color: var(--dsw-alias-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.agentCopy small {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .teamConversation {

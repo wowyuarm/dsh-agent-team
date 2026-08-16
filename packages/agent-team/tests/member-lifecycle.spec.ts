@@ -43,7 +43,7 @@ interface SlowToolGate {
 }
 
 class ScriptAdapter extends LlmAdapter {
-  readonly responses: StreamChunk[][] = []
+  readonly responses: Array<StreamChunk[] | Error> = []
 
   override resolveModel(provider: string, model: string) {
     return Promise.resolve({ provider, id: model, name: model })
@@ -51,6 +51,7 @@ class ScriptAdapter extends LlmAdapter {
 
   async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const chunks = this.responses.shift() ?? textResponse('done')
+    if (chunks instanceof Error) throw chunks
     for (const chunk of chunks) {
       options.signal?.throwIfAborted()
       yield chunk
@@ -801,6 +802,7 @@ describe('Agent Team Member real composition', () => {
     await ctx.agentTeam.sendMessage({ requestId: requestId('request:remove-running-start'), workspaceId,
       channelRef: channel.channel.channelRef, body: 'start', recipients: [member.status.member.memberId] })
     await slow.started.promise
+    expect(ctx.agentTeam.membersForClient({ workspaceId })[0]).toMatchObject({ presence: 'working' })
     let settled = false
     const removing = ctx.agentTeam.removeMember({ requestId: requestId('request:remove-running'),
       memberId: member.status.member.memberId }).finally(() => { settled = true })
@@ -811,6 +813,31 @@ describe('Agent Team Member real composition', () => {
     expect(ctx.agents.get(member.status.member.sessionId)).toBeUndefined()
     expect(ctx.workspaceRegistry.archivedSessionIds).toContain(member.status.member.sessionId)
     expect(ctx.agentTeam.members()[0]).toMatchObject({ availability: 'inactive' })
+  })
+
+  it('projects real loop error until the next loop starts, then recovers through working to available', async () => {
+    const { ctx, workspaceId, adapter, slow } = await realHarness()
+    adapter.responses.push(new Error('injected model failure'), slowToolResponse())
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:presence-channel'), workspaceId, name: 'presence' })
+    const member = await ctx.agentTeam.addMember({ requestId: requestId('request:presence-member'), workspaceId,
+      handle: 'presence', presetId: 'team-member', description: 'Presence transitions' })
+    await ctx.agentTeam.joinChannel({ requestId: requestId('request:presence-join'), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    await ctx.agentTeam.sendMessage({ requestId: requestId('request:presence-error'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'fail', recipients: [member.status.member.memberId] })
+    const agent = ctx.agents.get(member.status.member.sessionId)!
+    await agent.whenIdle()
+    expect(ctx.agentTeam.membersForClient({ workspaceId })[0]).toMatchObject({
+      presence: 'error', diagnostic: expect.stringContaining('injected model failure'),
+    })
+
+    await ctx.agentTeam.sendMessage({ requestId: requestId('request:presence-recover'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'recover', recipients: [member.status.member.memberId] })
+    await slow.started.promise
+    expect(ctx.agentTeam.membersForClient({ workspaceId })[0]).toMatchObject({ presence: 'working' })
+    slow.release.resolve()
+    await agent.whenIdle()
+    expect(ctx.agentTeam.membersForClient({ workspaceId })[0]).toMatchObject({ presence: 'available' })
   })
 
   it('retries remove side effects after archive failure without duplicating durable cleanup', async () => {

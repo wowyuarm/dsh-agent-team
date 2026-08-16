@@ -4,9 +4,10 @@ import type { DirectoryFlowOwnerProps } from '@deepseek-ai/dsh-client-ui-workspa
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceRow } from './TeamWorkspaceRow.tsx'
+import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
 import css from './team.module.css'
 
-export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, createWorkspaceFromPath, renderSlot, t, useDirectoryFlow, useWorkspaces }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, createWorkspaceFromPath, renderSlot, t, useDirectoryFlow, useWorkspaces, loadMembers, addMember }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -76,6 +77,17 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, create
         ))}
         {workspaces.length === 0 && <p className={css.emptyWorkspace}>{t('empty')}</p>}
       </div>
+      {selectedId !== undefined && (
+        <div className={css.workspaceSection}>
+          <div className={css.workspaceTabs} role="tablist" aria-label={t('workspaceSections')}>
+            <button type="button" role="tab" aria-selected={navigationState.activeTab === 'channels'} onClick={() => { selectWorkspaceTab('channels') }}>{t('channels')}</button>
+            <button type="button" role="tab" aria-selected={navigationState.activeTab === 'agents'} onClick={() => { selectWorkspaceTab('agents') }}>{t('agents')}</button>
+          </div>
+          {navigationState.activeTab === 'agents'
+            ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} addMember={addMember} t={t} />
+            : <p className={css.emptyWorkspace}>{t('channelsComingNext')}</p>}
+        </div>
+      )}
       {flowAvailable && directoryFlow(flowOwner)}
       {flowError && <p className={css.error} role="alert">{t('workspaceCreateFailed')}</p>}
     </section>

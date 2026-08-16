@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { AgentTeamAddMemberRequest } from '@deepseek-ai/dsh-agent-team/types'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotTestRuntime, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
@@ -37,7 +38,32 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   runtime.provide('locale', locale)
   runtime.slots.installLocale(locale)
   runtime.provide('layout', { toggleSidebar: vi.fn() })
-  runtime.provide('remote', { $mount: async () => async () => {} } as never)
+  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: string) => ({
+    member: {
+      memberId, workspaceId, handle, description: `${handle} description`,
+      presetId: 'team-member', privateMemoryPath: `/memory/${memberId}`, state: 'enabled', sessionId: `session:${memberId}`,
+    },
+    availability: presence === 'unavailable' ? 'unavailable' : 'active',
+    presence,
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+  })
+  const members = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({ ok: true, value: workspaceId === 'w1' ? [
+    status('member:builder', 'w1', 'builder', 'available'),
+    status('member:worker', 'w1', 'worker', 'working'),
+    status('member:failed', 'w1', 'failed', 'error', 'model failed'),
+    status('member:offline', 'w1', 'offline', 'unavailable', 'preset missing'),
+  ] : [status('member:builder-beta', 'w2', 'builder', 'available')] }))
+  const addMember = vi.fn(async (request: AgentTeamAddMemberRequest) => ({ ok: true, value: {
+    receipt: {},
+    status: {
+      member: {
+        memberId: 'member:new', workspaceId: request.workspaceId, handle: request.handle, description: request.description,
+        presetId: request.presetId, privateMemoryPath: '/memory/new', state: 'enabled', sessionId: 'session:new',
+      },
+      availability: 'active', presence: 'available',
+    },
+  } }))
+  runtime.provide('remote', { agentTeam: { members, addMember }, $mount: async () => async () => {} } as never)
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [
@@ -58,7 +84,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   ))
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status }
 }
 
 describe('rendered Team mode composition', () => {
@@ -72,7 +98,12 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByRole('heading', { name: '团队' })).toBeTruthy()
     expect(b.view.getByText('Alpha')).toBeTruthy()
     expect(b.view.queryByText('设置')).toBeNull()
-    expect((b.view.getByRole('button', { name: '成员' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(b.view.getByRole('button', { name: '成员' }))
+    const membersDialog = await b.view.findByRole('dialog', { name: '成员' })
+    expect(within(membersDialog).getAllByText('builder')).toHaveLength(2)
+    expect(within(membersDialog).getByText('Alpha')).toBeTruthy()
+    expect(within(membersDialog).getByText('Beta')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '关闭' }))
 
     fireEvent.click(b.view.getByRole('button', { name: '新建工作区' }))
     fireEvent.click(await b.view.findByRole('button', { name: '选择 /work/new' }))
@@ -83,6 +114,35 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByText('普通对话')).toBeTruthy()
     expect(await b.view.findByText('设置')).toBeTruthy()
     expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
+    await b.runtime.dispose()
+  })
+
+  it('loads Workspace Agents and creates a durable Member without optimistic rows', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('tab', { name: 'Agents' }))
+
+    expect(await b.view.findByText('builder')).toBeTruthy()
+    expect(b.view.getByRole('img', { name: '可用' })).toBeTruthy()
+    expect(b.view.getByRole('img', { name: '工作中' })).toBeTruthy()
+    expect(b.view.getByRole('img', { name: '错误: model failed' })).toBeTruthy()
+    expect(b.view.getByRole('img', { name: '不可用: preset missing' })).toBeTruthy()
+    expect(b.members).toHaveBeenCalledWith({ workspaceId: 'w1' })
+
+    fireEvent.click(b.view.getByRole('button', { name: '添加 Agent' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'reviewer' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'Reviews changes' } })
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof b.addMember>>>()
+    b.addMember.mockReturnValueOnce(pending.promise)
+    fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
+    expect(b.view.queryByText('reviewer')).toBeNull()
+    expect((b.view.getByRole('button', { name: '正在创建…' }) as HTMLButtonElement).disabled).toBe(true)
+    pending.resolve({ ok: true, value: { receipt: {} as never, status: b.status('member:new', 'w1', 'reviewer', 'available') as never } })
+
+    expect(await b.view.findByText('reviewer')).toBeTruthy()
+    expect(b.addMember).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'w1', handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
+    }))
     await b.runtime.dispose()
   })
 

@@ -74,6 +74,7 @@ export interface AgentTeamAgentMember {
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
   readonly availability: 'active' | 'suspended' | 'inactive' | 'unavailable'
+  readonly presence: 'available' | 'working' | 'error' | 'unavailable'
   readonly diagnostic?: string
 }
 
