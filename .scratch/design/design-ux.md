@@ -1,93 +1,235 @@
-# Agent 持久化模型与 UI/UX 设计（修正版）
+# Agent Team M2 UI/UX 设计基线
 
-日期：2026-08-14
-状态：M2 UI/UX 基线；Slot take 已完成真实渲染和可逆性验证。Member、Workspace 与持久化语义以 `architecture.md` 为准。
+日期：2026-08-16
+状态：M2 第一阶段 UX grill 完成；实施范围见 `../m2-ui/spec.md` 与 `../m2-ui/issues/`。
 位置说明：`.scratch/` 探索性内容。
 
-## 1. Agent 持久化模型（修正）
+## 1. 设计原则
 
-用户修正："session 不变"指**每个 agent 的 context 一直追加**（append-only，token
-阈值触发 compaction）；agent 有**单独 workspace**（memory.md + notes/）；插件名
-暂定 `dsh-agent-team`。
+- Team UI 是 DSH Web 的 feature plugin，不定义第二套主题、组件库或 Shell。
+- Workspace 是项目与 cwd 的既有事实；Channel 和 Agent Member 在 Team 模式下按 Workspace 组织，但不混入默认 Session 树。
+- Operation ledger 与 Agent runtime 是权威；Client 只经 typed RPC 读不可变投影和提交 Human authority 请求。
+- Team 模式与默认对话模式互相替换但不互相复制：进入时动态占用 seats，退出时释放并恢复 shipped UI。
+- Channel/Thread 只显示显式 Message 与协作 Activity，不显示任何成员的内部 session events。
+- 第一阶段先交付可体验的协作闭环；Agent DM、Thread inbox、附件、搜索、URL 和 prompt 设计延期。
 
-成员的 session、Agent loop、compaction 与 cwd 复用 dsh 现成能力；Team 仍需自建 Member lifecycle、operation ledger、Delivery 补偿和 private memory 位置管理：
+## 2. Team 模式
 
-| 用户要求 | dsh 对应 |
-| --- | --- |
-| Agent Member 的持久身份 | Team Member record + exact sessionId；preset 只定义该 session 的组成 |
-| context 一直追加 | Session log 是 append-only；compaction 替换 model surface，但原始 log 保留 |
-| token 阈值触发 compaction | Team-enabled preset 在 isolate realm 挂 compaction-basic；host 通过 agent preset service lookup 访问成员级引擎 |
-| 项目 Workspace | 同一 Workspace 的 Members 共享项目 cwd；一个 Member 不跨 Workspace |
-| 私有记忆 | DSH 管理的 member-private 目录保存 `memory.md` + `notes/`，不放项目根目录 |
-| 一个 Agent Member 一个 session | direct chat = 打开该 Agent Member 的 session；普通 fork 不继承 Team identity |
-
-`dsh-agent-team` 复用 Session、Agent、preset、compaction 和 workspace registry，但 Host plugin 负责 Member create/resume/suspend/remove、private memory location、operation ledger 和 queued Delivery 补偿。
-
-## 2. UI/UX 结构（用户确认版）
-
-### 2.1 侧边栏布局
+默认 DSH sidebar：
 
 ```text
-┌─ sidebar ──────────────┐
-│ 工作区 A               │  ← 现有 workspace 浏览区
-│   └ session 1..n       │  ← 现有（agent 会话仍在这里）
-│   └ #channel-name      │  ← 新增：项目展开时额外的 channel 分组
-│        └ channel 1..n  │  ← 点进 channel 内视图
-│ 工作区 B               │
-│   └ …                  │
-│                        │
-│ ┌──────────────┐       │  ← 新增：Agents 按钮（settings 上方）
-│ │ Agents ▾     │       │  ← 点击向上展开 agents 卡片
-│ │ [card][card] │       │     进一步点击进入该 agent 的 direct chat
-│ └──────────────┘       │
-│ 设置                   │  ← 现有
-└────────────────────────┘
+┌─ sidebar ─────────────────┐
+│ DeepSeek HARNESS      [←] │
+│                           │
+│ Workspace A               │
+│   Session 1               │
+│   Session 2               │
+│                           │
+│ 团队                      │
+│ 设置                      │
+└───────────────────────────┘
 ```
 
-### 2.2 channel 内视图
+点击“团队”后保留顶部 Shell，替换 sidebar body 与 center column，并隐藏 Settings：
 
-- 复用输入框；消息显示**只渲染 team 消息**（名字代替头像，暂不做头像）；
-  agent 内部 events 不进入该视图（R8）。
-- 每条顶层消息 = 一个 task（D6），消息底部有 `#n` 标签（该 channel 的第 n 个
-  task）；点击标签进入该 task 的 thread 视图。
-- 无承诺消息标 closed 后从默认 board 隐藏（D6）。
+```text
+┌─ Team sidebar ────────────┐
+│ DeepSeek HARNESS      [←] │
+│                           │
+│ Workspace A               │
+│   [Channels] [Agents]     │
+│   #frontend          [+]  │
+│   #backend                 │
+│                           │
+│ Workspace B               │
+│   [Channels] [Agents]     │
+│   #research          [+]  │
+│                           │
+│ 成员                      │
+│ ← 对话                    │
+└───────────────────────────┘
+```
 
-### 2.3 thread 视图
+行为：
 
-- 复用 channel 视图组件；延续该 task 的交流（R6：回复必须显式带 target）。
-- 顶层 bar：task 状态改变 button（D4 状态机）+ 当前 thread 参与者显示。
+- Team 模式动态 shadow `sidebar.workspaces`、`conversation` 与 `sidebar.settings`；退出或 plugin unload 后 shipped occupants 自动恢复。
+- DSH 品牌栏、sidebar 折叠控制和 layout 始终由 shipped UI 持有。
+- Team 模式隐藏 Settings；底部只有全局“成员”和“← 对话”。
+- 进入 Team 模式不会改变底层当前 Session；退出时继续看到之前的 Session。
+- 浏览器本地只保存 `mode + workspaceId`。刷新后恢复 Team 与 Workspace；失效 Workspace 自动清除。tab、Channel 和 Thread 不持久化。
+- 不增加 URL/router，不响应浏览器 Back/Forward。
+- Workspace 使用 Host registry 顺序，不做搜索或 Team 专用排序。
+- 新建 Workspace 复用现有 Client Workspace runtime 和 `sidebar.workspaces.directoryFlow` 交互契约，不修改 DSH 核心。
+- sidebar 收起到 rail 后不显示 Workspace/Channel/Agent 行，只保留 Shell 控件和 Team/返回入口；重新展开恢复 Team 目录。
 
-### 2.4 Agents 面板与 direct chat
+## 3. Workspace 目录
 
-- 左下角 Agents 按钮（settings 上方）→ 展开 Agent Member 卡片（name + description + availability）。
-- 点击 Agent Member 卡片 → 打开其 dsh session direct chat（append-only + compaction）。Client 侧复用 `ctx.sessions.open(agentSessionId)`，无需新路由。
-- Direct chat 顶部 actions：编辑 Member name/description、查看 member-private memory。
-- Direct chat 是 human 管理/对话入口，不是 Team DM，不创建 Team Message、Task、Thread、Follow 或 Delivery。
+每个 Workspace 是一个项目；Agent Member 的 cwd 是 Workspace path。一个 Agent Member 只绑定一个 Workspace，可加入该 Workspace 的多个 Channels。
 
-## 3. UI 落点对照（client Slot 树实测，2026-08-14）
+### 3.1 Channels / Agents
 
-| UI 元素 | Slot | 风险 |
+- 每个 Workspace 提供 `Channels` 与 `Agents` 两个 tab；首次默认 Channels。
+- active tab 右侧 `+` 打开创建面板。
+- 不同 Workspace 可以存在同名、同描述 Agent；同一 Workspace name 唯一。唯一身份始终是 memberRef。
+- Agent 不具有人格或跨 Workspace 身份；name/description 只是该 Workspace 内的协作名片。
+- Agent 创建第一阶段只填写 name 与 description，固定使用 shipped team-member preset 和 Host default model。Model/provider/preset 选择延期。
+
+### 3.2 Agent 状态
+
+Agent runtime status 是进程投影，不写 Team ledger：
+
+| 状态 | 事实 | 呈现 |
 | --- | --- | --- |
-| 左下角 Agents 按钮 | `sidebar.footer.action`（list，`replaceRisk: none`，"Optional actions beside Settings at the sidebar foot"） | 无（位置在 Settings 旁；若要严格"上方"需 footer 结构微调） |
-| Agents 卡片展开层 | `shell.overlay`（list，frame-wide floating layer）或自渲染浮层 | 无 |
-| Agent Member direct chat 顶部 actions | `conversation.session.header.actions`（list，`replaceRisk: none`） | 无（direct chat 即该 Member session 对话） |
-| 工作区下 #channel 区域 | `sidebar.workspaces`（single，被 ui-workspace 占据，`replaceRisk: shadows-shipped-ui`） | **高**：需 take 该 seat 自渲染浏览区（session 列表 + channel 组），或另找注入点 |
-| channel/thread 视图 | `conversation`（single，被 ui-conversation 的 ConversationRoot 占据，`replaceRisk: shadows-shipped-ui`）；take 后所有子 seat（composer/view/chat.node）随之消失，需自行声明或自渲染 | **高**：需替换整个中心列（含 no-session hero 与普通对话状态的委托） |
-| channel 视图输入框 | 复用 InputBar 组件（take conversation 后由我们的 root 挂载） | 中（组件复用方式落地时验证） |
+| `available` | live Agent idle，没有 loop | DSH success 绿色静态点 |
+| `working` | Agent loop running，含模型等待与正常 tool call | DSH ongoing 蓝色动态点 |
+| `error` | 当前活动发生 loop/tool error，保留到下一次 loop 启动 | DSH error 红色静态点 |
+| `unavailable` | 无可用 AgentHandle、suspended/inactive 或 setup/resume 失败 | 语义 neutral/disabled 灰色静态点 |
 
-两个 single-seat 落点已经通过动态 Client plugin 完成 take、Host RPC、两处真实渲染、用户目视和三次 stop/run 恢复验证。剩余风险不是 Slot 机制，而是 M2 必须在 replacement root 中委托普通 session/no-session 状态并长期跟随 shipped UI 行为。Channel 没有 backing session，因此不使用 `conversation.view` 把它伪装成 session tab。
+列表不显示状态文字；Tooltip 与无障碍文本提供状态名称，error/unavailable 提供简短原因。`unavailable > error > working > available` 是组合事实的显示优先级。`creating` 仅是本地 pending UI，创建完成前不能加入 Channel。
 
-## 4. 对 feasibility.md 的影响
+### 3.3 全局成员面板
 
-- 实现形态节的 client 插件行按本文件细化。
-- Member 底层 session 与 compaction 复用 dsh；Member lifecycle、private memory location、operation ledger 和 Delivery 补偿由 Team Host plugin 新建。
-- 两个 shadows-shipped-ui seats 的 take 机制已经验证；完整 UI 属 M2，必须补普通 Conversation 委托、routing、loading/error/empty、responsive 与 browser snapshot/GIF。
+“成员”不属于某个 Workspace tab；它打开 frame overlay 中的只读 Modal：
+
+```text
+┌─ 成员 ────────────────────┐
+│ Workspace A               │
+│   ● Alice                 │
+│   ◌ Bob                   │
+│                           │
+│ Workspace B               │
+│   ● Alice                 │
+└───────────────────────────┘
+```
+
+第一阶段只按 Workspace 分组查看所有 Agent，不提供搜索、管理或 DM 导航。
+
+## 4. Channel 创建与成员管理
+
+创建 Channel：
+
+```text
+┌─ 新建 Channel ────────────┐
+│ 名称                      │
+│ 描述                      │
+│ 成员                      │
+│ [Alice] [Bob]             │
+│                           │
+│              [取消] [创建]│
+└───────────────────────────┘
+```
+
+- Channel name、description 和 initialMemberRefs 由一条 Human operation 原子提交；任一 Member 非法则全部失败。
+- 后续可从 Channel header 管理 membership。
+- available/working/error Agent 可加入；creating/unavailable 禁用；inactive 不显示。
+- 从 Channel 移除 Member 不删除 Agent：释放该 Channel 内 active Claims、清除 Follows、取消 queued Deliveries，历史 Message/Activity/Task/Thread 保留。
+
+## 5. Channel 页面
+
+```text
+┌─ #frontend ──────────────────────────────┐
+│ frontend                                  │
+│ 前端实现与评审                            │
+│                                           │
+│ [A] Alice · Agent                         │
+│     请实现新的导航栏                      │
+│     Task #12 · In progress · 4 replies   │
+│                                           │
+│ [H] Human                                 │
+│     请补充移动端状态                      │
+│     Task #13 · Todo · 0 replies          │
+│                                           │
+│───────────────────────────────────────────│
+│ [@成员] 输入消息…                 [发送]  │
+└───────────────────────────────────────────┘
+```
+
+- Channel 没有 backing Session，不用 Session view 模拟。
+- Human 与 Agent Message 使用同一布局；名字首字符只作小型视觉标识。
+- 消息行显示 name 与 Member kind；description 放 HoverCard，不在每条消息重复。
+- 每条顶层 Message 固定创建 Task；底部显示 Task 编号、派生状态和 Thread Message count，整个 footer 进入 Thread。
+- 初始加载最新 bounded page，向上加载旧事实；cursor 使用 ledger sequence。
+- Team composer 复用 DSH 的视觉、键盘、focus 和 disabled 约定，但只实现 text、结构化 @mention 和 Send。
+- mention 候选只包含当前 Channel Members，持久化 memberRef，不解析纯文本名字。
+- 不挂 slash command、model、provider、permission、queue、attachment 或 Session trigger。
+- Mutation 不做业务事实 optimistic commit；发送失败保留 draft。
+
+## 6. Thread 页面
+
+```text
+┌─ ← #frontend ────────────────────────────┐
+│ Task #12                     [状态操作]  │
+│                                           │
+│ 参与成员                                  │
+│ ● Alice   navigation · active            │
+│ ◌ Bob     tests · done                   │
+│                                           │
+│ [A] Alice                                 │
+│     导航结构完成                          │
+│                                           │
+│ [H] Human                                 │
+│     请补一个键盘交互测试                  │
+│                                           │
+│───────────────────────────────────────────│
+│ [@成员] 回复 Thread…              [发送]  │
+└───────────────────────────────────────────┘
+```
+
+- 左上返回 Channel；不增加 URL 路由。
+- Member runtime 状态只用状态点；Claim owner、Direction 与 active/done/released 文本单独显示，二者不合并。
+- Human reply 使用当前 baseRevision、结构化 mentions、Follow 与 Delivery 规则。
+- stale revision 时刷新 Thread，不自动重放 Human 输入。
+- Human 可对具体 Claim 执行 done/release，不可代 Agent 新建 Claim，也不直接改 Agent Follow。
+- Human 可执行 Task accept/close/reopen；状态操作只放 Thread header。
+- 页面显示 Message 与协作 Activity；Task/Claim operation 仍由 ledger 派生投影。
+
+## 7. Client 与 Host 接缝
+
+- 一个 Team Client adapter 是唯一业务接缝：typed RPC + immutable projection + mutation result + changed notification。
+- Host changed signal 只提示事实变化；Client 重新拉当前 bounded projection，不在浏览器折叠 Operation event。
+- Agent runtime status 变化也通过同一 adapter 更新。
+- 所有 durable mutation 等 Host commit 后再显示。表单和 draft 可本地 pending；Agent `creating` 是允许的临时状态。
+- slot 冲突采用显式 priority 并 fail loud；不建立通用 mode registry。
+
+## 8. Agent DM（延期但已定方向）
+
+旧设计“直接打开 Agent Member 的内部 session”已废弃。后续 Agent DM 将使用独立持久的 Human-visible transcript，再把 Human 消息投递给 Agent 的内部 append-only session：
+
+```text
+Agent Member
+├── internal session
+│   ├── Team delivery
+│   ├── loop/tool events
+│   └── append-only model context
+└── Human-visible DM transcript
+    ├── Human 明确消息
+    └── Agent 明确回复
+```
+
+该 DM 不在第一阶段 tickets 中；其 Place、visibility、Delivery、失败恢复、管理入口和 session 呈现需单独设计。Trajectory 不应用于 Human-visible DM transcript。
+
+## 9. Thread inbox（UI 完成后单独 grill）
+
+现行 M1 Follow/mention/Delivery 语义在 M2 第一阶段保持不变。后续候选方向：
+
+- 普通 Thread Message 为参与 Member 建立独立 unread inbox item，只提示“有未读消息”，不直接把正文塞进模型上下文。
+- 显式 @mention 同时留下 durable inbox item，并在 next-step 边界 steer 目标 Agent，不中断正常 tool call。
+- 新 mention 进入持续 Thread 的 Agent 可先看到 Thread 当前状态、参与成员与 Message count，再按 bounded cursor 回读历史；不能一次把全部历史塞进 context。
+- 候选新增 `team_inbox` 或扩展 `team_view`，读取与 mark-read 分开。
+- 候选 `team_send` 门禁只应考虑当前 Thread 中相关且早于发送基线的未读事实；“任何未读都拒绝”可能让无关消息阻塞工作，尚未定案。
+- unread cursor、提示重试、Follow 关系和 prompt 文案全部待 UI 实测后再决定。
+
+## 10. 验收
+
+- 真实 Client plugin + typed RPC + Host composition。
+- Team mode 三席 take/restore：`sidebar.workspaces`、`conversation`、`sidebar.settings`。
+- desktop 与窄/mobile browser snapshot，无重叠、无文本溢出。
+- 完整 GUI journey：团队 → Workspace → Agent → Channel → Message/mention → Thread → Human reply → Claim/Task operation → Channel → 对话。
+- 退出/卸载后默认 DSH sidebar、Settings、Conversation 和当前 Session 均恢复。
+- M1 REAL composition、SQLite restart、typecheck、build 和 pack 保持通过。
 
 ## 来源
 
-- client Slot 树：本会话 `Slots.listSubTree` 实测（sidebar / conversation /
-  sidebar.workspaces / conversation.session.header.actions 等契约）。
-- compaction：`packages/compaction/compaction/README.md`（Service Definition、
-  compaction-basic provider、tokenMeter 压力触发）。
-- Session：`docs/subsystems/core.md`、`docs/architecture.md`（append-only log）。
-- 用户修正意见：本会话 2026-08-14。
+- 本会话 2026-08-16 UX grill Q1-Q46 与 ponytail review。
+- DSH `web-styling`、Client Modules、ui-sidebar、ui-workspace、ui-layout、ui-conversation、ui-primitives contracts。
+- M1 当前事实：`architecture.md`、`spec.md` 与 issues 01-09。

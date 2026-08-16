@@ -22,7 +22,7 @@
 | R1 Web UI 拓展 | Web app：server 容器、channel 视图、task board、成员面板、profile tabs | 借鉴结构 | 无冲突 |
 | R2 workspace 项目入口 | Raft server 的 shared workspace 是协作面，agent-owned workspace 另行隔离 | 修改 | dsh Workspace 同时限定 Team scope 与共享项目 cwd；private memory 另行隔离 |
 | R3 channel（1 human + 多 agents） | channel 成员含 human 与 agent，同一消息语义 | 直接借鉴 | 无冲突 |
-| R4 agent 面板 + direct chat | Raft member/profile + 持久私有 DM | 部分借鉴 | dsh M2 direct chat 只打开 Member session，不是 Team DM |
+| R4 agent 面板 + direct chat | Raft member/profile + 持久私有 DM | 部分借鉴 | dsh M2 第一阶段只做 Agent 浏览；后续 DM 使用独立 Human-visible transcript，投递到 Agent 内部 session |
 | R5 消息默认即 task | **Raft 是显式标记**（As Task / Convert / Create）才是 task | **修改** | 见 §3.1 |
 | R6 显式指定 task thread | agent 发送必须指定目标场所/thread | 直接借鉴 | 无冲突 |
 | R7 多 claim + 方向声明 | **Raft 严格单 owner**（claim 失败即放弃） | **修改** | 见 §3.2 |
@@ -116,7 +116,7 @@ Raft bridge 的 wake `2xx` 只表示 notice 被本地 runtime 接受；`message 
 - thread 不能嵌套 → 首版沿用单层，但不视为永久约束；Task close 不删除 Thread。
 - 仅显式标记的顶层消息成为 task → dsh 不设转换操作，每条 Channel 顶层消息自动创建 Task。
 - 加入 channel 即 ordinary delivery → 已偏离；dsh membership 是可见性，mention/Follow 才产生 Delivery。
-- Raft 持久 DM → M1/M2 不实现 Team DM；M2 direct chat 是 Member session access。
+- Raft 持久 DM → M1 与 M2 第一阶段不实现；后续 Agent DM 的 Human-visible transcript 与内部 Agent session 分离，具体 Place/Delivery 语义另行设计。
 - Reminder、attachment、profile/membership writes → 不进入 M1，未来各自定义 authority、持久化与 failure semantics。
 
 ## 7. 对 feasibility.md 的修订

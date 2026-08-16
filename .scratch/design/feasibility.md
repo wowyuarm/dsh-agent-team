@@ -37,7 +37,7 @@
 | R1 Web UI 拓展 | client 插件体系：Slots / Conversation nodes / typert RPC / `ui-*` 系列 | ✅ |
 | R2 workspace 项目入口 | `ctx.workspaceRegistry`：持久化 workspace 记录、session 归属、顺序、归档 | ✅ |
 | R3 session=channel | 见逐条分析 | 🟡 |
-| R4 agent 管理面板 | Team Member registry + UI；M2 direct chat 打开 Member session，真正 Team DM 为未来 Place 类型 | ✅ |
+| R4 agent 管理面板 | Team Member registry + UI；M2 第一阶段只做 Agent 浏览与状态，后续以独立 Human-visible transcript 设计 Agent DM | ✅ |
 | R5 消息即 task + thread 展开 | 团队消息对象（task 状态 + 父消息归属）+ UI 投影；agent session 不动 | ✅ |
 | R6 显式指定 task thread | message 工具 schema 强制 target 参数，无 target 拒绝 | ✅ |
 | R7 多 claim + 方向声明 | 自定 claim 模型（task × agent × 职责），不继承 Raft 单 owner | ✅ |
@@ -194,7 +194,7 @@ CLI 的 draft 文件机制。
   闭环（conflict → 重组织 → 重发成功）；claim 同方向互斥原语 = `storageDomain`
   + `KvTable.update` 原子 RMW（team 对象持久化落点确认）；tokenMeter 可用
   （compaction 测量端）；client Slot 挂载与 take（`sidebar.workspaces`、
-  `conversation`）可行可逆；M2 direct chat = `ctx.sessions.open(id)`（不是 Team DM）。修正：compaction 是
+  `conversation`）可行可逆；当时验证了 `ctx.sessions.open(id)` 可作为 direct-chat 技术捷径，但 D27 已决定不直接暴露 Agent 内部 session，后续改为独立 Human-visible transcript。修正：compaction 是
   可选 capability，team preset 需显式挂 compaction-basic 行；`MessageSource`
   正式包用声明合并新增 `team` kind（动态验证以 `plugin` kind + `form:'relay'`
   替代）。未验证留正式实现：冷恢复补偿投递、compaction 实际触发、claim 多成员
@@ -207,7 +207,7 @@ CLI 的 draft 文件机制。
   状态）、`team_follow`（action: unfollow | follow | status）。schema 借鉴 Loom
   raft tools（opaque refs / bounded evidence / action 形态 / canonical value
   与 prose 分离），详见 tools-research.md §3。
-- **D24（Q21，D26 补全）里程碑**：M1 机制核心（Host Service + 四工具 + team-enabled preset + isolate compaction + relay/activity MessageSources + invariant + 完整 `/team` + REAL composition/reliability tests，不做新 UI）→ M2 UI（#channel、Channel/Thread、Agents、Member direct chat）→ M3 ledger snapshot、attention aggregation 与性能。
+- **D24（Q21，D26 补全）里程碑**：M1 机制核心（Host Service + 四工具 + team-enabled preset + isolate compaction + relay/activity MessageSources + invariant + 临时 `/team` adapter + REAL composition/reliability tests，不做新 UI）→ M2 UI 第一阶段（Team mode、Workspace/Channel/Thread/Agents）→ M2 后续（Agent DM、Thread inbox/未读门禁与 prompt）→ M3 ledger snapshot、attention aggregation 与性能。
 - **D25（第二轮全方位验证结论，2026-08-15）**：上轮未验证项 + D23/D24 新机制全部
   验证通过（validation/2026-08-15-validation.md）：compaction manual 与自动压力
   实际触发、team-member preset 正反例、成员 create/resume（含 inbox 重放）、四工具
@@ -222,16 +222,18 @@ CLI 的 draft 文件机制。
   fiber 所有（插件更新即 dispose），M1 的成员创建必须落在 host 行、重启后 resume；
   (7) client 两席 take+渲染已激活验证：occupants 实测 take 成功、host.call 数据流
   回写、零诊断错误、用户目视确认 + stop/run 循环证明可逆。
-- **D26（正式架构复核与 grill，2026-08-15）**：M1 限定为一个 dshHome 内的单 Host 可重启 Team；投递承诺 at-least-once Inbox admission，不承诺模型处理 exactly-once。Team Domain 用 append-only operation ledger 作为唯一持久权威，每个业务操作单 record 原子提交；全局 sequence 排序，Thread revision 只受该 Thread 的 Message/Activity 影响。Agent tool 由 exact live Agent 绑定 Member authority，Agent 只能访问显式加入的 Channel；Human 是稳定特殊 Member和唯一管理员。Agent Member 绑定一个 Workspace/session/cwd，成员共享项目 cwd、私有记忆按 memberId 隔离；只允许显式 team-enabled preset。Plugin unload 停止 AgentHandle 但保留 session，suspend 可恢复，remove 不可逆，fork 不继承身份。Task 的 done/closed 必须 reopen 后继续，close 自动 release active Claims，done+released 无 active 为 in_review。D15 改为显式 confirmation token。Delivery 状态限定 queued/admitted/canceled，idle follower 投递会唤醒。Member relay 与 host Activity 使用不同 MessageSource kind。M1 `/team` 覆盖完整机制，并要求 HMR、REAL composition、keyless snapshot、JSON/SQLite restart、幂等和崩溃窗口 failure injection。完整架构见 `architecture.md`。
+- **D26（正式架构复核与 grill，2026-08-15）**：M1 限定为一个 dshHome 内的单 Host 可重启 Team；投递承诺 at-least-once Inbox admission，不承诺模型处理 exactly-once。Team Domain 用 append-only operation ledger 作为唯一持久权威，每个业务操作单 record 原子提交；全局 sequence 排序，Thread revision 只受该 Thread 的 Message/Activity 影响。Agent tool 由 exact live Agent 绑定 Member authority，Agent 只能访问显式加入的 Channel；Human 是稳定特殊 Member和唯一管理员。Agent Member 绑定一个 Workspace/session/cwd，成员共享项目 cwd、私有记忆按 memberId 隔离；只允许显式 team-enabled preset。Plugin unload 停止 AgentHandle 但保留 session，suspend 可恢复，remove 不可逆，fork 不继承身份。Task 的 done/closed 必须 reopen 后继续，close 自动 release active Claims，done+released 无 active 为 in_review。D15 改为显式 confirmation token。Delivery 状态限定 queued/admitted/canceled，idle follower 投递会唤醒。Member relay 与 host Activity 使用不同 MessageSource kind。M1 `/team` 是临时验证 adapter；HMR、REAL composition、keyless snapshot、JSON/SQLite restart、幂等和崩溃窗口 failure injection 构成机制验收。完整架构见 `architecture.md`。
 
-## 实现形态（2026-08-15 确认）
+- **D27（M2 第一阶段 UX grill + ponytail review，2026-08-16）**：Team 入口在 `sidebar.footer.action`；Team 模式保留 shipped Shell 并动态 shadow `sidebar.workspaces`、`conversation` 与 `sidebar.settings`，退出/卸载恢复原 occupants。Workspace 下分 Channels/Agents tab，不做搜索、Team 排序、URL、附件或通用 mode registry。Agent runtime presence 为 available/working/error/unavailable，UI 只显示 DSH 风格状态点。Channel/Thread 提供 Human 消息、mention、Claim done/release 与 Task accept/close/reopen。第一阶段明确延期 Agent DM 与 Thread inbox；现行 M1 Follow/Delivery 语义不变。完整规格见 `design-ux.md` 与 `../m2-ui/spec.md`。
+
+## 实现形态（2026-08-16 确认）
 
 以 **dsh-plugin 方式**展开：全部能力以 Cordis 插件行挂载，不修改 dsh 内核、不改
 agent loop。三个平面的插件行：
 
 - **host 组合行**：`ctx.agentTeam`、operation ledger、authority、Member AgentHandle、queued/admitted/canceled Delivery 补偿和 host projection。Host Fiber 卸载时停止 live Members 并保留 sessions；重新挂载后恢复 enabled Members。
 - **preset 行**：显式 team-enabled preset 贡献四工具、team guidance 和 isolate 内 compaction。Preset 不是 Member 身份或持久化来源；Member record + session log + ledger 共同提供恢复事实。
-- **client 插件行**：M2 提供 workspace 入口、Channel/Thread 视图和 Agent 管理，只经 typed JSON RPC 访问 Host projection。Slot 落点见 design-ux.md §2-3。
+- **client 插件行**：M2 第一阶段提供 Team mode、Workspace/Channel/Thread/Agent UI，只经一个 typed RPC adapter 访问 Host projection。进入 Team mode 时 shadow 三个 single seats，退出时释放恢复；不修改 dsh 核心。Slot 与 UX 见 design-ux.md。
 
 M1 包按真实演进角色拆为 `dsh-agent-team`、`dsh-tool-agent-team` 和 `dsh-command-agent-team`；M2 再增加 Client UI package。完整接口与所有权见 `architecture.md`。
 

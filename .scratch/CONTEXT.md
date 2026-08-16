@@ -70,7 +70,15 @@ Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有
 
 ## Team DM
 
-未来可能增加的私有 Place 类型，具有独立 participant set、visibility、Message、Thread、Follow 和 Delivery 语义。M2 direct chat 只打开 Agent Member session，不是 Team DM，也不写 Team ledger。
+未来可能增加的私有 Place 类型，具有独立 participant set、visibility、Message、Thread、Follow 和 Delivery 语义。M2 第一阶段不实现 DM；后续方向是把 Human-visible DM transcript 与 Agent 内部 append-only session 分开持久化，具体 authority 与投递语义待单独设计。
+
+## Runtime Presence
+
+Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 available（live idle）、working（Agent loop running）、error（当前 loop/tool failure，保留到下一次 loop 启动）与 unavailable（无可用 AgentHandle 或 lifecycle/setup/resume 阻止调用）；列表以状态点呈现，和 Claim 状态分离。
+
+## Thread Inbox（候选）
+
+UI 完成后再设计的 Agent-specific unread projection。候选方向是普通 Thread Message 只产生未读提示，显式 mention 做 next-step steer，Agent 可通过 bounded cursor 主动回读；当前 M1 Follow/Delivery 语义保持不变，尚无正式 schema 或工具契约。
 
 ## Suspend
 

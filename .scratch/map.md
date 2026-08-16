@@ -1,7 +1,7 @@
 # dsh-agent-team 工作区索引
 
-日期：2026-08-15
-状态：D1-D26 与 M1 架构已冻结；两轮原型验证完成；M1 已拆为 9 个本地 tracer-bullet tickets。Issue 01-09 已完成；Agent Team M1 已交付。
+日期：2026-08-16
+状态：D1-D26 与 M1 架构已冻结，Issue 01-09 已完成；M2 第一阶段 UX grill 与 ponytail review 完成，已拆为 6 个本地 tracer-bullet tickets。
 位置：本仓库 `.scratch/`（独立项目 dsh-agent-team；探索性内容，不走 docs gate）。
 
 ## 目的
@@ -18,7 +18,8 @@
 | `design/architecture.md` | M1 当前架构：Cordis 平面、包、ledger、authority、生命周期、投递与验收 | 架构层 |
 | `design/feasibility.md` | 可行性判定（R1-R12 → dsh 机制）+ **D1-D26 决策基线**（权威清单） | 决策层 |
 | `design/raft-design-mapping.md` | Raft 产品事实、Loom 选择与 dsh 借鉴/偏离对照 | 决策层 |
-| `design/design-ux.md` | agent 持久化模型 + UI/UX 结构 + client Slot 落点与风险 | 设计层 |
+| `design/design-ux.md` | M2 Team 模式、Workspace/Channel/Agent/Thread UI、Client Slot 接管、Agent runtime 状态与延期设计 | 设计层 |
+| `m2-ui/spec.md` | M2 第一阶段综合 spec：用户故事、实现决策、测试与明确延期 | 交付物 |
 | `design/tools-research.md` | 工具集研究：Loom schema 借鉴点 + dsh 工具规范 + 候选形态 | 设计层 |
 | `research/raft-design-details.md` | Raft 官方产品设计精读 | 事实层 |
 | `/home/yu/projects/Loom/.scratch/archive/raft-channel/` | Raft primary sources、CLI/bridge facts 与 Loom Adapter 决策；仅作溯源参考 | 外部参考 |
@@ -26,20 +27,21 @@
 | `validation/2026-08-14-validation.md` | 首轮验证：12 项核心机制全过 + 修正清单 | 验证层 |
 | `validation/2026-08-15-validation.md` | 第二轮全方位验证：上轮未验证项 + D23/D24 新机制（权威） | 验证层 |
 | `validation/pitfalls.md` | 31 条动态验证与正式架构踩坑记录 | 验证层 |
-| `issues/01-*.md` … `issues/09-*.md` | M1 九个 tracer-bullet tickets，含 blocking edges 与验收标准 | 实施层 |
+| `issues/01-*.md` … `issues/09-*.md` | M1 九个已完成 tracer-bullet tickets | 实施层 |
+| `m2-ui/issues/01-*.md` … `06-*.md` | M2 第一阶段六个 tracer-bullet tickets，含 blocking edges 与验收标准 | 实施层 |
 
 相互联系：`CONTEXT.md` 固定领域词汇；`spec.md` 是综合出口；`feasibility.md` 的 D1-D26 是决策清单；`design/architecture.md` 是 M1 当前实现基线；`design-ux.md` / `tools-research.md` 展开 UI 与工具；`raft-design-mapping.md` 记录 Raft 溯源；`validation/` 保存真实机制证据。
 
 ## 决策基线状态
 
-- **已定（D1-D26）**：D1-D22 固定范围模型与协作语义；D23 固定四工具；D24 固定 M1/M2/M3；D25 记录第二轮验证；D26 固定单 Host 可恢复范围、at-least-once admission、operation ledger、严格成员权限、Thread revision、Task 终态、显式 confirmation token、Workspace/Member 关系、Member suspend/remove、两类 MessageSource 与完整 M1 验收。
+- **已定（D1-D27）**：D1-D22 固定范围模型与协作语义；D23 固定四工具；D24 固定 M1/M2/M3；D25 记录第二轮验证；D26 固定单 Host 可恢复范围与完整 M1 验收；D27 固定 M2 第一阶段 Team mode、Workspace/Channel/Thread/Agent UI、runtime presence、三席动态 take/restore，以及 Agent DM/Thread inbox 延期边界。
 - **实现基线**：`design/architecture.md` 规定正式包、ledger record、authority、投递、AgentHandle 所有权、四工具、`/team`、invariant 和 teardown；字段级 TypeScript 类型与诊断文案在实现中按该基线收敛。
 
 ## 验证状态
 
 - **首轮（2026-08-14）**：多 agent 共存、成员创建、安静/唤醒投递三原语、
   Model-visible ⟺ logged、乐观并发闭环、`KvTable.update` 原子 RMW、tokenMeter、
-  Slot 挂载与 take（可逆）、M2 Member direct chat 复用 `ctx.sessions.open`（不是 Team DM）。
+  Slot 挂载与 take（可逆）、`ctx.sessions.open` direct-chat 技术捷径（D27 已决定不直接暴露内部 Agent session，后续 DM 改为独立 transcript）。
 - **第二轮（2026-08-15，全方位）**：compaction 实际触发（manual 真实摘要 +
   自动压力）、team-member preset 正反例、成员 create/resume（inbox 重放）、四工具
   全形态真实模型驱动、claim 多成员并发一胜一败、task 派生状态 13 组合、D19/D20/D15
@@ -49,10 +51,11 @@
   后续清理（`cordis_undefine` 两个验证插件、删除验证 preset 与 domain 文件）为
   可选项，保留作 M1 参考。
 
-## M1 Ticket Frontier
+## Ticket Frontier
 
-- **已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/09-ship-m1-runnable-composition.md`（REAL Loader/Agent/Session/command/tool/persistence workflow、SQLite 文件重开、durable failure windows、并发线性化、remove/archive 补偿、teardown、npm build/pack 与 opt-in preset shipping 均有自动验证）。
-- **当前状态**：M1 完成，没有下一张 frontier issue。
-- **可靠性与组装**：08 等待 01-07；09 等待 01-08。
+- **M1 已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/09-ship-m1-runnable-composition.md`（REAL Loader/Agent/Session/command/tool/persistence workflow、SQLite 文件重开、durable failure windows、并发线性化、remove/archive 补偿、teardown、npm build/pack 与 opt-in preset shipping 均有自动验证）。
+- **M2 当前 frontier**：`m2-ui/issues/01-enter-leave-team-mode.md`，无 blocker，可立即开始。
+- **M2 依赖链**：01 → 02；01+02 → 03；03 → 04 → 05；01-05 → 06。
+- **M2 第一阶段明确延期**：Agent DM、Thread inbox/未读门禁、新工具/prompt、附件、搜索、URL、Model/provider 选择。
 
 每个 ticket 必须独立保持其声明的验证路径成立；不要把 package 层完成当作 vertical slice 完成。

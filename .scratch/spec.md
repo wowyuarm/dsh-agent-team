@@ -1,7 +1,7 @@
 # Spec: dsh 原生 Agent Team（Raft 模式的 plugin 化实现）
 
 日期：2026-08-14
-状态：M1 综合 spec，基于 D1-D26、两轮原型验证与 `design/architecture.md`。探索性内容，未进入正式 docs 层级。
+状态：M1 已交付；M2 第一阶段细化见 `m2-ui/spec.md` 与 `design/design-ux.md`。探索性内容，未进入正式 docs 层级。
 
 ## Problem Statement
 
@@ -16,7 +16,7 @@ Raft 只提供产品参考。自动 Task、多 Direction Claims、默认静默�
 
 ## Solution
 
-以原生 Cordis capability `dsh-agent-team` 在一个 dshHome 内实现单 Host、可重启的团队协作层，不修改 agent loop。M1 的 `dsh-agent-team` Host package 持有 operation ledger、authority、Member AgentHandles 和 Delivery 补偿；`dsh-tool-agent-team` 由显式 team-enabled preset 挂载；`dsh-command-agent-team` 提供完整 `/team` human adapter。M2 再增加 Client UI。
+以原生 Cordis capability `dsh-agent-team` 在一个 dshHome 内实现单 Host、可重启的团队协作层，不修改 agent loop。M1 的 `dsh-agent-team` Host package 持有 operation ledger、authority、Member AgentHandles 和 Delivery 补偿；`dsh-tool-agent-team` 由显式 team-enabled preset 挂载；`dsh-command-agent-team` 提供临时 `/team` human adapter。M2 增加 Team Client UI。
 
 Operation ledger 是 Team 唯一持久权威，每次业务修改以一个 record 原子提交。消息发出即 effect且不可编辑/删除；每条 Channel 顶层消息创建 Task；Task 工作状态从 Claims 派生；attention 默认静默，仅 mention 与 Follow 产生 queued Delivery；投递承诺 at-least-once Inbox admission，不承诺模型处理 exactly-once；admitted 只表示目标 session 有可重建的 Inbox evidence。
 
@@ -29,7 +29,7 @@ Operation ledger 是 Team 唯一持久权威，每次业务修改以一个 recor
 4. 作为 human，我想编辑 agent 的 name/description，让分工表达保持准确。
 5. 作为 human，我想查看 agent 的 workspace（memory.md 与 notes/），了解它的记忆
    与笔记。
-6. 作为 human，我想在 M2 打开单个 Agent Member 的 session direct chat，直接安排或追问；该入口不是 Team DM，不创建 Team Message/Task/Delivery。
+6. 作为 human，我想在 M2 后续通过独立 Human-visible DM transcript 与 Agent Member 对话，同时让 Agent 内部 session 保持 append-only；该 DM 的持久化与投递在第一阶段 UI 后单独设计。
 7. 作为 human，我想在 channel 发消息且它自动成为一条 task，任何承诺都被追踪。
 8. 作为 human，我想在消息中 @ 成员（输入框成员选择器，显示 name 与 description），
    点名需要它处理的人或 agent。
@@ -88,8 +88,8 @@ Operation ledger 是 Team 唯一持久权威，每次业务修改以一个 recor
 - **Member lifecycle**：只支持 team-managed Agent。Enabled Member 启动时 resume；单 Member 失败标 unavailable 而不阻塞 Team。Suspend 保留 identity/session/Claims/Follows/queued Deliveries；Remove 不可逆并 release/clear/cancel/archive。Plugin unload 停止 live AgentHandles、保留 sessions；fork 不继承身份。
 - **工具**：`team_send`、`team_view`、`team_claim`、`team_follow` 使用 stable typed refs、sequence cursor、默认 limit 20/最大 100，并分离 canonical value 与 render。
 - **模型来源**：Member-authored relay 与 host-authored Activity 使用不同 MessageSource kind；source 只记录 provenance。
-- **里程碑**：M1 交付机制、完整 `/team`、invariant、REAL composition、keyless snapshot、JSON/SQLite restart、HMR 和 failure injection；M2 交付 Client UI 与打开 Member session 的 direct chat；M3 处理 ledger snapshots、attention aggregation 和性能。
-- **UI 落点（M2）**：Agents → `sidebar.footer.action`；direct chat actions → `conversation.session.header.actions`；#channel → take `sidebar.workspaces`；Channel/Thread → take `conversation`。完整设计见 design/design-ux.md。
+- **里程碑**：M1 交付机制、临时 `/team` adapter、invariant、REAL composition、keyless snapshot、JSON/SQLite restart、HMR 和 failure injection；M2 第一阶段交付 Team mode、Workspace/Agent/Channel/Thread Client UI；M2 后续单独设计 Agent DM 与 Thread inbox；M3 处理 ledger snapshots、attention aggregation 和性能。
+- **UI 落点（M2）**：Team 入口 → `sidebar.footer.action`；Team 模式动态 shadow `sidebar.workspaces`、`conversation` 与 `sidebar.settings`，退出时释放并恢复 shipped UI。Agent runtime presence 以状态点显示；Agent DM 与 Thread inbox 延期。完整设计见 `design/design-ux.md` 与 `m2-ui/spec.md`。
 - **借鉴与偏离 Raft**（design/raft-design-mapping.md）：借鉴任务即消息、状态机、
   参与即 follow、push/pull 分离、lanes not job titles 等；偏离：消息默认即 task
   （Raft 显式 As Task）、多 claim 带方向（Raft 单 owner）、默认静默（Raft 加入即
@@ -103,7 +103,7 @@ Operation ledger 是 Team 唯一持久权威，每次业务修改以一个 recor
 - **组装级**：通过 Loader/app 的 REAL composition 启动 Host 与两个 team-enabled Members，完成 send、claim、reply、accept、restart、suspend/resume、remove和补投。
 - **快照**：keyless snapshot 固定四工具 schema/render、两种 MessageSource、team guidance 与 `/team` human output。
 - **不变量**：核心包检查 ledger sequence/link、idempotency、Task projection、Member lifecycle 和 Delivery 双证据；每个 consumer package拥有自己的 invariant companion或具体 no-runtime-invariant 说明。
-- **UI**：M2 增加 browser snapshot、真实 GUI GIF和 Slot take/restore 验收。
+- **UI**：M2 增加真实 Client/Host typed RPC、browser snapshot、真实 GUI journey/GIF、desktop/mobile viewport 与三席 Slot take/restore 验收。
 - **原型验证**（2026-08-14 首轮 + 2026-08-15 第二轮，见
   validation/2026-08-14-validation.md 与 validation/2026-08-15-validation.md）：
   首轮验证 peer 投递三原语、投递落 session 事件、revision 检查、claim 原子原语
@@ -114,7 +114,8 @@ Operation ledger 是 Team 唯一持久权威，每次业务修改以一个 recor
 
 ## Out of Scope
 
-- 真正持久化的私有 Team place/DM。M2 的 direct chat 只打开 Agent Member 自己的 dsh session，不写 Team ledger。
+- M2 第一阶段不实现 Agent DM。后续方向是独立持久的 Human-visible transcript 投递到 Agent 内部 append-only session；其 Place、visibility、Delivery 与失败恢复另行设计。
+- M2 第一阶段不改变 Thread attention。Thread inbox、unread cursor、`team_inbox`/`team_view` 扩展、`team_send` 未读门禁与相关 prompt 在 UI 实测后另行 grill。
 - 多 human、成员邀请/自加入体系。
 - 移动端/跨设备访问。
 - 附件上传下载、消息编辑/删除、消息历史版本。
