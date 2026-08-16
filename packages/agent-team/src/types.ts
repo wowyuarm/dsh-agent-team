@@ -97,7 +97,14 @@ export interface AgentTeamChannel {
   readonly channelRef: AgentTeamChannelRef
   readonly workspaceId: WorkspaceId
   readonly name: string
+  readonly description: string
   readonly createdAtSequence: number
+}
+
+/** One durable Channel membership fact derived from the operation ledger. */
+export interface AgentTeamChannelMembership {
+  readonly channelRef: AgentTeamChannelRef
+  readonly memberId: AgentTeamMemberId
 }
 
 /** One immutable top-level Channel Message. */
@@ -194,12 +201,27 @@ export interface AgentTeamInitializedOperation extends AgentTeamOperationBase {
   }
 }
 
-/** Durable creation of one Channel. */
+/** Durable creation of one Channel with its atomic initial memberships. */
 export interface AgentTeamChannelCreatedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/channel-created'
   readonly data: {
     readonly workspaceId: WorkspaceId
     readonly channel: AgentTeamChannel
+    readonly memberIds: readonly AgentTeamMemberId[]
+  }
+}
+
+/** Durable removal of one Agent Member from one Channel with Channel-scoped cleanup. */
+export interface AgentTeamChannelMemberRemovedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/channel-member-removed'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly channelRef: AgentTeamChannelRef
+    readonly memberId: AgentTeamMemberId
+    readonly claims: readonly AgentTeamClaim[]
+    readonly tasks: readonly AgentTeamTask[]
+    readonly follows: readonly AgentTeamFollow[]
+    readonly deliveries: readonly AgentTeamDelivery[]
   }
 }
 
@@ -207,6 +229,7 @@ export interface AgentTeamChannelCreatedOperation extends AgentTeamOperationBase
 export interface AgentTeamChannelMemberAddedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/channel-member-added'
   readonly data: {
+    readonly workspaceId: WorkspaceId
     readonly channelRef: AgentTeamChannelRef
     readonly memberId: AgentTeamMemberId
   }
@@ -339,6 +362,7 @@ export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase 
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
   | AgentTeamChannelCreatedOperation
+  | AgentTeamChannelMemberRemovedOperation
   | AgentTeamMessageSentOperation
   | AgentTeamThreadRepliedOperation
   | AgentTeamClaimCreatedOperation
@@ -360,17 +384,38 @@ export interface AgentTeamOperationReceipt {
   readonly sequence: number
 }
 
-/** Human intent to create a Workspace Channel. */
+/** Human intent to create a Workspace Channel with its initial Members. */
 export interface AgentTeamCreateChannelRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly name: string
+  readonly description: string
+  readonly memberIds?: readonly AgentTeamMemberId[]
 }
 
-/** Result of creating or idempotently resolving a Channel. */
+/** Result of creating or idempotently resolving a Channel and its initial Members. */
 export interface AgentTeamCreateChannelResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly channel: AgentTeamChannel
+  readonly memberIds: readonly AgentTeamMemberId[]
+}
+
+/** Human intent to remove one Agent Member from one Channel. */
+export interface AgentTeamRemoveChannelMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  readonly memberId: AgentTeamMemberId
+}
+
+/** Result of removing one Agent Member from one Channel with Channel-scoped cleanup. */
+export interface AgentTeamRemoveChannelMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly channelRef: AgentTeamChannelRef
+  readonly memberId: AgentTeamMemberId
+  readonly releasedClaims: readonly AgentTeamClaim[]
+  readonly removedFollows: readonly AgentTeamFollow[]
+  readonly canceledDeliveries: readonly AgentTeamDelivery[]
 }
 
 /** Human intent to send one top-level Channel Message. */
@@ -555,6 +600,7 @@ export interface AgentTeamViewRequest {
 /** Bounded collaboration facts plus a continuation sequence. */
 export interface AgentTeamView {
   readonly channels: readonly AgentTeamChannel[]
+  readonly members: readonly AgentTeamChannelMembership[]
   readonly items: readonly AgentTeamViewItem[]
   readonly activities: readonly AgentTeamActivity[]
   readonly cursor: number

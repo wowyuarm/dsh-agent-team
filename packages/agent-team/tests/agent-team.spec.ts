@@ -89,7 +89,7 @@ async function sqliteHarness(path: string): Promise<TeamHarness> {
   return { ctx, fiber, facility }
 }
 
-function storedPool(records: Array<[string, unknown]>, version = 4): MemoryMediaPool {
+function storedPool(records: Array<[string, unknown]>, version = 5): MemoryMediaPool {
   const pool = new MemoryMediaPool()
   pool.versions.set('agent_team', version)
   pool.media.set('agent_team', {
@@ -128,7 +128,7 @@ describe('AgentTeam', () => {
     cleanups.push(() => rm(root, { recursive: true, force: true }))
     const path = join(root, 'team.sqlite')
     const first = await sqliteHarness(path)
-    const channel = await first.ctx.agentTeam.createChannel({ requestId: requestId('request:sqlite-channel'), workspaceId: alpha, name: 'sqlite' })
+    const channel = await first.ctx.agentTeam.createChannel({ requestId: requestId('request:sqlite-channel'), workspaceId: alpha, name: 'sqlite', description: 'SQLite restart proof' })
     await first.ctx.agentTeam.sendMessage({ requestId: requestId('request:sqlite-message'), workspaceId: alpha,
       channelRef: channel.channel.channelRef, body: 'persist in sqlite' })
     const before = first.ctx.agentTeam.view({ workspaceId: alpha })
@@ -142,7 +142,7 @@ describe('AgentTeam', () => {
     const pool = new MemoryMediaPool()
     const test = await harness(pool)
     pool.failNextWrites = 1
-    const request = { requestId: requestId('request:durability-retry'), workspaceId: alpha, name: 'retry' }
+    const request = { requestId: requestId('request:durability-retry'), workspaceId: alpha, name: 'retry', description: 'Retried durability' }
     await expect(test.ctx.agentTeam.createChannel(request)).rejects.toThrow(/injected write failure/)
     expect(test.ctx.agentTeam.status()).toMatchObject({ operationCount: 1, channelCount: 0 })
     const created = await test.ctx.agentTeam.createChannel(request)
@@ -151,7 +151,7 @@ describe('AgentTeam', () => {
   })
 
   it('fails loud on a mismatched ledger version', async () => {
-    await expect(harness(storedPool([], 99))).rejects.toThrow(/stamped v99, descriptor wants v4/)
+    await expect(harness(storedPool([], 99))).rejects.toThrow(/stamped v99, descriptor wants v5/)
   })
 
   it('fails loud when a durable operation does not match its schema', async () => {
@@ -196,6 +196,7 @@ describe('AgentTeam', () => {
       requestId: requestId('request:create-general'),
       workspaceId: alpha,
       name: 'general',
+      description: 'General collaboration',
     })
     const sent = await first.ctx.agentTeam.sendMessage({
       requestId: requestId('request:send-first'),
@@ -238,6 +239,7 @@ describe('AgentTeam', () => {
       requestId: requestId('request:create-paging'),
       workspaceId: alpha,
       name: 'paging',
+      description: 'Paged history',
     })
     for (let index = 0; index < 21; index += 1) {
       await test.ctx.agentTeam.sendMessage({
@@ -283,10 +285,13 @@ describe('AgentTeam', () => {
       requestId: requestId('request:idempotent-channel'),
       workspaceId: alpha,
       name: 'idempotent',
+      description: 'Idempotent channel',
     }
     const first = await test.ctx.agentTeam.createChannel(request)
     await expect(test.ctx.agentTeam.createChannel(request)).resolves.toEqual(first)
     await expect(test.ctx.agentTeam.createChannel({ ...request, name: 'changed' }))
+      .rejects.toThrow(/different operation or payload/)
+    await expect(test.ctx.agentTeam.createChannel({ ...request, description: 'changed' }))
       .rejects.toThrow(/different operation or payload/)
 
     const sendRequest = {

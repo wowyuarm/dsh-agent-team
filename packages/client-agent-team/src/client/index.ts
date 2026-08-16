@@ -1,5 +1,12 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AgentTeamAddMemberRequest, AgentTeamMembersRequest } from '@deepseek-ai/dsh-agent-team/types'
+import type {
+  AgentTeamAddMemberRequest,
+  AgentTeamCreateChannelRequest,
+  AgentTeamJoinChannelRequest,
+  AgentTeamMembersRequest,
+  AgentTeamRemoveChannelMemberRequest,
+  AgentTeamViewRequest,
+} from '@deepseek-ai/dsh-agent-team/types'
 import agentTeamRemote from '@deepseek-ai/dsh-agent-team/remote'
 import type {} from '@deepseek-ai/dsh-agent-team/remote'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -60,6 +67,10 @@ function registerModeShadow<T extends object>(
             ...(name === 'sidebar.workspaces' ? {
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
               addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
+              loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
+              createChannel: (request: AgentTeamCreateChannelRequest) => ctx.remote.agentTeam.createChannel(request),
+              joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
+              removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
               hooks: {
                 directoryFlow: {
                   getSnapshot: () => ctx.slots.entries('sidebar.workspaces.directoryFlow').length > 0,

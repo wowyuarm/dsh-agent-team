@@ -1,5 +1,18 @@
 import type { PropsLocale, PropsRenderSlots, PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { AgentTeamAddMemberRequest, AgentTeamAgentMemberStatus, AgentTeamMemberResult, AgentTeamMembersRequest } from '@deepseek-ai/dsh-agent-team/types'
+import type {
+  AgentTeamAddMemberRequest,
+  AgentTeamAgentMemberStatus,
+  AgentTeamCreateChannelRequest,
+  AgentTeamCreateChannelResult,
+  AgentTeamJoinChannelRequest,
+  AgentTeamJoinChannelResult,
+  AgentTeamMemberResult,
+  AgentTeamMembersRequest,
+  AgentTeamRemoveChannelMemberRequest,
+  AgentTeamRemoveChannelMemberResult,
+  AgentTeamView,
+  AgentTeamViewRequest,
+} from '@deepseek-ai/dsh-agent-team/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
 
@@ -17,6 +30,10 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     useDirectoryFlow: SnapshotSelectorHook<boolean>
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamAgentMemberStatus[]>>
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
+    loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
+    createChannel: (request: AgentTeamCreateChannelRequest) => Promise<RemoteResult<AgentTeamCreateChannelResult>>
+    joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
+    removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
   }
 
 export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & {

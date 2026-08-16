@@ -58,6 +58,7 @@ const channelSchema = z.object({
   channelRef: channelRefSchema,
   workspaceId: workspaceIdSchema,
   name: z.string().min(1),
+  description: z.string().min(1),
   createdAtSequence: z.number().int().positive(),
 }).strict()
 
@@ -175,13 +176,31 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/channel-created'),
-    data: z.object({ workspaceId: workspaceIdSchema, channel: channelSchema }).strict(),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      channel: channelSchema,
+      memberIds: z.array(memberIdSchema),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/channel-member-removed'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      channelRef: channelRefSchema,
+      memberId: memberIdSchema,
+      claims: z.array(claimSchema),
+      tasks: z.array(taskSchema),
+      follows: z.array(followSchema),
+      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('canceled') }).strict()),
+    }).strict(),
   }).strict(),
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/channel-member-added'),
-    data: z.object({ channelRef: channelRefSchema, memberId: memberIdSchema }).strict(),
+    data: z.object({ workspaceId: workspaceIdSchema, channelRef: channelRefSchema, memberId: memberIdSchema }).strict(),
   }).strict(),
   z.object({
     ...operationBase,
@@ -272,7 +291,7 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
 /** Versioned durable Agent Team ledger declaration. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 4,
+  version: 5,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },

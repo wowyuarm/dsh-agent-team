@@ -13,10 +13,11 @@ interface TeamAgentsPanelProps {
   readonly workspaceId: WorkspaceId
   readonly loadMembers: TeamSidebarProps['loadMembers']
   readonly addMember: TeamSidebarProps['addMember']
+  readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -42,27 +43,34 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, t }: Team
 
   const provision = async (request: AgentTeamAddMemberRequest) => {
     setCreating(true)
+    onCreatingChange(request, true)
     setError(undefined)
-    const result = await addMember(request)
-    if (result.ok) {
-      setMembers(current => {
-        const retained = current.filter(status => status.member.memberId !== result.value.status.member.memberId)
-        return [...retained, result.value.status]
-      })
-      setHandle('')
-      setDescription('')
-      setFormOpen(false)
-      if (result.value.status.presence === 'unavailable') {
-        setRetryRequest(request)
-        setError(result.value.status.diagnostic ?? t('statusUnavailable'))
+    try {
+      const result = await addMember(request)
+      if (result.ok) {
+        setMembers(current => {
+          const retained = current.filter(status => status.member.memberId !== result.value.status.member.memberId)
+          return [...retained, result.value.status]
+        })
+        setHandle('')
+        setDescription('')
+        setFormOpen(false)
+        if (result.value.status.presence === 'unavailable') {
+          setRetryRequest(request)
+          setError(result.value.status.diagnostic ?? t('statusUnavailable'))
+        } else {
+          setRetryRequest(undefined)
+        }
       } else {
-        setRetryRequest(undefined)
+        setError(result.error.message)
+        await refresh()
       }
-    } else {
-      setError(result.error.message)
-      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCreating(false)
+      onCreatingChange(request, false)
     }
-    setCreating(false)
   }
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {

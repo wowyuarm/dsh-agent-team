@@ -310,7 +310,7 @@ real Loader
 
 当前实现已验证：Team Client 使用 `@deepseek-ai/dsh-client-runtime/client` 的类型、真实 Cordis + SlotRegistry composition test、真实 React renderer DOM snapshot，以及根项目显式 `tsc` + Harness `tsdown` bundle。M2-01 的 Chromium browser journey 与完整 Team 流程由 M2-06 统一覆盖。
 
-M2-02 已完成。独立 package 不能直接运行 Typert generator，因此 `scripts/generate-typert.mjs` 会在本地 Harness checkout 的 `packages/` 下创建隔离的临时 package registration，复用 Harness 完整 Host project inventory 分析 Agent Team，生成确定性的 `./typert`、`./remote` 后写回 bundle，并在 `finally` 中删除临时目录。该流程不手写 generated artifact、不修改 Harness core；`typecheck`、`test`、`build` 都先执行生成门禁。Client 只 value-import `@deepseek-ai/dsh-agent-team/remote` 并通过 `ctx.remote.$mount()` 挂载，不 value-import Host Service。Agents UI 已交付 Workspace Channels/Agents transient tab、固定 team-member 创建、available/working/error/unavailable 四态、失败同 request retry，以及全局只读成员分组面板；M2-03 Channel membership picker 必须复用创建中/不可用门禁。后续 compaction frontier 是 M2-03 ticket，再回到本文件 §1-5。
+M2-03 已完成。独立 package 继续通过 `scripts/generate-typert.mjs` 的临时 package registration 生成确定性的 `./typert`、`./remote`，不手写 generated artifact、不修改 Harness core；Client 通过 `ctx.remote.$mount()` 使用 members/addMember/view/createChannel/joinChannel/removeChannelMember。Channels UI 已交付默认 tab、name/description/initial Members 原子创建、创建中与 unavailable 门禁、失败同 request retry，以及后续 add/remove 控制。Host domain v5 以单条 channel-created operation 固化初始成员；channel-member-removed 只清理目标 Channel 的 active Claims、Follows 与 queued Deliveries，保留 Member、其他 Channel membership 和全部历史。后续 compaction frontier 是 M2-04 `.scratch/m2-ui/issues/04-collaborate-channel.md`，再回到本文件 §1-5。
 
 ## 来源
 

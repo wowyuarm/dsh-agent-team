@@ -10,6 +10,8 @@ import type {
   AgentTeamChannel,
   AgentTeamChannelCreatedOperation,
   AgentTeamChannelMemberAddedOperation,
+  AgentTeamChannelMemberRemovedOperation,
+  AgentTeamChannelMembership,
   AgentTeamChannelRef,
   AgentTeamClaim,
   AgentTeamClaimList,
@@ -18,6 +20,7 @@ import type {
   AgentTeamClaimRef,
   AgentTeamConfirmationRequired,
   AgentTeamConfirmationToken,
+  AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamDelivery,
   AgentTeamDeliveryAdmittedOperation,
@@ -35,6 +38,8 @@ import type {
   AgentTeamMemberId,
   AgentTeamRemoveMemberRequest,
   AgentTeamRemoveMemberResult,
+  AgentTeamRemoveChannelMemberRequest,
+  AgentTeamRemoveChannelMemberResult,
   AgentTeamMessage,
   AgentTeamMessageRef,
   AgentTeamMemberAddedOperation,
@@ -99,11 +104,8 @@ export interface AgentTeamInitializeRequest {
 }
 
 /** Internal authorized Channel creation request. */
-export interface AgentTeamAuthorizedCreateChannelRequest {
-  readonly requestId: AgentTeamRequestId
+export interface AgentTeamAuthorizedCreateChannelRequest extends AgentTeamCreateChannelRequest {
   readonly actor: AgentTeamHumanActor
-  readonly workspaceId: WorkspaceId
-  readonly name: string
 }
 
 /** Internal authorized Agent Member creation request. */
@@ -119,6 +121,11 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
 
 /** Internal authorized Channel membership request. */
 export interface AgentTeamAuthorizedJoinChannelRequest extends AgentTeamJoinChannelRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+/** Internal authorized Channel membership removal request. */
+export interface AgentTeamAuthorizedRemoveChannelMemberRequest extends AgentTeamRemoveChannelMemberRequest {
   readonly actor: AgentTeamHumanActor
 }
 
@@ -259,9 +266,11 @@ export class AgentTeamLedger {
   }
 
   /**
-   * Create one Channel after the service resolves Human and Workspace authority.
+   * Create one Channel with its atomic initial Memberships after the service
+   * resolves Human and Workspace authority. One invalid, duplicate,
+   * cross-Workspace, or non-enabled Member rejects the whole request.
    * @param request - Authorized creation intent.
-   * @returns The stable Channel and operation receipt.
+   * @returns The stable Channel, its initial Members, and the operation receipt.
    */
   createChannel(
     request: AgentTeamAuthorizedCreateChannelRequest,
@@ -269,27 +278,33 @@ export class AgentTeamLedger {
     return this.enqueue(async () => {
       const existing = this.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameChannelCreation(existing, request)
+        this.assertSameChannelCreation(existing, request, Object.freeze([...(request.memberIds ?? [])].sort()))
         return this.resolved(this.channelResult(existing))
       }
+      const memberIds = this.normalizeInitialMemberIds(request.memberIds)
       this.assertHumanActor(request.actor)
       const name = request.name.trim()
       if (name === '') throw new Error('channel name must not be empty')
+      const description = request.description.trim()
+      if (description === '') throw new Error('channel description must not be empty')
+      for (const memberId of memberIds) this.assertJoinableMember(request.workspaceId, memberId)
       const sequence = this.nextSequence()
       const channel: AgentTeamChannel = Object.freeze({
         channelRef: this.ref('channel'),
         workspaceId: request.workspaceId,
         name,
+        description,
         createdAtSequence: sequence,
       })
       const operation: AgentTeamChannelCreatedOperation = Object.freeze({
         ...this.operationBase(request, sequence),
         kind: 'team/channel-created',
-        data: Object.freeze({ workspaceId: request.workspaceId, channel }),
+        data: Object.freeze({ workspaceId: request.workspaceId, channel, memberIds }),
       })
       await this.table.put(operation.operationId, operation)
       this.commit(operation)
       this.channels.set(channel.channelRef, channel)
+      for (const memberId of memberIds) this.addChannelMember(channel.channelRef, memberId)
       return this.committed(this.channelResult(operation))
     })
   }
@@ -357,18 +372,85 @@ export class AgentTeamLedger {
       const channel = this.requireChannel(request.workspaceId, request.channelRef)
       const member = this.requireMember(request.memberId)
       if (member.workspaceId !== request.workspaceId) throw new Error('Member and Channel must belong to one Workspace')
+      if (member.state !== 'enabled') {
+        throw new Error(`Agent Member '${member.memberId}' is ${member.state}; only enabled Members can join a Channel`)
+      }
       if (this.isChannelMember(channel.channelRef, member.memberId)) {
         throw new Error(`Agent Member '${member.memberId}' already belongs to Channel '${channel.channelRef}'`)
       }
       const operation: AgentTeamChannelMemberAddedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()),
         kind: 'team/channel-member-added',
-        data: Object.freeze({ channelRef: channel.channelRef, memberId: member.memberId }),
+        data: Object.freeze({ workspaceId: request.workspaceId, channelRef: channel.channelRef, memberId: member.memberId }),
       })
       await this.table.put(operation.operationId, operation)
       this.commit(operation)
       this.projectJoin(operation)
       return this.committed(this.joinResult(operation))
+    })
+  }
+
+  /**
+   * Remove one Agent Member from one Channel and clean only that Channel's
+   * Claims, Follows, and queued Deliveries. The Agent Member itself, its other
+   * Channel memberships, and every Message, Activity, Task, and Thread fact
+   * remain intact.
+   * @param request - Authorized Channel membership removal intent.
+   * @returns The removed membership refs and every cleaned Channel fact.
+   */
+  removeChannelMember(
+    request: AgentTeamAuthorizedRemoveChannelMemberRequest,
+  ): Promise<AgentTeamLedgerResult<AgentTeamRemoveChannelMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameChannelMemberRemoval(existing, request)
+        return this.resolved(this.channelMemberRemovalResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const channel = this.requireChannel(request.workspaceId, request.channelRef)
+      const member = this.requireMember(request.memberId)
+      if (member.workspaceId !== channel.workspaceId) throw new Error('Member and Channel must belong to one Workspace')
+      if (!this.isChannelMember(channel.channelRef, member.memberId)) {
+        throw new Error(`Agent Member '${member.memberId}' is not a member of Channel '${channel.channelRef}'`)
+      }
+      const channelThreadRefs = this.channelThreadRefs(channel.channelRef)
+      const releasedClaims = [...this.claims.values()]
+        .filter(claim => claim.owner === member.memberId && claim.state === 'active'
+          && this.tasks.get(claim.taskRef)?.channelRef === channel.channelRef)
+        .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
+      const projectedClaims = new Map(this.claims)
+      for (const claim of releasedClaims) projectedClaims.set(claim.claimRef, claim)
+      const affectedTaskRefs = new Set(releasedClaims.map(claim => claim.taskRef))
+      const tasks = [...affectedTaskRefs].map(taskRef => {
+        const task = this.tasks.get(taskRef)!
+        return Object.freeze({ ...task, status: this.deriveTaskStatus(taskRef, projectedClaims.values()) })
+      })
+      const removedFollows: AgentTeamFollow[] = []
+      for (const threadRef of channelThreadRefs) if (this.isFollowing(threadRef, member.memberId)) {
+        removedFollows.push(Object.freeze({ memberId: member.memberId, threadRef, following: false as const }))
+      }
+      const canceled = [...this.deliveries.values()]
+        .filter(delivery => delivery.recipient === member.memberId && delivery.state === 'queued'
+          && channelThreadRefs.has(delivery.threadRef))
+        .map(delivery => Object.freeze({ ...delivery, state: 'canceled' as const }))
+      const operation: AgentTeamChannelMemberRemovedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()),
+        kind: 'team/channel-member-removed',
+        data: Object.freeze({
+          workspaceId: request.workspaceId,
+          channelRef: channel.channelRef,
+          memberId: member.memberId,
+          claims: Object.freeze(releasedClaims),
+          tasks: Object.freeze(tasks),
+          follows: Object.freeze(removedFollows),
+          deliveries: Object.freeze(canceled),
+        }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.projectChannelMemberRemoval(operation)
+      return this.committed(this.channelMemberRemovalResult(operation))
     })
   }
 
@@ -818,6 +900,14 @@ export class AgentTeamLedger {
     const channels = [...this.channels.values()]
       .filter(channel => channel.workspaceId === request.workspaceId
         && (memberId === undefined || this.isChannelMember(channel.channelRef, memberId)))
+    const visibleChannelRefs = new Set(channels.map(channel => channel.channelRef))
+    const members: readonly AgentTeamChannelMembership[] = Object.freeze(
+      [...this.memberships.entries()]
+        .filter(([channelRef]) => visibleChannelRefs.has(channelRef))
+        .flatMap(([channelRef, memberIds]) => [...memberIds]
+          .filter(memberId => this.members.get(memberId)?.state !== 'inactive')
+          .sort().map(memberId => Object.freeze({ channelRef, memberId }))),
+    )
     if (memberId !== undefined) {
       const member = this.requireMember(memberId)
       if (member.workspaceId !== request.workspaceId) throw new Error('Member cannot view another Workspace')
@@ -856,6 +946,7 @@ export class AgentTeamLedger {
     })
     return Object.freeze({
       channels: Object.freeze(channels),
+      members,
       items: Object.freeze(items),
       activities: Object.freeze(selected.filter(entry => entry.kind === 'activity').map(entry => entry.value)),
       cursor: selected.at(-1)?.sequence ?? cursor,
@@ -899,8 +990,13 @@ export class AgentTeamLedger {
       this.commit(operation)
       if (operation.kind === 'team/channel-created') {
         this.channels.set(operation.data.channel.channelRef, operation.data.channel)
+        for (const memberId of operation.data.memberIds) {
+          this.addChannelMember(operation.data.channel.channelRef, memberId)
+        }
       } else if (operation.kind === 'team/channel-member-added') {
         this.projectJoin(operation)
+      } else if (operation.kind === 'team/channel-member-removed') {
+        this.projectChannelMemberRemoval(operation)
       } else if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
         this.projectMessage(operation)
       } else if (operation.kind === 'team/follow-changed') {
@@ -1013,21 +1109,37 @@ export class AgentTeamLedger {
       throw new Error(`agent-team operation ${operation.sequence} has invalid Human authority`)
     }
     if (operation.kind === 'team/channel-created') {
-      const { channel } = operation.data
+      const { channel, memberIds } = operation.data
       if (operation.data.workspaceId !== channel.workspaceId
         || channel.createdAtSequence !== operation.sequence) {
         throw new Error(`agent-team Channel operation ${operation.sequence} has inconsistent data`)
       }
       this.addRef(refs, channel.channelRef)
+      const joined = new Set<AgentTeamMemberId>()
+      for (const memberId of memberIds) {
+        const member = members.get(memberId)
+        if (member === undefined || member.workspaceId !== channel.workspaceId
+          || member.state !== 'enabled' || joined.has(memberId)) {
+          throw new Error(`agent-team Channel operation ${operation.sequence} has an invalid initial Member '${memberId}'`)
+        }
+        joined.add(memberId)
+      }
       channels.set(channel.channelRef, channel)
+      memberships.set(channel.channelRef, joined)
+      return
+    }
+    if (operation.kind === 'team/channel-member-removed') {
+      this.validateChannelMemberRemovalOperation(
+        operation, channels, members, memberships, tasks, threads, claims, follows, deliveries, refs,
+      )
       return
     }
     if (operation.kind === 'team/channel-member-added') {
       const channel = channels.get(operation.data.channelRef)
       const member = members.get(operation.data.memberId)
       const joined = memberships.get(operation.data.channelRef) ?? new Set<AgentTeamMemberId>()
-      if (channel === undefined || member === undefined || channel.workspaceId !== member.workspaceId
-        || joined.has(member.memberId)) {
+      if (channel === undefined || member === undefined || operation.data.workspaceId !== channel.workspaceId
+        || channel.workspaceId !== member.workspaceId || joined.has(member.memberId)) {
         throw new Error(`agent-team Channel membership operation ${operation.sequence} is invalid`)
       }
       joined.add(member.memberId)
@@ -1242,6 +1354,87 @@ export class AgentTeamLedger {
     members.set(previous.memberId, operation.data.member)
   }
 
+  private validateChannelMemberRemovalOperation(
+    operation: AgentTeamChannelMemberRemovedOperation,
+    channels: Map<AgentTeamChannelRef, AgentTeamChannel>,
+    members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
+    memberships: Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>,
+    tasks: Map<AgentTeamTaskRef, AgentTeamTask>,
+    threads: Map<AgentTeamThreadRef, AgentTeamThread>,
+    claims: Map<AgentTeamClaimRef, AgentTeamClaim>,
+    follows: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>,
+    deliveries: Map<AgentTeamDeliveryId, AgentTeamDelivery>,
+    refs: Set<string>,
+  ): void {
+    if (operation.actor.kind !== 'human') throw new Error('Channel membership removal requires Human authority')
+    const { channelRef, memberId, claims: released, tasks: nextTasks,
+      follows: removedFollows, deliveries: canceled } = operation.data
+    const channel = channels.get(channelRef)
+    const member = members.get(memberId)
+    const joined = memberships.get(channelRef)
+    if (channel === undefined || member === undefined || joined === undefined || !joined.has(memberId)
+      || operation.data.workspaceId !== channel.workspaceId || member.workspaceId !== channel.workspaceId) {
+      throw new Error(`agent-team Channel membership removal ${operation.sequence} is invalid`)
+    }
+    const channelThreadRefs = new Set([...tasks.values()]
+      .filter(task => task.channelRef === channelRef).map(task => task.threadRef))
+    const expectedClaims = [...claims.values()]
+      .filter(claim => claim.owner === memberId && claim.state === 'active'
+        && tasks.get(claim.taskRef)?.channelRef === channelRef)
+    if (released.length !== expectedClaims.length
+      || !this.sameList(released.map(claim => claim.claimRef).sort(),
+        expectedClaims.map(claim => claim.claimRef).sort())) {
+      throw new Error('agent-team Channel membership removal has incomplete Claim cleanup')
+    }
+    const expectedTaskRefs = [...new Set(expectedClaims.map(claim => claim.taskRef))].sort()
+    if (!this.sameList(nextTasks.map(task => task.taskRef).sort(), expectedTaskRefs)) {
+      throw new Error('agent-team Channel membership removal has incomplete Task cleanup')
+    }
+    const expectedFollowThreads = [...follows]
+      .filter(([threadRef, set]) => channelThreadRefs.has(threadRef) && set.has(memberId))
+      .map(([threadRef]) => threadRef).sort()
+    if (removedFollows.length !== expectedFollowThreads.length
+      || !this.sameList(removedFollows.map(follow => follow.threadRef).sort(), expectedFollowThreads)) {
+      throw new Error('agent-team Channel membership removal has incomplete Follow cleanup')
+    }
+    const expectedCanceled = [...deliveries.values()]
+      .filter(delivery => delivery.recipient === memberId && delivery.state === 'queued'
+        && channelThreadRefs.has(delivery.threadRef))
+    if (canceled.length !== expectedCanceled.length
+      || !this.sameList(canceled.map(delivery => delivery.deliveryId).sort(),
+        expectedCanceled.map(delivery => delivery.deliveryId).sort())) {
+      throw new Error('agent-team Channel membership removal has incomplete Delivery cleanup')
+    }
+    for (const claim of released) {
+      const prior = claims.get(claim.claimRef)
+      if (prior?.state !== 'active' || claim.state !== 'released' || !this.sameClaimIdentity(prior, claim)) {
+        throw new Error('invalid removed Channel Claim')
+      }
+      claims.set(claim.claimRef, claim)
+    }
+    const projectedClaims = new Map(claims)
+    for (const task of nextTasks) {
+      const prior = tasks.get(task.taskRef)
+      if (prior === undefined || prior.resolution !== task.resolution
+        || task.status !== this.deriveResolvedTaskStatus(task, projectedClaims.values())) {
+        throw new Error('invalid removed Channel Task')
+      }
+      tasks.set(task.taskRef, task)
+    }
+    for (const follow of removedFollows) {
+      if (follow.memberId !== memberId || follow.following) throw new Error('invalid removed Channel Follow')
+      follows.get(follow.threadRef)?.delete(memberId)
+    }
+    for (const delivery of canceled) {
+      const prior = deliveries.get(delivery.deliveryId)
+      if (prior?.state !== 'queued' || delivery.state !== 'canceled' || !this.sameDelivery(prior, delivery)) {
+        throw new Error('invalid canceled Channel Delivery')
+      }
+      deliveries.set(delivery.deliveryId, delivery)
+    }
+    joined.delete(memberId)
+  }
+
   private validateActivityDeliveries(
     operation: AgentTeamOperation, activity: AgentTeamActivity, queued: readonly AgentTeamDelivery[],
     follows: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>, members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
@@ -1427,11 +1620,27 @@ export class AgentTeamLedger {
   private assertSameChannelCreation(
     operation: AgentTeamOperation,
     request: AgentTeamAuthorizedCreateChannelRequest,
+    memberIds: readonly AgentTeamMemberId[],
   ): asserts operation is AgentTeamChannelCreatedOperation {
     if (operation.kind !== 'team/channel-created'
       || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId
-      || operation.data.channel.name !== request.name.trim()) {
+      || operation.data.channel.name !== request.name.trim()
+      || operation.data.channel.description !== request.description.trim()
+      || !this.sameList(operation.data.memberIds, memberIds)) {
+      this.throwRequestCollision(request.requestId)
+    }
+  }
+
+  private assertSameChannelMemberRemoval(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedRemoveChannelMemberRequest,
+  ): asserts operation is AgentTeamChannelMemberRemovedOperation {
+    if (operation.kind !== 'team/channel-member-removed'
+      || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId
+      || operation.data.channelRef !== request.channelRef
+      || operation.data.memberId !== request.memberId) {
       this.throwRequestCollision(request.requestId)
     }
   }
@@ -1442,6 +1651,7 @@ export class AgentTeamLedger {
   ): asserts operation is AgentTeamChannelMemberAddedOperation {
     if (operation.kind !== 'team/channel-member-added'
       || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId
       || operation.data.channelRef !== request.channelRef
       || operation.data.memberId !== request.memberId) {
       this.throwRequestCollision(request.requestId)
@@ -1650,6 +1860,40 @@ export class AgentTeamLedger {
     return channel
   }
 
+  /** Return every Thread ref whose Task belongs to one Channel. */
+  private channelThreadRefs(channelRef: AgentTeamChannelRef): Set<AgentTeamThreadRef> {
+    return new Set([...this.tasks.values()]
+      .filter(task => task.channelRef === channelRef)
+      .map(task => task.threadRef))
+  }
+
+  /** Normalize initial membership refs structurally without durable state checks. */
+  private normalizeInitialMemberIds(
+    memberIds: readonly AgentTeamMemberId[] | undefined,
+  ): readonly AgentTeamMemberId[] {
+    const unique = new Set(memberIds ?? [])
+    if (unique.size !== (memberIds?.length ?? 0)) {
+      throw new Error('initial Channel members contain duplicate Member refs')
+    }
+    return Object.freeze([...unique].sort())
+  }
+
+  /** Validate one durable Member may join one Workspace Channel. */
+  private assertJoinableMember(workspaceId: WorkspaceId, memberId: AgentTeamMemberId): void {
+    const member = this.requireMember(memberId)
+    if (member.workspaceId !== workspaceId) {
+      throw new Error(`Agent Member '${memberId}' does not belong to Workspace '${workspaceId}'`)
+    }
+    if (member.state !== 'enabled') {
+      throw new Error(`Agent Member '${memberId}' is ${member.state}; only enabled Members can join a Channel`)
+    }
+  }
+
+  /** Return whether one request id already committed a durable operation. */
+  hasCommitted(requestId: AgentTeamRequestId): boolean {
+    return this.byRequest.has(requestId)
+  }
+
   private async setMemberState(
     request: AgentTeamAuthorizedSetMemberStateRequest,
     state: 'enabled' | 'suspended',
@@ -1817,9 +2061,24 @@ export class AgentTeamLedger {
   }
 
   private projectJoin(operation: AgentTeamChannelMemberAddedOperation): void {
-    const members = this.memberships.get(operation.data.channelRef) ?? new Set<AgentTeamMemberId>()
-    members.add(operation.data.memberId)
-    this.memberships.set(operation.data.channelRef, members)
+    this.addChannelMember(operation.data.channelRef, operation.data.memberId)
+  }
+
+  private addChannelMember(channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): void {
+    const members = this.memberships.get(channelRef) ?? new Set<AgentTeamMemberId>()
+    members.add(memberId)
+    this.memberships.set(channelRef, members)
+  }
+
+  private projectChannelMemberRemoval(operation: AgentTeamChannelMemberRemovedOperation): void {
+    this.memberships.get(operation.data.channelRef)?.delete(operation.data.memberId)
+    for (const claim of operation.data.claims) this.claims.set(claim.claimRef, claim)
+    for (const task of operation.data.tasks) this.tasks.set(task.taskRef, task)
+    for (const follow of operation.data.follows) this.follows.get(follow.threadRef)?.delete(follow.memberId)
+    for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
+    for (const threadRef of this.channelThreadRefs(operation.data.channelRef)) {
+      this.invalidateThreadConfirmations(threadRef)
+    }
   }
 
   private joinResult(operation: AgentTeamChannelMemberAddedOperation): AgentTeamJoinChannelResult {
@@ -1831,7 +2090,24 @@ export class AgentTeamLedger {
   }
 
   private channelResult(operation: AgentTeamChannelCreatedOperation): AgentTeamCreateChannelResult {
-    return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel })
+    return Object.freeze({
+      receipt: this.receipt(operation),
+      channel: operation.data.channel,
+      memberIds: operation.data.memberIds,
+    })
+  }
+
+  private channelMemberRemovalResult(
+    operation: AgentTeamChannelMemberRemovedOperation,
+  ): AgentTeamRemoveChannelMemberResult {
+    return Object.freeze({
+      receipt: this.receipt(operation),
+      channelRef: operation.data.channelRef,
+      memberId: operation.data.memberId,
+      releasedClaims: operation.data.claims,
+      removedFollows: operation.data.follows,
+      canceledDeliveries: operation.data.deliveries,
+    })
   }
 
   private memberResult(

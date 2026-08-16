@@ -2,12 +2,14 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { IconAgentPresetOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { DirectoryFlowOwnerProps } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { AgentTeamAddMemberRequest } from '@deepseek-ai/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceRow } from './TeamWorkspaceRow.tsx'
 import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
+import { TeamChannelsPanel } from './TeamChannelsPanel.tsx'
 import css from './team.module.css'
 
-export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, createWorkspaceFromPath, renderSlot, t, useDirectoryFlow, useWorkspaces, loadMembers, addMember }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, createWorkspaceFromPath, renderSlot, t, useDirectoryFlow, useWorkspaces, loadMembers, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -25,6 +27,7 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
   const [flowOpen, setFlowOpen] = useState(false)
   const [flowBusy, setFlowBusy] = useState(false)
   const [flowError, setFlowError] = useState(false)
+  const [creatingAgents, setCreatingAgents] = useState<readonly AgentTeamAddMemberRequest[]>([])
 
   useEffect(() => {
     if (!flowAvailable) setFlowOpen(false)
@@ -84,8 +87,12 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
             <button type="button" role="tab" aria-selected={navigationState.activeTab === 'agents'} onClick={() => { selectWorkspaceTab('agents') }}>{t('agents')}</button>
           </div>
           {navigationState.activeTab === 'agents'
-            ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} addMember={addMember} t={t} />
-            : <p className={css.emptyWorkspace}>{t('channelsComingNext')}</p>}
+            ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} addMember={addMember} onCreatingChange={(request, creating) => {
+                setCreatingAgents(current => creating
+                  ? [...current.filter(item => item.requestId !== request.requestId), request]
+                  : current.filter(item => item.requestId !== request.requestId))
+              }} t={t} />
+            : <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} createChannel={createChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} t={t} />}
         </div>
       )}
       {flowAvailable && directoryFlow(flowOwner)}

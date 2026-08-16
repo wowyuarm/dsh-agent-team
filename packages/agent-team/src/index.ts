@@ -46,6 +46,8 @@ import type {
   AgentTeamMemberResult,
   AgentTeamRemoveMemberRequest,
   AgentTeamRemoveMemberResult,
+  AgentTeamRemoveChannelMemberRequest,
+  AgentTeamRemoveChannelMemberResult,
   AgentTeamOperationReceipt,
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
@@ -212,11 +214,14 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().status()
   }
 
-  /** Resolve Human authority and create one Channel in a registered Workspace. */
+  /** Resolve Human authority and create one Channel with its atomic initial Members. */
+  @Remote('createChannel')
   async createChannel(request: AgentTeamCreateChannelRequest): Promise<AgentTeamCreateChannelResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().createChannel({ ...request, actor: agentTeamHumanActor() })
+    const ledger = this.requireLedger()
+    if (!ledger.hasCommitted(request.requestId)) this.assertChannelMembersAvailable(request.memberIds)
+    const result = await ledger.createChannel({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
@@ -303,10 +308,28 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Add one Agent Member to a Channel without replaying historical Messages. */
+  @Remote('joinChannel')
   async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().joinChannel({ ...request, actor: agentTeamHumanActor() })
+    const ledger = this.requireLedger()
+    if (!ledger.hasCommitted(request.requestId)) this.assertChannelMembersAvailable([request.memberId])
+    const result = await ledger.joinChannel({ ...request, actor: agentTeamHumanActor() })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /**
+   * Remove one Agent Member from one Channel and clean only that Channel's
+   * Claims, Follows, and queued Deliveries while preserving every other fact.
+   */
+  @Remote('removeChannelMember')
+  async removeChannelMember(
+    request: AgentTeamRemoveChannelMemberRequest,
+  ): Promise<AgentTeamRemoveChannelMemberResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().removeChannelMember({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
@@ -378,6 +401,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Return a bounded Human-authorized Workspace view. */
+  @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().view(request)
@@ -398,6 +422,16 @@ export default class AgentTeam extends TypertRemoteService {
       const events = live?.session.events ?? (await this.ctx.sessionPersistence.inspect(member.sessionId)).events
       if (!this.eventsContainMessage(events, delivery.messageId)) {
         throw new Error(`admitted Delivery '${delivery.deliveryId}' has no target-session evidence`)
+      }
+    }
+  }
+
+  private assertChannelMembersAvailable(memberIds: readonly AgentTeamMemberId[] | undefined): void {
+    for (const memberId of memberIds ?? []) {
+      const member = this.requireLedger().getMember(memberId)
+      if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
+      if (this.memberStatus(member).availability !== 'active') {
+        throw new Error(`Agent Member '${memberId}' is not available for Channel membership`)
       }
     }
   }

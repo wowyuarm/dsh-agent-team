@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AgentTeamAddMemberRequest } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest } from '@deepseek-ai/dsh-agent-team/types'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotTestRuntime, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
@@ -63,7 +63,21 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
       availability: 'active', presence: 'available',
     },
   } }))
-  runtime.provide('remote', { agentTeam: { members, addMember }, $mount: async () => async () => {} } as never)
+  let channels: Array<Record<string, unknown>> = []
+  let memberships: Array<Record<string, unknown>> = []
+  const viewChannels = vi.fn(async () => ({ ok: true, value: {
+    channels, members: memberships, items: [], activities: [], cursor: 0, hasMore: false,
+  } }))
+  const createChannel = vi.fn(async (request: AgentTeamCreateChannelRequest) => {
+    const channel = { channelRef: 'channel:new', workspaceId: request.workspaceId, name: request.name,
+      description: request.description, createdAtSequence: 1 }
+    channels = [...channels, channel]
+    memberships = (request.memberIds ?? []).map(memberId => ({ channelRef: channel.channelRef, memberId }))
+    return { ok: true, value: { receipt: {}, channel, memberIds: request.memberIds ?? [] } }
+  })
+  const joinChannel = vi.fn(async () => ({ ok: true, value: {} }))
+  const removeChannelMember = vi.fn(async () => ({ ok: true, value: {} }))
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember }, $mount: async () => async () => {} } as never)
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [
@@ -84,7 +98,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   ))
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember }
 }
 
 describe('rendered Team mode composition', () => {
@@ -143,6 +157,35 @@ describe('rendered Team mode composition', () => {
     expect(b.addMember).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'w1', handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
     }))
+    await b.runtime.dispose()
+  })
+
+  it('creates a Channel atomically with selected available Members and manages committed membership', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    expect(await b.view.findByText('还没有 Channel')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '新建 Channel' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API implementation' } })
+    const builder = b.view.getByRole('checkbox', { name: /builder/ })
+    const unavailable = b.view.getByRole('checkbox', { name: /offline/ }) as HTMLInputElement
+    expect(unavailable.disabled).toBe(true)
+    fireEvent.click(builder)
+    b.createChannel.mockResolvedValueOnce({ ok: false, error: { message: 'connection lost' } } as never)
+    fireEvent.click(b.view.getByRole('button', { name: '创建 Channel' }))
+    expect((await b.view.findByRole('alert')).textContent).toContain('connection lost')
+    fireEvent.click(b.view.getByRole('button', { name: '创建 Channel' }))
+
+    expect(await b.view.findByText('# backend')).toBeTruthy()
+    expect(b.createChannel).toHaveBeenLastCalledWith(expect.objectContaining({
+      workspaceId: 'w1', name: 'backend', description: 'API implementation', memberIds: ['member:builder'],
+    }))
+    expect(b.createChannel.mock.calls[0]![0].requestId).toBe(b.createChannel.mock.calls[1]![0].requestId)
+    fireEvent.click(b.view.getByRole('button', { name: '管理成员' }))
+    const manager = b.view.getByLabelText('管理成员')
+    expect(within(manager).getByText('builder')).toBeTruthy()
+    fireEvent.click(within(manager).getByRole('button', { name: '移除' }))
+    await waitFor(() => { expect(b.removeChannelMember).toHaveBeenCalledWith(expect.objectContaining({ memberId: 'member:builder' })) })
     await b.runtime.dispose()
   })
 

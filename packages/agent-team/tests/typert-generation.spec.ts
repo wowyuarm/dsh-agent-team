@@ -15,16 +15,18 @@ interface GeneratedRemote {
 }
 
 describe('Agent Team generated Typert boundary', () => {
-  it('publishes the members and addMember Remote methods', () => {
+  it('publishes the complete Agent Team Client boundary', () => {
     const host = TYPERT as GeneratedHost
     const client = remote as unknown as GeneratedRemote
-    expect(host.invocations.map(invocation => invocation.method).sort()).toEqual([
+    const expected = [
       'addMember',
+      'createChannel',
+      'joinChannel',
       'members',
-    ])
-    expect(client.descriptors.map(invocation => invocation.method).sort()).toEqual([
-      'addMember',
-      'members',
-    ])
+      'removeChannelMember',
+      'view',
+    ]
+    expect(host.invocations.map(invocation => invocation.method).sort()).toEqual(expected)
+    expect(client.descriptors.map(invocation => invocation.method).sort()).toEqual(expected)
   })
 })

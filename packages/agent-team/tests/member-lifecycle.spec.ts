@@ -194,10 +194,11 @@ async function realHarness(): Promise<{
   ctx.storage.mount('domain', facility)
   ctx.provide('storageDomain', facility)
   const workspaceId = WorkspaceId('workspace:member-test')
+  const secondaryWorkspaceId = WorkspaceId('workspace:member-test-secondary')
   const archivedSessionIds: SessionId[] = []
   const archive = { failures: 0 }
   ctx.provide('workspaceRegistry', {
-    get: (id: typeof workspaceId) => id === workspaceId
+    get: (id: typeof workspaceId) => id === workspaceId || id === secondaryWorkspaceId
       ? { id, path: project, attachSession: async () => {} }
       : undefined,
     list: () => [],
@@ -300,12 +301,49 @@ describe('Agent Team Member real composition', () => {
     await remounted.dispose()
   })
 
+  it('creates one Channel with atomic initial memberships and rejects invalid sets without a partial Channel', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    const first = await ctx.agentTeam.addMember({ requestId: requestId('request:atomic-first'), workspaceId,
+      handle: 'atomic-first', presetId: 'team-member', description: 'First initial member' })
+    const second = await ctx.agentTeam.addMember({ requestId: requestId('request:atomic-second'), workspaceId,
+      handle: 'atomic-second', presetId: 'team-member', description: 'Second initial member' })
+    const request = { requestId: requestId('request:atomic-channel'), workspaceId, name: 'atomic',
+      description: 'Atomic initial membership', memberIds: [second.status.member.memberId, first.status.member.memberId] }
+    const created = await ctx.agentTeam.createChannel(request)
+    expect(created.memberIds).toEqual([first.status.member.memberId, second.status.member.memberId].sort())
+    expect(ctx.agentTeam.view({ workspaceId }).members).toEqual(created.memberIds.map(memberId => ({
+      channelRef: created.channel.channelRef, memberId,
+    })))
+    await expect(ctx.agentTeam.createChannel(request)).resolves.toEqual(created)
+    const before = ctx.agentTeam.status()
+    await expect(ctx.agentTeam.createChannel({ requestId: requestId('request:duplicate-initial'), workspaceId,
+      name: 'invalid', description: 'Duplicate set', memberIds: [first.status.member.memberId, first.status.member.memberId] }))
+      .rejects.toThrow(/duplicate/)
+    const crossWorkspace = await ctx.agentTeam.addMember({ requestId: requestId('request:atomic-cross'),
+      workspaceId: WorkspaceId('workspace:member-test-secondary'), handle: 'atomic-cross',
+      presetId: 'team-member', description: 'Cross Workspace member' })
+    const beforeCrossWorkspace = ctx.agentTeam.status()
+    await expect(ctx.agentTeam.createChannel({ requestId: requestId('request:cross-workspace-initial'), workspaceId,
+      name: 'invalid-cross', description: 'Cross Workspace set', memberIds: [crossWorkspace.status.member.memberId] }))
+      .rejects.toThrow(/does not belong to Workspace/)
+    expect(ctx.agentTeam.status()).toEqual(beforeCrossWorkspace)
+    expect(ctx.agentTeam.view({ workspaceId }).channels).toHaveLength(1)
+    expect(ctx.agentTeam.status().channelCount).toBe(before.channelCount)
+    const beforeRestart = ctx.agentTeam.view({ workspaceId })
+    await teamFiber.dispose()
+    const remounted = await ctx.plugin(AgentTeam)
+    expect(ctx.agentTeam.view({ workspaceId })).toEqual(beforeRestart)
+    ctx.agentTeam.validateLedger()
+    await remounted.dispose()
+  })
+
   it('joins without history replay, admits one mentioned Message, and enforces Agent view membership', async () => {
     const { ctx, workspaceId } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({
       requestId: requestId('request:delivery-channel'),
       workspaceId,
       name: 'delivery',
+      description: 'Test channel',
     })
     await ctx.agentTeam.sendMessage({
       requestId: requestId('request:historical-message'),
@@ -411,7 +449,7 @@ describe('Agent Team Member real composition', () => {
   it('coordinates two Members through Direction Claims and revision-fenced replies', async () => {
     const { ctx, workspaceId, teamFiber } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({
-      requestId: requestId('request:claims-channel'), workspaceId, name: 'claims',
+      requestId: requestId('request:claims-channel'), workspaceId, name: 'claims', description: 'Test channel',
     })
     const first = await ctx.agentTeam.addMember({ requestId: requestId('request:claims-first'), workspaceId,
       handle: 'first', presetId: 'team-member', description: 'First claimant' })
@@ -523,7 +561,7 @@ describe('Agent Team Member real composition', () => {
   it('controls Thread attention with Follow and one-use mention confirmation', async () => {
     const { ctx, workspaceId, teamFiber } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({
-      requestId: requestId('request:attention-channel'), workspaceId, name: 'attention',
+      requestId: requestId('request:attention-channel'), workspaceId, name: 'attention', description: 'Test channel',
     })
     const first = await ctx.agentTeam.addMember({ requestId: requestId('request:attention-first'), workspaceId,
       handle: 'attention-first', presetId: 'team-member', description: 'Attention sender' })
@@ -670,9 +708,58 @@ describe('Agent Team Member real composition', () => {
     await remounted.dispose()
   })
 
+  it('removes one Channel membership while preserving the Member and its other Channel work', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    const worker = await ctx.agentTeam.addMember({ requestId: requestId('request:scoped-worker'), workspaceId,
+      handle: 'scoped-worker', presetId: 'team-member', description: 'Works in two channels' })
+    const memberId = worker.status.member.memberId
+    const first = await ctx.agentTeam.createChannel({ requestId: requestId('request:scoped-first'), workspaceId,
+      name: 'first', description: 'First scope', memberIds: [memberId] })
+    const second = await ctx.agentTeam.createChannel({ requestId: requestId('request:scoped-second'), workspaceId,
+      name: 'second', description: 'Second scope', memberIds: [memberId] })
+    const firstTask = await ctx.agentTeam.sendMessage({ requestId: requestId('request:scoped-first-task'), workspaceId,
+      channelRef: first.channel.channelRef, body: 'first task', recipients: [memberId] })
+    const secondTask = await ctx.agentTeam.sendMessage({ requestId: requestId('request:scoped-second-task'), workspaceId,
+      channelRef: second.channel.channelRef, body: 'second task', recipients: [memberId] })
+    const agent = ctx.agents.get(worker.status.member.sessionId)!
+    await executeTool(ctx, agent, 'call:scoped-first-claim', 'team_claim', {
+      workspaceId, taskRef: firstTask.task.taskRef, action: 'claim', direction: 'first direction',
+    })
+    await executeTool(ctx, agent, 'call:scoped-second-claim', 'team_claim', {
+      workspaceId, taskRef: secondTask.task.taskRef, action: 'claim', direction: 'second direction',
+    })
+    await ctx.agentTeam.suspendMember({ requestId: requestId('request:scoped-suspend'), memberId })
+    const queuedFirst = await ctx.agentTeam.sendMessage({ requestId: requestId('request:scoped-first-queued'), workspaceId,
+      channelRef: first.channel.channelRef, body: 'queued first', recipients: [memberId] })
+    const queuedSecond = await ctx.agentTeam.sendMessage({ requestId: requestId('request:scoped-second-queued'), workspaceId,
+      channelRef: second.channel.channelRef, body: 'queued second', recipients: [memberId] })
+    const removed = await ctx.agentTeam.removeChannelMember({ requestId: requestId('request:scoped-remove'), workspaceId,
+      channelRef: first.channel.channelRef, memberId })
+    expect(removed.releasedClaims).toEqual([expect.objectContaining({ taskRef: firstTask.task.taskRef, state: 'released' })])
+    expect(removed.canceledDeliveries.map(item => item.deliveryId)).toContain(queuedFirst.deliveries[0]!.deliveryId)
+    expect(removed.canceledDeliveries.map(item => item.deliveryId)).not.toContain(queuedSecond.deliveries[0]!.deliveryId)
+    expect(ctx.agentTeam.view({ workspaceId }).members).toEqual([
+      { channelRef: second.channel.channelRef, memberId },
+    ])
+    expect(ctx.agentTeam.members()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ member: expect.objectContaining({ memberId, state: 'suspended' }) }),
+    ]))
+    await ctx.agentTeam.resumeMember({ requestId: requestId('request:scoped-resume'), memberId })
+    const resumed = ctx.agents.get(worker.status.member.sessionId)!
+    expect(ctx.agentTeam.listClaimsForAgent(resumed, { workspaceId, taskRef: secondTask.task.taskRef }).claims)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ direction: 'second direction', state: 'active' })]))
+    const beforeRestart = ctx.agentTeam.view({ workspaceId })
+    ctx.agentTeam.validateLedger()
+    await teamFiber.dispose()
+    const remounted = await ctx.plugin(AgentTeam)
+    expect(ctx.agentTeam.view({ workspaceId })).toEqual(beforeRestart)
+    ctx.agentTeam.validateLedger()
+    await remounted.dispose()
+  })
+
   it('closes, reopens, accepts, and removes work without losing history', async () => {
     const { ctx, workspaceId } = await realHarness()
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:finish-channel'), workspaceId, name: 'finish' })
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:finish-channel'), workspaceId, name: 'finish' , description: 'Test channel'})
     const worker = await ctx.agentTeam.addMember({ requestId: requestId('request:finish-worker'), workspaceId,
       handle: 'finish-worker', presetId: 'team-member', description: 'Finishes work' })
     const peer = await ctx.agentTeam.addMember({ requestId: requestId('request:finish-peer'), workspaceId,
@@ -745,7 +832,7 @@ describe('Agent Team Member real composition', () => {
 
   it('settles concurrent claim/close and send/remove into legal durable projections', async () => {
     const { ctx, workspaceId } = await realHarness()
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:race-channel'), workspaceId, name: 'race' })
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:race-channel'), workspaceId, name: 'race' , description: 'Test channel'})
     const first = await ctx.agentTeam.addMember({ requestId: requestId('request:race-first'), workspaceId,
       handle: 'race-first', presetId: 'team-member', description: 'Race first' })
     const second = await ctx.agentTeam.addMember({ requestId: requestId('request:race-second'), workspaceId,
@@ -794,7 +881,7 @@ describe('Agent Team Member real composition', () => {
   it('removes a Member during a running Agent interval and reaches quiescence', async () => {
     const { ctx, workspaceId, adapter, slow } = await realHarness()
     adapter.responses.push(slowToolResponse())
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:remove-running-channel'), workspaceId, name: 'remove-running' })
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:remove-running-channel'), workspaceId, name: 'remove-running' , description: 'Test channel'})
     const member = await ctx.agentTeam.addMember({ requestId: requestId('request:remove-running-member'), workspaceId,
       handle: 'remove-running', presetId: 'team-member', description: 'Removed while running' })
     await ctx.agentTeam.joinChannel({ requestId: requestId('request:remove-running-join'), workspaceId,
@@ -818,7 +905,7 @@ describe('Agent Team Member real composition', () => {
   it('projects real loop error until the next loop starts, then recovers through working to available', async () => {
     const { ctx, workspaceId, adapter, slow } = await realHarness()
     adapter.responses.push(new Error('injected model failure'), slowToolResponse())
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:presence-channel'), workspaceId, name: 'presence' })
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:presence-channel'), workspaceId, name: 'presence', description: 'Presence channel' })
     const member = await ctx.agentTeam.addMember({ requestId: requestId('request:presence-member'), workspaceId,
       handle: 'presence', presetId: 'team-member', description: 'Presence transitions' })
     await ctx.agentTeam.joinChannel({ requestId: requestId('request:presence-join'), workspaceId,
@@ -858,7 +945,7 @@ describe('Agent Team Member real composition', () => {
     const { ctx, workspaceId, adapter, slow } = await realHarness()
     adapter.responses.push(slowToolResponse(), textResponse('finished after steering'))
     const channel = await ctx.agentTeam.createChannel({
-      requestId: requestId('request:running-channel'), workspaceId, name: 'running',
+      requestId: requestId('request:running-channel'), workspaceId, name: 'running', description: 'Test channel',
     })
     const member = await ctx.agentTeam.addMember({
       requestId: requestId('request:running-member'), workspaceId,
@@ -899,7 +986,7 @@ describe('Agent Team Member real composition', () => {
   it('recovers existing Inbox evidence after the admitted ledger write fails', async () => {
     const { ctx, workspaceId, teamFiber, pool } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({
-      requestId: requestId('request:recovery-channel'), workspaceId, name: 'recovery',
+      requestId: requestId('request:recovery-channel'), workspaceId, name: 'recovery', description: 'Test channel',
     })
     const member = await ctx.agentTeam.addMember({
       requestId: requestId('request:recovery-member'), workspaceId,
@@ -962,6 +1049,7 @@ describe('Agent Team Member real composition', () => {
       requestId: requestId('request:channel-after-damage'),
       workspaceId,
       name: 'still-usable',
+      description: 'Test channel',
     })).resolves.toMatchObject({ channel: { name: 'still-usable' } })
     await remounted.dispose()
   })

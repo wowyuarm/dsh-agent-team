@@ -26,7 +26,20 @@ export const zh = {
   statusWorking: '工作中',
   statusError: '错误',
   statusUnavailable: '不可用',
-  channelsComingNext: 'Channels 将在下一步接入',
+  addChannel: '新建 Channel',
+  channelName: '名称',
+  channelDescription: '说明',
+  initialMembers: '初始成员',
+  createChannel: '创建 Channel',
+  creatingChannel: '正在创建…',
+  loadingChannels: '正在加载 Channels…',
+  emptyChannels: '还没有 Channel',
+  manageMembers: '管理成员',
+  memberCount: '{count} 位成员',
+  addToChannel: '添加',
+  removeFromChannel: '移除',
+  memberUnavailableReason: '当前不可用，不能加入 Channel',
+  memberCreatingReason: '正在创建，完成前不能加入 Channel',
 } as const
 
 export const en = {
@@ -57,7 +70,20 @@ export const en = {
   statusWorking: 'Working',
   statusError: 'Error',
   statusUnavailable: 'Unavailable',
-  channelsComingNext: 'Channels are coming next',
+  addChannel: 'New Channel',
+  channelName: 'Name',
+  channelDescription: 'Description',
+  initialMembers: 'Initial members',
+  createChannel: 'Create Channel',
+  creatingChannel: 'Creating…',
+  loadingChannels: 'Loading Channels…',
+  emptyChannels: 'No Channels yet',
+  manageMembers: 'Manage members',
+  memberCount: '{count} members',
+  addToChannel: 'Add',
+  removeFromChannel: 'Remove',
+  memberUnavailableReason: 'Unavailable members cannot join a Channel',
+  memberCreatingReason: 'Creating; cannot join a Channel until complete',
 } as const
 
 export type TeamKey = keyof typeof zh

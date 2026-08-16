@@ -13,14 +13,14 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 export const name = 'command-agent-team'
 export const inject = ['agentTeam', 'commands']
 
-export const USAGE = 'usage: /team status | /team member add <workspaceId> <handle> <presetId> <description> | /team member suspend|resume|remove <memberRef> | /team channel create <workspaceId> <name> | /team channel join <workspaceId> <channelRef> <memberRef> | /team task accept|close|reopen <workspaceId> <taskRef> | /team send <workspaceId> <channelRef> [--mention <memberRef,...> --] <body> | /team view <workspaceId> [channelRef] [limit] [cursor]'
+export const USAGE = 'usage: /team status | /team member add <workspaceId> <handle> <presetId> <description> | /team member suspend|resume|remove <memberRef> | /team channel create <workspaceId> <name> -- <description> | /team channel join|leave <workspaceId> <channelRef> <memberRef> | /team task accept|close|reopen <workspaceId> <taskRef> | /team send <workspaceId> <channelRef> [--mention <memberRef,...> --] <body> | /team view <workspaceId> [channelRef] [limit] [cursor]'
 
 /** Register `/team` and derive business idempotency from commandId. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.commands.register({
     name: 'team',
     description: 'Inspect and manage the Agent Team',
-    input: { hint: 'status | member add|suspend|resume|remove | channel create|join | task accept|close|reopen | send | view' },
+    input: { hint: 'status | member add|suspend|resume|remove | channel create|join|leave | task accept|close|reopen | send | view' },
     handler: async ({ rawInput, commandId }) => {
       const parts = rawInput.trim().split(/\s+/)
       if (parts.length === 1 && (parts[0] === '' || parts[0] === 'status')) {
@@ -84,11 +84,26 @@ export function apply(ctx: Context): void {
             text: `Agent Member ${result.memberId} joined Channel ${result.channelRef}`,
           }
         }
-        if (parts[0] === 'channel' && parts[1] === 'create' && parts.length >= 4) {
+        if (parts[0] === 'channel' && parts[1] === 'leave' && parts.length === 5) {
+          const result = await ctx.agentTeam.removeChannelMember({
+            requestId: commandId as unknown as AgentTeamRequestId,
+            workspaceId: WorkspaceId(parts[2]!),
+            channelRef: parts[3] as AgentTeamChannelRef,
+            memberId: parts[4] as AgentTeamMemberId,
+          })
+          return {
+            kind: 'success' as const,
+            text: `Agent Member ${result.memberId} left Channel ${result.channelRef}; released ${result.releasedClaims.length} Claims; canceled ${result.canceledDeliveries.length} Deliveries`,
+          }
+        }
+        if (parts[0] === 'channel' && parts[1] === 'create' && parts.length >= 6) {
+          const separator = parts.indexOf('--', 3)
+          if (separator <= 3 || separator >= parts.length - 1) throw new Error(USAGE)
           const result = await ctx.agentTeam.createChannel({
             requestId: commandId as unknown as AgentTeamRequestId,
             workspaceId: WorkspaceId(parts[2]!),
-            name: parts.slice(3).join(' '),
+            name: parts.slice(3, separator).join(' '),
+            description: parts.slice(separator + 1).join(' '),
           })
           return {
             kind: 'success' as const,
