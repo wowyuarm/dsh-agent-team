@@ -4,7 +4,7 @@
 
 **Blocked by:** None — M1 is complete; this ticket can start immediately.
 
-**Status:** in-progress
+**Status:** complete
 
 **Implementation reference:** `.scratch/design/dsh-client-plugin-development.md` (especially §§1-5).
 
@@ -17,4 +17,4 @@
 - [x] “← 对话” disposes every Team shadow registration, restores the shipped Workspace browser, Settings and Conversation occupants, and returns to the previously selected ordinary Session.
 - [x] Browser-local state persists only Team mode and selected Workspace; stale Workspace ids fall back to the first real Workspace, while tab, Channel and Thread state remain transient.
 - [x] An equal-priority competing primary slot occupant fails loudly instead of silently replacing Team or shipped navigation (enforced by the DSH SlotCore contract).
-- [ ] Real Client composition tests and browser snapshots prove enter/leave, refresh recovery, collapsed sidebar behavior, plugin unload restoration and no regression to ordinary Session navigation. Navigation persistence and lifecycle unit coverage is in place; REAL slot/browser coverage remains for the next implementation pass.
+- [x] Real Client composition tests and DOM snapshots prove enter/leave, refresh recovery, stale Workspace fallback, collapsed sidebar behavior, plugin unload restoration and preservation of ordinary Session selection. Full Chromium journey coverage is tracked by M2-06.

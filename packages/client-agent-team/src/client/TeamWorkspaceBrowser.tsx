@@ -6,7 +6,7 @@ import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceRow } from './TeamWorkspaceRow.tsx'
 import css from './team.module.css'
 
-export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, createWorkspaceFromPath, renderSlot, t, useWorkspaces }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, createWorkspaceFromPath, renderSlot, t, useDirectoryFlow, useWorkspaces }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -20,9 +20,14 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, create
     }
   }, [navigationState.mode, selected, selectedId, selectWorkspace])
 
+  const flowAvailable = useDirectoryFlow(occupied => occupied)
   const [flowOpen, setFlowOpen] = useState(false)
   const [flowBusy, setFlowBusy] = useState(false)
   const [flowError, setFlowError] = useState(false)
+
+  useEffect(() => {
+    if (!flowAvailable) setFlowOpen(false)
+  }, [flowAvailable])
   const directoryFlow = (owner: DirectoryFlowOwnerProps) => renderSlot('sidebar.workspaces.directoryFlow', owner)
   const flowOwner: DirectoryFlowOwnerProps = {
     open: flowOpen,
@@ -51,9 +56,11 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, create
     <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
       <div className={css.workspaceHeader}>
         <span>{t('workspaces')}</span>
-        <button type="button" className={css.iconButton} onClick={() => { setFlowOpen(true) }} aria-label={t('addWorkspace')} title={t('addWorkspace')}>
-          <IconPlusOutline16 size={15} />
-        </button>
+        {flowAvailable && (
+          <button type="button" className={css.iconButton} onClick={() => { setFlowOpen(true) }} aria-label={t('addWorkspace')} title={t('addWorkspace')}>
+            <IconPlusOutline16 size={15} />
+          </button>
+        )}
       </div>
       <div className={css.workspaceList}>
         {workspaces.map(workspace => (
@@ -69,7 +76,7 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, create
         ))}
         {workspaces.length === 0 && <p className={css.emptyWorkspace}>{t('empty')}</p>}
       </div>
-      {directoryFlow(flowOwner)}
+      {flowAvailable && directoryFlow(flowOwner)}
       {flowError && <p className={css.error} role="alert">{t('workspaceCreateFailed')}</p>}
     </section>
   )

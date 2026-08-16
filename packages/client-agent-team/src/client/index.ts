@@ -54,6 +54,14 @@ function registerModeShadow<T extends object>(
           inject: () => ({
             navigation,
             ...navigation.actions(),
+            ...(name === 'sidebar.workspaces' ? {
+              hooks: {
+                directoryFlow: {
+                  getSnapshot: () => ctx.slots.entries('sidebar.workspaces.directoryFlow').length > 0,
+                  subscribe: (listener: () => void) => ctx.slots.subscribe('sidebar.workspaces.directoryFlow', listener),
+                },
+              },
+            } : {}),
           }),
         } as never, component as never)
       } else if (!active && dispose !== undefined) {

@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin } from './scripts/standard-decorators.ts'
@@ -19,8 +20,20 @@ export default defineConfig({
     // Prefer .ts over stray .js build artifacts that linger in the harness
     // checkout's src trees; keeps this repo independent of their cleanup.
     extensions: ['.mts', '.ts', '.mjs', '.js', '.json'],
+    // Harness sources live in a sibling workspace; rendered tests must still
+    // share one React dispatcher with this repository's Testing Library.
+    dedupe: ['react', 'react-dom'],
+    alias: [
+      { find: /^react$/, replacement: resolve('node_modules/react/index.js') },
+      { find: /^react\/jsx-runtime$/, replacement: resolve('node_modules/react/jsx-runtime.js') },
+      { find: /^react-dom$/, replacement: resolve('node_modules/react-dom/index.js') },
+      { find: /^react-dom\/(.*)$/, replacement: resolve('node_modules/react-dom/$1') },
+      { find: /^@testing-library\/react$/, replacement: resolve('node_modules/@testing-library/react/dist/index.js') },
+      { find: /^@testing-library\/dom$/, replacement: resolve('node_modules/@testing-library/dom/dist/index.js') },
+      { find: /^use-sync-external-store\/(.*)$/, replacement: resolve('node_modules/use-sync-external-store/$1') },
+    ],
   },
   test: {
-    include: ['packages/*/tests/**/*.spec.ts'],
+    include: ['packages/*/tests/**/*.spec.ts', 'packages/*/tests/**/*.client.spec.tsx'],
   },
 })

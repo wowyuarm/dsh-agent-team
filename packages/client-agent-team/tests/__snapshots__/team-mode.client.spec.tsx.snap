@@ -1,0 +1,171 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`rendered Team mode composition > restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly 1`] = `
+<div>
+  <div
+    data-slot="root"
+    style="display: contents;"
+  >
+    <button
+      data-test-control="true"
+      type="button"
+    >
+      Toggle fixture sidebar
+    </button>
+    <div
+      data-slot="sidebar"
+      style="display: contents;"
+    >
+      <div
+        class="root collapsed railIn quietBars"
+        style=""
+      >
+        <div
+          class="logoRow"
+        >
+          <button
+            aria-label="打开侧边栏"
+            class="iconButton toggle"
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              class="railFish"
+              data-content="965fe321"
+              fill="none"
+              height="17.6580310880829"
+              viewBox="0 0 23.16 17.04"
+              width="24"
+            />
+            <svg
+              class="panelIcon"
+              data-content="35f95b0c"
+              fill="none"
+              height="18"
+              viewBox="0 0 16 16"
+              width="18"
+              xmlns="http://www.w3.org/2000/svg"
+            />
+          </button>
+        </div>
+        <button
+          aria-label="新建会话"
+          class="newSession"
+          type="button"
+        >
+          <svg
+            data-content="c0ce4dcc"
+            fill="none"
+            height="18"
+            viewBox="0 0 16 16"
+            width="18"
+            xmlns="http://www.w3.org/2000/svg"
+          />
+        </button>
+        <div
+          class="regionArea"
+        >
+          <div
+            data-slot="sidebar.workspaces"
+            style="display: contents;"
+          >
+            <div
+              aria-label="工作区"
+              class="railWorkspace"
+            >
+              <span
+                class="railMark"
+              >
+                <svg
+                  data-content="56ac24c5"
+                  fill="none"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  width="16"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </span>
+            </div>
+          </div>
+        </div>
+        <div
+          class="footArea"
+        >
+          <div
+            class="footerActions"
+          >
+            <div
+              data-slot="sidebar.footer.action"
+              style="display: contents;"
+            >
+              <button
+                aria-label="成员"
+                class="footerAction"
+                disabled=""
+                type="button"
+              >
+                <svg
+                  data-content="4d654e17"
+                  fill="none"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  width="18"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </button>
+              <button
+                aria-label="← 对话"
+                class="footerAction"
+                data-team-action="leave"
+                type="button"
+              >
+                <svg
+                  data-content="710b3749"
+                  fill="none"
+                  height="18"
+                  viewBox="0 0 14 14"
+                  width="18"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </button>
+            </div>
+          </div>
+          <div
+            class="settingsArea"
+          >
+            <div
+              data-slot="sidebar.settings"
+              style="display: contents;"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div
+      data-slot="conversation"
+      style="display: contents;"
+    >
+      <main
+        class="teamConversation"
+        data-team-conversation="true"
+      >
+        <div
+          class="welcome"
+        >
+          <span
+            class="welcomeEyebrow"
+          >
+            团队模式
+          </span>
+          <h1>
+            团队
+          </h1>
+          <p>
+            选择工作区 · Alpha
+          </p>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+`;

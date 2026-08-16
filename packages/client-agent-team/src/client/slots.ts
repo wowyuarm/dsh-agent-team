@@ -1,4 +1,4 @@
-import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRenderSlots, PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
 
 export interface TeamNavigationSource {
@@ -10,7 +10,7 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & PropsRenderSlots<'sidebar.workspaces.directoryFlow'>
   & PropsLocale<'team'>
   & TeamNavigationActions
-  & { navigation: TeamNavigationSource }
+  & { navigation: TeamNavigationSource; useDirectoryFlow: SnapshotSelectorHook<boolean> }
 
 export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & {
   navigation: TeamNavigationSource

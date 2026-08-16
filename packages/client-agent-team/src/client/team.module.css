@@ -123,7 +123,7 @@
 }
 
 .error {
-  color: var(--dsw-alias-text-danger);
+  color: var(--dsw-alias-state-error-primary);
   font-size: 12px;
   margin: 8px;
 }
