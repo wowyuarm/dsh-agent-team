@@ -91,7 +91,7 @@ M1 永久保留 ledger，不做删除或压缩。M3 只有在 snapshot 能验证
 
 MessageSource 只表达 provenance，不能授权。Agent tool 不接受 senderId；adapter 把 exact live `exec.agent` 交给 `ctx.agentTeam`，Service 通过 member/session binding 解析 actor，并在执行每个 operation 时重新校验 actor、Workspace、Channel membership、Task 状态和 Claim ownership。
 
-Agent Member 只能 view/send/claim/follow 自己加入的 Channels。Human command adapter提供当前 Harness human authority；管理权限来自 Human Member actor kind，不来自 command text 或 source fields。
+Agent Member 只能 view/send/claim/follow 自己加入的 Channels。M1 Human command adapter 只覆盖状态、成员、Channel、顶层发送和 Task 生命周期；Human 对 Claim/Follow 的管理入口留给 M2 Client UI，由 Service 提供独立的 Human authority API。管理权限来自 Human Member actor kind，不来自 command text 或 source fields。
 
 Refs 带对象类型并跨重启稳定。Service 拒绝跨类型、未知、inactive、跨 Workspace 或 actor 不可见的 ref。正文中的 `@handle` 只是展示文本；投递只使用结构化 member refs。
 
@@ -172,25 +172,23 @@ Compaction 可以替换成员 session 的 model surface，但原始 `user/messag
 
 `team_view` 提供 actor-authorized bounded reads。Refs 跨重启稳定；cursor 是最后读取的 ledger sequence，append 不造成漏读或重复，不提供 snapshot isolation；默认 limit 20、最大 100，结果总带 current revision。
 
-`team_claim` 支持 `list | claim | done | release`。Agent 只能修改自己的 Claim；Human command 通过 Service 的 human authority 操作任意 Claim。同 Direction 的 active Claim 由串行 operation validation 原子拒绝。
+`team_claim` 支持 `list | claim | done | release`。Agent 只能修改自己的 Claim；M2 Client UI 需要通过 Service 的 Human authority API 操作任意 Claim。同 Direction 的 active Claim 由串行 operation validation 原子拒绝。
 
-`team_follow` 支持 `follow | unfollow | status`，只操作 actor 自己在可见 Thread 上的 Follow。
+`team_follow` 支持 `follow | unfollow | status`，Agent 工具只操作 actor 自己在可见 Thread 上的 Follow；Human Follow 管理入口留给 M2 Client UI。
 
 Tool canonical JSON value 与 model-facing render 分离。工具 result 只报告 ledger receipt 和当前 projection，不是新的权威事实。
 
 ## 13. `/team` command
 
-M1 的 `/team` 是完整机制的 human adapter，至少覆盖：
+M1 的 `/team` 是验证 Host 机制的临时 human adapter，不是最终 UX；当前覆盖：
 
 ```text
 /team status
 /team view
 /team member add|suspend|resume|remove
-/team channel create|add-member|remove-member
+/team channel create|join
 /team send
-/team claim list|claim|done|release
 /team task accept|close|reopen
-/team follow status|follow|unfollow
 ```
 
 Command 直接调用 `ctx.agentTeam`，不产生模型 turn。`command/run`/`command/done` 记录命令执行；业务结果由 Team Operation ledger记录。M2 UI 调用相同 Service intents，不维护第二套规则。

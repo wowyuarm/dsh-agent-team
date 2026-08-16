@@ -452,7 +452,8 @@ export class AgentTeamLedger {
       }
       this.assertHumanActor(request.actor)
       const channel = this.requireChannel(request.workspaceId, request.channelRef)
-      if (request.body.trim() === '') throw new Error('message body must not be empty')
+      const body = request.body.trim()
+      if (body === '') throw new Error('message body must not be empty')
       const sequence = this.nextSequence()
       const taskRef = this.ref('task')
       const threadRef = this.ref('thread')
@@ -469,7 +470,7 @@ export class AgentTeamLedger {
         threadRef,
         taskRef,
         sender: request.actor.memberId,
-        body: request.body,
+        body,
         topLevel: true,
         sequence,
       })
@@ -1549,7 +1550,7 @@ export class AgentTeamLedger {
       || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId
       || operation.data.message.channelRef !== request.channelRef
-      || operation.data.message.body !== request.body
+      || operation.data.message.body !== request.body.trim()
       || !this.sameList(storedRecipients, recipients)) {
       this.throwRequestCollision(request.requestId)
     }

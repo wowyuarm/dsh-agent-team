@@ -293,10 +293,13 @@ describe('AgentTeam', () => {
       requestId: requestId('request:idempotent-send'),
       workspaceId: alpha,
       channelRef: first.channel.channelRef,
-      body: 'same body',
+      body: '  same body  ',
     }
     const sent = await test.ctx.agentTeam.sendMessage(sendRequest)
+    expect(sent.message.body).toBe('same body')
     await expect(test.ctx.agentTeam.sendMessage(sendRequest)).resolves.toEqual(sent)
+    await expect(test.ctx.agentTeam.sendMessage({ ...sendRequest, body: 'same body' }))
+      .resolves.toEqual(sent)
     await expect(test.ctx.agentTeam.sendMessage({ ...sendRequest, body: 'changed body' }))
       .rejects.toThrow(/different operation or payload/)
     expect(test.ctx.agentTeam.status().operationCount).toBe(3)
