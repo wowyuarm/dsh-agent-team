@@ -6,13 +6,16 @@
   "type": "module",
   "files": [
     "cordis.patch.yml",
-    "packages/*/lib",
+    "agent-presets/team-member/agent.cordis.yml",
+    "packages/*/lib/**/*",
     "packages/*/package.json",
     "README.md",
     "README.zh.md"
   ],
   "scripts": {
     "typecheck": "tsc -p packages/agent-team/tsconfig.json && tsc -p packages/command-agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json",
+    "build": "tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/command-agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json",
+    "prepack": "npm run build",
     "test": "vitest run",
     "lint": "eslint ."
   },
@@ -20,6 +23,11 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-agent-team": "workspace:^",
+    "@deepseek-ai/dsh-command-agent-team": "workspace:^",
+    "@deepseek-ai/dsh-tool-agent-team": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

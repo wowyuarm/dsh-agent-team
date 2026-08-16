@@ -48,6 +48,12 @@ const harnessTypes = Object.fromEntries(
   Object.entries(harnessSrc).map(([key, value]) => [key, value.map(toTypes)]),
 )
 
+const buildOwn = {
+  '@deepseek-ai/dsh-agent-team': ['./packages/agent-team/lib/types/index.d.ts'],
+  '@deepseek-ai/dsh-agent-team/invariant': ['./packages/agent-team/lib/types/invariant.d.ts'],
+  '@deepseek-ai/dsh-agent-team/types': ['./packages/agent-team/lib/types/types.d.ts'],
+}
+
 const shared = {
   target: 'es2024',
   module: 'esnext',
@@ -82,4 +88,9 @@ writeFileSync(new URL('../tsconfig.types.json', import.meta.url), `${JSON.string
   '// keeps the vendor strictness deltas out of this repo\'s gate. Own packages\n' +
   '// still resolve to src and compile fully strict in-project.\n')))
 
-console.log(`wrote tsconfig.json (${Object.keys(harnessSrc).length} harness src mappings) and tsconfig.types.json`)
+writeFileSync(new URL('../tsconfig.build-deps.json', import.meta.url), `${JSON.stringify({
+  compilerOptions: { ...shared, paths: { ...buildOwn, ...harnessTypes } },
+}, null, 2)}\n`.replace(/^/, header(
+  '// Build facade: own cross-package imports resolve to previously built declarations.\n')))
+
+console.log(`wrote tsconfig.json (${Object.keys(harnessSrc).length} harness src mappings), tsconfig.types.json, and tsconfig.build-deps.json`)

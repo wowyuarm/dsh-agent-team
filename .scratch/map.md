@@ -1,7 +1,7 @@
 # dsh-agent-team 工作区索引
 
 日期：2026-08-15
-状态：D1-D26 与 M1 架构已冻结；两轮原型验证完成；M1 已拆为 9 个本地 tracer-bullet tickets。Issue 01-08 已完成，当前 frontier 是 issue 09。
+状态：D1-D26 与 M1 架构已冻结；两轮原型验证完成；M1 已拆为 9 个本地 tracer-bullet tickets。Issue 01-09 已完成；Agent Team M1 已交付。
 位置：本仓库 `.scratch/`（独立项目 dsh-agent-team；探索性内容，不走 docs gate）。
 
 ## 目的
@@ -51,8 +51,8 @@
 
 ## M1 Ticket Frontier
 
-- **已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/08-recover-durable-failure-windows.md`（本地 dev 基线：tsconfig paths 别名到 sibling deepseek-harness 源码，vitest + tsc 双绿；REAL composition 与 SQLite 文件重开已覆盖 durable failure windows、并发线性化、remove/archive 补偿、teardown 和重挂重建）。
-- **可立即开始**：`issues/09-ship-m1-runnable-composition.md`。
+- **已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/09-ship-m1-runnable-composition.md`（REAL Loader/Agent/Session/command/tool/persistence workflow、SQLite 文件重开、durable failure windows、并发线性化、remove/archive 补偿、teardown、npm build/pack 与 opt-in preset shipping 均有自动验证）。
+- **当前状态**：M1 完成，没有下一张 frontier issue。
 - **可靠性与组装**：08 等待 01-07；09 等待 01-08。
 
 每个 ticket 必须独立保持其声明的验证路径成立；不要把 package 层完成当作 vertical slice 完成。

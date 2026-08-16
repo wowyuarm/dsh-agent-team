@@ -7,6 +7,16 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@deepseek-ai/dsh-agent-team':
+        specifier: workspace:^
+        version: link:packages/agent-team
+      '@deepseek-ai/dsh-command-agent-team':
+        specifier: workspace:^
+        version: link:packages/command-agent-team
+      '@deepseek-ai/dsh-tool-agent-team':
+        specifier: workspace:^
+        version: link:packages/tool-agent-team
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
