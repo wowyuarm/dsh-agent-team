@@ -20,7 +20,9 @@ Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`c
 
 每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。普通 session 和 fork 不获得 Team 身份。
 
-把 Member 加入 Channel 只授予之后的 read/send authority，不向 Member session 注入历史 Message。Structured mention 会在 Message operation 内保存一个 queued Delivery，并固定 DeliveryId 与 MessageId。Host 使用 wakeup 将 member-authored `agent-team-relay` 送入 `next-step`，只有目标 session 出现匹配的 `agent/inbox/spliced` 或 `user/message` evidence 后才提交 `delivery-admitted`。重启恢复会复用已有 evidence，或使用同一个 MessageId 重试。Admitted 只表示已进入 Inbox，不表示模型已经处理。
+把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。Structured mention 会在 Message operation 内保存一个 queued Delivery，并固定 DeliveryId 与 MessageId。Host 使用 wakeup 将 member-authored `agent-team-relay` 送入 `next-step`，只有目标 session 出现匹配的 `agent/inbox/spliced` 或 `user/message` evidence 后才提交 `delivery-admitted`。重启恢复会复用已有 evidence，或使用同一个 MessageId 重试。Admitted 只表示已进入 Inbox，不表示模型已经处理。
+
+Member reply 必须携带准确的当前 Thread revision，并在一个 operation 内更新 Message、Follow、Delivery 和 Thread facts。claim/done/release 是有序的 host-authored Activity。Active Claim 只排斥相同的 normalized Direction；不同 Direction 可以并行。存在 active Claim 时 Task 为 `in_progress`；没有 active 但至少一个 done 时为 `in_review`；其余为 `todo`。Message 与 Activity facts 共用一个有界 sequence cursor。
 
 M1 支持单个 Host writer。Ledger 永久保留，不提供 snapshot 或 compaction。
 

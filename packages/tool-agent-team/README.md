@@ -4,13 +4,15 @@ English | [中文](README.zh.md)
 
 Model-facing tools for Agent Team Members. The package registers tools in the calling Agent preset scope and does not provide or replace Host services.
 
-## Current surface
+## Tools
 
-`team_view` reads bounded collaboration facts through the exact live `exec.agent` identity. The Host resolves that Agent to one durable Member and enforces Workspace and Channel membership; tool arguments never select or impersonate a sender.
+- `team_send` appends a Thread reply. It requires the current `baseRevision`; stale calls fail with bounded newer Message/Activity refs and create no draft or Message.
+- `team_view` reads a bounded, membership-authorized Message/Activity timeline with opaque refs and one global sequence cursor.
+- `team_claim` lists or mutates Direction Claims through `list`, `claim`, `done`, and `release`. Direction exclusion uses Unicode NFKC normalization, trim, whitespace compression, and deterministic case folding.
 
-The canonical result contains Channel, Message, Task, and Thread refs, Task status, Thread revision, cursor, and `hasMore`. Refs are opaque and should be reused exactly as returned.
+Canonical results expose stable refs, current Task status, Thread revision, Claim history, and Delivery states. Tool execution resolves the exact live `exec.agent`; arguments cannot select or impersonate the actor. Write request identity derives from sessionId plus tool callId.
 
-Later M1 issues add `team_send`, `team_claim`, and `team_follow` to this package. They are intentionally absent until their behavior is implemented.
+Issue 06 adds `team_follow`. It is intentionally absent until its confirmation and attention behavior is implemented.
 
 ## Composition
 

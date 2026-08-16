@@ -23,17 +23,24 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
+  AgentTeamActivity,
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
   AgentTeamCreateChannelRequest,
+  AgentTeamClaimList,
+  AgentTeamClaimRequest,
+  AgentTeamClaimResult,
   AgentTeamCreateChannelResult,
   AgentTeamDelivery,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
+  AgentTeamMemberActor,
   AgentTeamMemberId,
   AgentTeamMemberResult,
   AgentTeamOperationReceipt,
+  AgentTeamReplyRequest,
+  AgentTeamReplyResult,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
   AgentTeamSetMemberStateRequest,
@@ -41,6 +48,7 @@ import type {
   AgentTeamView,
   AgentTeamViewRequest,
   AgentTeamMessage,
+  AgentTeamTask,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -78,6 +86,16 @@ declare module '@deepseek-ai/dsh-llm' {
       readonly channelRef: import('./types.ts').AgentTeamChannelRef
       readonly taskRef: import('./types.ts').AgentTeamTaskRef
       readonly messageRef: import('./types.ts').AgentTeamMessageRef
+      readonly revision: number
+    }
+    'agent-team-activity': {
+      readonly kind: 'agent-team-activity'
+      readonly form: 'notice'
+      readonly summary: string
+      readonly actor: { readonly memberId: AgentTeamMemberId; readonly handle: string }
+      readonly activityRef: import('./types.ts').AgentTeamActivityRef
+      readonly channelRef: import('./types.ts').AgentTeamChannelRef
+      readonly taskRef: import('./types.ts').AgentTeamTaskRef
       readonly revision: number
     }
   }
@@ -255,6 +273,33 @@ export default class AgentTeam extends Service {
     })
   }
 
+  /** Append one revision-fenced Thread reply from the exact live Agent Member. */
+  async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    const result = await this.requireLedger().reply({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  }
+
+  /** Mutate one Direction Claim as the exact live Agent Member. */
+  async changeClaimForAgent(agent: Agent, request: AgentTeamClaimRequest): Promise<AgentTeamClaimResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    const result = await this.requireLedger().changeClaim({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  }
+
+  /** List complete Claim history for one Task authorized by the exact live Member. */
+  listClaimsForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; taskRef: AgentTeamTask['taskRef'] }): AgentTeamClaimList {
+    return this.requireLedger().listClaims(this.memberActor(agent), request)
+  }
+
   /** Return a bounded view authorized by the exact live Agent identity. */
   viewForAgent(agent: Agent, request: AgentTeamViewRequest): AgentTeamView {
     const member = this.memberForAgent(agent)
@@ -287,6 +332,12 @@ export default class AgentTeam extends Service {
     }
   }
 
+  private memberActor(agent: Agent): AgentTeamMemberActor {
+    const member = this.memberForAgent(agent)
+    if (member === undefined) throw new Error('Agent is not an active Team Member')
+    return Object.freeze({ kind: 'member', memberId: member.memberId, handle: member.handle })
+  }
+
   private async recoverDeliveries(): Promise<void> {
     for (const delivery of this.requireLedger().queuedDeliveries()) await this.admitDelivery(delivery)
   }
@@ -301,10 +352,14 @@ export default class AgentTeam extends Service {
     const member = this.requireLedger().getMember(delivery.recipient)
     const handle = this.handles.get(delivery.recipient)
     const message = this.requireLedger().messageForDelivery(delivery.deliveryId)
-    if (member?.state !== 'enabled' || handle === undefined || message === undefined) return
+    const activity = this.requireLedger().activityForDelivery(delivery.deliveryId)
+    if (member?.state !== 'enabled' || handle === undefined || (message === undefined && activity === undefined)) return
     let evidence = this.deliveryEvidence(handle.agent, delivery.messageId)
     if (evidence === undefined) {
-      handle.agent.send(this.relayMessage(message, delivery.messageId), 'next-step', true)
+      const relay = message === undefined
+        ? this.activityMessage(activity!, delivery.messageId)
+        : this.relayMessage(message, delivery.messageId)
+      handle.agent.send(relay, 'next-step', true)
       evidence = this.deliveryEvidence(handle.agent, delivery.messageId)
     }
     if (evidence === undefined) throw new Error(`Delivery '${delivery.deliveryId}' has no Inbox evidence`)
@@ -336,6 +391,29 @@ export default class AgentTeam extends Service {
       if (event.type === 'user/message' && event.data.id === messageId) return 'user/message'
     }
     return undefined
+  }
+
+  private activityMessage(activity: AgentTeamActivity, messageId: MessageId) {
+    const ledger = this.requireLedger()
+    const task = ledger.getTask(activity.taskRef)
+    const actor = ledger.getMember(activity.actor)
+    if (task === undefined || actor === undefined) throw new Error(`Activity '${activity.activityRef}' has an incomplete projection`)
+    const summary = `${actor.handle} ${activity.kind} Claim ${activity.claimRef}`
+    return freezeMessage({
+      id: messageId,
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text: `${summary} on Task ${activity.taskRef}.` }],
+      source: {
+        kind: 'agent-team-activity' as const,
+        form: 'notice' as const,
+        summary,
+        actor: { memberId: actor.memberId, handle: actor.handle },
+        activityRef: activity.activityRef,
+        channelRef: task.channelRef,
+        taskRef: task.taskRef,
+        revision: activity.sequence,
+      },
+    })
   }
 
   private relayMessage(message: AgentTeamMessage, messageId: MessageId) {

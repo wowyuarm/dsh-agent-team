@@ -20,7 +20,9 @@ Member creation commits one stable Member/session/Workspace/preset/private-memor
 
 Every team-managed session records `danger-full-access`. Project cwd remains the Workspace path, while private memory lives under `$DSH_HOME/agent-team/members/<memberId>/`. Ordinary sessions and forks receive no Team identity.
 
-Adding a Member to a Channel grants future read/send authority but injects no historical Messages into the member session. A structured mention is stored as one queued Delivery inside the Message operation with stable DeliveryId and MessageId. The Host sends a member-authored `agent-team-relay` to `next-step` with wakeup enabled, then commits `delivery-admitted` only after the target session contains matching `agent/inbox/spliced` or `user/message` evidence. Restart recovery reuses existing evidence or retries the same MessageId. Admitted means Inbox admission, not model processing.
+Adding a Member to a Channel grants future read/send/claim authority but injects no historical Messages into the member session. A structured mention is stored as one queued Delivery inside the Message operation with stable DeliveryId and MessageId. The Host sends a member-authored `agent-team-relay` to `next-step` with wakeup enabled, then commits `delivery-admitted` only after the target session contains matching `agent/inbox/spliced` or `user/message` evidence. Restart recovery reuses existing evidence or retries the same MessageId. Admitted means Inbox admission, not model processing.
+
+Member replies require the exact current Thread revision and atomically update Message, Follow, Delivery, and Thread facts. Claim/done/release are ordered host-authored Activities. Active Claims exclude only the same normalized Direction; different Directions can run concurrently. Task state is `in_progress` while any Claim is active, `in_review` when no Claim is active and at least one is done, and otherwise `todo`. Message and Activity facts share one bounded sequence cursor.
 
 M1 supports one Host writer. The ledger is permanent and has no snapshot or compaction path.
 

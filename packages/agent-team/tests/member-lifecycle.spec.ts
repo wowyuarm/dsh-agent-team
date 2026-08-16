@@ -97,15 +97,31 @@ function teamTools(ctx: Context, slow: SlowToolGate): void {
       return [{ type: 'text', text: 'slow work complete' }]
     },
   }))
-  for (const name of AGENT_TEAM_TOOL_NAMES.filter(name => name !== 'team_view')) {
+  for (const name of AGENT_TEAM_TOOL_NAMES.filter(name => name === 'team_follow')) {
     const definition = defineContentToolFixture({
       name,
       description: `${name} fixture`,
       parameters: {},
       execute: async () => [{ type: 'text', text: 'ok' }],
     })
-    ctx.tools.register(name === 'team_send' ? markAgentTeamPreset(definition) : definition)
+    ctx.tools.register(definition)
   }
+}
+
+async function executeTool(
+  ctx: Context,
+  agent: import('@deepseek-ai/dsh-agent').Agent,
+  callId: string,
+  name: string,
+  args: object,
+) {
+  return ctx.tools.execute({
+    signal: new AbortController().signal,
+    callId: CallId(callId),
+    name,
+    arguments: args,
+    agent,
+  })
 }
 
 async function realHarness(): Promise<{
@@ -389,6 +405,118 @@ describe('Agent Team Member real composition', () => {
     expect(ctx.agentTeam.status().operationCount).toBe(8)
     ctx.agentTeam.validateLedger()
     await ctx.agentTeam.validateDeliveryEvidence()
+  })
+
+  it('coordinates two Members through Direction Claims and revision-fenced replies', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({
+      requestId: requestId('request:claims-channel'), workspaceId, name: 'claims',
+    })
+    const first = await ctx.agentTeam.addMember({ requestId: requestId('request:claims-first'), workspaceId,
+      handle: 'first', presetId: 'team-member', description: 'First claimant' })
+    const second = await ctx.agentTeam.addMember({ requestId: requestId('request:claims-second'), workspaceId,
+      handle: 'second', presetId: 'team-member', description: 'Second claimant' })
+    for (const member of [first, second]) {
+      await ctx.agentTeam.joinChannel({ requestId: requestId(`request:join:${member.status.member.handle}`), workspaceId,
+        channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    }
+    const sent = await ctx.agentTeam.sendMessage({ requestId: requestId('request:claims-task'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'coordinate this work',
+      recipients: [first.status.member.memberId, second.status.member.memberId] })
+    const firstAgent = ctx.agents.get(first.status.member.sessionId)!
+    const secondAgent = ctx.agents.get(second.status.member.sessionId)!
+    const base = { workspaceId, taskRef: sent.task.taskRef }
+
+    const [docs, tests] = await Promise.all([
+      executeTool(ctx, firstAgent, 'call:claim-docs', 'team_claim', { ...base, action: 'claim', direction: '  Docs   Review ' }),
+      executeTool(ctx, secondAgent, 'call:claim-tests', 'team_claim', { ...base, action: 'claim', direction: 'Test Coverage' }),
+    ])
+    expect(docs.isError).toBe(false)
+    expect(tests.isError).toBe(false)
+    expect(docs.value).toMatchObject({ status: 'in_progress' })
+    const docsRetry = await executeTool(ctx, firstAgent, 'call:claim-docs', 'team_claim', {
+      ...base, action: 'claim', direction: '  Docs   Review ',
+    })
+    expect(docsRetry.value).toMatchObject({ operationId: (docs.value as { operationId: string }).operationId })
+
+    const race = await Promise.all([
+      executeTool(ctx, firstAgent, 'call:claim-race-first', 'team_claim', { ...base, action: 'claim', direction: 'API Audit' }),
+      executeTool(ctx, secondAgent, 'call:claim-race-second', 'team_claim', { ...base, action: 'claim', direction: ' api   audit ' }),
+    ])
+    expect(race.filter(result => result.isError)).toHaveLength(1)
+    expect(race.filter(result => !result.isError)).toHaveLength(1)
+
+    const listed = await executeTool(ctx, firstAgent, 'call:claim-list', 'team_claim', { ...base, action: 'list' })
+    expect(listed.value).toMatchObject({
+      status: 'in_progress',
+      claims: expect.arrayContaining([
+        expect.objectContaining({ direction: 'Docs   Review', normalizedDirection: 'docs review', state: 'active' }),
+        expect.objectContaining({ direction: 'Test Coverage', normalizedDirection: 'test coverage', state: 'active' }),
+      ]),
+    })
+    const claims = (listed.value as { claims: Array<{ claimRef: string; owner: string; normalizedDirection: string }> }).claims
+    const firstClaim = claims.find(claim => claim.normalizedDirection === 'docs review')!
+    const secondClaim = claims.find(claim => claim.normalizedDirection === 'test coverage')!
+    const raceClaim = claims.find(claim => claim.normalizedDirection === 'api audit')!
+    await executeTool(ctx, firstAgent, 'call:claim-done', 'team_claim', { ...base, action: 'done', claimRef: firstClaim.claimRef })
+    await executeTool(ctx, secondAgent, 'call:claim-release', 'team_claim', { ...base, action: 'release', claimRef: secondClaim.claimRef })
+    await executeTool(ctx,
+      raceClaim.owner === first.status.member.memberId ? firstAgent : secondAgent,
+      'call:claim-release-race', 'team_claim', { ...base, action: 'release', claimRef: raceClaim.claimRef })
+
+    const current = await executeTool(ctx, firstAgent, 'call:claim-list-current', 'team_claim', { ...base, action: 'list' })
+    const revision = (current.value as { revision: number }).revision
+    const stale = await executeTool(ctx, secondAgent, 'call:reply-stale', 'team_send', {
+      ...base, body: 'stale reply', baseRevision: sent.thread.revision,
+    })
+    expect(stale).toMatchObject({ isError: true, content: [expect.objectContaining({ text: expect.stringMatching(/stale Thread revision/) })] })
+    const reply = await executeTool(ctx, secondAgent, 'call:reply-current', 'team_send', {
+      ...base, body: 'reorganized current reply', baseRevision: revision,
+    })
+    expect(reply.isError).toBe(false)
+    expect((reply.value as { revision: number }).revision).toBeGreaterThan(revision)
+
+    const finalClaims = await executeTool(ctx, firstAgent, 'call:claim-list-final', 'team_claim', { ...base, action: 'list' })
+    expect(finalClaims.value).toMatchObject({ status: 'in_review' })
+    const teamView = await executeTool(ctx, firstAgent, 'call:view-activities', 'team_view', {
+      workspaceId, channelRef: channel.channel.channelRef,
+    })
+    expect(teamView.value).toMatchObject({ activities: expect.arrayContaining([
+      expect.objectContaining({ kind: 'claim' }),
+      expect.objectContaining({ kind: 'done' }),
+      expect.objectContaining({ kind: 'release' }),
+    ]) })
+    const serviceView = ctx.agentTeam.viewForAgent(firstAgent, { workspaceId, channelRef: channel.channel.channelRef })
+    expect(serviceView.items.some(item => item.message.body === 'stale reply')).toBe(false)
+    expect(serviceView).toMatchObject({ activities: expect.arrayContaining([
+        expect.objectContaining({ kind: 'claim' }),
+        expect.objectContaining({ kind: 'done' }),
+        expect.objectContaining({ kind: 'release' }),
+      ]) })
+    const activityRelay = firstAgent.session.events.flatMap(event => event.type === 'agent/inbox/spliced'
+      ? event.data.inserted : []).find(message => message.source.kind === 'agent-team-activity')
+    expect(activityRelay?.source).toMatchObject({
+      kind: 'agent-team-activity', form: 'notice', taskRef: sent.task.taskRef,
+      actor: expect.objectContaining({ memberId: second.status.member.memberId }),
+      activityRef: expect.stringMatching(/^activity:/), revision: expect.any(Number),
+    })
+    ctx.agentTeam.validateLedger()
+    await ctx.agentTeam.validateDeliveryEvidence()
+
+    await teamFiber.dispose()
+    const remounted = await ctx.plugin(AgentTeam)
+    const restoredFirst = ctx.agents.get(first.status.member.sessionId)!
+    const reconstructed = ctx.agentTeam.listClaimsForAgent(restoredFirst, base)
+    expect(reconstructed).toMatchObject({
+      task: { status: 'in_review' },
+      claims: expect.arrayContaining([
+        expect.objectContaining({ normalizedDirection: 'docs review', state: 'done' }),
+        expect.objectContaining({ normalizedDirection: 'test coverage', state: 'released' }),
+      ]),
+    })
+    expect(ctx.agentTeam.viewForAgent(restoredFirst, { workspaceId, channelRef: channel.channel.channelRef })
+      .items.some(item => item.message.body === 'reorganized current reply')).toBe(true)
+    await remounted.dispose()
   })
 
   it('queues a mention at next-step without aborting a running tool call', async () => {

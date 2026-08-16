@@ -24,7 +24,7 @@ The profile must include the Harness packages that provide the injected services
 
 ## Composition
 
-The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Inbox admission. The command package registers `/team`. `@deepseek-ai/dsh-tool-agent-team` provides the membership-authorized `team_view`; the remaining tools and shipped preset are added by later M1 tickets.
+The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Inbox admission. The command package registers `/team`. `@deepseek-ai/dsh-tool-agent-team` provides membership-authorized `team_send`, `team_view`, and `team_claim`; `team_follow` and the shipped preset are added by later M1 tickets.
 
 The bundle consumes the profile's existing Host providers instead of replacing them: `agents`, default model selection, `tools`, filesystem/shell, sandbox policy, Session store/persistence, Workspace registry, and storage remain singletons. Team-managed sessions persist `danger-full-access`; ordinary sessions keep the profile's normal policy. A conflicting preset tool registration fails inside unpublished setup and makes only that Member unavailable.
 
@@ -45,4 +45,4 @@ This repository targets the public DSH plugin and bundle interfaces. It does not
 
 ## Known Limitations and Deferred Work
 
-M1 tickets 05-09 add Agent replies, Claims, attention controls, completion/removal, broader failure recovery, and the final installable composition. Issues 01-04 provide the ledger, Human command adapter, Agent Member lifecycle, Channel membership, durable mention delivery, and `team_view`.
+M1 tickets 06-09 add attention controls, completion/removal, broader failure recovery, and the final installable composition. Issues 01-05 provide the ledger, Human command adapter, Agent Member lifecycle, durable Delivery, revision-fenced replies, Direction Claims, and three production tools.

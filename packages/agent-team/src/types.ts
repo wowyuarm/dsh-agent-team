@@ -27,6 +27,12 @@ export type AgentTeamThreadRef = Branded<'AgentTeamThreadRef'>
 /** Stable identifier of one Delivery intent. */
 export type AgentTeamDeliveryId = Branded<'AgentTeamDeliveryId'>
 
+/** Stable identifier of one Claim. */
+export type AgentTeamClaimRef = Branded<'AgentTeamClaimRef'>
+
+/** Stable identifier of one host-authored Activity. */
+export type AgentTeamActivityRef = Branded<'AgentTeamActivityRef'>
+
 /** Snapshot of the actor authorized for an operation. */
 export interface AgentTeamHumanActor {
   readonly kind: 'human'
@@ -40,7 +46,14 @@ export interface AgentTeamHostActor {
   readonly handle: 'agent-team'
 }
 
-export type AgentTeamActor = AgentTeamHumanActor | AgentTeamHostActor
+/** Snapshot of the exact Agent Member authorized by its live Agent binding. */
+export interface AgentTeamMemberActor {
+  readonly kind: 'member'
+  readonly memberId: AgentTeamMemberId
+  readonly handle: string
+}
+
+export type AgentTeamActor = AgentTeamHumanActor | AgentTeamHostActor | AgentTeamMemberActor
 
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
@@ -86,7 +99,7 @@ export interface AgentTeamMessage {
   readonly taskRef: AgentTeamTaskRef
   readonly sender: AgentTeamMemberId
   readonly body: string
-  readonly topLevel: true
+  readonly topLevel: boolean
   readonly sequence: number
 }
 
@@ -95,7 +108,7 @@ export interface AgentTeamTask {
   readonly taskRef: AgentTeamTaskRef
   readonly channelRef: AgentTeamChannelRef
   readonly threadRef: AgentTeamThreadRef
-  readonly status: 'todo'
+  readonly status: 'todo' | 'in_progress' | 'in_review'
 }
 
 /** Current projection of one Task Thread. */
@@ -112,10 +125,36 @@ export interface AgentTeamFollow {
   readonly following: true
 }
 
-/** Durable delivery state for one Message recipient. */
+/** One Direction Claim retained as Task progress history. */
+export interface AgentTeamClaim {
+  readonly claimRef: AgentTeamClaimRef
+  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly owner: AgentTeamMemberId
+  readonly direction: string
+  readonly normalizedDirection: string
+  readonly state: 'active' | 'done' | 'released'
+}
+
+/** One ordered host-authored Thread Activity. */
+export interface AgentTeamActivity {
+  readonly activityRef: AgentTeamActivityRef
+  readonly kind: 'claim' | 'done' | 'release'
+  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly actor: AgentTeamMemberId
+  readonly claimRef: AgentTeamClaimRef
+  readonly sequence: number
+}
+
+export type AgentTeamDeliverySource =
+  | { readonly kind: 'message'; readonly messageRef: AgentTeamMessageRef }
+  | { readonly kind: 'activity'; readonly activityRef: AgentTeamActivityRef }
+
+/** Durable delivery state for one Message or Activity recipient. */
 export interface AgentTeamDelivery {
   readonly deliveryId: AgentTeamDeliveryId
-  readonly messageRef: AgentTeamMessageRef
+  readonly source: AgentTeamDeliverySource
   readonly messageId: MessageId
   readonly threadRef: AgentTeamThreadRef
   readonly taskRef: AgentTeamTaskRef
@@ -172,6 +211,49 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
 }
 
 /** Durable creation intent for one team-managed Agent Member. */
+export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-replied'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly baseRevision: number
+    readonly mentions: readonly AgentTeamMemberId[]
+    readonly message: AgentTeamMessage
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly follows: readonly AgentTeamFollow[]
+    readonly deliveries: readonly AgentTeamDelivery[]
+  }
+}
+
+export interface AgentTeamClaimOperationData {
+  readonly workspaceId: WorkspaceId
+  readonly activity: AgentTeamActivity
+  readonly claim: AgentTeamClaim
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamClaimCreatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/claim-created'
+  readonly data: AgentTeamClaimOperationData
+}
+
+export interface AgentTeamClaimDoneOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/claim-done'
+  readonly data: AgentTeamClaimOperationData
+}
+
+export interface AgentTeamClaimReleasedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/claim-released'
+  readonly data: AgentTeamClaimOperationData
+}
+
+export type AgentTeamClaimChangedOperation =
+  | AgentTeamClaimCreatedOperation
+  | AgentTeamClaimDoneOperation
+  | AgentTeamClaimReleasedOperation
+
 export interface AgentTeamMemberAddedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-added'
   readonly data: {
@@ -200,6 +282,10 @@ export type AgentTeamOperation =
   | AgentTeamInitializedOperation
   | AgentTeamChannelCreatedOperation
   | AgentTeamMessageSentOperation
+  | AgentTeamThreadRepliedOperation
+  | AgentTeamClaimCreatedOperation
+  | AgentTeamClaimDoneOperation
+  | AgentTeamClaimReleasedOperation
   | AgentTeamChannelMemberAddedOperation
   | AgentTeamDeliveryAdmittedOperation
   | AgentTeamMemberAddedOperation
@@ -258,6 +344,52 @@ export interface AgentTeamSendMessageResult {
   readonly deliveries: readonly AgentTeamDelivery[]
 }
 
+export interface AgentTeamReplyRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly body: string
+  readonly baseRevision: number
+  readonly recipients?: readonly AgentTeamMemberId[]
+}
+
+export interface AgentTeamReplyResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamClaimRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly action: 'claim' | 'done' | 'release'
+  readonly direction?: string
+  readonly claimRef?: AgentTeamClaimRef
+}
+
+export interface AgentTeamClaimResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly activity: AgentTeamActivity
+  readonly claim: AgentTeamClaim
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamClaimListRequest {
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+}
+
+export interface AgentTeamClaimList {
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly claims: readonly AgentTeamClaim[]
+}
+
 /** Human intent to provision one team-managed Agent Member. */
 export interface AgentTeamAddMemberRequest {
   readonly requestId: AgentTeamRequestId
@@ -302,6 +434,7 @@ export interface AgentTeamViewRequest {
 export interface AgentTeamView {
   readonly channels: readonly AgentTeamChannel[]
   readonly items: readonly AgentTeamViewItem[]
+  readonly activities: readonly AgentTeamActivity[]
   readonly cursor: number
   readonly hasMore: boolean
 }
