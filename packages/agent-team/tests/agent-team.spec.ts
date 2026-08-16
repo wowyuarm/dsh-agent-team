@@ -65,7 +65,7 @@ async function harness(
   return { ctx, fiber, facility }
 }
 
-function storedPool(records: Array<[string, unknown]>, version = 2): MemoryMediaPool {
+function storedPool(records: Array<[string, unknown]>, version = 3): MemoryMediaPool {
   const pool = new MemoryMediaPool()
   pool.versions.set('agent_team', version)
   pool.media.set('agent_team', {
@@ -100,7 +100,7 @@ describe('AgentTeam', () => {
   })
 
   it('fails loud on a mismatched ledger version', async () => {
-    await expect(harness(storedPool([], 99))).rejects.toThrow(/stamped v99, descriptor wants v2/)
+    await expect(harness(storedPool([], 99))).rejects.toThrow(/stamped v99, descriptor wants v3/)
   })
 
   it('fails loud when a durable operation does not match its schema', async () => {

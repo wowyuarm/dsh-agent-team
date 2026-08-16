@@ -18,7 +18,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import AgentTeam, { AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
+import AgentTeam, { markAgentTeamPreset } from '../src/index.ts'
 import { apply as applyAgentTeamTools } from '@deepseek-ai/dsh-tool-agent-team'
 import type { AgentTeamRequestId } from '../src/types.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -97,15 +97,6 @@ function teamTools(ctx: Context, slow: SlowToolGate): void {
       return [{ type: 'text', text: 'slow work complete' }]
     },
   }))
-  for (const name of AGENT_TEAM_TOOL_NAMES.filter(name => name === 'team_follow')) {
-    const definition = defineContentToolFixture({
-      name,
-      description: `${name} fixture`,
-      parameters: {},
-      execute: async () => [{ type: 'text', text: 'ok' }],
-    })
-    ctx.tools.register(definition)
-  }
 }
 
 async function executeTool(
@@ -519,7 +510,157 @@ describe('Agent Team Member real composition', () => {
     await remounted.dispose()
   })
 
-  it('queues a mention at next-step without aborting a running tool call', async () => {
+  it('controls Thread attention with Follow and one-use mention confirmation', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({
+      requestId: requestId('request:attention-channel'), workspaceId, name: 'attention',
+    })
+    const first = await ctx.agentTeam.addMember({ requestId: requestId('request:attention-first'), workspaceId,
+      handle: 'attention-first', presetId: 'team-member', description: 'Attention sender' })
+    const second = await ctx.agentTeam.addMember({ requestId: requestId('request:attention-second'), workspaceId,
+      handle: 'attention-second', presetId: 'team-member', description: 'Attention recipient' })
+    for (const member of [first, second]) {
+      await ctx.agentTeam.joinChannel({ requestId: requestId(`request:attention-join:${member.status.member.handle}`),
+        workspaceId, channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    }
+    const sent = await ctx.agentTeam.sendMessage({ requestId: requestId('request:attention-task'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'attention task',
+      recipients: [first.status.member.memberId, second.status.member.memberId] })
+    const firstAgent = ctx.agents.get(first.status.member.sessionId)!
+    const secondAgent = ctx.agents.get(second.status.member.sessionId)!
+    const base = { workspaceId, taskRef: sent.task.taskRef }
+
+    const unfollowed = await executeTool(ctx, firstAgent, 'call:attention-unfollow', 'team_follow', {
+      ...base, action: 'unfollow',
+    })
+    expect(unfollowed.value).toMatchObject({ following: false })
+    const unfollowRevision = (unfollowed.value as { revision: number }).revision
+    const beforeOrdinary = firstAgent.session.events.filter(event => event.type === 'agent/inbox/spliced').length
+    const ordinary = await executeTool(ctx, secondAgent, 'call:attention-ordinary', 'team_send', {
+      ...base, body: 'ordinary follower update', baseRevision: unfollowRevision,
+    })
+    expect(ordinary.value).toMatchObject({ kind: 'committed', deliveries: [] })
+    expect(firstAgent.session.events.filter(event => event.type === 'agent/inbox/spliced')).toHaveLength(beforeOrdinary)
+
+    const currentRevision = (ordinary.value as { revision: number }).revision
+    const beforeConfirmation = ctx.agentTeam.status().operationCount
+    const held = await executeTool(ctx, secondAgent, 'call:attention-held', 'team_send', {
+      ...base, body: 'explicit attention', baseRevision: currentRevision,
+      mentions: [first.status.member.memberId],
+    })
+    expect(held.value).toMatchObject({
+      kind: 'confirmation_required', revision: currentRevision,
+      recipients: [first.status.member.memberId], confirmationToken: expect.stringMatching(/^confirmation:/),
+    })
+    expect(ctx.agentTeam.status().operationCount).toBe(beforeConfirmation)
+    const heldToken = (held.value as { confirmationToken: string }).confirmationToken
+
+    const crossSender = await executeTool(ctx, firstAgent, 'call:attention-cross-sender', 'team_send', {
+      ...base, body: 'cross sender', baseRevision: currentRevision,
+      mentions: [second.status.member.memberId], confirmationToken: heldToken,
+    })
+    expect(crossSender).toMatchObject({ isError: true,
+      content: [expect.objectContaining({ text: expect.stringMatching(/confirmation token is invalid/) })] })
+    const consumed = await executeTool(ctx, secondAgent, 'call:attention-consumed', 'team_send', {
+      ...base, body: 'explicit attention', baseRevision: currentRevision,
+      mentions: [first.status.member.memberId], confirmationToken: heldToken,
+    })
+    expect(consumed.isError).toBe(true)
+
+    const heldAgain = await executeTool(ctx, secondAgent, 'call:attention-held-again', 'team_send', {
+      ...base, body: 'explicit attention', baseRevision: currentRevision,
+      mentions: [first.status.member.memberId],
+    })
+    const validToken = (heldAgain.value as { confirmationToken: string }).confirmationToken
+    const confirmed = await executeTool(ctx, secondAgent, 'call:attention-confirmed', 'team_send', {
+      ...base, body: 'explicit attention', baseRevision: currentRevision,
+      mentions: [first.status.member.memberId], confirmationToken: validToken,
+    })
+    expect(confirmed.value).toMatchObject({ kind: 'committed', deliveries: [
+      expect.objectContaining({ recipient: first.status.member.memberId, state: 'admitted' }),
+    ] })
+    expect((await executeTool(ctx, firstAgent, 'call:attention-status', 'team_follow', {
+      ...base, action: 'status',
+    })).value).toMatchObject({ following: true })
+    const replayed = await executeTool(ctx, secondAgent, 'call:attention-replay', 'team_send', {
+      ...base, body: 'explicit attention', baseRevision: currentRevision,
+      mentions: [first.status.member.memberId], confirmationToken: validToken,
+    })
+    expect(replayed.isError).toBe(true)
+
+    const confirmedRevision = (confirmed.value as { revision: number }).revision
+    await executeTool(ctx, firstAgent, 'call:attention-unfollow-again', 'team_follow', { ...base, action: 'unfollow' })
+    const latest = ctx.agentTeam.followStatusForAgent(secondAgent, base).thread.revision
+    const stateHeld = await executeTool(ctx, secondAgent, 'call:attention-state-held', 'team_send', {
+      ...base, body: 'state token', baseRevision: latest, mentions: [first.status.member.memberId],
+    })
+    const stateToken = (stateHeld.value as { confirmationToken: string }).confirmationToken
+    await executeTool(ctx, firstAgent, 'call:attention-follow-change', 'team_follow', { ...base, action: 'follow' })
+    const invalidAfterFollow = await executeTool(ctx, secondAgent, 'call:attention-state-retry', 'team_send', {
+      ...base, body: 'state token', baseRevision: latest,
+      mentions: [first.status.member.memberId], confirmationToken: stateToken,
+    })
+    expect(invalidAfterFollow.isError).toBe(true)
+    await executeTool(ctx, firstAgent, 'call:attention-unfollow-provider', 'team_follow', { ...base, action: 'unfollow' })
+
+    const beforeConcurrentFollow = ctx.agentTeam.followStatusForAgent(secondAgent, base).thread.revision
+    const [concurrentFollow, sendBesideFollow] = await Promise.all([
+      executeTool(ctx, firstAgent, 'call:attention-concurrent-follow', 'team_follow', { ...base, action: 'follow' }),
+      executeTool(ctx, secondAgent, 'call:attention-send-beside-follow', 'team_send', {
+        ...base, body: 'beside follow', baseRevision: beforeConcurrentFollow,
+      }),
+    ])
+    expect(concurrentFollow.isError).toBe(false)
+    expect(sendBesideFollow.isError
+      || (sendBesideFollow.value as { deliveries: unknown[] }).deliveries.length === 0).toBe(true)
+    expect(ctx.agentTeam.followStatusForAgent(firstAgent, base).following).toBe(true)
+
+    const beforeConcurrentUnfollow = ctx.agentTeam.followStatusForAgent(secondAgent, base).thread.revision
+    const [concurrentUnfollow, sendBesideUnfollow] = await Promise.all([
+      executeTool(ctx, firstAgent, 'call:attention-concurrent-unfollow', 'team_follow', { ...base, action: 'unfollow' }),
+      executeTool(ctx, secondAgent, 'call:attention-send-beside-unfollow', 'team_send', {
+        ...base, body: 'beside unfollow', baseRevision: beforeConcurrentUnfollow,
+      }),
+    ])
+    expect(concurrentUnfollow.isError).toBe(false)
+    expect(sendBesideUnfollow.isError
+      || (sendBesideUnfollow.value as { deliveries: Array<{ recipient: string }> }).deliveries
+        .some(delivery => delivery.recipient === first.status.member.memberId)).toBe(true)
+    expect(ctx.agentTeam.followStatusForAgent(firstAgent, base).following).toBe(false)
+
+    const providerRevision = ctx.agentTeam.followStatusForAgent(secondAgent, base).thread.revision
+    const providerHeld = await executeTool(ctx, secondAgent, 'call:attention-provider-held', 'team_send', {
+      ...base, body: 'provider token', baseRevision: providerRevision, mentions: [first.status.member.memberId],
+    })
+    const lifecycleToken = (providerHeld.value as { confirmationToken: string }).confirmationToken
+    expect(providerRevision).toBeGreaterThan(confirmedRevision)
+    await ctx.agentTeam.suspendMember({ requestId: requestId('request:attention-suspend'),
+      memberId: first.status.member.memberId })
+    await ctx.agentTeam.resumeMember({ requestId: requestId('request:attention-resume'),
+      memberId: first.status.member.memberId })
+    const invalidAfterLifecycle = await executeTool(ctx, secondAgent, 'call:attention-lifecycle-retry', 'team_send', {
+      ...base, body: 'provider token', baseRevision: providerRevision,
+      mentions: [first.status.member.memberId], confirmationToken: lifecycleToken,
+    })
+    expect(invalidAfterLifecycle.isError).toBe(true)
+    const providerHeldAgain = await executeTool(ctx, secondAgent, 'call:attention-provider-held-again', 'team_send', {
+      ...base, body: 'provider token', baseRevision: providerRevision, mentions: [first.status.member.memberId],
+    })
+    const providerToken = (providerHeldAgain.value as { confirmationToken: string }).confirmationToken
+    await teamFiber.dispose()
+    const remounted = await ctx.plugin(AgentTeam)
+    const restoredSecond = ctx.agents.get(second.status.member.sessionId)!
+    const invalidAfterReload = await executeTool(ctx, restoredSecond, 'call:attention-provider-retry', 'team_send', {
+      ...base, body: 'provider token', baseRevision: providerRevision,
+      mentions: [first.status.member.memberId], confirmationToken: providerToken,
+    })
+    expect(invalidAfterReload.isError).toBe(true)
+    ctx.agentTeam.validateLedger()
+    await ctx.agentTeam.validateDeliveryEvidence()
+    await remounted.dispose()
+  })
+
+  it('queues subscribed Thread delivery at next-step without aborting a running tool call', async () => {
     const { ctx, workspaceId, adapter, slow } = await realHarness()
     adapter.responses.push(slowToolResponse(), textResponse('finished after steering'))
     const channel = await ctx.agentTeam.createChannel({
@@ -529,11 +670,15 @@ describe('Agent Team Member real composition', () => {
       requestId: requestId('request:running-member'), workspaceId,
       handle: 'runner', presetId: 'team-member', description: 'Runs controlled work',
     })
-    await ctx.agentTeam.joinChannel({
-      requestId: requestId('request:running-join'), workspaceId,
-      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId,
+    const sender = await ctx.agentTeam.addMember({
+      requestId: requestId('request:running-sender'), workspaceId,
+      handle: 'runner-sender', presetId: 'team-member', description: 'Sends subscribed updates',
     })
-    await ctx.agentTeam.sendMessage({
+    for (const joined of [member, sender]) await ctx.agentTeam.joinChannel({
+      requestId: requestId(`request:running-join:${joined.status.member.handle}`), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: joined.status.member.memberId,
+    })
+    const started = await ctx.agentTeam.sendMessage({
       requestId: requestId('request:start-running'), workspaceId,
       channelRef: channel.channel.channelRef,
       body: 'start slow work', recipients: [member.status.member.memberId],
@@ -542,12 +687,14 @@ describe('Agent Team Member real composition', () => {
     const agent = ctx.agents.get(member.status.member.sessionId)!
     expect(agent.status).toBe('running')
 
-    const steering = await ctx.agentTeam.sendMessage({
-      requestId: requestId('request:steer-running'), workspaceId,
-      channelRef: channel.channel.channelRef,
-      body: 'new information while working', recipients: [member.status.member.memberId],
+    const senderAgent = ctx.agents.get(sender.status.member.sessionId)!
+    const steering = await executeTool(ctx, senderAgent, 'call:steer-running', 'team_send', {
+      workspaceId, taskRef: started.task.taskRef,
+      body: 'new subscribed information while working', baseRevision: started.thread.revision,
     })
-    expect(steering.deliveries[0]?.state).toBe('admitted')
+    expect(steering.value).toMatchObject({ deliveries: [
+      expect.objectContaining({ recipient: member.status.member.memberId, state: 'admitted' }),
+    ] })
     expect(slow.aborted).toBe(false)
     expect(agent.status).toBe('running')
     slow.release.resolve()

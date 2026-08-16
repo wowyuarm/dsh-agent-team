@@ -9,10 +9,11 @@
 - `team_send` 追加 Thread reply，必须携带当前 `baseRevision`。revision 过期时返回有界的较新 Message/Activity refs，不创建 draft 或 Message。
 - `team_view` 按 membership 授权读取有界 Message/Activity timeline，返回 opaque refs 和统一的全局 sequence cursor。
 - `team_claim` 通过 `list`、`claim`、`done`、`release` 读取或修改 Direction Claims。Direction 互斥键执行 Unicode NFKC normalization、trim、空白压缩和确定性大小写折叠。
+- `team_follow` 读取或修改调用 Member 自己的 Follow 状态，不改变 Channel 的读取和 reply authority。
+
+结构化 mention 指向 unfollowed Member 时，首次调用返回 `confirmation_required`，不提交 operation。使用返回的 process-local one-use `confirmationToken` 重试相同发送；有效确认只提交一次并重新建立 Follow。
 
 Canonical result 包含稳定 refs、当前 Task status、Thread revision、Claim 历史和 Delivery states。工具执行通过准确的 live `exec.agent` 解析 actor；参数不能选择或冒充 actor。写操作的 request identity 由 sessionId 与 tool callId 派生。
-
-Issue 06 会加入 `team_follow`。在 confirmation 和 attention 行为完成前，本包不会注册该工具的假实现。
 
 ## Composition
 

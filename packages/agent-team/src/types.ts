@@ -33,6 +33,9 @@ export type AgentTeamClaimRef = Branded<'AgentTeamClaimRef'>
 /** Stable identifier of one host-authored Activity. */
 export type AgentTeamActivityRef = Branded<'AgentTeamActivityRef'>
 
+/** Process-local one-use authorization to pierce one unfollowed mention. */
+export type AgentTeamConfirmationToken = Branded<'AgentTeamConfirmationToken'>
+
 /** Snapshot of the actor authorized for an operation. */
 export interface AgentTeamHumanActor {
   readonly kind: 'human'
@@ -122,7 +125,7 @@ export interface AgentTeamThread {
 export interface AgentTeamFollow {
   readonly memberId: AgentTeamMemberId
   readonly threadRef: AgentTeamThreadRef
-  readonly following: true
+  readonly following: boolean
 }
 
 /** One Direction Claim retained as Task progress history. */
@@ -136,16 +139,25 @@ export interface AgentTeamClaim {
   readonly state: 'active' | 'done' | 'released'
 }
 
-/** One ordered host-authored Thread Activity. */
-export interface AgentTeamActivity {
+interface AgentTeamActivityBase {
   readonly activityRef: AgentTeamActivityRef
-  readonly kind: 'claim' | 'done' | 'release'
   readonly taskRef: AgentTeamTaskRef
   readonly threadRef: AgentTeamThreadRef
   readonly actor: AgentTeamMemberId
-  readonly claimRef: AgentTeamClaimRef
   readonly sequence: number
 }
+
+export interface AgentTeamClaimActivity extends AgentTeamActivityBase {
+  readonly kind: 'claim' | 'done' | 'release'
+  readonly claimRef: AgentTeamClaimRef
+}
+
+export interface AgentTeamFollowActivity extends AgentTeamActivityBase {
+  readonly kind: 'follow' | 'unfollow'
+}
+
+/** One ordered host-authored Thread Activity. */
+export type AgentTeamActivity = AgentTeamClaimActivity | AgentTeamFollowActivity
 
 export type AgentTeamDeliverySource =
   | { readonly kind: 'message'; readonly messageRef: AgentTeamMessageRef }
@@ -225,6 +237,18 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
   }
 }
 
+export interface AgentTeamFollowChangedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/follow-changed'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly activity: AgentTeamFollowActivity
+    readonly follow: AgentTeamFollow
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly deliveries: readonly AgentTeamDelivery[]
+  }
+}
+
 export interface AgentTeamClaimOperationData {
   readonly workspaceId: WorkspaceId
   readonly activity: AgentTeamActivity
@@ -286,6 +310,7 @@ export type AgentTeamOperation =
   | AgentTeamClaimCreatedOperation
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
+  | AgentTeamFollowChangedOperation
   | AgentTeamChannelMemberAddedOperation
   | AgentTeamDeliveryAdmittedOperation
   | AgentTeamMemberAddedOperation
@@ -351,14 +376,47 @@ export interface AgentTeamReplyRequest {
   readonly body: string
   readonly baseRevision: number
   readonly recipients?: readonly AgentTeamMemberId[]
+  readonly confirmationToken?: AgentTeamConfirmationToken
+}
+
+export interface AgentTeamConfirmationRequired {
+  readonly kind: 'confirmation_required'
+  readonly confirmationToken: AgentTeamConfirmationToken
+  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly revision: number
+  readonly recipients: readonly AgentTeamMemberId[]
 }
 
 export interface AgentTeamReplyResult {
+  readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
   readonly message: AgentTeamMessage
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamFollowRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly action: 'follow' | 'unfollow'
+}
+
+export interface AgentTeamFollowResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly activity: AgentTeamFollowActivity
+  readonly follow: AgentTeamFollow
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamFollowStatus {
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly following: boolean
 }
 
 export interface AgentTeamClaimRequest {

@@ -9,10 +9,11 @@ Model-facing tools for Agent Team Members. The package registers tools in the ca
 - `team_send` appends a Thread reply. It requires the current `baseRevision`; stale calls fail with bounded newer Message/Activity refs and create no draft or Message.
 - `team_view` reads a bounded, membership-authorized Message/Activity timeline with opaque refs and one global sequence cursor.
 - `team_claim` lists or mutates Direction Claims through `list`, `claim`, `done`, and `release`. Direction exclusion uses Unicode NFKC normalization, trim, whitespace compression, and deterministic case folding.
+- `team_follow` reads or changes the calling Member's own Follow state without changing Channel read/reply authority.
+
+A structured mention of an unfollowed Member first returns `confirmation_required` without committing. Retry the same send with its process-local one-use `confirmationToken`; valid confirmation commits once and re-establishes Follow.
 
 Canonical results expose stable refs, current Task status, Thread revision, Claim history, and Delivery states. Tool execution resolves the exact live `exec.agent`; arguments cannot select or impersonate the actor. Write request identity derives from sessionId plus tool callId.
-
-Issue 06 adds `team_follow`. It is intentionally absent until its confirmation and attention behavior is implemented.
 
 ## Composition
 

@@ -30,11 +30,15 @@ import type {
   AgentTeamCreateChannelRequest,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
+  AgentTeamConfirmationRequired,
   AgentTeamClaimResult,
   AgentTeamCreateChannelResult,
   AgentTeamDelivery,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
+  AgentTeamFollowRequest,
+  AgentTeamFollowResult,
+  AgentTeamFollowStatus,
   AgentTeamMemberActor,
   AgentTeamMemberId,
   AgentTeamMemberResult,
@@ -274,14 +278,32 @@ export default class AgentTeam extends Service {
   }
 
   /** Append one revision-fenced Thread reply from the exact live Agent Member. */
-  async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
+  async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult | AgentTeamConfirmationRequired> {
     this.requireAccepting()
     const actor = this.memberActor(agent)
     const result = await this.requireLedger().reply({ ...request, actor })
+    if (result.value.kind === 'confirmation_required') return result.value
     if (result.committed) this.emitCommitted(result.value.receipt)
     await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
     return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
       this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  }
+
+  /** Change one Thread Follow as the exact live Agent Member. */
+  async changeFollowForAgent(agent: Agent, request: AgentTeamFollowRequest): Promise<AgentTeamFollowResult> {
+    this.requireAccepting()
+    const result = await this.requireLedger().changeFollow({ ...request, actor: this.memberActor(agent) })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  }
+
+  followStatusForAgent(agent: Agent, request: {
+    workspaceId: AgentTeamViewRequest['workspaceId']
+    taskRef: AgentTeamTask['taskRef']
+  }): AgentTeamFollowStatus {
+    return this.requireLedger().followStatus(this.memberActor(agent), request)
   }
 
   /** Mutate one Direction Claim as the exact live Agent Member. */
@@ -398,7 +420,9 @@ export default class AgentTeam extends Service {
     const task = ledger.getTask(activity.taskRef)
     const actor = ledger.getMember(activity.actor)
     if (task === undefined || actor === undefined) throw new Error(`Activity '${activity.activityRef}' has an incomplete projection`)
-    const summary = `${actor.handle} ${activity.kind} Claim ${activity.claimRef}`
+    const summary = activity.kind === 'claim' || activity.kind === 'done' || activity.kind === 'release'
+      ? `${actor.handle} ${activity.kind} Claim ${activity.claimRef}`
+      : `${actor.handle} ${activity.kind} Thread ${activity.threadRef}`
     return freezeMessage({
       id: messageId,
       role: 'user' as const,

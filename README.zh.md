@@ -24,7 +24,7 @@ profile 必须提供当前组合所需的 Harness 服务。发布包包含构建
 
 ## 组合内容
 
-Host 包提供 `agentTeam` Service、operation ledger、Team 管理的 Agent 生命周期、Channel membership 和 durable Inbox admission，command 包注册 `/team`。`@deepseek-ai/dsh-tool-agent-team` 已提供按 membership 授权的 `team_send`、`team_view` 和 `team_claim`；`team_follow` 与随包 preset 会在后续 M1 issue 加入。
+Host 包提供 `agentTeam` Service、operation ledger、Team 管理的 Agent 生命周期、Channel membership 和 durable Inbox admission，command 包注册 `/team`。`@deepseek-ai/dsh-tool-agent-team` 已提供按 membership 授权的 `team_send`、`team_view`、`team_claim` 和 `team_follow`；随包 preset 会在后续 M1 issue 加入。
 
 Bundle 使用 profile 已有的 Host provider，不替换 `agents`、默认模型选择、`tools`、filesystem/shell、sandbox policy、Session store/persistence、Workspace registry 或 storage；这些服务保持 singleton。Team 管理的 session 持久使用 `danger-full-access`，普通 session 继续使用 profile 原有策略。Preset tool 冲突会在 unpublished setup 内失败，只让对应 Member unavailable。
 
@@ -45,4 +45,4 @@ pnpm build
 
 ## 已知限制与延后工作
 
-M1 的 06-09 issue 会加入 attention control、完成/移除、更多故障恢复和最终可安装组合。Issue 01-05 已提供 ledger、Human command adapter、Agent Member lifecycle、durable Delivery、revision-fenced reply、Direction Claims 和三个正式工具。
+M1 的 07-09 issue 会加入完成/移除、更多故障恢复和最终可安装组合。Issue 01-06 已提供 ledger、Human command adapter、Agent Member lifecycle、durable Delivery、revision-fenced reply、Direction Claims、Follow attention、one-use mention confirmation 和四个正式工具。

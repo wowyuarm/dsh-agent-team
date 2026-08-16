@@ -16,11 +16,18 @@ import type {
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
   AgentTeamClaimRef,
+  AgentTeamConfirmationRequired,
+  AgentTeamConfirmationToken,
   AgentTeamCreateChannelResult,
   AgentTeamDelivery,
   AgentTeamDeliveryAdmittedOperation,
   AgentTeamDeliveryId,
   AgentTeamFollow,
+  AgentTeamFollowActivity,
+  AgentTeamFollowChangedOperation,
+  AgentTeamFollowRequest,
+  AgentTeamFollowResult,
+  AgentTeamFollowStatus,
   AgentTeamHostActor,
   AgentTeamHumanActor,
   AgentTeamMemberActor,
@@ -126,6 +133,10 @@ export interface AgentTeamAuthorizedClaimRequest extends AgentTeamClaimRequest {
   readonly actor: AgentTeamMemberActor
 }
 
+export interface AgentTeamAuthorizedFollowRequest extends AgentTeamFollowRequest {
+  readonly actor: AgentTeamMemberActor
+}
+
 /** Internal authorized top-level Message request. */
 export interface AgentTeamAuthorizedSendMessageRequest {
   readonly requestId: AgentTeamRequestId
@@ -168,6 +179,14 @@ export class AgentTeamLedger {
   private readonly messages: AgentTeamMessage[] = []
   private readonly tasks = new Map<AgentTeamTaskRef, AgentTeamTask>()
   private readonly threads = new Map<AgentTeamThreadRef, AgentTeamThread>()
+  private readonly confirmations = new Map<AgentTeamConfirmationToken, {
+    readonly sender: AgentTeamMemberId
+    readonly threadRef: AgentTeamThreadRef
+    readonly revision: number
+    readonly recipients: readonly AgentTeamMemberId[]
+    readonly following: readonly boolean[]
+    readonly memberStates: readonly AgentTeamAgentMember['state'][]
+  }>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
   private readonly createRef: (kind: 'channel' | 'message' | 'task' | 'thread' | 'delivery' | 'claim' | 'activity') => string
@@ -483,7 +502,7 @@ export class AgentTeamLedger {
   }
 
   /** Append a revision-fenced Member reply to one existing Task Thread. */
-  reply(request: AgentTeamAuthorizedReplyRequest): Promise<AgentTeamLedgerResult<AgentTeamReplyResult>> {
+  reply(request: AgentTeamAuthorizedReplyRequest): Promise<AgentTeamLedgerResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>> {
     return this.enqueue(async () => {
       const explicit = this.normalizeRecipients(request.actor, request.recipients)
       const existing = this.byRequest.get(request.requestId)
@@ -495,6 +514,8 @@ export class AgentTeamLedger {
       const task = this.requireTask(request.workspaceId, request.taskRef)
       const thread = this.requireThread(task.threadRef)
       this.requireMemberChannel(member, task.channelRef)
+      const body = request.body.trim()
+      if (body === '') throw new Error('message body must not be empty')
       for (const recipient of explicit) {
         const target = this.requireMember(recipient)
         if (target.workspaceId !== request.workspaceId || !this.isChannelMember(task.channelRef, recipient)) {
@@ -502,6 +523,7 @@ export class AgentTeamLedger {
         }
       }
       if (request.baseRevision !== thread.revision) {
+        if (request.confirmationToken !== undefined) this.confirmations.delete(request.confirmationToken)
         const newer = [
           ...this.messages.filter(message => message.threadRef === thread.threadRef
             && message.sequence > request.baseRevision).map(message => ({ sequence: message.sequence, ref: message.messageRef })),
@@ -510,8 +532,26 @@ export class AgentTeamLedger {
         ].sort((left, right) => left.sequence - right.sequence).slice(-3).map(item => item.ref)
         throw new Error(`stale Thread revision ${request.baseRevision}; current revision is ${thread.revision}; newer facts: ${newer.join(', ') || 'none'}`)
       }
-      const body = request.body.trim()
-      if (body === '') throw new Error('message body must not be empty')
+      if (request.confirmationToken !== undefined) {
+        this.consumeConfirmation(request.confirmationToken, member, thread, explicit)
+      } else {
+        const unfollowed = explicit.filter(recipient => !this.isFollowing(thread.threadRef, recipient))
+        if (unfollowed.length > 0) {
+          for (const [token, confirmation] of this.confirmations) {
+            if (confirmation.sender === member.memberId) this.confirmations.delete(token)
+          }
+          const confirmationToken = `confirmation:${randomUUID()}` as AgentTeamConfirmationToken
+          this.confirmations.set(confirmationToken, Object.freeze({
+            sender: member.memberId, threadRef: thread.threadRef, revision: thread.revision,
+            recipients: explicit, following: explicit.map(recipient => this.isFollowing(thread.threadRef, recipient)),
+            memberStates: explicit.map(recipient => this.requireMember(recipient).state),
+          }))
+          return this.resolved(Object.freeze({
+            kind: 'confirmation_required', confirmationToken, taskRef: task.taskRef,
+            threadRef: thread.threadRef, revision: thread.revision, recipients: Object.freeze(unfollowed),
+          }))
+        }
+      }
       const sequence = this.nextSequence()
       const message: AgentTeamMessage = Object.freeze({
         messageRef: this.ref('message'), channelRef: task.channelRef, threadRef: task.threadRef,
@@ -535,6 +575,57 @@ export class AgentTeamLedger {
       this.projectMessage(operation)
       return this.committed(this.replyResult(operation))
     })
+  }
+
+  /** Change the exact Member's durable subscription on one visible Thread. */
+  changeFollow(request: AgentTeamAuthorizedFollowRequest): Promise<AgentTeamLedgerResult<AgentTeamFollowResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameFollow(existing, request)
+        return this.resolved(this.followResult(existing))
+      }
+      const member = this.assertMemberActor(request.actor)
+      const task = this.requireTask(request.workspaceId, request.taskRef)
+      const thread = this.requireThread(task.threadRef)
+      this.requireMemberChannel(member, task.channelRef)
+      const following = request.action === 'follow'
+      if (this.isFollowing(thread.threadRef, member.memberId) === following) {
+        throw new Error(`Member is already ${following ? 'following' : 'unfollowed from'} Thread '${thread.threadRef}'`)
+      }
+      const sequence = this.nextSequence()
+      const activity: AgentTeamFollowActivity = Object.freeze({
+        activityRef: this.ref('activity'), kind: request.action, taskRef: task.taskRef,
+        threadRef: thread.threadRef, actor: member.memberId, sequence,
+      })
+      const follow: AgentTeamFollow = Object.freeze({
+        memberId: member.memberId, threadRef: thread.threadRef, following,
+      })
+      const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
+      const recipients = [...(this.follows.get(thread.threadRef) ?? [])]
+        .filter(id => id !== member.memberId && this.members.has(id))
+      const deliveries = this.activityDeliveries(activity, recipients)
+      const operation: AgentTeamFollowChangedOperation = Object.freeze({
+        ...this.operationBase(request, sequence), kind: 'team/follow-changed',
+        data: Object.freeze({ workspaceId: request.workspaceId, activity, follow, task,
+          thread: nextThread, deliveries }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.projectFollow(operation)
+      return this.committed(this.followResult(operation))
+    })
+  }
+
+  followStatus(actor: AgentTeamMemberActor, request: {
+    workspaceId: WorkspaceId
+    taskRef: AgentTeamTaskRef
+  }): AgentTeamFollowStatus {
+    const member = this.assertMemberActor(actor)
+    const task = this.requireTask(request.workspaceId, request.taskRef)
+    this.requireMemberChannel(member, task.channelRef)
+    const thread = this.requireThread(task.threadRef)
+    return Object.freeze({ task, thread, following: this.isFollowing(thread.threadRef, member.memberId) })
   }
 
   /** Mutate one Member-owned Direction Claim and derive Task state. */
@@ -711,6 +802,8 @@ export class AgentTeamLedger {
         this.projectJoin(operation)
       } else if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
         this.projectMessage(operation)
+      } else if (operation.kind === 'team/follow-changed') {
+        this.projectFollow(operation)
       } else if (operation.kind === 'team/claim-created'
         || operation.kind === 'team/claim-done'
         || operation.kind === 'team/claim-released') {
@@ -802,6 +895,7 @@ export class AgentTeamLedger {
       return
     }
     const memberAuthored = operation.kind === 'team/thread-replied'
+      || operation.kind === 'team/follow-changed'
       || operation.kind === 'team/claim-created'
       || operation.kind === 'team/claim-done'
       || operation.kind === 'team/claim-released'
@@ -862,6 +956,11 @@ export class AgentTeamLedger {
       members.set(next.memberId, next)
       return
     }
+    if (operation.kind === 'team/follow-changed') {
+      this.validateFollowOperation(operation, channels, members, memberships, tasks, threads,
+        follows, deliveries, messageIds, refs)
+      return
+    }
     if (operation.kind === 'team/claim-created'
       || operation.kind === 'team/claim-done'
       || operation.kind === 'team/claim-released') {
@@ -869,6 +968,10 @@ export class AgentTeamLedger {
       return
     }
     const { message, task, thread, follows: nextFollows, deliveries: queued } = operation.data
+    if (operation.actor.kind === 'host') {
+      throw new Error(`agent-team Message operation ${operation.sequence} has invalid authority`)
+    }
+    const actor = operation.actor
     const channel = channels.get(message.channelRef)
     if (channel === undefined || channel.workspaceId !== operation.data.workspaceId) {
       throw new Error(`agent-team Message operation ${operation.sequence} references an invalid Channel`)
@@ -877,8 +980,7 @@ export class AgentTeamLedger {
     const priorThread = threads.get(thread.threadRef)
     const topLevel = operation.kind === 'team/message-sent'
     if (message.sequence !== operation.sequence
-      || operation.actor.kind === 'host'
-      || message.sender !== operation.actor.memberId
+      || message.sender !== actor.memberId
       || message.topLevel !== topLevel
       || (topLevel ? priorTask !== undefined || priorThread !== undefined || task.status !== 'todo'
         : priorTask === undefined || priorThread === undefined
@@ -913,7 +1015,7 @@ export class AgentTeamLedger {
         || recipient === undefined
         || recipient.workspaceId !== operation.data.workspaceId
         || !memberships.get(channel.channelRef)?.has(recipient.memberId)
-        || delivery.recipient === operation.actor.memberId
+        || delivery.recipient === actor.memberId
         || recipients.has(delivery.recipient)) {
         throw new Error(`agent-team Message operation ${operation.sequence} has invalid Deliveries`)
       }
@@ -921,14 +1023,77 @@ export class AgentTeamLedger {
       deliveries.set(delivery.deliveryId, delivery)
     }
     const currentFollows = follows.get(thread.threadRef) ?? new Set<AgentTeamMemberId>()
-    const expectedFollows = [...new Set([...currentFollows, operation.actor.memberId, ...recipients])]
-    if (nextFollows.length !== expectedFollows.length || nextFollows.some((follow, index) =>
+    const mentions = operation.kind === 'team/thread-replied' ? operation.data.mentions : [...recipients]
+    const expectedFollows = [...new Set([...currentFollows, actor.memberId, ...mentions])]
+    const expectedRecipients = expectedFollows.filter(memberId => memberId !== actor.memberId && members.has(memberId)).sort()
+    if (!this.sameList([...recipients].sort(), expectedRecipients)
+      || nextFollows.length !== expectedFollows.length || nextFollows.some((follow, index) =>
       follow.memberId !== expectedFollows[index]
       || follow.threadRef !== thread.threadRef
       || follow.following !== true)) {
       throw new Error(`agent-team Message operation ${operation.sequence} has invalid Follow state`)
     }
     follows.set(thread.threadRef, new Set(expectedFollows))
+    tasks.set(task.taskRef, task)
+    threads.set(thread.threadRef, thread)
+  }
+
+  private validateFollowOperation(
+    operation: AgentTeamFollowChangedOperation,
+    channels: Map<AgentTeamChannelRef, AgentTeamChannel>,
+    members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
+    memberships: Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>,
+    tasks: Map<AgentTeamTaskRef, AgentTeamTask>,
+    threads: Map<AgentTeamThreadRef, AgentTeamThread>,
+    follows: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>,
+    deliveries: Map<AgentTeamDeliveryId, AgentTeamDelivery>,
+    messageIds: Set<string>,
+    refs: Set<string>,
+  ): void {
+    if (operation.actor.kind !== 'member') throw new Error('Follow operation requires Member authority')
+    const actor = operation.actor
+    const { activity, follow, task, thread, deliveries: queued } = operation.data
+    const previousTask = tasks.get(task.taskRef)
+    const previousThread = threads.get(thread.threadRef)
+    const channel = channels.get(task.channelRef)
+    const currentFollowers = follows.get(thread.threadRef) ?? new Set<AgentTeamMemberId>()
+    const expectedFollowing = operation.data.activity.kind === 'follow'
+    if (previousTask === undefined || previousThread === undefined || channel === undefined
+      || channel.workspaceId !== operation.data.workspaceId
+      || !memberships.get(channel.channelRef)?.has(actor.memberId)
+      || previousTask.channelRef !== task.channelRef || previousTask.threadRef !== task.threadRef
+      || previousThread.taskRef !== thread.taskRef || thread.revision !== operation.sequence
+      || activity.sequence !== operation.sequence || activity.actor !== actor.memberId
+      || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef
+      || follow.memberId !== actor.memberId || follow.threadRef !== thread.threadRef
+      || follow.following !== expectedFollowing
+      || currentFollowers.has(actor.memberId) === expectedFollowing) {
+      throw new Error(`agent-team Follow operation ${operation.sequence} has inconsistent facts`)
+    }
+    this.addRef(refs, activity.activityRef)
+    const expectedRecipients = [...currentFollowers].filter(id => id !== actor.memberId && members.has(id)).sort()
+    const recipients: AgentTeamMemberId[] = []
+    for (const delivery of queued) {
+      this.addRef(refs, delivery.deliveryId)
+      if (messageIds.has(delivery.messageId)) throw new Error(`agent-team repeats Inbox MessageId '${delivery.messageId}'`)
+      messageIds.add(delivery.messageId)
+      if (delivery.source.kind !== 'activity' || delivery.source.activityRef !== activity.activityRef
+        || delivery.threadRef !== thread.threadRef || delivery.taskRef !== task.taskRef
+        || delivery.state !== 'queued' || !currentFollowers.has(delivery.recipient)
+        || !members.has(delivery.recipient) || delivery.recipient === actor.memberId
+        || recipients.includes(delivery.recipient)) {
+        throw new Error(`agent-team Follow operation ${operation.sequence} has invalid Deliveries`)
+      }
+      recipients.push(delivery.recipient)
+      deliveries.set(delivery.deliveryId, delivery)
+    }
+    if (!this.sameList(recipients.sort(), expectedRecipients)) {
+      throw new Error(`agent-team Follow operation ${operation.sequence} has an incomplete Delivery set`)
+    }
+    const nextFollowers = new Set(currentFollowers)
+    if (follow.following) nextFollowers.add(follow.memberId)
+    else nextFollowers.delete(follow.memberId)
+    follows.set(thread.threadRef, nextFollowers)
     tasks.set(task.taskRef, task)
     threads.set(thread.threadRef, thread)
   }
@@ -1088,6 +1253,17 @@ export class AgentTeamLedger {
     }
   }
 
+  private assertSameFollow(
+    operation: AgentTeamOperation,
+    request: AgentTeamAuthorizedFollowRequest,
+  ): asserts operation is AgentTeamFollowChangedOperation {
+    if (operation.kind !== 'team/follow-changed' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId || operation.data.task.taskRef !== request.taskRef
+      || operation.data.follow.following !== (request.action === 'follow')) {
+      this.throwRequestCollision(request.requestId)
+    }
+  }
+
   private assertSameClaim(
     operation: AgentTeamOperation,
     request: AgentTeamAuthorizedClaimRequest,
@@ -1171,6 +1347,25 @@ export class AgentTeamLedger {
     return Object.freeze([...unique].sort())
   }
 
+  private consumeConfirmation(
+    token: AgentTeamConfirmationToken,
+    sender: AgentTeamAgentMember,
+    thread: AgentTeamThread,
+    recipients: readonly AgentTeamMemberId[],
+  ): void {
+    const confirmation = this.confirmations.get(token)
+    this.confirmations.delete(token)
+    const currentFollowing = recipients.map(recipient => this.isFollowing(thread.threadRef, recipient))
+    const currentStates = recipients.map(recipient => this.members.get(recipient)?.state)
+    if (confirmation === undefined || confirmation.sender !== sender.memberId
+      || confirmation.threadRef !== thread.threadRef || confirmation.revision !== thread.revision
+      || !this.sameList(confirmation.recipients, recipients)
+      || !this.sameList(confirmation.following, currentFollowing)
+      || !this.sameList(confirmation.memberStates, currentStates)) {
+      throw new Error('confirmation token is invalid or expired')
+    }
+  }
+
   private assertMemberActor(actor: AgentTeamMemberActor): AgentTeamAgentMember {
     const member = this.requireMember(actor.memberId)
     if (member.state !== 'enabled' || member.handle !== actor.handle) {
@@ -1204,6 +1399,10 @@ export class AgentTeamLedger {
     const member = this.members.get(memberId)
     if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
     return member
+  }
+
+  private isFollowing(threadRef: AgentTeamThreadRef, memberId: AgentTeamMemberId): boolean {
+    return this.follows.get(threadRef)?.has(memberId) ?? false
   }
 
   private isChannelMember(channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): boolean {
@@ -1250,6 +1449,7 @@ export class AgentTeamLedger {
       await this.table.put(operation.operationId, operation)
       this.commit(operation)
       this.members.set(next.memberId, next)
+      this.confirmations.clear()
       return this.committed(this.memberResult(operation))
     })
   }
@@ -1325,7 +1525,14 @@ export class AgentTeamLedger {
     })))
   }
 
+  private invalidateThreadConfirmations(threadRef: AgentTeamThreadRef): void {
+    for (const [token, confirmation] of this.confirmations) {
+      if (confirmation.threadRef === threadRef) this.confirmations.delete(token)
+    }
+  }
+
   private projectMessage(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation): void {
+    this.invalidateThreadConfirmations(operation.data.thread.threadRef)
     this.messages.push(operation.data.message)
     this.tasks.set(operation.data.task.taskRef, operation.data.task)
     this.threads.set(operation.data.thread.threadRef, operation.data.thread)
@@ -1333,7 +1540,20 @@ export class AgentTeamLedger {
     for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
   }
 
+  private projectFollow(operation: AgentTeamFollowChangedOperation): void {
+    this.invalidateThreadConfirmations(operation.data.thread.threadRef)
+    const followers = new Set(this.follows.get(operation.data.thread.threadRef) ?? [])
+    if (operation.data.follow.following) followers.add(operation.data.follow.memberId)
+    else followers.delete(operation.data.follow.memberId)
+    this.follows.set(operation.data.thread.threadRef, followers)
+    this.activities.push(operation.data.activity)
+    this.tasks.set(operation.data.task.taskRef, operation.data.task)
+    this.threads.set(operation.data.thread.threadRef, operation.data.thread)
+    for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
+  }
+
   private projectClaim(operation: AgentTeamClaimChangedOperation): void {
+    this.invalidateThreadConfirmations(operation.data.thread.threadRef)
     this.claims.set(operation.data.claim.claimRef, operation.data.claim)
     this.activities.push(operation.data.activity)
     this.tasks.set(operation.data.task.taskRef, operation.data.task)
@@ -1367,8 +1587,14 @@ export class AgentTeamLedger {
   }
 
   private replyResult(operation: AgentTeamThreadRepliedOperation): AgentTeamReplyResult {
-    return Object.freeze({ receipt: this.receipt(operation), message: operation.data.message,
+    return Object.freeze({ kind: 'committed', receipt: this.receipt(operation), message: operation.data.message,
       task: operation.data.task, thread: operation.data.thread, deliveries: operation.data.deliveries })
+  }
+
+  private followResult(operation: AgentTeamFollowChangedOperation): AgentTeamFollowResult {
+    return Object.freeze({ receipt: this.receipt(operation), activity: operation.data.activity,
+      follow: operation.data.follow, task: operation.data.task, thread: operation.data.thread,
+      deliveries: operation.data.deliveries })
   }
 
   private claimResult(operation: AgentTeamClaimChangedOperation): AgentTeamClaimResult {

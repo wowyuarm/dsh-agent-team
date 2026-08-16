@@ -3,6 +3,7 @@ import AgentTeam, { markAgentTeamPreset } from '@deepseek-ai/dsh-agent-team'
 import type {
   AgentTeamChannelRef,
   AgentTeamClaimRef,
+  AgentTeamConfirmationToken,
   AgentTeamMemberId,
   AgentTeamRequestId,
   AgentTeamTaskRef,
@@ -36,16 +37,20 @@ const teamSend = markAgentTeamPreset(defineTool({
     body: { type: 'string', required: true },
     baseRevision: { type: 'number', required: true },
     mentions: { type: 'array', items: { type: 'string' } },
+    confirmationToken: { type: 'string' },
   },
   output: {
     schema: {
       type: 'object', additionalProperties: false, properties: {
-        operationId: { type: 'string', required: true },
-        messageRef: { type: 'string', required: true },
+        kind: { type: 'string', required: true },
+        operationId: { type: 'string' },
+        confirmationToken: { type: 'string' },
+        recipients: { type: 'array', items: { type: 'string' } },
+        messageRef: { type: 'string' },
         taskRef: { type: 'string', required: true },
         threadRef: { type: 'string', required: true },
         revision: { type: 'number', required: true },
-        deliveries: { type: 'array', required: true, items: {
+        deliveries: { type: 'array', items: {
           type: 'object', additionalProperties: false, properties: {
             deliveryId: { type: 'string', required: true },
             recipient: { type: 'string', required: true },
@@ -54,8 +59,9 @@ const teamSend = markAgentTeamPreset(defineTool({
         } },
       },
     },
-    render: (_args, value) => [{ type: 'text', text:
-      `Reply ${value.messageRef} committed at revision ${value.revision}. Deliveries: ${value.deliveries.map(d => `${d.recipient}=${d.state}`).join(', ') || 'none'}` }],
+    render: (_args, value) => [{ type: 'text', text: value.kind === 'confirmation_required'
+      ? `Confirmation required for ${value.recipients?.join(', ')} at revision ${value.revision}. Retry the same send with confirmationToken=${value.confirmationToken}`
+      : `Reply ${value.messageRef} committed at revision ${value.revision}. Deliveries: ${value.deliveries?.map(d => `${d.recipient}=${d.state}`).join(', ') || 'none'}` }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -65,9 +71,13 @@ const teamSend = markAgentTeamPreset(defineTool({
       requestId: requestId(agent.id, exec.callId), workspaceId: WorkspaceId(args.workspaceId),
       taskRef: args.taskRef as AgentTeamTaskRef, body: args.body, baseRevision: args.baseRevision,
       ...(args.mentions === undefined ? {} : { recipients: args.mentions as AgentTeamMemberId[] }),
+      ...(args.confirmationToken === undefined ? {} : { confirmationToken: args.confirmationToken as AgentTeamConfirmationToken }),
     })
+    if (result.kind === 'confirmation_required') return {
+      ...result, recipients: [...result.recipients],
+    }
     return {
-      operationId: result.receipt.operationId, messageRef: result.message.messageRef,
+      kind: 'committed', operationId: result.receipt.operationId, messageRef: result.message.messageRef,
       taskRef: result.task.taskRef, threadRef: result.thread.threadRef, revision: result.thread.revision,
       deliveries: result.deliveries.map(d => ({ deliveryId: d.deliveryId, recipient: d.recipient, state: d.state })),
     }
@@ -143,6 +153,42 @@ const teamClaim = defineTool({
   },
 })
 
+const teamFollow = defineTool({
+  name: 'team_follow',
+  description: 'Read or change your own subscription on one visible Task Thread. Unfollow keeps read and reply authority.',
+  parameters: {
+    action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow'] },
+    workspaceId: { type: 'string', required: true },
+    taskRef: { type: 'string', required: true },
+  },
+  output: {
+    schema: { type: 'object', additionalProperties: false, properties: {
+      taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true },
+      revision: { type: 'number', required: true }, following: { type: 'boolean', required: true },
+      operationId: { type: 'string' }, activityRef: { type: 'string' },
+    } },
+    render: (_args, value) => [{ type: 'text', text:
+      `Thread ${value.threadRef}: following=${value.following}, revision=${value.revision}` }],
+  },
+  async execute(args, exec) {
+    const agent = exec.agent
+    if (agent === undefined) throw new Error('team_follow requires an Agent session')
+    const service = host(agent)
+    const base = { workspaceId: WorkspaceId(args.workspaceId), taskRef: args.taskRef as AgentTeamTaskRef }
+    if (args.action === 'status') {
+      const result = service.followStatusForAgent(agent, base)
+      return { taskRef: result.task.taskRef, threadRef: result.thread.threadRef,
+        revision: result.thread.revision, following: result.following }
+    }
+    const result = await service.changeFollowForAgent(agent, {
+      requestId: requestId(agent.id, exec.callId), ...base, action: args.action,
+    })
+    return { taskRef: result.task.taskRef, threadRef: result.thread.threadRef,
+      revision: result.thread.revision, following: result.follow.following,
+      operationId: result.receipt.operationId, activityRef: result.activity.activityRef }
+  },
+})
+
 const teamView = defineTool({
   name: 'team_view',
   description: 'Read bounded Agent Team facts visible to this Member. Reuse opaque refs exactly as returned.',
@@ -163,7 +209,7 @@ const teamView = defineTool({
       activities: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         activityRef: { type: 'string', required: true }, kind: { type: 'string', required: true },
         taskRef: { type: 'string', required: true }, actor: { type: 'string', required: true },
-        claimRef: { type: 'string', required: true }, sequence: { type: 'number', required: true },
+        claimRef: { type: 'string' }, sequence: { type: 'number', required: true },
       } } },
       cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true },
     } },
@@ -182,7 +228,8 @@ const teamView = defineTool({
         channelRef: message.channelRef, taskRef: task.taskRef, threadRef: thread.threadRef,
         sender: message.sender, body: message.body, status: task.status, revision: thread.revision })),
       activities: view.activities.map(a => ({ activityRef: a.activityRef, kind: a.kind, taskRef: a.taskRef,
-        actor: a.actor, claimRef: a.claimRef, sequence: a.sequence })), cursor: view.cursor, hasMore: view.hasMore }
+        actor: a.actor, ...('claimRef' in a ? { claimRef: a.claimRef } : {}), sequence: a.sequence })),
+      cursor: view.cursor, hasMore: view.hasMore }
   },
 })
 
@@ -190,4 +237,5 @@ export function apply(ctx: Context): void {
   ctx.tools.register(teamSend)
   ctx.tools.register(teamView)
   ctx.tools.register(teamClaim)
+  ctx.tools.register(teamFollow)
 }
