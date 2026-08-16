@@ -5,6 +5,7 @@ import type {
   AgentTeamChannelRef,
   AgentTeamMemberId,
   AgentTeamRequestId,
+  AgentTeamTaskRef,
 } from '@deepseek-ai/dsh-agent-team'
 import type {} from '@deepseek-ai/dsh-commands'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -12,14 +13,14 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 export const name = 'command-agent-team'
 export const inject = ['agentTeam', 'commands']
 
-export const USAGE = 'usage: /team status | /team member add <workspaceId> <handle> <presetId> <description> | /team member suspend|resume <memberRef> | /team channel create <workspaceId> <name> | /team channel join <workspaceId> <channelRef> <memberRef> | /team send <workspaceId> <channelRef> [--mention <memberRef,...> --] <body> | /team view <workspaceId> [channelRef] [limit] [cursor]'
+export const USAGE = 'usage: /team status | /team member add <workspaceId> <handle> <presetId> <description> | /team member suspend|resume|remove <memberRef> | /team channel create <workspaceId> <name> | /team channel join <workspaceId> <channelRef> <memberRef> | /team task accept|close|reopen <workspaceId> <taskRef> | /team send <workspaceId> <channelRef> [--mention <memberRef,...> --] <body> | /team view <workspaceId> [channelRef] [limit] [cursor]'
 
 /** Register `/team` and derive business idempotency from commandId. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.commands.register({
     name: 'team',
     description: 'Inspect and manage the Agent Team',
-    input: { hint: 'status | member add|suspend|resume | channel create|join | send | view' },
+    input: { hint: 'status | member add|suspend|resume|remove | channel create|join | task accept|close|reopen | send | view' },
     handler: async ({ rawInput, commandId }) => {
       const parts = rawInput.trim().split(/\s+/)
       if (parts.length === 1 && (parts[0] === '' || parts[0] === 'status')) {
@@ -53,6 +54,23 @@ export function apply(ctx: Context): void {
             kind: result.status.availability === 'unavailable' ? 'error' as const : 'success' as const,
             text: `Agent Member ${result.status.member.memberId} is ${result.status.availability}${detail}`,
           }
+        }
+        if (parts[0] === 'member' && parts[1] === 'remove' && parts.length === 3) {
+          const result = await ctx.agentTeam.removeMember({
+            requestId: commandId as unknown as AgentTeamRequestId,
+            memberId: parts[2] as AgentTeamMemberId,
+          })
+          return { kind: 'success' as const,
+            text: `Agent Member ${result.member.memberId} removed; released ${result.releasedClaims.length} Claims; canceled ${result.canceledDeliveries.length} Deliveries` }
+        }
+        if (parts[0] === 'task' && (parts[1] === 'accept' || parts[1] === 'close' || parts[1] === 'reopen')
+          && parts.length === 4) {
+          const result = await ctx.agentTeam.changeTask({
+            requestId: commandId as unknown as AgentTeamRequestId,
+            workspaceId: WorkspaceId(parts[2]!), taskRef: parts[3] as AgentTeamTaskRef, action: parts[1],
+          })
+          return { kind: 'success' as const,
+            text: `Task ${result.task.taskRef} is ${result.task.status} at revision ${result.thread.revision}` }
         }
         if (parts[0] === 'channel' && parts[1] === 'join' && parts.length === 5) {
           const result = await ctx.agentTeam.joinChannel({

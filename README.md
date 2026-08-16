@@ -45,4 +45,4 @@ This repository targets the public DSH plugin and bundle interfaces. It does not
 
 ## Known Limitations and Deferred Work
 
-M1 tickets 07-09 add completion/removal, broader failure recovery, and the final installable composition. Issues 01-06 provide the ledger, Human command adapter, Agent Member lifecycle, durable Delivery, revision-fenced replies, Direction Claims, Follow attention, one-use mention confirmation, and four production tools.
+M1 tickets 08-09 add broader failure recovery and the final installable composition. Issues 01-07 provide the ledger, Human command adapter, Agent Member lifecycle, durable Delivery, revision-fenced replies, Direction Claims, Follow attention, one-use mention confirmation, Human Task completion/reopen, irreversible Member removal, and four production tools.

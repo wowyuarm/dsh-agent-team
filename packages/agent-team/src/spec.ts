@@ -51,7 +51,7 @@ const memberSchema = z.object({
   description: z.string().min(1),
   presetId: z.string().min(1),
   privateMemoryPath: z.string().min(1),
-  state: z.union([z.literal('enabled'), z.literal('suspended')]),
+  state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive')]),
 }).strict()
 
 const channelSchema = z.object({
@@ -76,7 +76,8 @@ const taskSchema = z.object({
   taskRef: taskRefSchema,
   channelRef: channelRefSchema,
   threadRef: threadRefSchema,
-  status: z.union([z.literal('todo'), z.literal('in_progress'), z.literal('in_review')]),
+  status: z.union([z.literal('todo'), z.literal('in_progress'), z.literal('in_review'), z.literal('done'), z.literal('closed')]),
+  resolution: z.union([z.literal('open'), z.literal('accepted'), z.literal('closed')]),
 }).strict()
 
 const threadSchema = z.object({
@@ -132,6 +133,11 @@ const claimActivitySchema = z.object({
 const followActivitySchema = z.object({
   ...activityBase,
   kind: z.union([z.literal('follow'), z.literal('unfollow')]),
+}).strict()
+
+const taskActivitySchema = z.object({
+  ...activityBase,
+  kind: z.union([z.literal('accept'), z.literal('close'), z.literal('reopen')]),
 }).strict()
 
 const messageOperationData = {
@@ -233,6 +239,31 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
       deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('queued') }).strict()),
     }).strict(),
   }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/task-changed'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      activity: taskActivitySchema,
+      task: taskSchema,
+      thread: threadSchema,
+      claims: z.array(claimSchema),
+      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('queued') }).strict()),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-removed'),
+    data: z.object({
+      member: memberSchema,
+      claims: z.array(claimSchema),
+      tasks: z.array(taskSchema),
+      follows: z.array(followSchema),
+      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('canceled') }).strict()),
+    }).strict(),
+  }).strict(),
   claimOperation('team/claim-created'),
   claimOperation('team/claim-done'),
   claimOperation('team/claim-released'),
@@ -241,7 +272,7 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
 /** Versioned durable Agent Team ledger declaration. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 3,
+  version: 4,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },

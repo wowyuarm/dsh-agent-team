@@ -67,13 +67,13 @@ export interface AgentTeamAgentMember {
   readonly description: string
   readonly presetId: string
   readonly privateMemoryPath: string
-  readonly state: 'enabled' | 'suspended'
+  readonly state: 'enabled' | 'suspended' | 'inactive'
 }
 
 /** Host projection combining durable intent with process-local availability. */
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
-  readonly availability: 'active' | 'suspended' | 'unavailable'
+  readonly availability: 'active' | 'suspended' | 'inactive' | 'unavailable'
   readonly diagnostic?: string
 }
 
@@ -111,7 +111,8 @@ export interface AgentTeamTask {
   readonly taskRef: AgentTeamTaskRef
   readonly channelRef: AgentTeamChannelRef
   readonly threadRef: AgentTeamThreadRef
-  readonly status: 'todo' | 'in_progress' | 'in_review'
+  readonly status: 'todo' | 'in_progress' | 'in_review' | 'done' | 'closed'
+  readonly resolution: 'open' | 'accepted' | 'closed'
 }
 
 /** Current projection of one Task Thread. */
@@ -156,8 +157,12 @@ export interface AgentTeamFollowActivity extends AgentTeamActivityBase {
   readonly kind: 'follow' | 'unfollow'
 }
 
+export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
+  readonly kind: 'accept' | 'close' | 'reopen'
+}
+
 /** One ordered host-authored Thread Activity. */
-export type AgentTeamActivity = AgentTeamClaimActivity | AgentTeamFollowActivity
+export type AgentTeamActivity = AgentTeamClaimActivity | AgentTeamFollowActivity | AgentTeamTaskActivity
 
 export type AgentTeamDeliverySource =
   | { readonly kind: 'message'; readonly messageRef: AgentTeamMessageRef }
@@ -171,7 +176,7 @@ export interface AgentTeamDelivery {
   readonly threadRef: AgentTeamThreadRef
   readonly taskRef: AgentTeamTaskRef
   readonly recipient: AgentTeamMemberId
-  readonly state: 'queued' | 'admitted'
+  readonly state: 'queued' | 'admitted' | 'canceled'
 }
 
 /** The first durable operation in every Agent Team ledger. */
@@ -249,6 +254,29 @@ export interface AgentTeamFollowChangedOperation extends AgentTeamOperationBase 
   }
 }
 
+export interface AgentTeamTaskChangedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/task-changed'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly activity: AgentTeamTaskActivity
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly claims: readonly AgentTeamClaim[]
+    readonly deliveries: readonly AgentTeamDelivery[]
+  }
+}
+
+export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-removed'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+    readonly claims: readonly AgentTeamClaim[]
+    readonly tasks: readonly AgentTeamTask[]
+    readonly follows: readonly AgentTeamFollow[]
+    readonly deliveries: readonly AgentTeamDelivery[]
+  }
+}
+
 export interface AgentTeamClaimOperationData {
   readonly workspaceId: WorkspaceId
   readonly activity: AgentTeamActivity
@@ -311,6 +339,8 @@ export type AgentTeamOperation =
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
   | AgentTeamFollowChangedOperation
+  | AgentTeamTaskChangedOperation
+  | AgentTeamMemberRemovedOperation
   | AgentTeamChannelMemberAddedOperation
   | AgentTeamDeliveryAdmittedOperation
   | AgentTeamMemberAddedOperation
@@ -395,6 +425,34 @@ export interface AgentTeamReplyResult {
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamTaskRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly action: 'accept' | 'close' | 'reopen'
+}
+
+export interface AgentTeamTaskResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly activity: AgentTeamTaskActivity
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly claims: readonly AgentTeamClaim[]
+  readonly deliveries: readonly AgentTeamDelivery[]
+}
+
+export interface AgentTeamRemoveMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly memberId: AgentTeamMemberId
+}
+
+export interface AgentTeamRemoveMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly member: AgentTeamAgentMember
+  readonly releasedClaims: readonly AgentTeamClaim[]
+  readonly canceledDeliveries: readonly AgentTeamDelivery[]
 }
 
 export interface AgentTeamFollowRequest {

@@ -20,7 +20,7 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
   AgentTeamActivity,
@@ -42,6 +42,8 @@ import type {
   AgentTeamMemberActor,
   AgentTeamMemberId,
   AgentTeamMemberResult,
+  AgentTeamRemoveMemberRequest,
+  AgentTeamRemoveMemberResult,
   AgentTeamOperationReceipt,
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
@@ -53,6 +55,8 @@ import type {
   AgentTeamViewRequest,
   AgentTeamMessage,
   AgentTeamTask,
+  AgentTeamTaskRequest,
+  AgentTeamTaskResult,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
@@ -254,6 +258,33 @@ export default class AgentTeam extends Service {
     })
   }
 
+  /** Irreversibly remove one Member, quiesce its Agent, and archive its session. */
+  async removeMember(request: AgentTeamRemoveMemberRequest): Promise<AgentTeamRemoveMemberResult> {
+    return this.enqueueLifecycle(async () => {
+      const result = await this.requireLedger().removeMember({ ...request, actor: agentTeamHumanActor() })
+      if (result.committed) this.emitCommitted(result.value.receipt)
+      const handle = this.handles.get(request.memberId)
+      if (handle !== undefined) {
+        await handle.dispose()
+        this.handles.delete(request.memberId)
+      }
+      this.diagnostics.delete(request.memberId)
+      await this.ctx.workspaceRegistry.archiveSession(result.value.member.sessionId)
+      return result.value
+    })
+  }
+
+  /** Accept, close, or reopen one Task as the Human authority. */
+  async changeTask(request: AgentTeamTaskRequest): Promise<AgentTeamTaskResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().changeTask({ ...request, actor: agentTeamHumanActor() })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  }
+
   /** Add one Agent Member to a Channel without replaying historical Messages. */
   async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
     this.requireAccepting()
@@ -418,7 +449,9 @@ export default class AgentTeam extends Service {
   private activityMessage(activity: AgentTeamActivity, messageId: MessageId) {
     const ledger = this.requireLedger()
     const task = ledger.getTask(activity.taskRef)
-    const actor = ledger.getMember(activity.actor)
+    const member = ledger.getMember(activity.actor)
+    const actor = member === undefined && activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID
+      ? { memberId: AGENT_TEAM_HUMAN_MEMBER_ID, handle: 'human' } : member
     if (task === undefined || actor === undefined) throw new Error(`Activity '${activity.activityRef}' has an incomplete projection`)
     const summary = activity.kind === 'claim' || activity.kind === 'done' || activity.kind === 'release'
       ? `${actor.handle} ${activity.kind} Claim ${activity.claimRef}`
@@ -518,6 +551,7 @@ export default class AgentTeam extends Service {
   }
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
+    if (member.state === 'inactive') return Object.freeze({ member, availability: 'inactive' })
     if (member.state === 'suspended') return Object.freeze({ member, availability: 'suspended' })
     const diagnostic = this.diagnostics.get(member.memberId)
     if (diagnostic !== undefined) return Object.freeze({ member, availability: 'unavailable', diagnostic })

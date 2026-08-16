@@ -45,4 +45,4 @@ pnpm build
 
 ## 已知限制与延后工作
 
-M1 的 07-09 issue 会加入完成/移除、更多故障恢复和最终可安装组合。Issue 01-06 已提供 ledger、Human command adapter、Agent Member lifecycle、durable Delivery、revision-fenced reply、Direction Claims、Follow attention、one-use mention confirmation 和四个正式工具。
+M1 的 08-09 issue 会加入更多故障恢复和最终可安装组合。Issue 01-07 已提供 ledger、Human command adapter、Agent Member lifecycle、durable Delivery、revision-fenced reply、Direction Claims、Follow attention、one-use mention confirmation、Human Task 完成/重开、不可逆 Member 移除和四个正式工具。

@@ -22,7 +22,7 @@ Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`c
 
 把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。Structured mention 会在 Message operation 内保存一个 queued Delivery，并固定 DeliveryId 与 MessageId。Host 使用 wakeup 将 member-authored `agent-team-relay` 送入 `next-step`，只有目标 session 出现匹配的 `agent/inbox/spliced` 或 `user/message` evidence 后才提交 `delivery-admitted`。重启恢复会复用已有 evidence，或使用同一个 MessageId 重试。Admitted 只表示已进入 Inbox，不表示模型已经处理。
 
-Member reply 必须携带准确的当前 Thread revision，并在一个 operation 内更新 Message、Follow、Delivery 和 Thread facts。显式 follow/unfollow 是有序 Activity。结构化 mention 指向 unfollowed Member 时，必须先取得 process-local one-use confirmation token，首次调用不提交 operation；确认成功后重新建立 Follow。claim/done/release 是有序的 host-authored Activity。Active Claim 只排斥相同的 normalized Direction；不同 Direction 可以并行。存在 active Claim 时 Task 为 `in_progress`；没有 active 但至少一个 done 时为 `in_review`；其余为 `todo`。Message 与 Activity facts 共用一个有界 sequence cursor。
+Member reply 必须携带准确的当前 Thread revision，并在一个 operation 内更新 Message、Follow、Delivery 和 Thread facts。显式 follow/unfollow 是有序 Activity。结构化 mention 指向 unfollowed Member 时，必须先取得 process-local one-use confirmation token，首次调用不提交 operation；确认成功后重新建立 Follow。claim/done/release 是有序的 host-authored Activity。Active Claim 只排斥相同的 normalized Direction；不同 Direction 可以并行。显式 Human resolution 下 Task 为 `closed` 或 `done`；否则存在 active Claim 时为 `in_progress`，没有 active 但至少一个 done 时为 `in_review`，其余为 `todo`。Close 在同一 operation 内 release active Claims；reopen 保留 Claim 历史并重新派生状态。Member remove 先原子标记 inactive、release owned active Claims、清除 Follows、cancel queued Deliveries，再由 Host 等待 Agent 静止并归档 session。Message 与 Activity facts 共用一个有界 sequence cursor。
 
 M1 支持单个 Host writer。Ledger 永久保留，不提供 snapshot 或 compaction。
 

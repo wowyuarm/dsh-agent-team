@@ -33,9 +33,12 @@ import type {
   AgentTeamMemberActor,
   AgentTeamInitializedOperation,
   AgentTeamMemberId,
+  AgentTeamRemoveMemberRequest,
+  AgentTeamRemoveMemberResult,
   AgentTeamMessage,
   AgentTeamMessageRef,
   AgentTeamMemberAddedOperation,
+  AgentTeamMemberRemovedOperation,
   AgentTeamMemberResumedOperation,
   AgentTeamMemberSuspendedOperation,
   AgentTeamMessageSentOperation,
@@ -53,6 +56,10 @@ import type {
   AgentTeamSetMemberStateRequest,
   AgentTeamStatus,
   AgentTeamTask,
+  AgentTeamTaskActivity,
+  AgentTeamTaskChangedOperation,
+  AgentTeamTaskRequest,
+  AgentTeamTaskResult,
   AgentTeamTaskRef,
   AgentTeamThread,
   AgentTeamThreadRef,
@@ -135,6 +142,14 @@ export interface AgentTeamAuthorizedClaimRequest extends AgentTeamClaimRequest {
 
 export interface AgentTeamAuthorizedFollowRequest extends AgentTeamFollowRequest {
   readonly actor: AgentTeamMemberActor
+}
+
+export interface AgentTeamAuthorizedTaskRequest extends AgentTeamTaskRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedRemoveMemberRequest extends AgentTeamRemoveMemberRequest {
+  readonly actor: AgentTeamHumanActor
 }
 
 /** Internal authorized top-level Message request. */
@@ -445,7 +460,7 @@ export class AgentTeamLedger {
         taskRef,
         channelRef: channel.channelRef,
         threadRef,
-        status: 'todo',
+        status: 'todo', resolution: 'open',
       })
       const thread: AgentTeamThread = Object.freeze({ threadRef, taskRef, revision: sequence })
       const message: AgentTeamMessage = Object.freeze({
@@ -467,7 +482,7 @@ export class AgentTeamLedger {
       )
       for (const recipient of recipients) {
         const member = this.requireMember(recipient)
-        if (member.workspaceId !== request.workspaceId || !this.isChannelMember(channel.channelRef, recipient)) {
+        if (member.state === 'inactive' || member.workspaceId !== request.workspaceId || !this.isChannelMember(channel.channelRef, recipient)) {
           throw new Error(`Agent Member '${recipient}' is not authorized for Channel '${channel.channelRef}'`)
         }
       }
@@ -514,11 +529,12 @@ export class AgentTeamLedger {
       const task = this.requireTask(request.workspaceId, request.taskRef)
       const thread = this.requireThread(task.threadRef)
       this.requireMemberChannel(member, task.channelRef)
+      if (task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is ${task.status}; reopen it before replying`)
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       for (const recipient of explicit) {
         const target = this.requireMember(recipient)
-        if (target.workspaceId !== request.workspaceId || !this.isChannelMember(task.channelRef, recipient)) {
+        if (target.state === 'inactive' || target.workspaceId !== request.workspaceId || !this.isChannelMember(task.channelRef, recipient)) {
           throw new Error(`Agent Member '${recipient}' is not authorized for Channel '${task.channelRef}'`)
         }
       }
@@ -574,6 +590,89 @@ export class AgentTeamLedger {
       this.commit(operation)
       this.projectMessage(operation)
       return this.committed(this.replyResult(operation))
+    })
+  }
+
+  /** Accept, close, or reopen one Task as the Human authority. */
+  changeTask(request: AgentTeamAuthorizedTaskRequest): Promise<AgentTeamLedgerResult<AgentTeamTaskResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameTask(existing, request)
+        return this.resolved(this.taskResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const task = this.requireTask(request.workspaceId, request.taskRef)
+      const thread = this.requireThread(task.threadRef)
+      if ((request.action === 'accept' || request.action === 'close') && task.resolution !== 'open') {
+        throw new Error(`Task '${task.taskRef}' is already ${task.resolution}`)
+      }
+      if (request.action === 'accept' && task.status !== 'in_review') {
+        throw new Error(`Task '${task.taskRef}' must be in_review before acceptance`)
+      }
+      if (request.action === 'reopen' && task.resolution === 'open') throw new Error(`Task '${task.taskRef}' is already open`)
+      const sequence = this.nextSequence()
+      const nextClaims = [...this.claims.values()].filter(claim => claim.taskRef === task.taskRef).map(claim =>
+        request.action === 'close' && claim.state === 'active'
+          ? Object.freeze({ ...claim, state: 'released' as const }) : claim)
+      const resolution = request.action === 'reopen' ? 'open' as const : request.action === 'accept' ? 'accepted' as const : 'closed' as const
+      const status = resolution === 'accepted' ? 'done' as const
+        : resolution === 'closed' ? 'closed' as const : this.deriveTaskStatus(task.taskRef, nextClaims)
+      const nextTask: AgentTeamTask = Object.freeze({ ...task, resolution, status })
+      const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
+      const activity: AgentTeamTaskActivity = Object.freeze({ activityRef: this.ref('activity'),
+        kind: request.action, taskRef: task.taskRef, threadRef: thread.threadRef,
+        actor: request.actor.memberId, sequence })
+      const recipients = [...(this.follows.get(thread.threadRef) ?? [])].filter(id => this.members.has(id))
+      const deliveries = this.activityDeliveries(activity, recipients)
+      const operation: AgentTeamTaskChangedOperation = Object.freeze({
+        ...this.operationBase(request, sequence), kind: 'team/task-changed',
+        data: Object.freeze({ workspaceId: request.workspaceId, activity, task: nextTask,
+          thread: nextThread, claims: Object.freeze(nextClaims), deliveries }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.projectTask(operation)
+      return this.committed(this.taskResult(operation))
+    })
+  }
+
+  /** Irreversibly remove one Member and atomically clean its durable work. */
+  removeMember(request: AgentTeamAuthorizedRemoveMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamRemoveMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameRemoval(existing, request)
+        return this.resolved(this.removalResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const member = this.requireMember(request.memberId)
+      if (member.state === 'inactive') throw new Error(`Agent Member '${member.memberId}' is already inactive`)
+      const nextMember: AgentTeamAgentMember = Object.freeze({ ...member, state: 'inactive' })
+      const releasedClaims = [...this.claims.values()].filter(claim => claim.owner === member.memberId && claim.state === 'active')
+        .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
+      const projectedClaims = new Map(this.claims)
+      for (const claim of releasedClaims) projectedClaims.set(claim.claimRef, claim)
+      const affectedTaskRefs = new Set(releasedClaims.map(claim => claim.taskRef))
+      const tasks = [...affectedTaskRefs].map(taskRef => {
+        const task = this.tasks.get(taskRef)!
+        return Object.freeze({ ...task, status: this.deriveTaskStatus(taskRef, projectedClaims.values()) })
+      })
+      const changedFollows: AgentTeamFollow[] = []
+      for (const [threadRef, followers] of this.follows) if (followers.has(member.memberId)) {
+        changedFollows.push(Object.freeze({ memberId: member.memberId, threadRef, following: false }))
+      }
+      const canceled = [...this.deliveries.values()].filter(delivery => delivery.recipient === member.memberId && delivery.state === 'queued')
+        .map(delivery => Object.freeze({ ...delivery, state: 'canceled' as const }))
+      const operation: AgentTeamMemberRemovedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/member-removed',
+        data: Object.freeze({ member: nextMember, claims: Object.freeze(releasedClaims),
+          tasks: Object.freeze(tasks), follows: Object.freeze(changedFollows), deliveries: Object.freeze(canceled) }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.commit(operation)
+      this.projectRemoval(operation)
+      return this.committed(this.removalResult(operation))
     })
   }
 
@@ -640,6 +739,7 @@ export class AgentTeamLedger {
       const task = this.requireTask(request.workspaceId, request.taskRef)
       const thread = this.requireThread(task.threadRef)
       this.requireMemberChannel(member, task.channelRef)
+      if (task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is ${task.status}; reopen it before changing Claims`)
       let claim: AgentTeamClaim
       let kind: AgentTeamClaimChangedOperation['kind']
       let activityKind: AgentTeamActivity['kind']
@@ -804,6 +904,10 @@ export class AgentTeamLedger {
         this.projectMessage(operation)
       } else if (operation.kind === 'team/follow-changed') {
         this.projectFollow(operation)
+      } else if (operation.kind === 'team/task-changed') {
+        this.projectTask(operation)
+      } else if (operation.kind === 'team/member-removed') {
+        this.projectRemoval(operation)
       } else if (operation.kind === 'team/claim-created'
         || operation.kind === 'team/claim-done'
         || operation.kind === 'team/claim-released') {
@@ -936,7 +1040,8 @@ export class AgentTeamLedger {
       if ([...members.values()].some(candidate => candidate.sessionId === member.sessionId)) {
         throw new Error(`agent-team repeats Agent session '${member.sessionId}'`)
       }
-      if ([...members.values()].some(candidate => candidate.workspaceId === member.workspaceId
+      if ([...members.values()].some(candidate => candidate.state !== 'inactive'
+        && candidate.workspaceId === member.workspaceId
         && this.normalizeHandle(candidate.handle) === normalized)) {
         throw new Error(`agent-team repeats active handle '${member.handle}' in Workspace '${member.workspaceId}'`)
       }
@@ -954,6 +1059,15 @@ export class AgentTeamLedger {
         throw new Error(`agent-team Member lifecycle operation ${operation.sequence} has an invalid transition`)
       }
       members.set(next.memberId, next)
+      return
+    }
+    if (operation.kind === 'team/member-removed') {
+      this.validateRemovalOperation(operation, members, claims, tasks, follows, deliveries)
+      return
+    }
+    if (operation.kind === 'team/task-changed') {
+      this.validateTaskOperation(operation, channels, members, memberships, tasks, threads,
+        claims, follows, deliveries, messageIds, refs)
       return
     }
     if (operation.kind === 'team/follow-changed') {
@@ -1036,6 +1150,112 @@ export class AgentTeamLedger {
     follows.set(thread.threadRef, new Set(expectedFollows))
     tasks.set(task.taskRef, task)
     threads.set(thread.threadRef, thread)
+  }
+
+  private validateTaskOperation(
+    operation: AgentTeamTaskChangedOperation,
+    channels: Map<AgentTeamChannelRef, AgentTeamChannel>,
+    members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
+    memberships: Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>,
+    tasks: Map<AgentTeamTaskRef, AgentTeamTask>,
+    threads: Map<AgentTeamThreadRef, AgentTeamThread>,
+    claims: Map<AgentTeamClaimRef, AgentTeamClaim>,
+    follows: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>,
+    deliveries: Map<AgentTeamDeliveryId, AgentTeamDelivery>,
+    messageIds: Set<string>, refs: Set<string>,
+  ): void {
+    if (operation.actor.kind !== 'human') throw new Error('Task operation requires Human authority')
+    const { activity, task, thread, claims: nextClaims, deliveries: queued } = operation.data
+    const previousTask = tasks.get(task.taskRef)
+    const previousThread = threads.get(thread.threadRef)
+    const channel = channels.get(task.channelRef)
+    const expectedResolution = activity.kind === 'reopen' ? 'open' : activity.kind === 'accept' ? 'accepted' : 'closed'
+    if (previousTask === undefined || previousThread === undefined || channel?.workspaceId !== operation.data.workspaceId
+      || (activity.kind === 'reopen' ? previousTask.resolution === 'open' : previousTask.resolution !== 'open')
+      || previousTask.channelRef !== task.channelRef || previousTask.threadRef !== task.threadRef
+      || (activity.kind === 'accept' && previousTask.status !== 'in_review')
+      || task.resolution !== expectedResolution || thread.revision !== operation.sequence
+      || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
+      || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef) {
+      throw new Error(`agent-team Task operation ${operation.sequence} has inconsistent facts`)
+    }
+    const priorClaims = [...claims.values()].filter(claim => claim.taskRef === task.taskRef)
+    const expectedClaims = priorClaims.map(claim => activity.kind === 'close' && claim.state === 'active'
+      ? { ...claim, state: 'released' as const } : claim)
+    if (JSON.stringify(nextClaims) !== JSON.stringify(expectedClaims)) throw new Error('agent-team Task operation has invalid Claims')
+    const projected = new Map(claims)
+    for (const claim of nextClaims) projected.set(claim.claimRef, claim)
+    const expectedStatus = expectedResolution === 'accepted' ? 'done' : expectedResolution === 'closed' ? 'closed'
+      : this.deriveTaskStatus(task.taskRef, projected.values())
+    if (task.status !== expectedStatus) throw new Error('agent-team Task operation has invalid status')
+    this.validateActivityDeliveries(operation, activity, queued, follows, members, deliveries, messageIds, refs)
+    this.addRef(refs, activity.activityRef)
+    for (const claim of nextClaims) claims.set(claim.claimRef, claim)
+    tasks.set(task.taskRef, task); threads.set(thread.threadRef, thread)
+  }
+
+  private validateRemovalOperation(
+    operation: AgentTeamMemberRemovedOperation,
+    members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
+    claims: Map<AgentTeamClaimRef, AgentTeamClaim>, tasks: Map<AgentTeamTaskRef, AgentTeamTask>,
+    follows: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>,
+    deliveries: Map<AgentTeamDeliveryId, AgentTeamDelivery>,
+  ): void {
+    const previous = members.get(operation.data.member.memberId)
+    if (operation.actor.kind !== 'human' || previous === undefined || previous.state === 'inactive'
+      || operation.data.member.state !== 'inactive' || !this.sameMemberIdentity(previous, operation.data.member)) {
+      throw new Error(`agent-team Member removal ${operation.sequence} is invalid`)
+    }
+    const expectedClaims = [...claims.values()].filter(c => c.owner === previous.memberId && c.state === 'active')
+    const expectedFollows = [...follows].filter(([, set]) => set.has(previous.memberId))
+    const expectedCanceled = [...deliveries.values()].filter(d => d.recipient === previous.memberId && d.state === 'queued')
+    const expectedTaskRefs = [...new Set(expectedClaims.map(claim => claim.taskRef))].sort()
+    if (operation.data.claims.length !== expectedClaims.length || operation.data.follows.length !== expectedFollows.length
+      || operation.data.deliveries.length !== expectedCanceled.length
+      || !this.sameList(operation.data.tasks.map(task => task.taskRef).sort(), expectedTaskRefs)
+      || !this.sameList(operation.data.claims.map(claim => claim.claimRef).sort(), expectedClaims.map(claim => claim.claimRef).sort())
+      || !this.sameList(operation.data.follows.map(follow => follow.threadRef).sort(), expectedFollows.map(([ref]) => ref).sort())
+      || !this.sameList(operation.data.deliveries.map(delivery => delivery.deliveryId).sort(), expectedCanceled.map(delivery => delivery.deliveryId).sort())) {
+      throw new Error('agent-team Member removal has incomplete cleanup')
+    }
+    for (const claim of operation.data.claims) {
+      const prior = claims.get(claim.claimRef)
+      if (prior?.state !== 'active' || claim.state !== 'released' || !this.sameClaimIdentity(prior, claim)) throw new Error('invalid removed Claim')
+      claims.set(claim.claimRef, claim)
+    }
+    for (const task of operation.data.tasks) {
+      const prior = tasks.get(task.taskRef)
+      if (prior === undefined || prior.resolution !== task.resolution
+        || task.status !== this.deriveResolvedTaskStatus(task, claims.values())) throw new Error('invalid removed Task')
+      tasks.set(task.taskRef, task)
+    }
+    for (const follow of operation.data.follows) {
+      if (follow.memberId !== previous.memberId || follow.following) throw new Error('invalid removed Follow')
+      follows.get(follow.threadRef)?.delete(previous.memberId)
+    }
+    for (const delivery of operation.data.deliveries) {
+      const prior = deliveries.get(delivery.deliveryId)
+      if (prior?.state !== 'queued' || delivery.state !== 'canceled' || !this.sameDelivery(prior, delivery)) throw new Error('invalid canceled Delivery')
+      deliveries.set(delivery.deliveryId, delivery)
+    }
+    members.set(previous.memberId, operation.data.member)
+  }
+
+  private validateActivityDeliveries(
+    operation: AgentTeamOperation, activity: AgentTeamActivity, queued: readonly AgentTeamDelivery[],
+    follows: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>, members: Map<AgentTeamMemberId, AgentTeamAgentMember>,
+    deliveries: Map<AgentTeamDeliveryId, AgentTeamDelivery>, messageIds: Set<string>, refs: Set<string>,
+  ): void {
+    const expected = [...(follows.get(activity.threadRef) ?? [])].filter(id => members.has(id) && id !== (operation.actor.kind === 'host' ? undefined : operation.actor.memberId)).sort()
+    const actual: AgentTeamMemberId[] = []
+    for (const delivery of queued) {
+      this.addRef(refs, delivery.deliveryId)
+      if (messageIds.has(delivery.messageId) || delivery.source.kind !== 'activity'
+        || delivery.source.activityRef !== activity.activityRef || delivery.state !== 'queued'
+        || delivery.taskRef !== activity.taskRef || delivery.threadRef !== activity.threadRef) throw new Error('invalid Activity Delivery')
+      messageIds.add(delivery.messageId); actual.push(delivery.recipient); deliveries.set(delivery.deliveryId, delivery)
+    }
+    if (!this.sameList(actual.sort(), expected)) throw new Error('incomplete Activity Delivery set')
   }
 
   private validateFollowOperation(
@@ -1251,6 +1471,17 @@ export class AgentTeamLedger {
       || !this.sameList(operation.data.mentions, recipients)) {
       this.throwRequestCollision(request.requestId)
     }
+  }
+
+  private assertSameTask(operation: AgentTeamOperation, request: AgentTeamAuthorizedTaskRequest): asserts operation is AgentTeamTaskChangedOperation {
+    if (operation.kind !== 'team/task-changed' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId || operation.data.task.taskRef !== request.taskRef
+      || operation.data.activity.kind !== request.action) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameRemoval(operation: AgentTeamOperation, request: AgentTeamAuthorizedRemoveMemberRequest): asserts operation is AgentTeamMemberRemovedOperation {
+    if (operation.kind !== 'team/member-removed' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameFollow(
@@ -1482,8 +1713,8 @@ export class AgentTeamLedger {
 
   private assertHandleAvailable(workspaceId: WorkspaceId, handle: string): void {
     const normalized = this.normalizeHandle(handle)
-    if ([...this.members.values()].some(member => member.workspaceId === workspaceId
-      && this.normalizeHandle(member.handle) === normalized)) {
+    if ([...this.members.values()].some(member => member.state !== 'inactive'
+      && member.workspaceId === workspaceId && this.normalizeHandle(member.handle) === normalized)) {
       throw new Error(`Agent Member handle '${handle}' is already active in Workspace '${workspaceId}'`)
     }
   }
@@ -1500,6 +1731,11 @@ export class AgentTeamLedger {
     return left.claimRef === right.claimRef && left.taskRef === right.taskRef
       && left.threadRef === right.threadRef && left.owner === right.owner
       && left.direction === right.direction && left.normalizedDirection === right.normalizedDirection
+  }
+
+  private deriveResolvedTaskStatus(task: AgentTeamTask, claims: Iterable<AgentTeamClaim>): AgentTeamTask['status'] {
+    return task.resolution === 'accepted' ? 'done' : task.resolution === 'closed' ? 'closed'
+      : this.deriveTaskStatus(task.taskRef, claims)
   }
 
   private deriveTaskStatus(taskRef: AgentTeamTaskRef, claims: Iterable<AgentTeamClaim>): AgentTeamTask['status'] {
@@ -1538,6 +1774,24 @@ export class AgentTeamLedger {
     this.threads.set(operation.data.thread.threadRef, operation.data.thread)
     this.follows.set(operation.data.thread.threadRef, new Set(operation.data.follows.map(follow => follow.memberId)))
     for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
+  }
+
+  private projectTask(operation: AgentTeamTaskChangedOperation): void {
+    this.invalidateThreadConfirmations(operation.data.thread.threadRef)
+    for (const claim of operation.data.claims) this.claims.set(claim.claimRef, claim)
+    this.activities.push(operation.data.activity)
+    this.tasks.set(operation.data.task.taskRef, operation.data.task)
+    this.threads.set(operation.data.thread.threadRef, operation.data.thread)
+    for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
+  }
+
+  private projectRemoval(operation: AgentTeamMemberRemovedOperation): void {
+    this.members.set(operation.data.member.memberId, operation.data.member)
+    for (const claim of operation.data.claims) this.claims.set(claim.claimRef, claim)
+    for (const task of operation.data.tasks) this.tasks.set(task.taskRef, task)
+    for (const follow of operation.data.follows) this.follows.get(follow.threadRef)?.delete(follow.memberId)
+    for (const delivery of operation.data.deliveries) this.deliveries.set(delivery.deliveryId, delivery)
+    this.confirmations.clear()
   }
 
   private projectFollow(operation: AgentTeamFollowChangedOperation): void {
@@ -1589,6 +1843,17 @@ export class AgentTeamLedger {
   private replyResult(operation: AgentTeamThreadRepliedOperation): AgentTeamReplyResult {
     return Object.freeze({ kind: 'committed', receipt: this.receipt(operation), message: operation.data.message,
       task: operation.data.task, thread: operation.data.thread, deliveries: operation.data.deliveries })
+  }
+
+  private taskResult(operation: AgentTeamTaskChangedOperation): AgentTeamTaskResult {
+    return Object.freeze({ receipt: this.receipt(operation), activity: operation.data.activity,
+      task: operation.data.task, thread: operation.data.thread, claims: operation.data.claims,
+      deliveries: operation.data.deliveries })
+  }
+
+  private removalResult(operation: AgentTeamMemberRemovedOperation): AgentTeamRemoveMemberResult {
+    return Object.freeze({ receipt: this.receipt(operation), member: operation.data.member,
+      releasedClaims: operation.data.claims, canceledDeliveries: operation.data.deliveries })
   }
 
   private followResult(operation: AgentTeamFollowChangedOperation): AgentTeamFollowResult {

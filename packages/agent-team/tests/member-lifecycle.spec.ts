@@ -192,11 +192,14 @@ async function realHarness(): Promise<{
   ctx.storage.mount('domain', facility)
   ctx.provide('storageDomain', facility)
   const workspaceId = WorkspaceId('workspace:member-test')
+  const archivedSessionIds: SessionId[] = []
   ctx.provide('workspaceRegistry', {
     get: (id: typeof workspaceId) => id === workspaceId
       ? { id, path: project, attachSession: async () => {} }
       : undefined,
     list: () => [],
+    archivedSessionIds,
+    archiveSession: async (sessionId: SessionId) => { if (!archivedSessionIds.includes(sessionId)) archivedSessionIds.push(sessionId) },
   })
   const teamFiber = await ctx.plugin(AgentTeam)
 
@@ -658,6 +661,102 @@ describe('Agent Team Member real composition', () => {
     ctx.agentTeam.validateLedger()
     await ctx.agentTeam.validateDeliveryEvidence()
     await remounted.dispose()
+  })
+
+  it('closes, reopens, accepts, and removes work without losing history', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:finish-channel'), workspaceId, name: 'finish' })
+    const worker = await ctx.agentTeam.addMember({ requestId: requestId('request:finish-worker'), workspaceId,
+      handle: 'finish-worker', presetId: 'team-member', description: 'Finishes work' })
+    const peer = await ctx.agentTeam.addMember({ requestId: requestId('request:finish-peer'), workspaceId,
+      handle: 'finish-peer', presetId: 'team-member', description: 'Reviews work' })
+    for (const member of [worker, peer]) await ctx.agentTeam.joinChannel({
+      requestId: requestId(`request:finish-join:${member.status.member.handle}`), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    const sent = await ctx.agentTeam.sendMessage({ requestId: requestId('request:finish-task'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'finish task', recipients: [worker.status.member.memberId, peer.status.member.memberId] })
+    const workerAgent = ctx.agents.get(worker.status.member.sessionId)!
+    const peerAgent = ctx.agents.get(peer.status.member.sessionId)!
+    const base = { workspaceId, taskRef: sent.task.taskRef }
+    const claimed = await executeTool(ctx, workerAgent, 'call:finish-claim', 'team_claim', { ...base, action: 'claim', direction: 'implementation' })
+    const claimRef = (claimed.value as { claims: Array<{ claimRef: string }> }).claims[0]!.claimRef
+    const closed = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-close'), ...base, action: 'close' })
+    expect(closed).toMatchObject({ task: { status: 'closed', resolution: 'closed' },
+      claims: [expect.objectContaining({ claimRef, state: 'released' })] })
+    expect((await executeTool(ctx, workerAgent, 'call:finish-claim-closed', 'team_claim', {
+      ...base, action: 'claim', direction: 'blocked',
+    })).isError).toBe(true)
+    const reopened = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-reopen'), ...base, action: 'reopen' })
+    expect(reopened.task).toMatchObject({ status: 'todo', resolution: 'open' })
+    const reply = await executeTool(ctx, workerAgent, 'call:finish-reply', 'team_send', {
+      ...base, body: 'work resumed', baseRevision: reopened.thread.revision,
+    })
+    expect(reply.isError).toBe(false)
+    const reviewClaim = await executeTool(ctx, workerAgent, 'call:finish-review-claim', 'team_claim', {
+      ...base, action: 'claim', direction: 'reviewable work',
+    })
+    const reviewRef = (reviewClaim.value as { claims: Array<{ claimRef: string; state: string }> }).claims
+      .find(claim => claim.state === 'active')!.claimRef
+    await executeTool(ctx, workerAgent, 'call:finish-done', 'team_claim', { ...base, action: 'done', claimRef: reviewRef })
+    const accepted = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-accept'), ...base, action: 'accept' })
+    expect(accepted.task).toMatchObject({ status: 'done', resolution: 'accepted' })
+    const acceptedRevision = accepted.thread.revision
+    expect((await executeTool(ctx, peerAgent, 'call:finish-reply-done', 'team_send', {
+      ...base, body: 'should reject', baseRevision: acceptedRevision,
+    })).isError).toBe(true)
+    const reopenedAccepted = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-reopen-accepted'), ...base, action: 'reopen' })
+    expect(reopenedAccepted.task).toMatchObject({ status: 'in_review', resolution: 'open' })
+
+    const active = await executeTool(ctx, workerAgent, 'call:remove-active-claim', 'team_claim', {
+      ...base, action: 'claim', direction: 'remove me',
+    })
+    expect(active.isError).toBe(false)
+    await ctx.agentTeam.suspendMember({ requestId: requestId('request:remove-suspend'), memberId: worker.status.member.memberId })
+    const queued = await executeTool(ctx, peerAgent, 'call:remove-queued', 'team_send', {
+      ...base, body: 'queued for removed worker',
+      baseRevision: (active.value as { revision: number }).revision,
+    })
+    expect(queued.value).toMatchObject({ deliveries: expect.arrayContaining([
+      expect.objectContaining({ recipient: worker.status.member.memberId, state: 'queued' }),
+    ]) })
+    const removed = await ctx.agentTeam.removeMember({ requestId: requestId('request:remove-worker'), memberId: worker.status.member.memberId })
+    expect(removed).toMatchObject({ member: { state: 'inactive' },
+      releasedClaims: [expect.objectContaining({ state: 'released' })],
+      canceledDeliveries: [expect.objectContaining({ state: 'canceled' })] })
+    expect(ctx.workspaceRegistry.archivedSessionIds).toContain(worker.status.member.sessionId)
+    expect(ctx.agentTeam.members()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ member: expect.objectContaining({ memberId: worker.status.member.memberId }), availability: 'inactive' }),
+    ]))
+    await expect(ctx.agentTeam.resumeMember({ requestId: requestId('request:remove-resume'),
+      memberId: worker.status.member.memberId })).rejects.toThrow()
+    const replacement = await ctx.agentTeam.addMember({ requestId: requestId('request:remove-reuse'), workspaceId,
+      handle: 'finish-worker', presetId: 'team-member', description: 'New identity' })
+    expect(replacement.status.member.memberId).not.toBe(worker.status.member.memberId)
+    expect(ctx.agentTeam.view({ workspaceId }).items.some(item => item.message.sender === worker.status.member.memberId)).toBe(true)
+    ctx.agentTeam.validateLedger()
+  })
+
+  it('removes a Member during a running Agent interval and reaches quiescence', async () => {
+    const { ctx, workspaceId, adapter, slow } = await realHarness()
+    adapter.responses.push(slowToolResponse())
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('request:remove-running-channel'), workspaceId, name: 'remove-running' })
+    const member = await ctx.agentTeam.addMember({ requestId: requestId('request:remove-running-member'), workspaceId,
+      handle: 'remove-running', presetId: 'team-member', description: 'Removed while running' })
+    await ctx.agentTeam.joinChannel({ requestId: requestId('request:remove-running-join'), workspaceId,
+      channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    await ctx.agentTeam.sendMessage({ requestId: requestId('request:remove-running-start'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'start', recipients: [member.status.member.memberId] })
+    await slow.started.promise
+    let settled = false
+    const removing = ctx.agentTeam.removeMember({ requestId: requestId('request:remove-running'),
+      memberId: member.status.member.memberId }).finally(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    slow.release.resolve()
+    await removing
+    expect(ctx.agents.get(member.status.member.sessionId)).toBeUndefined()
+    expect(ctx.workspaceRegistry.archivedSessionIds).toContain(member.status.member.sessionId)
+    expect(ctx.agentTeam.members()[0]).toMatchObject({ availability: 'inactive' })
   })
 
   it('queues subscribed Thread delivery at next-step without aborting a running tool call', async () => {
