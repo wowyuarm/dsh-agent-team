@@ -19,6 +19,7 @@
 | `design/feasibility.md` | 可行性判定（R1-R12 → dsh 机制）+ **D1-D26 决策基线**（权威清单） | 决策层 |
 | `design/raft-design-mapping.md` | Raft 产品事实、Loom 选择与 dsh 借鉴/偏离对照 | 决策层 |
 | `design/design-ux.md` | M2 Team 模式、Workspace/Channel/Agent/Thread UI、Client Slot 接管、Agent runtime 状态与延期设计 | 设计层 |
+| `design/dsh-client-plugin-development.md` | DSH Client plugin 开发基线：dsh.client、bundle、Cordis lifecycle、Slot takeover、Workspace 复用、测试接缝与 compaction 恢复点 | 实施基线 |
 | `m2-ui/spec.md` | M2 第一阶段综合 spec：用户故事、实现决策、测试与明确延期 | 交付物 |
 | `design/tools-research.md` | 工具集研究：Loom schema 借鉴点 + dsh 工具规范 + 候选形态 | 设计层 |
 | `research/raft-design-details.md` | Raft 官方产品设计精读 | 事实层 |
@@ -55,6 +56,7 @@
 
 - **M1 已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/09-ship-m1-runnable-composition.md`（REAL Loader/Agent/Session/command/tool/persistence workflow、SQLite 文件重开、durable failure windows、并发线性化、remove/archive 补偿、teardown、npm build/pack 与 opt-in preset shipping 均有自动验证）。
 - **M2 当前 frontier**：`m2-ui/issues/01-enter-leave-team-mode.md`，无 blocker，可立即开始。
+- **M2 实施基线**：开始写 Client plugin 前先读 `design/dsh-client-plugin-development.md`，并按其 §6 查阅 Harness 上游 contract。
 - **M2 依赖链**：01 → 02；01+02 → 03；03 → 04 → 05；01-05 → 06。
 - **M2 第一阶段明确延期**：Agent DM、Thread inbox/未读门禁、新工具/prompt、附件、搜索、URL、Model/provider 选择。
 

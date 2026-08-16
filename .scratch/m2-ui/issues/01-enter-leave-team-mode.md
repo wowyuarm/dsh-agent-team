@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Implementation reference:** `.scratch/design/dsh-client-plugin-development.md` (especially §§1-5).
+
 - [ ] The opt-in bundle ships one Team Client package through the existing DSH client-module mechanism and exposes one typed Client adapter as the only UI-to-Host business seam.
 - [ ] A “团队” footer action enters Team mode while the DSH brand row, sidebar collapse control and layout remain owned by shipped UI.
 - [ ] Team mode dynamically shadows only the Workspace region, center conversation region and Settings seat; Settings is absent while Team mode is active.
