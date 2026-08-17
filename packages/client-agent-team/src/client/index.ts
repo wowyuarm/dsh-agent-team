@@ -71,6 +71,8 @@ function registerModeShadow<T extends object>(
               loadChanges: (request: AgentTeamChangesRequest) => ctx.remote.agentTeam.changes(request),
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
               sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
+              joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
+              removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
             } : {}),
             ...(name === 'sidebar.workspaces' ? {
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),

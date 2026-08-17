@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TeamConversationProps } from './slots.ts'
@@ -11,11 +11,13 @@ interface TeamChannelPageProps {
   readonly loadChanges: TeamConversationProps['loadChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly sendMessage: TeamConversationProps['sendMessage']
+  readonly joinChannel: TeamConversationProps['joinChannel']
+  readonly removeChannelMember: TeamConversationProps['removeChannelMember']
   readonly selectThread: TeamConversationProps['selectThread']
   readonly t: TeamConversationProps['t']
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadChanges, loadMembers, sendMessage, selectThread, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
   const [draft, setDraft] = useState('')
@@ -24,6 +26,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const [pending, setPending] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [pendingSend, setPendingSend] = useState<AgentTeamSendMessageRequest>()
+  const [managingMembers, setManagingMembers] = useState(false)
+  const [membershipPending, setMembershipPending] = useState(false)
+  const membershipRequests = useRef(new Map<string, AgentTeamSendMessageRequest['requestId']>())
   const channel = view?.channels.find(item => item.channelRef === channelRef)
 
   const refresh = async () => {
@@ -72,6 +77,20 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     })
   }
 
+  const changeMembership = async (memberId: AgentTeamMemberId, joined: boolean) => {
+    if (membershipPending) return
+    setMembershipPending(true); setError(undefined)
+    const key = `${joined ? 'remove' : 'join'}:${memberId}`
+    const requestId = membershipRequests.current.get(key) ?? crypto.randomUUID() as AgentTeamSendMessageRequest['requestId']
+    membershipRequests.current.set(key, requestId)
+    const request = { requestId, workspaceId, channelRef, memberId }
+    try {
+      const result = joined ? await removeChannelMember(request) : await joinChannel(request)
+      if (result.ok) { membershipRequests.current.delete(key); await refresh() } else setError(result.error.message)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setMembershipPending(false) }
+  }
+
   const send = async () => {
     if (pending || draft.trim() === '') return
     const recipientIds = [...recipients].sort()
@@ -100,7 +119,14 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   return <main className={css.teamConversation} data-team-channel={channelRef}>
     {channel === undefined && !loading && <p className={css.emptyWorkspace}>{t('emptyChannels')}</p>}
     {channel !== undefined && <>
-      <header className={css.channelPageHeader}><h1># {channel.name}</h1><p>{channel.description}</p></header>
+      <header className={css.channelPageHeader}><div><h1># {channel.name}</h1><p>{channel.description}</p></div><button type="button" className={css.textButton} aria-expanded={managingMembers} onClick={() => { setManagingMembers(value => !value) }}>{t('manageMembers')}</button></header>
+      {managingMembers && <section className={css.channelPageMembers} aria-label={t('manageMembers')}>
+        {members.filter(status => status.member.state !== 'inactive').map(status => {
+          const joined = view?.members.some(item => item.channelRef === channelRef && item.memberId === status.member.memberId) ?? false
+          const disabled = membershipPending || (!joined && status.presence === 'unavailable')
+          return <div key={status.member.memberId}><span>@{status.member.handle}</span><button type="button" className={css.textButton} disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{joined ? t('removeFromChannel') : t('addToChannel')}</button></div>
+        })}
+      </section>}
       <section className={css.channelTimeline} aria-label={t('channels')}>
         {view?.hasMore && <button type="button" className={css.textButton} onClick={() => { void loadOlder() }}>{t('loadOlder')}</button>}
         {view?.items.length === 0 && <p className={css.emptyWorkspace}>{t('emptyMessages')}</p>}

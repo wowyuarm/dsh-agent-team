@@ -527,6 +527,8 @@ describe('Agent Team Member real composition', () => {
     ]) })
     const serviceView = ctx.agentTeam.viewForAgent(firstAgent, { workspaceId, channelRef: channel.channel.channelRef })
     expect(serviceView.items.some(item => item.message.body === 'stale reply')).toBe(false)
+    const visibleReply = serviceView.items.find(item => item.message.body === 'reorganized current reply')
+    expect(visibleReply).toMatchObject({ message: { sender: second.status.member.memberId, topLevel: false }, messageCount: 2 })
     expect(serviceView).toMatchObject({ activities: expect.arrayContaining([
         expect.objectContaining({ kind: 'claim' }),
         expect.objectContaining({ kind: 'done' }),

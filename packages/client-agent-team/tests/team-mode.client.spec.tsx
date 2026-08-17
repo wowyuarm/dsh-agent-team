@@ -76,8 +76,14 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     memberships = (request.memberIds ?? []).map(memberId => ({ channelRef: channel.channelRef, memberId }))
     return { ok: true, value: { receipt: {}, channel, memberIds: request.memberIds ?? [] } }
   })
-  const joinChannel = vi.fn(async () => ({ ok: true, value: {} }))
-  const removeChannelMember = vi.fn(async () => ({ ok: true, value: {} }))
+  const joinChannel = vi.fn(async (request: { channelRef: string; memberId: string }) => {
+    memberships = [...memberships, { channelRef: request.channelRef, memberId: request.memberId }]
+    return { ok: true, value: {} }
+  })
+  const removeChannelMember = vi.fn(async (request: { channelRef: string; memberId: string }) => {
+    memberships = memberships.filter(item => item.channelRef !== request.channelRef || item.memberId !== request.memberId)
+    return { ok: true, value: {} }
+  })
   const sendMessage = vi.fn(async (request: AgentTeamSendMessageRequest) => {
     const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
     const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
@@ -85,7 +91,17 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     viewItems = [{ message, task, thread, taskNumber: 1, messageCount: 1 }]
     return { ok: true, value: { receipt: {}, message, task, thread, follows: [], deliveries: [] } }
   })
-  const changes = vi.fn(() => new Promise(() => {}))
+  let changeVersion = 0
+  const changeWaiters: Array<(value: { ok: true; value: { version: number } }) => void> = []
+  const changes = vi.fn(({ afterVersion }: { afterVersion: number }) => changeVersion > afterVersion
+    ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
+    : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
+  const publishAgentReply = () => {
+    const top = viewItems[0]!
+    viewItems = [{ ...top, messageCount: 2 }, { ...top, message: { ...(top.message as object), messageRef: 'message:reply', sender: 'member:builder', body: 'agent reply', topLevel: false, sequence: 3 }, messageCount: 2 }]
+    changeVersion += 1
+    for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
+  }
   runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, changes }, $mount: async () => async () => {} } as never)
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
@@ -107,7 +123,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   ))
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, publishAgentReply }
 }
 
 describe('rendered Team mode composition', () => {
@@ -208,6 +224,10 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '创建 Channel' }))
     fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    const channelPage = b.view.container.querySelector('[data-team-channel]') as HTMLElement
+    fireEvent.click(within(channelPage).getByRole('button', { name: '管理成员' }))
+    const pageManager = within(channelPage).getByLabelText('管理成员')
+    expect(within(pageManager).getByText('@builder')).toBeTruthy()
     fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: 'hello team' } })
     fireEvent.click(b.view.getByRole('checkbox', { name: '@builder' }))
     b.sendMessage.mockResolvedValueOnce({ ok: false, error: { message: 'send failed' } } as never)
@@ -219,6 +239,9 @@ describe('rendered Team mode composition', () => {
     expect(b.sendMessage.mock.calls[0]![0].requestId).toBe(b.sendMessage.mock.calls[1]![0].requestId)
     expect(await b.view.findByText('hello team')).toBeTruthy()
     expect(b.view.getByText('Human 成员')).toBeTruthy()
+    b.publishAgentReply()
+    expect(await b.view.findByText('agent reply')).toBeTruthy()
+    expect(b.view.getByText('Agent 成员')).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: /Task #1/ }))
     expect(b.runtime.ctx.teamNavigation.getSnapshot().threadRef).toBe('thread:1')
     await b.runtime.dispose()

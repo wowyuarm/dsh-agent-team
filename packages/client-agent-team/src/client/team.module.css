@@ -441,9 +441,11 @@
   padding: 32px;
 }
 
-.channelPageHeader { border-bottom: 1px solid var(--dsw-alias-border-subtle); padding-bottom: 16px; }
+.channelPageHeader { align-items: start; border-bottom: 1px solid var(--dsw-alias-border-subtle); display: flex; justify-content: space-between; padding-bottom: 16px; }
 .channelPageHeader h1 { color: var(--dsw-alias-text-primary); font-size: 20px; margin: 0; }
 .channelPageHeader p { color: var(--dsw-alias-text-secondary); margin: 6px 0 0; }
+.channelPageMembers { border-bottom: 1px solid var(--dsw-alias-border-subtle); padding: 8px 0; }
+.channelPageMembers > div { align-items: center; display: flex; justify-content: space-between; }
 .channelTimeline { flex: 1; overflow: auto; padding: 20px 0; }
 .messageRow { display: flex; gap: 10px; padding: 12px 0; }
 .messageIdentity { align-items: center; background: var(--dsw-alias-fill-tertiary); border-radius: 50%; color: var(--dsw-alias-text-secondary); display: flex; flex: 0 0 28px; height: 28px; justify-content: center; }
