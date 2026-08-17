@@ -325,6 +325,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Accept, close, or reopen one Task as the Human authority. */
+  @Remote('changeTask')
   async changeTask(request: AgentTeamTaskRequest): Promise<AgentTeamTaskResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
@@ -375,6 +376,32 @@ export default class AgentTeam extends TypertRemoteService {
       deliveries: Object.freeze(result.value.deliveries.map(delivery =>
         this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)),
     })
+  }
+
+  /** Append one revision-fenced Thread reply with Host-injected Human authority. */
+  @Remote('reply')
+  async reply(request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult | AgentTeamConfirmationRequired> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().reply({ ...request, actor: agentTeamHumanActor() })
+    if (result.value.kind === 'confirmation_required') return result.value
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  }
+
+  /** Resolve one existing Agent-owned Claim with Host-injected Human authority. */
+  @Remote('changeClaim')
+  async changeClaim(request: AgentTeamClaimRequest): Promise<AgentTeamClaimResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    if (request.action === 'claim') throw new Error('Human cannot create a Claim for an Agent')
+    const result = await this.requireLedger().changeClaim({ ...request, actor: agentTeamHumanActor() })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
+    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
+      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
   }
 
   /** Append one revision-fenced Thread reply from the exact live Agent Member. */

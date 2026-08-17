@@ -49,6 +49,15 @@ export const zh = {
   sendMessage: '发送',
   sendingMessage: '发送中…',
   loadOlder: '加载更早消息',
+  backToChannel: '← 返回 Channel',
+  acceptTask: '验收',
+  closeTask: '关闭任务',
+  reopenTask: '重新打开',
+  participants: '参与者',
+  claims: 'Claims',
+  markClaimDone: '标记完成',
+  releaseClaim: '释放',
+  mentionConfirmation: '提及未关注成员需要确认，再次发送以继续',
 } as const
 
 export const en = {
@@ -102,6 +111,15 @@ export const en = {
   sendMessage: 'Send',
   sendingMessage: 'Sending…',
   loadOlder: 'Load older messages',
+  backToChannel: '← Back to Channel',
+  acceptTask: 'Accept',
+  closeTask: 'Close task',
+  reopenTask: 'Reopen',
+  participants: 'Participants',
+  claims: 'Claims',
+  markClaimDone: 'Mark done',
+  releaseClaim: 'Release',
+  mentionConfirmation: 'Mentioning an unfollowed member requires confirmation; send again to continue',
 } as const
 
 export type TeamKey = keyof typeof zh

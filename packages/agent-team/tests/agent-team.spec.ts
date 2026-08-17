@@ -129,13 +129,23 @@ describe('AgentTeam', () => {
     const path = join(root, 'team.sqlite')
     const first = await sqliteHarness(path)
     const channel = await first.ctx.agentTeam.createChannel({ requestId: requestId('request:sqlite-channel'), workspaceId: alpha, name: 'sqlite', description: 'SQLite restart proof' })
-    await first.ctx.agentTeam.sendMessage({ requestId: requestId('request:sqlite-message'), workspaceId: alpha,
+    const sent = await first.ctx.agentTeam.sendMessage({ requestId: requestId('request:sqlite-message'), workspaceId: alpha,
       channelRef: channel.channel.channelRef, body: 'persist in sqlite' })
+    await first.ctx.agentTeam.reply({ requestId: requestId('request:sqlite-human-reply'), workspaceId: alpha,
+      taskRef: sent.task.taskRef, body: 'Human reply in sqlite', baseRevision: sent.thread.revision })
+    await first.ctx.agentTeam.changeTask({ requestId: requestId('request:sqlite-close'), workspaceId: alpha,
+      taskRef: sent.task.taskRef, action: 'close' })
+    await first.ctx.agentTeam.changeTask({ requestId: requestId('request:sqlite-reopen'), workspaceId: alpha,
+      taskRef: sent.task.taskRef, action: 'reopen' })
     const before = first.ctx.agentTeam.view({ workspaceId: alpha })
     await first.fiber.dispose(); await first.facility.closeAll()
     const second = await sqliteHarness(path)
     expect(second.ctx.agentTeam.view({ workspaceId: alpha })).toEqual(before)
-    expect(second.ctx.agentTeam.status()).toMatchObject({ operationCount: 3, sequence: 3 })
+    expect(second.ctx.agentTeam.status()).toMatchObject({ operationCount: 6, sequence: 6 })
+    expect(second.ctx.agentTeam.view({ workspaceId: alpha }).items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.objectContaining({ sender: AGENT_TEAM_HUMAN_MEMBER_ID,
+        body: 'Human reply in sqlite', topLevel: false }) }),
+    ]))
   })
 
   it('leaves no business effect before durability and commits one effect on retry', async () => {

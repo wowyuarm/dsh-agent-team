@@ -595,6 +595,7 @@ export interface AgentTeamAgentViewRequest extends AgentTeamViewRequest {
 export interface AgentTeamViewRequest {
   readonly workspaceId: WorkspaceId
   readonly channelRef?: AgentTeamChannelRef
+  readonly threadRef?: AgentTeamThreadRef
   readonly limit?: number
   readonly cursor?: number
   /** Read facts after the cursor (Agent default) or the latest facts before it (Client history). */
@@ -610,7 +611,11 @@ export interface AgentTeamView {
   readonly humanMemberId: AgentTeamMemberId
   readonly channels: readonly AgentTeamChannel[]
   readonly members: readonly AgentTeamChannelMembership[]
+  readonly tasks: readonly AgentTeamTask[]
+  readonly threads: readonly AgentTeamThread[]
+  readonly taskNumbers: readonly { readonly taskRef: AgentTeamTaskRef; readonly taskNumber: number }[]
   readonly items: readonly AgentTeamViewItem[]
+  readonly claims: readonly AgentTeamClaim[]
   readonly activities: readonly AgentTeamActivity[]
   readonly cursor: number
   readonly hasMore: boolean

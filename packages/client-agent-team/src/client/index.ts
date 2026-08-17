@@ -7,6 +7,9 @@ import type {
   AgentTeamJoinChannelRequest,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
+  AgentTeamReplyRequest,
+  AgentTeamClaimRequest,
+  AgentTeamTaskRequest,
   AgentTeamViewRequest,
 } from '@deepseek-ai/dsh-agent-team/types'
 import agentTeamRemote from '@deepseek-ai/dsh-agent-team/remote'
@@ -73,6 +76,9 @@ function registerModeShadow<T extends object>(
               sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
               joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
               removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
+              reply: (request: AgentTeamReplyRequest) => ctx.remote.agentTeam.reply(request),
+              changeClaim: (request: AgentTeamClaimRequest) => ctx.remote.agentTeam.changeClaim(request),
+              changeTask: (request: AgentTeamTaskRequest) => ctx.remote.agentTeam.changeTask(request),
             } : {}),
             ...(name === 'sidebar.workspaces' ? {
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),

@@ -446,10 +446,16 @@
 .channelPageHeader p { color: var(--dsw-alias-text-secondary); margin: 6px 0 0; }
 .channelPageMembers { border-bottom: 1px solid var(--dsw-alias-border-subtle); padding: 8px 0; }
 .channelPageMembers > div { align-items: center; display: flex; justify-content: space-between; }
+.threadParticipants { display: flex; gap: 12px; padding: 12px 0; }
+.threadParticipants > div { align-items: center; display: flex; gap: 5px; }
+.threadClaims { display: grid; gap: 8px; }
+.threadClaims article { align-items: center; border: 1px solid var(--dsw-alias-border-subtle); border-radius: 8px; display: grid; gap: 6px; grid-template-columns: auto 1fr auto auto; padding: 8px; }
+.threadClaims article > div { display: flex; gap: 6px; }
 .channelTimeline { flex: 1; overflow: auto; padding: 20px 0; }
 .messageRow { display: flex; gap: 10px; padding: 12px 0; }
 .messageIdentity { align-items: center; background: var(--dsw-alias-fill-tertiary); border-radius: 50%; color: var(--dsw-alias-text-secondary); display: flex; flex: 0 0 28px; height: 28px; justify-content: center; }
 .messageRow p { color: var(--dsw-alias-text-primary); margin: 6px 0; white-space: pre-wrap; }
+.threadActivity { color: var(--dsw-alias-text-tertiary); font-size: 12px; padding: 4px 38px; }
 .messageRow small { color: var(--dsw-alias-text-tertiary); display: block; }
 .channelComposer { border-top: 1px solid var(--dsw-alias-border-subtle); display: grid; gap: 8px; padding-top: 16px; }
 .channelComposer textarea { min-width: 0; resize: vertical; }

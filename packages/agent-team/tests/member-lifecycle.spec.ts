@@ -497,7 +497,13 @@ describe('Agent Team Member real composition', () => {
     const firstClaim = claims.find(claim => claim.normalizedDirection === 'docs review')!
     const secondClaim = claims.find(claim => claim.normalizedDirection === 'test coverage')!
     const raceClaim = claims.find(claim => claim.normalizedDirection === 'api audit')!
-    await executeTool(ctx, firstAgent, 'call:claim-done', 'team_claim', { ...base, action: 'done', claimRef: firstClaim.claimRef })
+    const humanDone = await ctx.agentTeam.changeClaim({ requestId: requestId('request:human-claim-done'),
+      workspaceId, taskRef: sent.task.taskRef, action: 'done', claimRef: firstClaim.claimRef as never })
+    expect(humanDone).toMatchObject({ claim: { owner: first.status.member.memberId, state: 'done' },
+      activity: { actor: 'member:human', kind: 'done' } })
+    await expect(ctx.agentTeam.changeClaim({ requestId: requestId('request:human-claim-create'),
+      workspaceId, taskRef: sent.task.taskRef, action: 'claim', direction: 'forged' }))
+      .rejects.toThrow(/Human cannot create/)
     await executeTool(ctx, secondAgent, 'call:claim-release', 'team_claim', { ...base, action: 'release', claimRef: secondClaim.claimRef })
     await executeTool(ctx,
       raceClaim.owner === first.status.member.memberId ? firstAgent : secondAgent,
@@ -513,7 +519,14 @@ describe('Agent Team Member real composition', () => {
       ...base, body: 'reorganized current reply', baseRevision: revision,
     })
     expect(reply.isError).toBe(false)
-    expect((reply.value as { revision: number }).revision).toBeGreaterThan(revision)
+    const agentReplyRevision = (reply.value as { revision: number }).revision
+    expect(agentReplyRevision).toBeGreaterThan(revision)
+    const humanReply = await ctx.agentTeam.reply({ requestId: requestId('request:human-reply'), workspaceId,
+      taskRef: sent.task.taskRef, body: 'Human review response', baseRevision: agentReplyRevision })
+    expect(humanReply).toMatchObject({ kind: 'committed', message: { sender: 'member:human', body: 'Human review response' } })
+    await expect(ctx.agentTeam.reply({ requestId: requestId('request:human-reply-stale'), workspaceId,
+      taskRef: sent.task.taskRef, body: 'stale Human response', baseRevision: agentReplyRevision }))
+      .rejects.toThrow(/stale Thread revision/)
 
     const finalClaims = await executeTool(ctx, firstAgent, 'call:claim-list-final', 'team_claim', { ...base, action: 'list' })
     expect(finalClaims.value).toMatchObject({ status: 'in_review' })
@@ -528,7 +541,7 @@ describe('Agent Team Member real composition', () => {
     const serviceView = ctx.agentTeam.viewForAgent(firstAgent, { workspaceId, channelRef: channel.channel.channelRef })
     expect(serviceView.items.some(item => item.message.body === 'stale reply')).toBe(false)
     const visibleReply = serviceView.items.find(item => item.message.body === 'reorganized current reply')
-    expect(visibleReply).toMatchObject({ message: { sender: second.status.member.memberId, topLevel: false }, messageCount: 2 })
+    expect(visibleReply).toMatchObject({ message: { sender: second.status.member.memberId, topLevel: false }, messageCount: 3 })
     expect(serviceView).toMatchObject({ activities: expect.arrayContaining([
         expect.objectContaining({ kind: 'claim' }),
         expect.objectContaining({ kind: 'done' }),
@@ -555,8 +568,13 @@ describe('Agent Team Member real composition', () => {
         expect.objectContaining({ normalizedDirection: 'test coverage', state: 'released' }),
       ]),
     })
-    expect(ctx.agentTeam.viewForAgent(restoredFirst, { workspaceId, channelRef: channel.channel.channelRef })
-      .items.some(item => item.message.body === 'reorganized current reply')).toBe(true)
+    const restoredView = ctx.agentTeam.viewForAgent(restoredFirst, { workspaceId, channelRef: channel.channel.channelRef })
+    expect(restoredView.items.some(item => item.message.body === 'reorganized current reply')).toBe(true)
+    expect(restoredView.items.some(item => item.message.body === 'Human review response'
+      && item.message.sender === 'member:human')).toBe(true)
+    expect(restoredView.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ actor: 'member:human', kind: 'done' }),
+    ]))
     await remounted.dispose()
   })
 
