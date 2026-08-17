@@ -11,7 +11,7 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
-import css from './team.module.css'
+import css from './sidebar.module.css'
 
 interface TeamChannelsPanelProps {
   readonly workspaceId: WorkspaceId
@@ -137,8 +137,8 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   }
 
   return (
-    <div className={css.channelsPanel}>
-      <div className={css.agentToolbar}>
+    <div className={css.panel}>
+      <div className={css.panelToolbar}>
         <span>{t('channels')}</span>
         <button type="button" className={css.textButton} onClick={() => { setFormOpen(open => !open) }}>
           {formOpen ? t('cancel') : t('addChannel')}
@@ -182,19 +182,20 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
           </button>
         </form>
       )}
-      {loading && view === undefined && <p className={css.emptyWorkspace}>{t('loadingChannels')}</p>}
-      {!loading && (view?.channels.length ?? 0) === 0 && <p className={css.emptyWorkspace}>{t('emptyChannels')}</p>}
+      {loading && view === undefined && <p className={css.emptyState}>{t('loadingChannels')}</p>}
+      {!loading && (view?.channels.length ?? 0) === 0 && <p className={css.emptyState}>{t('emptyChannels')}</p>}
       <div className={css.channelList}>
         {view?.channels.map(channel => {
           const joined = membership.get(channel.channelRef) ?? new Set<AgentTeamMemberId>()
           const manageOpen = managing === channel.channelRef
           return (
-            <article className={css.channelCard} key={channel.channelRef} aria-current={selectedChannelRef === channel.channelRef ? 'page' : undefined}>
-              <div className={css.channelHeader}>
-                <span><button type="button" className={css.textButton} onClick={() => { selectChannel(channel.channelRef) }}><strong># {channel.name}</strong></button><small>{channel.description}</small></span>
-                <button type="button" className={css.textButton} aria-expanded={manageOpen} onClick={() => { setManaging(manageOpen ? undefined : channel.channelRef) }}>{t('manageMembers')}</button>
-              </div>
-              <small>{t('memberCount', { count: joined.size })}</small>
+            <article className={css.channelRow} key={channel.channelRef} aria-current={selectedChannelRef === channel.channelRef ? 'page' : undefined}>
+              <button type="button" className={css.channelSelect} onClick={() => { selectChannel(channel.channelRef) }}>
+                <strong className={css.channelName}># {channel.name}</strong>
+                <small className={css.channelDescription}>{channel.description}</small>
+                <small className={css.channelCount}>{joined.size}</small>
+              </button>
+              <button type="button" className={`${css.textButton} ${css.channelManage}`} aria-expanded={manageOpen} onClick={() => { setManaging(manageOpen ? undefined : channel.channelRef) }}>{t('manageMembers')}</button>
               {manageOpen && (
                 <div className={css.memberManager} aria-label={t('manageMembers')}>
                   {members.map(status => {

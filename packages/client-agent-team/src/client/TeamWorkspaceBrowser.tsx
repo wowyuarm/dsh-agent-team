@@ -1,12 +1,15 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { IconAgentPresetOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutline16, IconFolderOpenOutline16, IconPlusOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { AgentTeamAddMemberRequest } from '@deepseek-ai/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceRow } from './TeamWorkspaceRow.tsx'
 import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
 import { TeamChannelsPanel } from './TeamChannelsPanel.tsx'
-import css from './team.module.css'
+import css from './sidebar.module.css'
+
+const CHANNELS_PANEL_ID = 'team-sidebar-channels'
+const AGENTS_PANEL_ID = 'team-sidebar-agents'
 
 export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, createWorkspaceFromPath, pickWorkspaceDirectory, t, useWorkspaces, loadMembers, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
@@ -36,20 +39,33 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
   }
 
   if (!wide) {
+    const tabLabel = navigationState.activeTab === 'channels' ? t('channels') : t('agents')
     return (
-      <div className={css.railWorkspace} aria-label={t('workspaces')}>
-        <span className={css.railMark}><IconAgentPresetOutline16 size={16} /></span>
-      </div>
+      <nav className={css.railWorkspace} aria-label={t('workspaceSections')}>
+        <Tooltip label={tabLabel} side="right">
+          <button type="button" className={css.railButton} data-active aria-label={tabLabel} onClick={() => { selectWorkspaceTab(navigationState.activeTab === 'channels' ? 'agents' : 'channels') }}>
+            <IconAgentPresetOutline16 size={18} />
+          </button>
+        </Tooltip>
+        <Tooltip label={t('addWorkspace')} side="right">
+          <button type="button" className={css.railButton} disabled={flowBusy} aria-label={t('addWorkspace')} onClick={createWorkspace}>
+            <IconFolderOpenOutline16 size={18} />
+          </button>
+        </Tooltip>
+      </nav>
     )
   }
 
+  const panelId = navigationState.activeTab === 'channels' ? CHANNELS_PANEL_ID : AGENTS_PANEL_ID
   return (
     <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
       <div className={css.workspaceHeader}>
         <span>{t('workspaces')}</span>
-        <button type="button" className={css.iconButton} disabled={flowBusy} onClick={createWorkspace} aria-label={t('addWorkspace')} title={t('addWorkspace')}>
+        <Tooltip label={t('addWorkspace')}>
+          <button type="button" className={css.iconButton} disabled={flowBusy} onClick={createWorkspace} aria-label={t('addWorkspace')}>
             <IconPlusOutline16 size={15} />
           </button>
+        </Tooltip>
       </div>
       <div className={css.workspaceList}>
         {workspaces.map(workspace => (
@@ -60,24 +76,25 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
             path={workspace.path}
             selected={workspace.workspaceId === selectedId}
             onSelect={selectWorkspace}
-            t={t}
           />
         ))}
-        {workspaces.length === 0 && <p className={css.emptyWorkspace}>{t('empty')}</p>}
+        {workspaces.length === 0 && <p className={css.emptyState}>{t('empty')}</p>}
       </div>
       {selectedId !== undefined && (
         <div className={css.workspaceSection}>
           <div className={css.workspaceTabs} role="tablist" aria-label={t('workspaceSections')}>
-            <button type="button" role="tab" aria-selected={navigationState.activeTab === 'channels'} onClick={() => { selectWorkspaceTab('channels') }}>{t('channels')}</button>
-            <button type="button" role="tab" aria-selected={navigationState.activeTab === 'agents'} onClick={() => { selectWorkspaceTab('agents') }}>{t('agents')}</button>
+            <button id="team-tab-channels" type="button" role="tab" aria-selected={navigationState.activeTab === 'channels'} aria-controls={CHANNELS_PANEL_ID} tabIndex={navigationState.activeTab === 'channels' ? 0 : -1} onClick={() => { selectWorkspaceTab('channels') }}>{t('channels')}</button>
+            <button id="team-tab-agents" type="button" role="tab" aria-selected={navigationState.activeTab === 'agents'} aria-controls={AGENTS_PANEL_ID} tabIndex={navigationState.activeTab === 'agents' ? 0 : -1} onClick={() => { selectWorkspaceTab('agents') }}>{t('agents')}</button>
           </div>
-          {navigationState.activeTab === 'agents'
-            ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} addMember={addMember} onCreatingChange={(request, creating) => {
-                setCreatingAgents(current => creating
-                  ? [...current.filter(item => item.requestId !== request.requestId), request]
-                  : current.filter(item => item.requestId !== request.requestId))
-              }} t={t} />
-            : <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} createChannel={createChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />}
+          <div id={panelId} className={css.panel} role="tabpanel" aria-labelledby={navigationState.activeTab === 'channels' ? 'team-tab-channels' : 'team-tab-agents'}>
+            {navigationState.activeTab === 'agents'
+              ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} addMember={addMember} onCreatingChange={(request, creating) => {
+                  setCreatingAgents(current => creating
+                    ? [...current.filter(item => item.requestId !== request.requestId), request]
+                    : current.filter(item => item.requestId !== request.requestId))
+                }} t={t} />
+              : <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} createChannel={createChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />}
+          </div>
         </div>
       )}
       {flowError && <p className={css.error} role="alert">{t('workspaceCreateFailed')}</p>}

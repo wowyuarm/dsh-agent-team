@@ -9,7 +9,8 @@ const TEAM_ROOT = '__TEAM_ROOT__'
 const OVERLAY = '__OVERLAY__'
 const HOME = '__HOME__'
 const CHROME = '__CHROME__'
-const SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
+const UI01_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
+const UI02_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-02')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -28,7 +29,8 @@ async function installLocalBundle(): Promise<void> {
       filter: source => !source.includes('/node_modules') && !source.includes('/src'),
     })
   }
-  await mkdir(SHOTS, { recursive: true })
+  await mkdir(UI01_SHOTS, { recursive: true })
+  await mkdir(UI02_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -55,6 +57,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     await page.getByText(name, { exact: true }).waitFor({ timeout: 20_000 })
   }
   await expect.poll(() => page.getByLabel('可用').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(2)
+  await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-agents.png'), fullPage: true })
 
   await page.getByRole('tab', { name: 'Channels' }).click()
   await page.getByRole('button', { name: '新建 Channel' }).click()
@@ -66,7 +69,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await channelForm.getByRole('button', { name: '创建 Channel' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByText('还没有消息', { exact: true }).waitFor()
-  await page.screenshot({ path: join(SHOTS, 'empty-channel.png'), fullPage: true })
+  await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
+  await page.screenshot({ path: join(UI01_SHOTS, 'empty-channel.png'), fullPage: true })
   await page.getByRole('textbox', { name: '消息内容' }).fill('请协作完成验收')
   await page.getByLabel('@builder').check()
   await page.getByLabel('@reviewer').check()
@@ -83,7 +87,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(channelGeometry[0]!.bottom).toBeLessThanOrEqual(channelGeometry[1]!.top + 1)
   expect(channelGeometry[1]!.bottom).toBeLessThanOrEqual(channelGeometry[2]!.top + 1)
   expect(channelGeometry[1]!.height).toBeGreaterThan(200)
-  await page.screenshot({ path: join(SHOTS, 'desktop-channel.png'), fullPage: true })
+  await page.screenshot({ path: join(UI01_SHOTS, 'desktop-channel.png'), fullPage: true })
 
   const workspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const projection = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id })
@@ -102,23 +106,37 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '发送' }).click()
   await page.getByText('Human 已检查 Thread', { exact: true }).waitFor()
   await page.getByRole('button', { name: '标记完成' }).click()
-  await page.getByRole('button', { name: '验收' }).waitFor()
-  await page.getByRole('button', { name: '验收' }).click()
+  const acceptTask = page.getByRole('button', { name: '验收' })
+  await acceptTask.waitFor()
+  await expect.poll(() => page.evaluate(() => {
+    const current = [...document.querySelectorAll('button')].find(button => button.textContent === '验收')
+    if (current === undefined || current.disabled) return false
+    current.click()
+    return true
+  })).toBe(true)
+  await expect.poll(async () => {
+    const currentProjection = scaffold!.ctx.agentTeam.view({ workspaceId: workspace.id })
+    const currentTask = currentProjection.tasks.find(candidate => candidate.taskRef === task.taskRef)
+    const currentClaims = currentProjection.claims.filter(candidate => candidate.taskRef === task.taskRef)
+    const alert = await page.getByRole('alert').allTextContents()
+    return JSON.stringify({ task: currentTask, claims: currentClaims, alert })
+  }).toContain('"resolution":"accepted"')
   await page.getByRole('button', { name: '重新打开' }).waitFor()
-  await page.screenshot({ path: join(SHOTS, 'desktop-thread.png'), fullPage: true })
+  await page.screenshot({ path: join(UI01_SHOTS, 'desktop-thread.png'), fullPage: true })
 
   await page.setViewportSize({ width: 390, height: 844 })
   const collapsedFrame = page.locator('[data-sidebar-collapsed="true"]')
   await collapsedFrame.waitFor()
   await expect.poll(async () => (await collapsedFrame.locator(':scope > div').first().boundingBox())?.width ?? 999).toBeLessThanOrEqual(56)
-  await page.screenshot({ path: join(SHOTS, 'narrow-thread.png'), fullPage: true })
+  await page.screenshot({ path: join(UI01_SHOTS, 'narrow-thread.png'), fullPage: true })
+  await page.screenshot({ path: join(UI02_SHOTS, 'narrow-team-rail.png'), fullPage: true })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.setViewportSize({ width: 1440, height: 960 })
 
   await page.getByRole('button', { name: '← 返回 Channel' }).click()
   await page.getByRole('heading', { name: '# delivery' }).waitFor()
   await page.getByRole('button', { name: '成员', exact: true }).click()
-  await page.getByRole('dialog', { name: '成员' }).screenshot({ path: join(SHOTS, 'global-members.png') })
+  await page.getByRole('dialog', { name: '成员' }).screenshot({ path: join(UI01_SHOTS, 'global-members.png') })
   await page.getByRole('button', { name: '关闭', exact: true }).click()
 
   await page.reload()
@@ -128,6 +146,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('heading', { name: '# delivery' }).waitFor()
   await page.getByRole('button', { name: '← 对话' }).click()
   await ordinaryComposer.waitFor({ timeout: 20_000 })
-  await page.screenshot({ path: join(SHOTS, 'restored-conversations.png'), fullPage: true })
+  await page.screenshot({ path: join(UI01_SHOTS, 'restored-conversations.png'), fullPage: true })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 120_000)

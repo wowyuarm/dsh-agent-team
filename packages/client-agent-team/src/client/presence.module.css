@@ -1,0 +1,14 @@
+.target {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 14px;
+  justify-content: center;
+}
+
+.unavailableDot {
+  background: var(--dsw-alias-text-disabled);
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  width: 7px;
+}

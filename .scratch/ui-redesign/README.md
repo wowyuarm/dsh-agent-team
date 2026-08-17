@@ -18,8 +18,8 @@ M2 functional baseline 已完成，commit `9ae7cc3`。当前 UI 功能可用，�
 ## Ticket frontier
 
 - `01-center-surface-foundation.md`：complete；证据在 `validation/ui-01/`。
-- `02-sidebar-navigation-rail.md`：当前 frontier；01 已完成，可立即做。
-- `03-create-modals.md`：blocked by 02。
+- `02-sidebar-navigation-rail.md`：complete；证据在 `validation/ui-02/`。
+- `03-create-modals.md`：当前 frontier；02 已完成，可立即做。
 - `04-channel-surface.md`：blocked by 03。
 - `05-thread-surface.md`：blocked by 04。
 - `06-members-responsive-acceptance.md`：blocked by 05。

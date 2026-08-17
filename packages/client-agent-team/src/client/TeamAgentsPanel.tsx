@@ -6,8 +6,8 @@ import type {
 } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { TeamSidebarProps } from './slots.ts'
-import { TeamPresenceDot } from './TeamPresenceDot.tsx'
-import css from './team.module.css'
+import { presenceLabel, TeamPresenceDot } from './TeamPresenceDot.tsx'
+import css from './sidebar.module.css'
 
 interface TeamAgentsPanelProps {
   readonly workspaceId: WorkspaceId
@@ -88,8 +88,8 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
   }
 
   return (
-    <div className={css.agentsPanel}>
-      <div className={css.agentToolbar}>
+    <div className={css.panel}>
+      <div className={css.panelToolbar}>
         <span>{t('agents')}</span>
         <button type="button" className={css.textButton} onClick={() => { setFormOpen(open => !open) }}>
           {formOpen ? t('cancel') : t('addAgent')}
@@ -110,8 +110,8 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
           </button>
         </form>
       )}
-      {loading && members.length === 0 && <p className={css.emptyWorkspace}>{t('loadingAgents')}</p>}
-      {!loading && members.length === 0 && <p className={css.emptyWorkspace}>{t('emptyAgents')}</p>}
+      {loading && members.length === 0 && <p className={css.emptyState}>{t('loadingAgents')}</p>}
+      {!loading && members.length === 0 && <p className={css.emptyState}>{t('emptyAgents')}</p>}
       <div className={css.agentList}>
         {members.map(status => {
           return (
@@ -121,6 +121,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
                 <strong>{status.member.handle}</strong>
                 <small>{status.member.description}</small>
               </span>
+              <span className={css.presenceText}>{presenceLabel(status, t).split(':')[0]}</span>
             </div>
           )
         })}

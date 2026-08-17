@@ -178,7 +178,10 @@ describe('rendered Team mode composition', () => {
   it('loads Workspace Agents and creates a durable Member without optimistic rows', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    fireEvent.click(await b.view.findByRole('tab', { name: 'Agents' }))
+    const agentsTab = await b.view.findByRole('tab', { name: 'Agents' })
+    fireEvent.click(agentsTab)
+    expect(agentsTab.getAttribute('aria-controls')).toBe('team-sidebar-agents')
+    expect(b.view.getByRole('tabpanel', { name: 'Agents' }).id).toBe('team-sidebar-agents')
 
     expect(await b.view.findByText('builder')).toBeTruthy()
     expect(b.view.getByRole('img', { name: '可用' })).toBeTruthy()
@@ -241,7 +244,9 @@ describe('rendered Team mode composition', () => {
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
     fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建 Channel' }))
-    fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
+    const backendChannel = await b.view.findByRole('button', { name: /backend/ })
+    fireEvent.click(backendChannel)
+    expect(backendChannel.closest('article')?.getAttribute('aria-current')).toBe('page')
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     const channelPage = b.view.container.querySelector('[data-team-channel]') as HTMLElement
     fireEvent.click(within(channelPage).getByRole('button', { name: '管理成员' }))
@@ -290,6 +295,8 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
     await waitFor(() => { expect(b.view.queryByText('Alpha')).toBeNull() })
     expect(b.view.getByRole('button', { name: '← 对话' })).toBeTruthy()
+    expect(b.view.getByRole('button', { name: 'Channels' })).toBeTruthy()
+    expect(b.view.getByRole('button', { name: '新建工作区' })).toBeTruthy()
     expect(b.view.container).toMatchSnapshot()
 
     await b.team.dispose()

@@ -69,23 +69,39 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
             data-slot="sidebar.workspaces"
             style="display: contents;"
           >
-            <div
-              aria-label="工作区"
+            <nav
+              aria-label="工作区内容"
               class="railWorkspace"
             >
-              <span
-                class="railMark"
+              <button
+                aria-label="Channels"
+                class="railButton"
+                data-active="true"
+                type="button"
               >
                 <svg
                   data-content="56ac24c5"
                   fill="none"
-                  height="16"
+                  height="18"
                   viewBox="0 0 16 16"
-                  width="16"
+                  width="18"
                   xmlns="http://www.w3.org/2000/svg"
                 />
-              </span>
-            </div>
+              </button>
+              <button
+                aria-label="新建工作区"
+                class="railButton"
+                type="button"
+              >
+                <svg
+                  data-content="7d0b657c"
+                  fill="none"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  width="18"
+                />
+              </button>
+            </nav>
           </div>
         </div>
         <div
