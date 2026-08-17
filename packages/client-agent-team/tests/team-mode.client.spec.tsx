@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamSendMessageRequest } from '@deepseek-ai/dsh-agent-team/types'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotTestRuntime, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
@@ -65,8 +65,9 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   } }))
   let channels: Array<Record<string, unknown>> = []
   let memberships: Array<Record<string, unknown>> = []
+  let viewItems: Array<Record<string, unknown>> = []
   const viewChannels = vi.fn(async () => ({ ok: true, value: {
-    channels, members: memberships, items: [], activities: [], cursor: 0, hasMore: false,
+    humanMemberId: 'member:human', channels, members: memberships, items: viewItems, activities: [], cursor: 0, hasMore: false,
   } }))
   const createChannel = vi.fn(async (request: AgentTeamCreateChannelRequest) => {
     const channel = { channelRef: 'channel:new', workspaceId: request.workspaceId, name: request.name,
@@ -77,7 +78,15 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   })
   const joinChannel = vi.fn(async () => ({ ok: true, value: {} }))
   const removeChannelMember = vi.fn(async () => ({ ok: true, value: {} }))
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember }, $mount: async () => async () => {} } as never)
+  const sendMessage = vi.fn(async (request: AgentTeamSendMessageRequest) => {
+    const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
+    const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
+    const message = { messageRef: 'message:1', channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, topLevel: true, sequence: 2 }
+    viewItems = [{ message, task, thread, taskNumber: 1, messageCount: 1 }]
+    return { ok: true, value: { receipt: {}, message, task, thread, follows: [], deliveries: [] } }
+  })
+  const changes = vi.fn(() => new Promise(() => {}))
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, changes }, $mount: async () => async () => {} } as never)
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [
@@ -98,7 +107,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   ))
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage }
 }
 
 describe('rendered Team mode composition', () => {
@@ -186,6 +195,32 @@ describe('rendered Team mode composition', () => {
     expect(within(manager).getByText('builder')).toBeTruthy()
     fireEvent.click(within(manager).getByRole('button', { name: '移除' }))
     await waitFor(() => { expect(b.removeChannelMember).toHaveBeenCalledWith(expect.objectContaining({ memberId: 'member:builder' })) })
+    await b.runtime.dispose()
+  })
+
+  it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '新建 Channel' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建 Channel' }))
+    fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: 'hello team' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: '@builder' }))
+    b.sendMessage.mockResolvedValueOnce({ ok: false, error: { message: 'send failed' } } as never)
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect((await b.view.findByRole('alert')).textContent).toContain('send failed')
+    expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value).toBe('hello team')
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(b.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ body: 'hello team', recipients: ['member:builder'] })))
+    expect(b.sendMessage.mock.calls[0]![0].requestId).toBe(b.sendMessage.mock.calls[1]![0].requestId)
+    expect(await b.view.findByText('hello team')).toBeTruthy()
+    expect(b.view.getByText('Human 成员')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: /Task #1/ }))
+    expect(b.runtime.ctx.teamNavigation.getSnapshot().threadRef).toBe('thread:1')
     await b.runtime.dispose()
   })
 

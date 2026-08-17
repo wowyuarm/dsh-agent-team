@@ -310,7 +310,7 @@ real Loader
 
 当前实现已验证：Team Client 使用 `@deepseek-ai/dsh-client-runtime/client` 的类型、真实 Cordis + SlotRegistry composition test、真实 React renderer DOM snapshot，以及根项目显式 `tsc` + Harness `tsdown` bundle。M2-01 的 Chromium browser journey 与完整 Team 流程由 M2-06 统一覆盖。
 
-M2-03 已完成。独立 package 继续通过 `scripts/generate-typert.mjs` 的临时 package registration 生成确定性的 `./typert`、`./remote`，不手写 generated artifact、不修改 Harness core；Client 通过 `ctx.remote.$mount()` 使用 members/addMember/view/createChannel/joinChannel/removeChannelMember。Channels UI 已交付默认 tab、name/description/initial Members 原子创建、创建中与 unavailable 门禁、失败同 request retry，以及后续 add/remove 控制。Host domain v5 以单条 channel-created operation 固化初始成员；channel-member-removed 只清理目标 Channel 的 active Claims、Follows 与 queued Deliveries，保留 Member、其他 Channel membership 和全部历史。后续 compaction frontier 是 M2-04 `.scratch/m2-ui/issues/04-collaborate-channel.md`，再回到本文件 §1-5。
+M2-04 进行中。M2-03 基线提交为 a872cfd。当前 M2-04 已暴露 typed `sendMessage` 与 `changes` Remote；`changes` 是 bundle 自有的轻量长轮询失效通知，只传 version，避免修改 Harness 静态 forwarded-event allowlist，也不向 Client 暴露 Operation。Host `view` 保留默认 after cursor，并新增 before cursor、Activity 开关、Human ref、稳定 Task number 和 Thread Message count。Client 已支持 transient Channel/Thread ref、选择 Channel 后 Team-owned 中央页、显式 Human/Agent Message timeline、最新页/加载更早、结构化 Member-ref mention、失败同 request retry、Host commit 后刷新和 changed 后重新 pull。下一步仍是 M2-04：在中央页头复用 membership controls，补 Agent reply/live-refresh 与窄屏证据；完成后再推进 M2-05。
 
 ## 来源
 

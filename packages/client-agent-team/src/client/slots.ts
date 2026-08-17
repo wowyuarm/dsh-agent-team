@@ -1,6 +1,9 @@
 import type { PropsLocale, PropsRenderSlots, PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   AgentTeamAddMemberRequest,
+  AgentTeamChannelRef,
+  AgentTeamChangesRequest,
+  AgentTeamChangesResult,
   AgentTeamAgentMemberStatus,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
@@ -10,6 +13,8 @@ import type {
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
+  AgentTeamSendMessageRequest,
+  AgentTeamSendMessageResult,
   AgentTeamView,
   AgentTeamViewRequest,
 } from '@deepseek-ai/dsh-agent-team/types'
@@ -34,10 +39,16 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     createChannel: (request: AgentTeamCreateChannelRequest) => Promise<RemoteResult<AgentTeamCreateChannelResult>>
     joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
+    selectedChannelRef?: AgentTeamChannelRef
+    selectChannel: (channelRef: AgentTeamChannelRef) => void
   }
 
-export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & {
+export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & TeamNavigationActions & {
   navigation: TeamNavigationSource
+  loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
+  loadChanges: (request: AgentTeamChangesRequest) => Promise<RemoteResult<AgentTeamChangesResult>>
+  sendMessage: (request: AgentTeamSendMessageRequest) => Promise<RemoteResult<AgentTeamSendMessageResult>>
+  loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamAgentMemberStatus[]>>
 }
 
 export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'team'> & {

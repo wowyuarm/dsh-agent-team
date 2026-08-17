@@ -890,7 +890,9 @@ export class AgentTeamLedger {
    */
   view(request: AgentTeamViewRequest, memberId?: AgentTeamMemberId): AgentTeamView {
     const limit = request.limit ?? 20
+    const direction = request.direction ?? 'after'
     const cursor = request.cursor ?? 0
+    if (direction !== 'after' && direction !== 'before') throw new Error('direction must be after or before')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new Error('limit must be an integer between 1 and 100')
     }
@@ -920,13 +922,17 @@ export class AgentTeamLedger {
     }
     const visibleMessage = (message: AgentTeamMessage): boolean => {
       const channel = this.channels.get(message.channelRef)
-      return message.sequence > cursor && channel?.workspaceId === request.workspaceId
+      return (direction === 'before' ? message.sequence < (request.cursor ?? this.ordered.length + 1) : message.sequence > cursor)
+        && channel?.workspaceId === request.workspaceId
+        && (!request.topLevelOnly || message.topLevel)
         && (memberId === undefined || this.isChannelMember(message.channelRef, memberId))
         && (request.channelRef === undefined || message.channelRef === request.channelRef)
     }
     const visibleActivity = (activity: AgentTeamActivity): boolean => {
+      if (request.includeActivities === false || request.topLevelOnly) return false
       const task = this.tasks.get(activity.taskRef)
-      return activity.sequence > cursor && task !== undefined
+      return (direction === 'before' ? activity.sequence < (request.cursor ?? this.ordered.length + 1) : activity.sequence > cursor)
+        && task !== undefined
         && this.channels.get(task.channelRef)?.workspaceId === request.workspaceId
         && (request.channelRef === undefined || task.channelRef === request.channelRef)
         && (memberId === undefined || this.isChannelMember(task.channelRef, memberId))
@@ -935,21 +941,34 @@ export class AgentTeamLedger {
       ...this.messages.filter(visibleMessage).map(value => ({ kind: 'message' as const, sequence: value.sequence, value })),
       ...this.activities.filter(visibleActivity).map(value => ({ kind: 'activity' as const, sequence: value.sequence, value })),
     ].sort((left, right) => left.sequence - right.sequence)
-    const selected = candidates.slice(0, limit)
+    const selected = direction === 'before' ? candidates.slice(-limit) : candidates.slice(0, limit)
+    const channelMessages = this.messages
+      .filter(message => message.topLevel && this.channels.get(message.channelRef)?.workspaceId === request.workspaceId
+        && (request.channelRef === undefined || message.channelRef === request.channelRef))
+      .sort((left, right) => left.sequence - right.sequence)
+    const taskNumbers = new Map(channelMessages.map((message, index) => [message.taskRef, index + 1] as const))
     const items = selected.filter(entry => entry.kind === 'message').map(({ value: message }) => {
       const task = this.tasks.get(message.taskRef)
       const thread = this.threads.get(message.threadRef)
       if (task === undefined || thread === undefined) {
         throw new Error(`agent-team projection is incomplete for message '${message.messageRef}'`)
       }
-      return Object.freeze({ message, task, thread })
+      const messageCount = this.messages.filter(candidate => candidate.threadRef === thread.threadRef).length
+      return Object.freeze({ message, task, thread,
+        taskNumber: taskNumbers.get(task.taskRef) ?? 0, messageCount })
     })
+    const nextCursor = selected.length === 0 ? cursor
+      : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
+    const initialization = this.ordered[0]
+    if (initialization === undefined) throw new Error('agent-team ledger is not initialized')
+    this.assertInitializationRecord(initialization)
     return Object.freeze({
+      humanMemberId: initialization.data.humanMemberId,
       channels: Object.freeze(channels),
       members,
       items: Object.freeze(items),
       activities: Object.freeze(selected.filter(entry => entry.kind === 'activity').map(entry => entry.value)),
-      cursor: selected.at(-1)?.sequence ?? cursor,
+      cursor: nextCursor,
       hasMore: candidates.length > selected.length,
     })
   }

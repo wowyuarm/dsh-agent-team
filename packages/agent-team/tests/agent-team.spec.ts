@@ -287,7 +287,10 @@ describe('AgentTeam', () => {
       name: 'idempotent',
       description: 'Idempotent channel',
     }
+    const initialChange = await test.ctx.agentTeam.changes({ afterVersion: 0 })
+    const changed = test.ctx.agentTeam.changes({ afterVersion: initialChange.version })
     const first = await test.ctx.agentTeam.createChannel(request)
+    expect((await changed).version).toBeGreaterThan(initialChange.version)
     await expect(test.ctx.agentTeam.createChannel(request)).resolves.toEqual(first)
     await expect(test.ctx.agentTeam.createChannel({ ...request, name: 'changed' }))
       .rejects.toThrow(/different operation or payload/)
@@ -308,6 +311,33 @@ describe('AgentTeam', () => {
     await expect(test.ctx.agentTeam.sendMessage({ ...sendRequest, body: 'changed body' }))
       .rejects.toThrow(/different operation or payload/)
     expect(test.ctx.agentTeam.status().operationCount).toBe(3)
+  })
+
+  it('pages the latest top-level Channel Messages backward without Activity gaps', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('request:page-channel'),
+      workspaceId: alpha, name: 'history', description: 'Bounded history' })
+    const sent = []
+    for (const [index, body] of ['one', 'two', 'three'].entries()) {
+      sent.push(await test.ctx.agentTeam.sendMessage({ requestId: requestId(`request:page-${index}`),
+        workspaceId: alpha, channelRef: channel.channel.channelRef, body }))
+    }
+    await test.ctx.agentTeam.changeTask({ requestId: requestId('request:page-close'), workspaceId: alpha,
+      taskRef: sent[2]!.task.taskRef, action: 'close' })
+
+    const latest = test.ctx.agentTeam.view({ workspaceId: alpha, channelRef: channel.channel.channelRef,
+      direction: 'before', topLevelOnly: true, limit: 2 })
+    expect(latest.items.map(item => item.message.body)).toEqual(['two', 'three'])
+    expect(latest.items.map(item => item.taskNumber)).toEqual([2, 3])
+    expect(latest.items[1]!.task.status).toBe('closed')
+    expect(latest.activities).toEqual([])
+    expect(latest.hasMore).toBe(true)
+
+    const older = test.ctx.agentTeam.view({ workspaceId: alpha, channelRef: channel.channel.channelRef,
+      direction: 'before', topLevelOnly: true, cursor: latest.cursor, limit: 2 })
+    expect(older.items.map(item => item.message.body)).toEqual(['one'])
+    expect(older.items[0]!.taskNumber).toBe(1)
+    expect(older.hasMore).toBe(false)
   })
 
   it('registers a package invariant that rejects projection divergence', async () => {

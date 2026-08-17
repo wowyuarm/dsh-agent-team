@@ -1,6 +1,8 @@
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AgentTeamAddMemberRequest,
+  AgentTeamSendMessageRequest,
+  AgentTeamChangesRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamMembersRequest,
@@ -64,6 +66,12 @@ function registerModeShadow<T extends object>(
           inject: () => ({
             navigation,
             ...navigation.actions(),
+            ...(name === 'conversation' ? {
+              loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
+              loadChanges: (request: AgentTeamChangesRequest) => ctx.remote.agentTeam.changes(request),
+              loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
+              sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
+            } : {}),
             ...(name === 'sidebar.workspaces' ? {
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
               addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),

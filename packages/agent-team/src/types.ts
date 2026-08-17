@@ -583,6 +583,8 @@ export interface AgentTeamViewItem {
   readonly message: AgentTeamMessage
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
+  readonly taskNumber: number
+  readonly messageCount: number
 }
 
 /** Workspace-authorized bounded view request. */
@@ -595,16 +597,32 @@ export interface AgentTeamViewRequest {
   readonly channelRef?: AgentTeamChannelRef
   readonly limit?: number
   readonly cursor?: number
+  /** Read facts after the cursor (Agent default) or the latest facts before it (Client history). */
+  readonly direction?: 'after' | 'before'
+  /** Exclude Thread replies from a top-level-only projection. */
+  readonly topLevelOnly?: boolean
+  /** Include relevant Activity facts in the shared bounded stream (default true). */
+  readonly includeActivities?: boolean
 }
 
 /** Bounded collaboration facts plus a continuation sequence. */
 export interface AgentTeamView {
+  readonly humanMemberId: AgentTeamMemberId
   readonly channels: readonly AgentTeamChannel[]
   readonly members: readonly AgentTeamChannelMembership[]
   readonly items: readonly AgentTeamViewItem[]
   readonly activities: readonly AgentTeamActivity[]
   readonly cursor: number
   readonly hasMore: boolean
+}
+
+/** Cursor for the lightweight Client invalidation stream. */
+export interface AgentTeamChangesRequest {
+  readonly afterVersion: number
+}
+
+export interface AgentTeamChangesResult {
+  readonly version: number
 }
 
 /** Human-facing summary of the current Team projection. */

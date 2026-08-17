@@ -30,6 +30,8 @@ import type {
   AgentTeamAgentMemberStatus,
   AgentTeamMembersRequest,
   AgentTeamCreateChannelRequest,
+  AgentTeamChangesRequest,
+  AgentTeamChangesResult,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
   AgentTeamConfirmationRequired,
@@ -153,6 +155,8 @@ export default class AgentTeam extends TypertRemoteService {
   private lifecycleTail: Promise<void> = Promise.resolve()
   private deliveryTail: Promise<void> = Promise.resolve()
   private accepting = true
+  private changeVersion = 0
+  private readonly changeWaiters = new Set<(version: number) => void>()
 
   /** Create the service; Cordis runs durable initialization before publication. */
   constructor(ctx: Context) {
@@ -164,13 +168,18 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.on('agent/error', ({ agent, error }) => {
       if (this.memberForAgent(agent) === undefined) return
       this.runtimeErrors.set(agent.id, error instanceof Error ? error.message : String(error))
+      this.emitChanged()
     })
     this.ctx.on('agent/status', ({ agent, status }) => {
-      if (status === 'running' && this.memberForAgent(agent) !== undefined) this.runtimeErrors.delete(agent.id)
+      if (status === 'running' && this.memberForAgent(agent) !== undefined) {
+        this.runtimeErrors.delete(agent.id)
+        this.emitChanged()
+      }
     })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
       this.accepting = false
+      this.emitChanged()
       await this.lifecycleTail
       await this.deliveryTail
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
@@ -207,6 +216,25 @@ export default class AgentTeam extends TypertRemoteService {
   @Remote('members')
   membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamAgentMemberStatus[] {
     return this.members().filter(status => status.member.workspaceId === request.workspaceId)
+  }
+
+  /** Wait for a lightweight projection invalidation without exposing operation data. */
+  @Remote('changes')
+  async changes(request: AgentTeamChangesRequest): Promise<AgentTeamChangesResult> {
+    if (!Number.isInteger(request.afterVersion) || request.afterVersion < 0) {
+      throw new Error('afterVersion must be a non-negative integer')
+    }
+    if (this.changeVersion > request.afterVersion || !this.accepting) {
+      return Object.freeze({ version: this.changeVersion })
+    }
+    return new Promise(resolve => {
+      const waiter = (version: number) => { clearTimeout(timeout); resolve(Object.freeze({ version })) }
+      const timeout = setTimeout(() => {
+        this.changeWaiters.delete(waiter)
+        resolve(Object.freeze({ version: this.changeVersion }))
+      }, 25_000)
+      this.changeWaiters.add(waiter)
+    })
   }
 
   /** Return the current Human-facing Team status without starting a model turn. */
@@ -335,6 +363,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Resolve Human authority and send one atomic top-level Message bundle. */
+  @Remote('sendMessage')
   async sendMessage(request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
@@ -578,6 +607,8 @@ export default class AgentTeam extends TypertRemoteService {
     } catch (error) {
       await created?.dispose()
       this.diagnostics.set(member.memberId, error instanceof Error ? error.message : String(error))
+    } finally {
+      this.emitChanged()
     }
   }
 
@@ -634,6 +665,13 @@ export default class AgentTeam extends TypertRemoteService {
 
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
     this.ctx.emit('agent-team/committed', { receipt })
+    this.emitChanged()
+  }
+
+  private emitChanged(): void {
+    this.changeVersion += 1
+    for (const waiter of this.changeWaiters) waiter(this.changeVersion)
+    this.changeWaiters.clear()
   }
 
   private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {

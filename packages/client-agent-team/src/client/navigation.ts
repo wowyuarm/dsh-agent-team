@@ -1,4 +1,5 @@
 import type { ClientContext, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { AgentTeamChannelRef, AgentTeamThreadRef } from '@deepseek-ai/dsh-agent-team/types'
 
 export type TeamMode = 'conversation' | 'team'
 
@@ -8,6 +9,8 @@ export interface TeamNavigationSnapshot {
   mode: TeamMode
   workspaceId?: WorkspaceId
   activeTab: TeamWorkspaceTab
+  channelRef?: AgentTeamChannelRef
+  threadRef?: AgentTeamThreadRef
 }
 
 const STORAGE_KEY = 'dsh.agent-team.navigation'
@@ -41,6 +44,9 @@ export interface TeamNavigationActions {
   leaveTeam: () => void
   selectWorkspace: (workspaceId: WorkspaceId) => void
   selectWorkspaceTab: (tab: TeamWorkspaceTab) => void
+  selectChannel: (channelRef: AgentTeamChannelRef) => void
+  selectThread: (threadRef: AgentTeamThreadRef) => void
+  backToChannel: () => void
   createWorkspaceFromPath: (path: string) => Promise<{ workspaceId: WorkspaceId }>
 }
 
@@ -64,6 +70,9 @@ export class TeamNavigation {
       leaveTeam: () => { this.setMode('conversation') },
       selectWorkspace: workspaceId => { this.setWorkspace(workspaceId) },
       selectWorkspaceTab: tab => { this.setTab(tab) },
+      selectChannel: channelRef => { this.setChannel(channelRef) },
+      selectThread: threadRef => { this.setThread(threadRef) },
+      backToChannel: () => { this.setThread(undefined) },
       createWorkspaceFromPath: path => this.ctx.workspaces.create({ path }),
     }
   }
@@ -80,7 +89,26 @@ export class TeamNavigation {
 
   private setWorkspace(workspaceId: WorkspaceId): void {
     if (this.snapshot.workspaceId === workspaceId) return
-    this.snapshot = { ...this.snapshot, workspaceId, activeTab: 'channels' }
+    const { channelRef: _channelRef, threadRef: _threadRef, ...base } = this.snapshot
+    this.snapshot = { ...base, workspaceId, activeTab: 'channels' }
+    this.commit()
+  }
+
+  private setChannel(channelRef: AgentTeamChannelRef): void {
+    if (this.snapshot.channelRef === channelRef && this.snapshot.threadRef === undefined) return
+    const { threadRef: _threadRef, ...base } = this.snapshot
+    this.snapshot = { ...base, channelRef, activeTab: 'channels' }
+    this.commit()
+  }
+
+  private setThread(threadRef: AgentTeamThreadRef | undefined): void {
+    if (this.snapshot.threadRef === threadRef) return
+    if (threadRef === undefined) {
+      const { threadRef: _threadRef, ...base } = this.snapshot
+      this.snapshot = base
+    } else {
+      this.snapshot = { ...this.snapshot, threadRef }
+    }
     this.commit()
   }
 

@@ -40,6 +40,15 @@ export const zh = {
   removeFromChannel: '移除',
   memberUnavailableReason: '当前不可用，不能加入 Channel',
   memberCreatingReason: '正在创建，完成前不能加入 Channel',
+  emptyMessages: '还没有消息',
+  memberAgent: 'Agent 成员',
+  memberHuman: 'Human 成员',
+  human: 'Human',
+  mentions: '提及成员',
+  messageDraft: '消息内容',
+  sendMessage: '发送',
+  sendingMessage: '发送中…',
+  loadOlder: '加载更早消息',
 } as const
 
 export const en = {
@@ -84,6 +93,15 @@ export const en = {
   removeFromChannel: 'Remove',
   memberUnavailableReason: 'Unavailable members cannot join a Channel',
   memberCreatingReason: 'Creating; cannot join a Channel until complete',
+  emptyMessages: 'No messages yet',
+  memberAgent: 'Agent member',
+  memberHuman: 'Human member',
+  human: 'Human',
+  mentions: 'Mention members',
+  messageDraft: 'Message',
+  sendMessage: 'Send',
+  sendingMessage: 'Sending…',
+  loadOlder: 'Load older messages',
 } as const
 
 export type TeamKey = keyof typeof zh

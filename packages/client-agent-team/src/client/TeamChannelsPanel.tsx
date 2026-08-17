@@ -21,11 +21,13 @@ interface TeamChannelsPanelProps {
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly creatingAgents: readonly AgentTeamAddMemberRequest[]
+  readonly selectedChannelRef?: AgentTeamChannelRef
+  readonly selectChannel: TeamSidebarProps['selectChannel']
   readonly t: TeamSidebarProps['t']
 }
 
 export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
-  const { workspaceId, loadMembers, loadChannels, createChannel, joinChannel, removeChannelMember, creatingAgents, t } = props
+  const { workspaceId, loadMembers, loadChannels, createChannel, joinChannel, removeChannelMember, creatingAgents, selectedChannelRef, selectChannel, t } = props
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
@@ -187,9 +189,9 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
           const joined = membership.get(channel.channelRef) ?? new Set<AgentTeamMemberId>()
           const manageOpen = managing === channel.channelRef
           return (
-            <article className={css.channelCard} key={channel.channelRef}>
+            <article className={css.channelCard} key={channel.channelRef} aria-current={selectedChannelRef === channel.channelRef ? 'page' : undefined}>
               <div className={css.channelHeader}>
-                <span><strong># {channel.name}</strong><small>{channel.description}</small></span>
+                <span><button type="button" className={css.textButton} onClick={() => { selectChannel(channel.channelRef) }}><strong># {channel.name}</strong></button><small>{channel.description}</small></span>
                 <button type="button" className={css.textButton} aria-expanded={manageOpen} onClick={() => { setManaging(manageOpen ? undefined : channel.channelRef) }}>{t('manageMembers')}</button>
               </div>
               <small>{t('memberCount', { count: joined.size })}</small>
