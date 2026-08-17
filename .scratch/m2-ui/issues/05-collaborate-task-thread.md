@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — Collaborate in a Channel.
 
-**Status:** in-progress; implementation, REAL Host/Client composition and Human-operation SQLite replay are complete. M2-06 owns the remaining desktop/narrow browser journey.
+**Status:** complete as the M2 functional baseline. Browser interaction/layout evidence passed under M2-06; DSH native-feel redesign is tracked separately by `../../ui-redesign/spec.md`.
 
 - [x] The Task footer opens a Thread page with an explicit back control that restores the originating Channel without URL routing.
 - [x] The Thread header shows Task number, derived status and Human actions for accept, close and reopen only when each transition is valid.
@@ -17,4 +17,4 @@
 - [x] Thread history loads the latest bounded page, includes explicit Messages plus relevant Activity, supports older-page reads and reports Thread Message count separately from revision.
 - [x] Closed or accepted Tasks reject replies and Claim changes until Human reopen; UI controls and Host authority independently enforce the same rule.
 - [x] REAL two-Agent tests prove Human reply, stale revision, Claim done/release, accept/close/reopen, activity delivery, non-optimistic failures and replay after SQLite restart.
-- [ ] Browser interaction and snapshots prove Channel↔Thread navigation, state-dot-only runtime status, Claim readability, accessible controls and narrow/mobile layout without overlap.
+- [x] Browser interaction and snapshots prove Channel↔Thread navigation, state-dot-only runtime status, Claim readability, accessible controls and narrow/mobile layout without overlap.

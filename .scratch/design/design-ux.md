@@ -1,7 +1,7 @@
 # Agent Team M2 UI/UX 设计基线
 
 日期：2026-08-16
-状态：M2 第一阶段 UX grill 完成；实施范围见 `../m2-ui/spec.md` 与 `../m2-ui/issues/`。
+状态：M2 functional UX 基线（已实现）；不再作为最终视觉/native-feel 标准。UI 重做权威见 `team-ui-redesign.md`，证据见 `research/`，实施范围见 `../ui-redesign/spec.md`。
 位置说明：`.scratch/` 探索性内容。
 
 ## 1. 设计原则
@@ -219,7 +219,9 @@ Agent Member
 - 候选 `team_send` 门禁只应考虑当前 Thread 中相关且早于发送基线的未读事实；“任何未读都拒绝”可能让无关消息阻塞工作，尚未定案。
 - unread cursor、提示重试、Follow 关系和 prompt 文案全部待 UI 实测后再决定。
 
-## 10. 验收
+## 10. 功能验收（历史基线）
+
+本节验收已由 M2 完成，但只证明功能闭环、布局不溢出和 slot 可恢复，不证明视觉层级、控件复用或 DSH native-feel 达标。后续视觉验收只以 `team-ui-redesign.md` 为准。
 
 - 真实 Client plugin + typed RPC + Host composition。
 - Team mode 三席 take/restore：`sidebar.workspaces`、`conversation`、`sidebar.settings`。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Enter and Leave Team Mode; 02 — Browse Agent Members and Runtime Presence; 03 — Create Channels and Manage Membership; 04 — Collaborate in a Channel; 05 — Collaborate in a Task Thread.
 
-**Status:** complete
+**Status:** complete as the M2 functional/layout-safety baseline. This ticket proved real composition, behavior, restore and no-overflow; it did not prove DSH native-feel. The visual redesign frontier is `../../ui-redesign/spec.md`.
 
 - [x] One documented opt-in composition mounts the Host, bundle-private Team preset/tools, typed RPC adapter and Team Client package without adding Team UI to unrelated compositions.
 - [x] The real GUI journey enters Team mode, selects or creates a Workspace, creates two Agent Members, creates a Channel with membership, sends and mentions, observes runtime states, opens a Thread, replies, changes Claim/Task state, returns to Channel and exits to Conversations.

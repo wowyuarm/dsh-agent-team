@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Create Channels and Manage Membership.
 
-**Status:** in-progress; implementation and REAL Host/Client composition evidence are complete. M2-06 owns the remaining desktop/narrow browser layout journey.
+**Status:** complete as the M2 functional baseline. Browser interaction/layout evidence passed under M2-06; DSH native-feel redesign is tracked separately by `../../ui-redesign/spec.md`.
 
 - [x] Selecting a Channel keeps Team sidebar mode active and renders a Team-owned center page rather than creating or impersonating a Session.
 - [x] The Channel header shows name, description and membership management; an empty Channel renders a restrained “no messages” state with the Team composer available.
@@ -17,4 +17,4 @@
 - [x] A failed send preserves the draft and displays a retryable error; successful Messages appear only after Host commit and projection refresh.
 - [x] Host changed notifications cause the Client adapter to pull new bounded projection facts; the browser never folds Operation events into its own business state.
 - [x] Current M1 Follow, mention, confirmation and Delivery behavior remains unchanged; this ticket does not introduce Thread inbox or prompt changes.
-- [ ] REAL Agent composition plus browser tests prove Human send, mention wake/steer, Agent reply visibility, pagination, live refresh, empty/error states and desktop/narrow layouts.
+- [x] REAL Agent composition plus browser tests prove Human send, mention wake/steer, Agent reply visibility, pagination, live refresh, empty/error states and desktop/narrow layouts.
