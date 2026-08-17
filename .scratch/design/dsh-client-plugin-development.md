@@ -221,11 +221,12 @@ Sidebar Shell 仍由 shipped `ui-sidebar` 持有；它继续提供 brand row、c
 
 ### 4.2 Workspace 复用
 
-Team 读取和创建 Workspace 使用 `ctx.workspaces`：
+Workspace 由 shipped DSH Session/Workspace UI 创建和管理，Team 只读取已有 Host projection：
 
 - `ctx.workspaces.list` 是 real Host projection，顺序保持 Host registry order。
-- `ctx.workspaces.create({ path })` 是唯一 Workspace create 入口。
-- 外部 Team plugin 不能重新声明 shipped `WorkspaceBrowser` 私有的 `sidebar.workspaces.directoryFlow` child slot；两个 live parent declaration 会在 SlotCore 中冲突。Team 通过公开的 `ctx.workspaces.pickDirectory()` 获取路径，再调用 `ctx.workspaces.create({ path })`，不复制 `WorkspaceBrowser` 或 Web browse picker。
+- Team 不提供 New Workspace、不调用 `ctx.workspaces.pickDirectory()`、不调用 `ctx.workspaces.create()`。
+- 外部 Team plugin 不能重新声明 shipped `WorkspaceBrowser` 私有的 `sidebar.workspaces.directoryFlow` child slot；也不复制 Workspace browse/native picker。
+- Team 只负责选择已有 Workspace；没有 Workspace 时显示空状态，用户回到普通 Session UI 创建。
 - 第一阶段不实现搜索、不实现 Team-specific sort、不创建第二套 Workspace store。
 
 ### 4.3 持久状态

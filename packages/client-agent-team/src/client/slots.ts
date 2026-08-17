@@ -38,7 +38,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & TeamNavigationActions
   & {
     navigation: TeamNavigationSource
-    pickWorkspaceDirectory: () => Promise<string | null>
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamAgentMemberStatus[]>>
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>

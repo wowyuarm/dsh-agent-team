@@ -78,7 +78,7 @@ Team 当前不替换 `root`，而是 shadow `sidebar.workspaces`、`conversation
 
 公开的是 `WorkspaceBrowserProps`、`WorkspacePickerProps` 和 directory-flow contract types；没有 public `WorkspaceBrowser` / row component。
 
-当前 Harness 的 directory-flow child slot 属于 shipped WorkspaceBrowser parent declaration。外部 Team shadow 不可重复声明；Team 已改用 public `ctx.workspaces.pickDirectory()` + `ctx.workspaces.create({ path })`，应保持。
+当前 Harness 的 directory-flow child slot 属于 shipped WorkspaceBrowser parent declaration。外部 Team shadow 不可重复声明。最终产品边界是：Workspace 只由普通 Session/Workspace UI 创建，Team 只读取并选择已有 Workspace，不提供第二套创建流程。
 
 ### 3.4 `ui-conversation`
 

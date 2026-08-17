@@ -125,7 +125,6 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeClaim, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
-  runtime.workspaces.stub('pickDirectory', async () => '/work/new')
   await runtime.workspaces.update((draft) => {
     draft.items = [
       { workspaceId: 'w1' as WorkspaceId, title: 'Alpha', path: '/work/alpha', sessionIds: [], createdAt: '', updatedAt: '' },
@@ -146,7 +145,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
 }
 
 describe('rendered Team mode composition', () => {
-  it('enters Team, creates a Workspace through directory-flow, and restores the shipped seats', async () => {
+  it('enters Team with existing Workspaces and restores the shipped seats', async () => {
     const b = await runtimeWithTeam()
     expect(b.view.getByText('普通工作区')).toBeTruthy()
     expect(b.view.getByText('普通对话')).toBeTruthy()
@@ -177,27 +176,11 @@ describe('rendered Team mode composition', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(document.activeElement).toBe(membersTrigger))
 
-    fireEvent.click(b.view.getByRole('button', { name: '新建工作区' }))
-    await vi.waitFor(() => {
-      expect(b.runtime.workspaces.calls).toContainEqual({ method: 'pickDirectory', args: [] })
-      expect(b.runtime.workspaces.calls).toContainEqual({ method: 'create', args: [{ path: '/work/new' }] })
-    })
-
     fireEvent.click(b.view.getByRole('button', { name: '← 对话' }))
     expect(await b.view.findByText('普通工作区')).toBeTruthy()
     expect(await b.view.findByText('普通对话')).toBeTruthy()
     expect(await b.view.findByText('设置')).toBeTruthy()
     expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
-    await b.runtime.dispose()
-  })
-
-  it('shows the Host workspace create error instead of hiding the cause', async () => {
-    const b = await runtimeWithTeam()
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    await b.view.findByText('Alpha')
-    b.runtime.workspaces.stub('create', async () => { throw new Error('workspace.create: path is not accessible') })
-    fireEvent.click(await b.view.findByRole('button', { name: '新建工作区' }))
-    expect((await b.view.findByRole('alert')).textContent).toContain('path is not accessible')
     await b.runtime.dispose()
   })
 
@@ -356,7 +339,7 @@ describe('rendered Team mode composition', () => {
     await waitFor(() => { expect(b.view.queryByText('Alpha')).toBeNull() })
     expect(b.view.getByRole('button', { name: '← 对话' })).toBeTruthy()
     expect(b.view.getByRole('button', { name: 'Channels' })).toBeTruthy()
-    expect(b.view.getByRole('button', { name: '新建工作区' })).toBeTruthy()
+    expect(b.view.queryByRole('button', { name: '新建工作区' })).toBeNull()
     expect(b.view.container).toMatchSnapshot()
 
     await b.team.dispose()

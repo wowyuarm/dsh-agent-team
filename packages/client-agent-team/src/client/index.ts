@@ -87,7 +87,6 @@ function registerModeShadow<T extends object>(
               createChannel: (request: AgentTeamCreateChannelRequest) => ctx.remote.agentTeam.createChannel(request),
               joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
               removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
-              pickWorkspaceDirectory: () => ctx.workspaces.pickDirectory(),
             } : {}),
           }),
         } as never, component as never)
@@ -109,7 +108,7 @@ function registerModeShadow<T extends object>(
 function applyUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agent-team: dictionaries')
 
-  const navigation = new TeamNavigation(ctx)
+  const navigation = new TeamNavigation()
   const disposeNavigation = ctx.reflect.provide('teamNavigation', navigation)
   ctx.effect(() => () => {
     navigation.dispose()

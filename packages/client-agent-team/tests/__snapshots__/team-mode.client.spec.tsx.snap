@@ -88,19 +88,6 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                   xmlns="http://www.w3.org/2000/svg"
                 />
               </button>
-              <button
-                aria-label="新建工作区"
-                class="railButton"
-                type="button"
-              >
-                <svg
-                  data-content="7d0b657c"
-                  fill="none"
-                  height="18"
-                  viewBox="0 0 16 16"
-                  width="18"
-                />
-              </button>
             </nav>
           </div>
         </div>

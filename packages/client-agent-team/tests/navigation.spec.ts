@@ -13,29 +13,13 @@ function storage(): Storage {
   }
 }
 
-function context() {
-  return {
-    workspaces: {
-      pickDirectory: vi.fn(async () => '/work/team'),
-      create: vi.fn(async ({ path }: { path: string }) => ({
-        workspaceId: `workspace:${path}` as never,
-        path,
-        title: 'team',
-        sessionIds: [],
-        createdAt: '',
-        updatedAt: '',
-      })),
-    },
-  } as { workspaces: { pickDirectory: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> } }
-}
-
 describe('TeamNavigation', () => {
   beforeEach(() => {
     vi.stubGlobal('localStorage', storage())
   })
 
   it('enters and leaves Team mode while preserving the selected Workspace', () => {
-    const navigation = new TeamNavigation(context() as never)
+    const navigation = new TeamNavigation()
     const changes: string[] = []
     const off = navigation.subscribe(() => { changes.push(navigation.getSnapshot().mode) })
 
@@ -51,22 +35,18 @@ describe('TeamNavigation', () => {
     off()
   })
 
-  it('rehydrates Team mode and creates a selected Workspace through the shared service', async () => {
+  it('rehydrates Team mode and changes the selected existing Workspace', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: 'team', workspaceId: 'workspace:old' }))
-    const ctx = context()
-    const navigation = new TeamNavigation(ctx as never)
+    const navigation = new TeamNavigation()
 
-    await navigation.actions().createWorkspaceFromPath('/work/team')
-    expect(ctx.workspaces.create).toHaveBeenCalledWith({ path: '/work/team' })
-    navigation.actions().selectWorkspace('workspace:/work/team' as never)
-
+    navigation.actions().selectWorkspace('workspace:existing' as never)
     navigation.actions().selectWorkspaceTab('agents')
-    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:/work/team', activeTab: 'agents' })
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:/work/team' })
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:existing', activeTab: 'agents' })
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:existing' })
   })
 
   it('ignores malformed persisted state', () => {
     localStorage.setItem(STORAGE_KEY, '{broken')
-    expect(new TeamNavigation(context() as never).getSnapshot()).toEqual({ mode: 'conversation', activeTab: 'channels' })
+    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation', activeTab: 'channels' })
   })
 })

@@ -1,4 +1,4 @@
-import type { ClientContext, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { AgentTeamChannelRef, AgentTeamThreadRef } from '@deepseek-ai/dsh-agent-team/types'
 
 export type TeamMode = 'conversation' | 'team'
@@ -47,15 +47,12 @@ export interface TeamNavigationActions {
   selectChannel: (channelRef: AgentTeamChannelRef) => void
   selectThread: (threadRef: AgentTeamThreadRef) => void
   backToChannel: () => void
-  createWorkspaceFromPath: (path: string) => Promise<{ workspaceId: WorkspaceId }>
 }
 
 /** Root-scoped Team mode state. Slot lifetimes subscribe to this source. */
 export class TeamNavigation {
   private snapshot = readSnapshot()
   private readonly listeners = new Set<() => void>()
-
-  constructor(private readonly ctx: ClientContext) {}
 
   readonly getSnapshot = (): TeamNavigationSnapshot => this.snapshot
 
@@ -73,7 +70,6 @@ export class TeamNavigation {
       selectChannel: channelRef => { this.setChannel(channelRef) },
       selectThread: threadRef => { this.setThread(threadRef) },
       backToChannel: () => { this.setThread(undefined) },
-      createWorkspaceFromPath: path => this.ctx.workspaces.create({ path }),
     }
   }
 

@@ -59,7 +59,7 @@
 - 浏览器本地只保存 `mode + workspaceId`。刷新后恢复 Team 与 Workspace；失效 Workspace 自动清除。tab、Channel 和 Thread 不持久化。
 - 不增加 URL/router，不响应浏览器 Back/Forward。
 - Workspace 使用 Host registry 顺序，不做搜索或 Team 专用排序。
-- 外部 Team plugin 不声明 shipped WorkspaceBrowser 私有的 directory-flow child slot；新建 Workspace 只调用公开的 `ctx.workspaces.pickDirectory()` 和 `ctx.workspaces.create({ path })`，不复制 UI，也不修改 DSH 核心。
+- Workspace 由普通 Session/Workspace UI 创建；Team 不声明 directory-flow child slot、不调用 native picker、不复制 browse UI，只列出并选择已有 Workspace。
 - sidebar 收起到 rail 后不显示 Workspace/Channel/Agent 行，只保留 Shell 控件和 Team/返回入口；重新展开恢复 Team 目录。
 
 ## 3. Workspace 目录

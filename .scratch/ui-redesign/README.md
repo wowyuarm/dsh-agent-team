@@ -38,7 +38,7 @@ M2 functional baseline 已完成，commit `9ae7cc3`。当前 UI 功能可用，�
 - 没有 public multiline composer、Message row 或 Team domain row；这些由 Team 做薄 presenter。
 - composer 仍需保留 textarea，但要遵守 DSH focus、density、token、keyboard 语法。
 - `StateDot` 没有 neutral/unavailable state；不要伪造其他 StateDot state。
-- 外部 plugin 只使用公开 `ctx.workspaces.pickDirectory()` / `create()`，不声明 WorkspaceBrowser 私有 directory-flow child slot。
+- Workspace 由普通 Session/Workspace UI 创建；Team 只列出并选择已有 Workspace，不拥有 New Workspace 或 directory picker。
 - M2 只持久化 `mode + workspaceId`；刷新后 Channel/Thread/tab 回到 transient 初始状态，这是正确行为。
 
 ## 开工前门禁
