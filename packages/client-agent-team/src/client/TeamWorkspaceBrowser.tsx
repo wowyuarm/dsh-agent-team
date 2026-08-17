@@ -26,33 +26,38 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
   }, [navigationState.mode, selected, selectedId, selectWorkspace])
 
   const [flowBusy, setFlowBusy] = useState(false)
-  const [flowError, setFlowError] = useState(false)
+  const [flowError, setFlowError] = useState<string>()
   const [creatingAgents, setCreatingAgents] = useState<readonly AgentTeamAddMemberRequest[]>([])
 
   const createWorkspace = (): void => {
     if (flowBusy) return
     setFlowBusy(true)
-    setFlowError(false)
+    setFlowError(undefined)
     void pickWorkspaceDirectory().then(path => path === null ? undefined : createWorkspaceFromPath(path)).then(workspace => {
       if (workspace !== undefined) selectWorkspace(workspace.workspaceId)
-    }).catch(() => { setFlowError(true) }).finally(() => { setFlowBusy(false) })
+    }).catch(cause => {
+      setFlowError(cause instanceof Error ? cause.message : String(cause))
+    }).finally(() => { setFlowBusy(false) })
   }
 
   if (!wide) {
     const tabLabel = navigationState.activeTab === 'channels' ? t('channels') : t('agents')
     return (
-      <nav className={css.railWorkspace} aria-label={t('workspaceSections')}>
-        <Tooltip label={tabLabel} side="right">
-          <button type="button" className={css.railButton} data-active aria-label={tabLabel} onClick={() => { selectWorkspaceTab(navigationState.activeTab === 'channels' ? 'agents' : 'channels') }}>
-            <IconAgentPresetOutline16 size={18} />
-          </button>
-        </Tooltip>
-        <Tooltip label={t('addWorkspace')} side="right">
-          <button type="button" className={css.railButton} disabled={flowBusy} aria-label={t('addWorkspace')} onClick={createWorkspace}>
-            <IconFolderOpenOutline16 size={18} />
-          </button>
-        </Tooltip>
-      </nav>
+      <>
+        <nav className={css.railWorkspace} aria-label={t('workspaceSections')}>
+          <Tooltip label={tabLabel} side="right">
+            <button type="button" className={css.railButton} data-active aria-label={tabLabel} onClick={() => { selectWorkspaceTab(navigationState.activeTab === 'channels' ? 'agents' : 'channels') }}>
+              <IconAgentPresetOutline16 size={18} />
+            </button>
+          </Tooltip>
+          <Tooltip label={t('addWorkspace')} side="right">
+            <button type="button" className={css.railButton} disabled={flowBusy} aria-label={t('addWorkspace')} onClick={createWorkspace}>
+              <IconFolderOpenOutline16 size={18} />
+            </button>
+          </Tooltip>
+        </nav>
+        {flowError !== undefined && <p className={css.error} role="alert">{t('workspaceCreateFailed', { reason: flowError })}</p>}
+      </>
     )
   }
 
@@ -97,7 +102,7 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
           </div>
         </div>
       )}
-      {flowError && <p className={css.error} role="alert">{t('workspaceCreateFailed')}</p>}
+      {flowError !== undefined && <p className={css.error} role="alert">{t('workspaceCreateFailed', { reason: flowError })}</p>}
     </section>
   )
 }

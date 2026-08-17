@@ -191,6 +191,16 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
+  it('shows the Host workspace create error instead of hiding the cause', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('Alpha')
+    b.runtime.workspaces.stub('create', async () => { throw new Error('workspace.create: path is not accessible') })
+    fireEvent.click(await b.view.findByRole('button', { name: '新建工作区' }))
+    expect((await b.view.findByRole('alert')).textContent).toContain('path is not accessible')
+    await b.runtime.dispose()
+  })
+
   it('loads Workspace Agents and creates a durable Member without optimistic rows', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
