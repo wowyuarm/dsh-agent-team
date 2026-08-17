@@ -1,0 +1,148 @@
+.statusLine {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.status {
+  background: var(--dsw-alias-fill-tertiary);
+  border-radius: 10px;
+  color: var(--dsw-alias-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  padding: 1px 7px;
+}
+
+.workSection {
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  margin: 12px auto 0;
+  max-width: 880px;
+  padding-top: 10px;
+}
+
+.workHeading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.workHeading h2 {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  margin: 0;
+}
+
+.claimList {
+  display: grid;
+  gap: 4px;
+}
+
+.claimRow {
+  align-items: center;
+  border-radius: 6px;
+  display: grid;
+  gap: 4px 8px;
+  grid-template-columns: 14px minmax(96px, auto) minmax(0, 1fr) auto auto;
+  min-height: 36px;
+  padding: 4px 6px;
+}
+
+.claimRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+.claimOwner {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claimDirection {
+  color: var(--dsw-alias-text-primary);
+  font-size: 12px;
+  line-height: 18px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.claimState {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.claimActions { display: flex; gap: 4px; }
+
+.emptyClaims {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  margin: 0;
+  padding: 5px 6px;
+}
+
+.activityRow {
+  align-items: center;
+  color: var(--dsw-alias-text-tertiary);
+  display: flex;
+  font-size: 11px;
+  gap: 8px;
+  line-height: 18px;
+  margin: 0;
+  padding: 5px 38px;
+}
+
+.activityMark {
+  background: var(--dsw-alias-border-default);
+  border-radius: 50%;
+  flex: 0 0 5px;
+  height: 5px;
+  width: 5px;
+}
+
+.readOnly {
+  align-items: center;
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  color: var(--dsw-alias-text-secondary);
+  display: flex;
+  font-size: 12px;
+  gap: 12px;
+  justify-content: space-between;
+  line-height: 18px;
+  padding: 12px clamp(18px, 3vw, 36px) 16px;
+}
+
+.readOnly > div {
+  margin: 0 auto;
+  max-width: 880px;
+  width: 100%;
+}
+
+.readOnly p { margin: 0; }
+
+@media (max-width: 600px) {
+  .claimRow {
+    align-items: start;
+    grid-template-columns: 14px minmax(0, 1fr) auto;
+  }
+
+  .claimDirection {
+    grid-column: 2 / -1;
+  }
+
+  .claimActions {
+    grid-column: 2 / -1;
+    flex-wrap: wrap;
+  }
+
+  .activityRow { padding-left: 0; }
+  .readOnly { padding: 10px 12px; }
+}

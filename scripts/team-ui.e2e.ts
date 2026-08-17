@@ -13,6 +13,7 @@ const UI01_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
 const UI02_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-02')
 const UI03_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-03')
 const UI04_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-04')
+const UI05_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-05')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -35,6 +36,7 @@ async function installLocalBundle(): Promise<void> {
   await mkdir(UI02_SHOTS, { recursive: true })
   await mkdir(UI03_SHOTS, { recursive: true })
   await mkdir(UI04_SHOTS, { recursive: true })
+  await mkdir(UI05_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -131,6 +133,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
   await page.getByRole('button', { name: /Task #1/ }).click()
   await page.getByText('实现验收功能', { exact: true }).waitFor()
+  await page.getByText(/认领了「实现验收功能」/).waitFor()
+  await page.screenshot({ path: join(UI05_SHOTS, 'active-thread.png'), fullPage: true })
+  await page.getByRole('button', { name: '添加提及' }).click()
+  await page.getByRole('menuitem', { name: '@reviewer' }).click()
+  await page.screenshot({ path: join(UI05_SHOTS, 'thread-mention-menu.png'), fullPage: true })
+  await page.getByRole('button', { name: '移除 @reviewer' }).click()
   await page.getByRole('textbox', { name: '消息内容' }).fill('Human 已检查 Thread')
   await page.getByRole('button', { name: '发送' }).click()
   await page.getByText('Human 已检查 Thread', { exact: true }).waitFor()
@@ -151,7 +159,13 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     return JSON.stringify({ task: currentTask, claims: currentClaims, alert })
   }).toContain('"resolution":"accepted"')
   await page.getByRole('button', { name: '重新打开' }).waitFor()
+  await page.getByText(/此 Task 已验收/).waitFor()
   await page.screenshot({ path: join(UI01_SHOTS, 'desktop-thread.png'), fullPage: true })
+  await page.screenshot({ path: join(UI05_SHOTS, 'accepted-thread.png'), fullPage: true })
+  await page.getByRole('button', { name: '重新打开' }).click()
+  await page.getByRole('button', { name: '关闭任务' }).click()
+  await page.getByText(/此 Task 已关闭/).waitFor()
+  await page.screenshot({ path: join(UI05_SHOTS, 'closed-thread.png'), fullPage: true })
 
   await page.setViewportSize({ width: 390, height: 844 })
   const collapsedFrame = page.locator('[data-sidebar-collapsed="true"]')
@@ -159,6 +173,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(async () => (await collapsedFrame.locator(':scope > div').first().boundingBox())?.width ?? 999).toBeLessThanOrEqual(56)
   await page.screenshot({ path: join(UI01_SHOTS, 'narrow-thread.png'), fullPage: true })
   await page.screenshot({ path: join(UI02_SHOTS, 'narrow-team-rail.png'), fullPage: true })
+  await page.screenshot({ path: join(UI05_SHOTS, 'narrow-closed-thread.png'), fullPage: true })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.setViewportSize({ width: 1440, height: 960 })
 

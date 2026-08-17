@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconCloseOutline16, IconPlusOutline16, IconSendOutline16, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconSendOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
+import { TeamMentionPicker } from './TeamMentionPicker.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { formatTaskStatus } from './team-formatters.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 
@@ -20,14 +22,6 @@ interface TeamChannelPageProps {
   readonly t: TeamConversationProps['t']
 }
 
-const taskStatusKey = (status: AgentTeamTask['status']) => ({
-  todo: 'taskStatusTodo',
-  in_progress: 'taskStatusInProgress',
-  in_review: 'taskStatusInReview',
-  done: 'taskStatusDone',
-  closed: 'taskStatusClosed',
-} as const)[status]
-
 export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
@@ -37,7 +31,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const [pending, setPending] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [pendingSend, setPendingSend] = useState<AgentTeamSendMessageRequest>()
-  const [mentionOpen, setMentionOpen] = useState(false)
   const [managingMembers, setManagingMembers] = useState(false)
   const [membershipPending, setMembershipPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [membershipErrors, setMembershipErrors] = useState<ReadonlyMap<AgentTeamMemberId, string>>(new Map())
@@ -65,7 +58,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     setError(undefined)
     setLoading(true)
     setRecipients(new Set())
-    setMentionOpen(false)
     setManagingMembers(false)
     void refresh()
     void (async () => {
@@ -130,15 +122,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     }
   }
 
-  const toggleRecipient = (memberId: AgentTeamMemberId) => {
-    setRecipients(current => {
-      const next = new Set(current)
-      if (next.has(memberId)) next.delete(memberId); else next.add(memberId)
-      return next
-    })
-    setPendingSend(undefined)
-  }
-
   const send = async () => {
     if (pending || draft.trim() === '') return
     const recipientIds = [...recipients].sort()
@@ -158,17 +141,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
           setDraft('')
           setRecipients(new Set())
           setPendingSend(undefined)
-          setMentionOpen(false)
         }
       } else setError(result.error.message)
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
   }
-
-  const mentionItems = channelMembers.map(status => ({
-    id: status.member.memberId,
-    label: `@${status.member.handle}`,
-  }))
 
   return <main className={css.surface} data-team-channel={channelRef}>
     <div className={css.surfaceHeader}>
@@ -219,7 +196,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
               <p>{item.message.body}</p>
               {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef) }}>
                 <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
-                <span className={channelCss.taskStatus}>{t(taskStatusKey(item.task.status))}</span>
+                <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
                 <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
               </button>}
             </div>
@@ -230,21 +207,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
 
     {channel !== undefined ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void send() }}>
       <div className={css.composerInner}>
-        <div className={channelCss.composerToolbar}>
-          <Menu
-            open={mentionOpen}
-            portal
-            side="top"
-            compact
-            className={channelCss.mentionMenu!}
-            items={mentionItems.length === 0 ? [{ id: 'none', label: t('noMentionMembers'), disabled: true }] : mentionItems}
-            selectedIds={[...recipients]}
-            onSelect={id => { if (id !== 'none') toggleRecipient(id as AgentTeamMemberId) }}
-            onClose={() => { setMentionOpen(false) }}
-            anchor={<button type="button" className={channelCss.mentionTrigger} aria-haspopup="menu" aria-expanded={mentionOpen} disabled={pending} onClick={() => { setMentionOpen(open => !open) }}><IconPlusOutline16 size={14} />{t('addMention')}</button>}
-          />
-          {channelMembers.filter(status => recipients.has(status.member.memberId)).map(status => <button type="button" className={channelCss.recipientToken} key={status.member.memberId} aria-label={t('removeMention', { handle: status.member.handle })} disabled={pending} onClick={() => { toggleRecipient(status.member.memberId) }}><span>@{status.member.handle}</span><IconCloseOutline16 size={12} /></button>)}
-        </div>
+        <TeamMentionPicker members={channelMembers} recipients={recipients} disabled={pending} onChange={next => { setRecipients(next); setPendingSend(undefined) }} t={t} />
         <div className={css.composerMain}>
           <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value); setPendingSend(undefined) }} rows={2} />
           <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || draft.trim() === ''}>{pending ? t('sendingMessage') : t('sendMessage')}</Button>

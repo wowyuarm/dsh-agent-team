@@ -3,8 +3,11 @@ import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamClaimRef
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
+import { TeamMentionPicker } from './TeamMentionPicker.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { formatActivity, formatClaimState, formatTaskStatus } from './team-formatters.ts'
 import css from './conversation.module.css'
+import threadCss from './thread.module.css'
 
 interface TeamThreadPageProps {
   readonly workspaceId: WorkspaceId
@@ -45,6 +48,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     let active = true
     setView(undefined)
     setError(undefined)
+    setRecipients(new Set())
+    setRequestId(undefined)
+    setConfirmation(undefined)
     void refresh()
     void (async () => {
       let version = 0
@@ -60,8 +66,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const loadOlder = async () => {
     if (view === undefined || !view.hasMore) return
-    const result = await loadChannels({ workspaceId, channelRef, threadRef, direction: 'before',
-      cursor: view.cursor, limit: 20 })
+    const result = await loadChannels({ workspaceId, channelRef, threadRef, direction: 'before', cursor: view.cursor, limit: 20 })
     if (!result.ok) { setError(result.error.message); return }
     const known = new Set(view.items.map(item => item.message.messageRef))
     setView(currentView => currentView === undefined ? result.value : {
@@ -77,6 +82,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const task = activeView?.tasks.find(candidate => candidate.threadRef === threadRef)
   const thread = activeView?.threads.find(candidate => candidate.threadRef === threadRef)
   const taskNumber = task === undefined ? 0 : activeView?.taskNumbers.find(candidate => candidate.taskRef === task.taskRef)?.taskNumber ?? 0
+  const channelMembers = members.filter(status => activeView?.members.some(item => item.channelRef === channelRef && item.memberId === status.member.memberId) === true && status.member.state !== 'inactive')
+  const taskClaims = task === undefined ? [] : activeView?.claims.filter(claim => claim.taskRef === task.taskRef) ?? []
+  const memberName = (memberId: AgentTeamMemberId) => {
+    if (memberId === activeView?.humanMemberId) return t('human')
+    const handle = members.find(status => status.member.memberId === memberId)?.member.handle
+    return handle === undefined ? t('memberUnknown') : `@${handle}`
+  }
+
   const mutateTask = async (action: 'accept' | 'close' | 'reopen') => {
     if (pending || task === undefined) return
     setPending(true); setError(undefined)
@@ -101,8 +114,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     if (pending || task === undefined || thread === undefined || draft.trim() === '') return
     const id = requestId ?? crypto.randomUUID() as AgentTeamRequestId
     setRequestId(id); setPending(true); setError(undefined)
-    const result = await reply({ requestId: id, workspaceId, taskRef: task.taskRef, body: draft.trim(),
-      baseRevision: thread.revision, recipients: [...recipients].sort(), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
+    const result = await reply({ requestId: id, workspaceId, taskRef: task.taskRef, body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
     if (!result.ok) {
       setError(result.error.message)
       setConfirmation(undefined)
@@ -122,7 +134,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <h1>{task === undefined ? 'Task …' : `Task #${taskNumber}`}</h1>
-          <p>{task?.status ?? t('loadingChannels')}</p>
+          <div className={threadCss.statusLine}>{task === undefined ? <p>{t('loadingChannels')}</p> : <span className={threadCss.status}>{formatTaskStatus(task.status, t)}</span>}</div>
         </div>
         {activeView !== undefined && task !== undefined && thread !== undefined && <div className={css.headerActions}>
           {task.resolution === 'open' && task.status === 'in_review' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{t('acceptTask')}</Button>}
@@ -130,33 +142,38 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           {task.resolution !== 'open' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
         </div>}
       </header>
-      {activeView !== undefined && task !== undefined && thread !== undefined && <>
-        <section className={css.participants} aria-label={t('participants')}>
-          {members.filter(status => activeView.members.some(item => item.channelRef === channelRef && item.memberId === status.member.memberId)).map(status => <div key={status.member.memberId}><TeamPresenceDot status={status} t={t} /><span title={status.member.description}>@{status.member.handle}</span></div>)}
-        </section>
-        <section className={css.claims} aria-label={t('claims')}>
-          {activeView.claims.filter(claim => claim.taskRef === task.taskRef).map(claim => {
-            const owner = members.find(status => status.member.memberId === claim.owner)?.member.handle ?? claim.owner
-            return <article key={claim.claimRef}><strong>@{owner}</strong><span>{claim.direction}</span><small>{claim.state}</small>{claim.state === 'active' && task.resolution === 'open' && <div><Button size="sm" disabled={pending} onClick={() => { void mutateClaim(task.taskRef, claim.claimRef, 'done') }}>{t('markClaimDone')}</Button><Button size="sm" disabled={pending} onClick={() => { void mutateClaim(task.taskRef, claim.claimRef, 'release') }}>{t('releaseClaim')}</Button></div>}</article>
+      {activeView !== undefined && task !== undefined && thread !== undefined && <section className={threadCss.workSection} aria-label={t('claims')}>
+        <div className={threadCss.workHeading}><h2>{t('claims')}</h2><span className={threadCss.claimState}>{taskClaims.length}</span></div>
+        <div className={threadCss.claimList}>
+          {taskClaims.length === 0 && <p className={threadCss.emptyClaims}>{t('noClaims')}</p>}
+          {taskClaims.map(claim => {
+            const ownerStatus = members.find(status => status.member.memberId === claim.owner)
+            return <article className={threadCss.claimRow} key={claim.claimRef}>
+              {ownerStatus === undefined ? <span /> : <TeamPresenceDot status={ownerStatus} t={t} />}
+              <strong className={threadCss.claimOwner}>{memberName(claim.owner)}</strong>
+              <span className={threadCss.claimDirection}>{claim.direction}</span>
+              <small className={threadCss.claimState}>{formatClaimState(claim.state, t)}</small>
+              {claim.state === 'active' && task.resolution === 'open' && <div className={threadCss.claimActions}><Button size="sm" disabled={pending} onClick={() => { void mutateClaim(task.taskRef, claim.claimRef, 'done') }}>{t('markClaimDone')}</Button><Button size="sm" disabled={pending} onClick={() => { void mutateClaim(task.taskRef, claim.claimRef, 'release') }}>{t('releaseClaim')}</Button></div>}
+            </article>
           })}
-        </section>
-      </>}
+        </div>
+      </section>}
     </div>
 
     <section className={css.timeline} aria-label={t('participants')}><div className={css.timelineContent}>
       {activeView === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
       {activeView?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
-      {activeView !== undefined && [...activeView.items.map(item => ({ kind: 'message' as const, sequence: item.message.sequence, item })), ...activeView.activities.map(activity => ({ kind: 'activity' as const, sequence: activity.sequence, activity }))].sort((left, right) => left.sequence - right.sequence).map(entry => entry.kind === 'message' ? <article className={css.messageRow} key={entry.item.message.messageRef}><div className={css.messageBody}><strong>{entry.item.message.sender === activeView.humanMemberId ? t('human') : members.find(status => status.member.memberId === entry.item.message.sender)?.member.handle ?? entry.item.message.sender}</strong><p>{entry.item.message.body}</p></div></article> : <p className={css.activity} key={entry.activity.activityRef}>{`${entry.activity.kind} · ${entry.activity.actor}`}</p>)}
+      {activeView !== undefined && [...activeView.items.map(item => ({ kind: 'message' as const, sequence: item.message.sequence, item })), ...activeView.activities.map(activity => ({ kind: 'activity' as const, sequence: activity.sequence, activity }))].sort((left, right) => left.sequence - right.sequence).map(entry => entry.kind === 'message' ? <article className={css.messageRow} key={entry.item.message.messageRef}><div className={css.messageIdentity} aria-hidden="true">{memberName(entry.item.message.sender).replace('@', '').slice(0, 1).toUpperCase()}</div><div className={css.messageBody}><strong>{memberName(entry.item.message.sender)}</strong><p>{entry.item.message.body}</p></div></article> : <p className={threadCss.activityRow} key={entry.activity.activityRef}><span className={threadCss.activityMark} aria-hidden="true" />{formatActivity(entry.activity, { t, actorName: memberName, claims: activeView.claims })}</p>)}
     </div></section>
 
-    {activeView !== undefined && task !== undefined && thread !== undefined ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void sendReply() }}><div className={css.composerInner}>
-      <fieldset className={css.mentions} disabled={pending || task.resolution !== 'open'}><legend>{t('mentions')}</legend>{members.filter(status => activeView.members.some(item => item.channelRef === channelRef && item.memberId === status.member.memberId)).map(status => <label key={status.member.memberId}><input type="checkbox" checked={recipients.has(status.member.memberId)} onChange={event => { setRecipients(currentSet => { const next = new Set(currentSet); if (event.target.checked) next.add(status.member.memberId); else next.delete(status.member.memberId); return next }) }} />@{status.member.handle}</label>)}</fieldset>
+    {activeView !== undefined && task !== undefined && thread !== undefined && task.resolution === 'open' ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void sendReply() }}><div className={css.composerInner}>
+      <TeamMentionPicker members={channelMembers} recipients={recipients} disabled={pending} onChange={next => { setRecipients(next); setConfirmation(undefined); setRequestId(undefined) }} t={t} />
       <div className={css.composerMain}>
-        <textarea aria-label={t('messageDraft')} value={draft} disabled={pending || task.resolution !== 'open'} onChange={event => { setDraft(event.target.value) }} rows={2} />
-        <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || task.resolution !== 'open' || draft.trim() === ''}>{t('sendMessage')}</Button>
+        <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value); setConfirmation(undefined); setRequestId(undefined) }} rows={2} />
+        <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || draft.trim() === ''}>{t('sendMessage')}</Button>
       </div>
       {error !== undefined && <p className={css.error} role="alert">{error}</p>}
-    </div></form> : <div />}
+    </div></form> : activeView !== undefined && task !== undefined && thread !== undefined ? <div className={threadCss.readOnly}><div><p>{task.resolution === 'accepted' ? t('threadAcceptedReadOnly') : t('threadClosedReadOnly')}</p>{error !== undefined && <p className={css.error} role="alert">{error}</p>}</div></div> : <div />}
     {activeView === undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
   </main>
 }

@@ -58,68 +58,6 @@
   line-height: 18px;
 }
 
-.composerToolbar {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 28px;
-}
-
-.mentionMenu {
-  flex: 0 0 auto;
-}
-
-.mentionTrigger {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--dsw-alias-text-secondary);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 12px;
-  gap: 5px;
-  line-height: 20px;
-  min-height: 26px;
-  padding: 2px 7px;
-}
-
-.mentionTrigger:hover,
-.mentionTrigger:focus-visible,
-.mentionTrigger[aria-expanded='true'] {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-text-primary);
-  outline: none;
-}
-
-.recipientToken {
-  align-items: center;
-  background: var(--dsw-alias-fill-tertiary);
-  border: 0;
-  border-radius: 12px;
-  color: var(--dsw-alias-text-secondary);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 11px;
-  gap: 3px;
-  line-height: 18px;
-  max-width: 160px;
-  padding: 2px 7px;
-}
-
-.recipientToken:hover,
-.recipientToken:focus-visible {
-  color: var(--dsw-alias-text-primary);
-  outline: 1px solid var(--dsw-alias-border-default);
-}
-
-.recipientToken span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .memberList {
   display: grid;
   gap: 3px;
@@ -189,11 +127,6 @@
 
   .headerMeta span + span::before {
     display: none;
-  }
-
-  .composerToolbar {
-    max-height: 64px;
-    overflow-y: auto;
   }
 
   .memberRow {

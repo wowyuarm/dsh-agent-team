@@ -63,11 +63,12 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   let memberships: Array<Record<string, unknown>> = []
   let viewItems: Array<Record<string, unknown>> = []
   let viewClaims: Array<Record<string, unknown>> = []
+  let viewActivities: Array<Record<string, unknown>> = []
   const viewChannels = vi.fn(async () => ({ ok: true, value: {
     humanMemberId: 'member:human', channels, members: memberships,
     tasks: viewItems.length === 0 ? [] : [viewItems[0]!.task], threads: viewItems.length === 0 ? [] : [viewItems[0]!.thread],
     taskNumbers: viewItems.length === 0 ? [] : [{ taskRef: 'task:1', taskNumber: 1 }],
-    items: viewItems, claims: viewClaims, activities: [], cursor: 0, hasMore: false,
+    items: viewItems, claims: viewClaims, activities: viewActivities, cursor: 0, hasMore: false,
   } }))
   const createChannel = vi.fn(async (request: AgentTeamCreateChannelRequest) => {
     const channel = { channelRef: 'channel:new', workspaceId: request.workspaceId, name: request.name,
@@ -117,6 +118,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     const top = viewItems[0]!
     viewItems = [{ ...top, messageCount: 2 }, { ...top, message: { ...(top.message as object), messageRef: 'message:reply', sender: 'member:builder', body: 'agent reply', topLevel: false, sequence: 3 }, messageCount: 2 }]
     viewClaims = [{ claimRef: 'claim:1', taskRef: 'task:1', threadRef: 'thread:1', owner: 'member:builder', direction: 'Implement API', normalizedDirection: 'implement api', state: 'active' }]
+    viewActivities = [{ activityRef: 'activity:claim', taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:builder', kind: 'claim', claimRef: 'claim:1', sequence: 4 }]
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
@@ -298,6 +300,9 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     expect(b.view.getByText('Implement API')).toBeTruthy()
+    expect(b.view.getByText('@builder 认领了「Implement API」')).toBeTruthy()
+    expect(b.view.queryByText(/member:builder/)).toBeNull()
+    expect(b.view.queryByText(/claim ·/)).toBeNull()
     fireEvent.click(b.view.getByRole('button', { name: '标记完成' }))
     await waitFor(() => expect(b.changeClaim).toHaveBeenCalledWith(expect.objectContaining({ claimRef: 'claim:1', action: 'done' })))
     fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: 'human thread reply' } })
@@ -311,6 +316,8 @@ describe('rendered Team mode composition', () => {
     expect(b.reply.mock.calls[0]![0].requestId).not.toBe(b.reply.mock.calls[1]![0].requestId)
     fireEvent.click(b.view.getByRole('button', { name: '关闭任务' }))
     expect(await b.view.findByRole('button', { name: '重新打开' })).toBeTruthy()
+    expect(b.view.getByText('此 Task 已关闭。重新打开后才能继续回复或修改 Claim。')).toBeTruthy()
+    expect(b.view.queryByRole('textbox', { name: '消息内容' })).toBeNull()
     fireEvent.click(b.view.getByRole('button', { name: '← 返回 Channel' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     await b.runtime.dispose()
