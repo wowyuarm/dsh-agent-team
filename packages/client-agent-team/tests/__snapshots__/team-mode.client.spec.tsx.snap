@@ -145,7 +145,7 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
       style="display: contents;"
     >
       <main
-        class="teamConversation"
+        class="welcomeSurface"
         data-team-conversation="true"
       >
         <div

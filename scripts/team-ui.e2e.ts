@@ -9,7 +9,7 @@ const TEAM_ROOT = '__TEAM_ROOT__'
 const OVERLAY = '__OVERLAY__'
 const HOME = '__HOME__'
 const CHROME = '__CHROME__'
-const SHOTS = join(TEAM_ROOT, '.scratch/m2-ui/validation/m2-06')
+const SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -65,11 +65,24 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await channelForm.getByLabel(/reviewer/).check()
   await channelForm.getByRole('button', { name: '创建 Channel' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByText('还没有消息', { exact: true }).waitFor()
+  await page.screenshot({ path: join(SHOTS, 'empty-channel.png'), fullPage: true })
   await page.getByRole('textbox', { name: '消息内容' }).fill('请协作完成验收')
   await page.getByLabel('@builder').check()
   await page.getByLabel('@reviewer').check()
   await page.getByRole('button', { name: '发送' }).click()
-  await page.getByText('请协作完成验收', { exact: true }).waitFor()
+  const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
+  await committedMessage.waitFor()
+  await expect.poll(() => page.getByRole('textbox', { name: '消息内容' }).inputValue()).toBe('')
+  await page.getByRole('button', { name: '发送', exact: true }).waitFor()
+  const channelGeometry = await page.locator('[data-team-channel]').evaluate(element => {
+    const children = [...element.children].map(child => child.getBoundingClientRect())
+    return children.map(rect => ({ top: rect.top, bottom: rect.bottom, height: rect.height }))
+  })
+  expect(channelGeometry).toHaveLength(3)
+  expect(channelGeometry[0]!.bottom).toBeLessThanOrEqual(channelGeometry[1]!.top + 1)
+  expect(channelGeometry[1]!.bottom).toBeLessThanOrEqual(channelGeometry[2]!.top + 1)
+  expect(channelGeometry[1]!.height).toBeGreaterThan(200)
   await page.screenshot({ path: join(SHOTS, 'desktop-channel.png'), fullPage: true })
 
   const workspace = scaffold.ctx.workspaceRegistry.list()[0]!

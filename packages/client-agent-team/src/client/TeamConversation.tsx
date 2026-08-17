@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamChannelPage } from './TeamChannelPage.tsx'
 import { TeamThreadPage } from './TeamThreadPage.tsx'
-import css from './team.module.css'
+import css from './conversation.module.css'
 
 export function TeamConversation({ t, useWorkspaces, navigation, loadChannels, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, reply, changeClaim, changeTask, selectThread, backToChannel }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
@@ -14,7 +14,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, loadChannels, l
   if (current !== undefined && navigationState.channelRef !== undefined) {
     return <TeamChannelPage key={navigationState.channelRef} workspaceId={current.workspaceId} channelRef={navigationState.channelRef} loadChannels={loadChannels} loadChanges={loadChanges} loadMembers={loadMembers} sendMessage={sendMessage} joinChannel={joinChannel} removeChannelMember={removeChannelMember} selectThread={selectThread} t={t} />
   }
-  return <main className={css.teamConversation} data-team-conversation>
+  return <main className={css.welcomeSurface} data-team-conversation>
     <div className={css.welcome}>
       <span className={css.welcomeEyebrow}>{t('teamMode')}</span>
       <h1>{t('team')}</h1>

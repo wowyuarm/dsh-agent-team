@@ -1,0 +1,296 @@
+.surface {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.surfaceHeader {
+  border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  min-width: 0;
+  padding: 18px clamp(18px, 3vw, 36px) 14px;
+}
+
+.headerRow {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: 880px;
+  min-width: 0;
+}
+
+.headerCopy { min-width: 0; }
+.headerCopy h1 {
+  color: var(--dsw-alias-text-primary);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.headerCopy p {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 3px 0 0;
+}
+
+.headerActions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.backRow {
+  margin: 0 auto 8px;
+  max-width: 880px;
+}
+
+.members {
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  display: grid;
+  gap: 4px;
+  margin: 12px auto 0;
+  max-width: 880px;
+  padding-top: 10px;
+}
+.members > div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 30px;
+}
+
+.participants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px auto 0;
+  max-width: 880px;
+}
+.participants > div {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+}
+
+.claims {
+  display: grid;
+  gap: 6px;
+  margin: 12px auto 0;
+  max-width: 880px;
+}
+.claims article {
+  align-items: center;
+  border: 1px solid var(--dsw-alias-border-subtle);
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  min-width: 0;
+  padding: 7px 9px;
+}
+.claims article > div { display: flex; gap: 4px; }
+
+.timeline {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px clamp(18px, 3vw, 36px) 24px;
+  scrollbar-gutter: stable;
+}
+.timelineContent {
+  margin: 0 auto;
+  max-width: 880px;
+  min-width: 0;
+}
+.timelineAction {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 8px;
+}
+
+.messageRow { display: flex; gap: 10px; padding: 10px 0; }
+.messageIdentity {
+  align-items: center;
+  background: var(--dsw-alias-fill-tertiary);
+  border-radius: 50%;
+  color: var(--dsw-alias-text-secondary);
+  display: flex;
+  flex: 0 0 28px;
+  font-size: 12px;
+  font-weight: 600;
+  height: 28px;
+  justify-content: center;
+}
+.messageBody { min-width: 0; }
+.messageBody strong {
+  color: var(--dsw-alias-text-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+.messageBody small {
+  color: var(--dsw-alias-text-tertiary);
+  display: block;
+  font-size: 11px;
+  line-height: 16px;
+}
+.messageBody p {
+  color: var(--dsw-alias-text-primary);
+  font-size: 14px;
+  line-height: 22px;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.taskLink { justify-content: flex-start; margin-top: 2px; max-width: 100%; }
+.activity {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+  padding: 5px 38px;
+}
+
+.emptyState,
+.loadingState {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0;
+  padding: 14px 0;
+}
+.loadingState { align-items: center; display: flex; gap: 8px; }
+.loadingMark {
+  animation: pulse 1.2s ease-in-out infinite;
+  background: var(--dsw-alias-fill-tertiary);
+  border-radius: 50%;
+  height: 8px;
+  width: 8px;
+}
+
+.composer {
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  padding: 12px clamp(18px, 3vw, 36px) 16px;
+}
+.composerInner {
+  display: grid;
+  gap: 8px;
+  margin: 0 auto;
+  max-width: 880px;
+  min-width: 0;
+}
+.composerMain {
+  align-items: flex-end;
+  background: var(--dsw-alias-surface-primary);
+  border: 1px solid var(--dsw-alias-border-default);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 8px;
+}
+.composerMain:focus-within { border-color: var(--dsw-alias-text-secondary); }
+.composer textarea {
+  background: transparent;
+  border: 0;
+  color: var(--dsw-alias-text-primary);
+  font: inherit;
+  line-height: 20px;
+  max-height: 180px;
+  min-height: 44px;
+  min-width: 0;
+  outline: none;
+  padding: 6px 7px;
+  resize: none;
+  width: 100%;
+}
+.mentions {
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 0 2px;
+}
+.mentions legend {
+  color: var(--dsw-alias-text-tertiary);
+  float: left;
+  font-size: 11px;
+  line-height: 18px;
+  margin-right: 2px;
+}
+.mentions label {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.error {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0 auto;
+  max-width: 880px;
+  padding-top: 6px;
+}
+
+.welcomeSurface {
+  align-items: center;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  min-width: 0;
+  padding: 32px;
+}
+.welcome { max-width: 420px; text-align: center; }
+.welcomeEyebrow {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-transform: uppercase;
+}
+.welcome h1 {
+  color: var(--dsw-alias-text-primary);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 32px;
+  margin: 8px 0;
+}
+.welcome p {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@media (max-width: 600px) {
+  .surfaceHeader { padding: 12px 12px 10px; }
+  .headerRow { align-items: stretch; flex-direction: column; gap: 8px; }
+  .headerActions { flex-wrap: wrap; }
+  .backRow { margin-bottom: 6px; }
+  .timeline { padding: 8px 12px 16px; scrollbar-gutter: auto; }
+  .claims article { align-items: start; grid-template-columns: minmax(0, 1fr) auto; }
+  .claims article > span,
+  .claims article > div { grid-column: 1 / -1; }
+  .composer { padding: 8px 10px 10px; }
+  .messageRow { padding: 8px 0; }
+  .activity { padding-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingMark { animation: none; }
+}

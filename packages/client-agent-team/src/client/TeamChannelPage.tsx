@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import { Button, IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
-import css from './team.module.css'
+import css from './conversation.module.css'
 
 interface TeamChannelPageProps {
   readonly workspaceId: WorkspaceId
@@ -116,32 +117,50 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     finally { setPending(false) }
   }
 
-  return <main className={css.teamConversation} data-team-channel={channelRef}>
-    {channel === undefined && !loading && <p className={css.emptyWorkspace}>{t('emptyChannels')}</p>}
-    {channel !== undefined && <>
-      <header className={css.channelPageHeader}><div><h1># {channel.name}</h1><p>{channel.description}</p></div><button type="button" className={css.textButton} aria-expanded={managingMembers} onClick={() => { setManagingMembers(value => !value) }}>{t('manageMembers')}</button></header>
-      {managingMembers && <section className={css.channelPageMembers} aria-label={t('manageMembers')}>
+  return <main className={css.surface} data-team-channel={channelRef}>
+    <div className={css.surfaceHeader}>
+      <header className={css.headerRow}>
+        <div className={css.headerCopy}>
+          <h1>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
+          <p>{channel?.description ?? t('loadingChannels')}</p>
+        </div>
+        {channel !== undefined && <Button size="sm" variant="outline" aria-expanded={managingMembers} onClick={() => { setManagingMembers(value => !value) }}>{t('manageMembers')}</Button>}
+      </header>
+      {channel !== undefined && managingMembers && <section className={css.members} aria-label={t('manageMembers')}>
         {members.filter(status => status.member.state !== 'inactive').map(status => {
           const joined = view?.members.some(item => item.channelRef === channelRef && item.memberId === status.member.memberId) ?? false
           const disabled = membershipPending || (!joined && status.presence === 'unavailable')
-          return <div key={status.member.memberId}><span>@{status.member.handle}</span><button type="button" className={css.textButton} disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{joined ? t('removeFromChannel') : t('addToChannel')}</button></div>
+          return <div key={status.member.memberId}><span>@{status.member.handle}</span><Button size="sm" disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{joined ? t('removeFromChannel') : t('addToChannel')}</Button></div>
         })}
       </section>}
-      <section className={css.channelTimeline} aria-label={t('channels')}>
-        {view?.hasMore && <button type="button" className={css.textButton} onClick={() => { void loadOlder() }}>{t('loadOlder')}</button>}
-        {view?.items.length === 0 && <p className={css.emptyWorkspace}>{t('emptyMessages')}</p>}
+    </div>
+
+    <section className={css.timeline} aria-label={t('channels')}>
+      <div className={css.timelineContent}>
+        {loading && channel === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
+        {!loading && channel === undefined && <p className={css.emptyState}>{t('emptyChannels')}</p>}
+        {view?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
+        {channel !== undefined && view?.items.length === 0 && <p className={css.emptyState}>{t('emptyMessages')}</p>}
         {view?.items.map(item => {
           const senderStatus = members.find(member => member.member.memberId === item.message.sender)
           const human = item.message.sender === view.humanMemberId
           const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender
           return <article className={css.messageRow} key={item.message.messageRef}>
             <div className={css.messageIdentity} aria-hidden="true">{sender.slice(0, 1).toUpperCase()}</div>
-            <div><strong title={senderStatus?.member.description}>{sender}</strong><small>{human ? t('memberHuman') : t('memberAgent')}</small><p>{item.message.body}</p>{item.message.topLevel && <button type="button" className={css.textButton} onClick={() => { selectThread(item.thread.threadRef) }}>{`Task #${item.taskNumber} · ${item.task.status} · ${item.messageCount} messages`}</button>}</div>
+            <div className={css.messageBody}>
+              <strong title={senderStatus?.member.description}>{sender}</strong>
+              <small>{human ? t('memberHuman') : t('memberAgent')}</small>
+              <p>{item.message.body}</p>
+              {item.message.topLevel && <Button className={css.taskLink} size="sm" onClick={() => { selectThread(item.thread.threadRef) }}>{`Task #${item.taskNumber} · ${item.task.status} · ${item.messageCount} messages`}</Button>}
+            </div>
           </article>
         })}
-      </section>
-      <form className={css.channelComposer} onSubmit={event => { event.preventDefault(); void send() }}>
-        <fieldset className={css.mentionPicker} disabled={pending}>
+      </div>
+    </section>
+
+    {channel !== undefined ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void send() }}>
+      <div className={css.composerInner}>
+        <fieldset className={css.mentions} disabled={pending}>
           <legend>{t('mentions')}</legend>
           {members.filter(status => view?.members.some(item => item.channelRef === channelRef
             && item.memberId === status.member.memberId) && status.member.state !== 'inactive').map(status => (
@@ -150,11 +169,13 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
             }} />@{status.member.handle}</label>
           ))}
         </fieldset>
-        <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value) }} rows={3} />
-        <button type="submit" className={css.primaryButton} disabled={pending || draft.trim() === ''}>{pending ? t('sendingMessage') : t('sendMessage')}</button>
-      </form>
-    </>}
-    {error !== undefined && <p className={css.error} role="alert">{error}</p>}
+        <div className={css.composerMain}>
+          <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value) }} rows={2} />
+          <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || draft.trim() === ''}>{pending ? t('sendingMessage') : t('sendMessage')}</Button>
+        </div>
+        {error !== undefined && <p className={css.error} role="alert">{error}</p>}
+      </div>
+    </form> : <div />}
+    {channel === undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
   </main>
 }
-
