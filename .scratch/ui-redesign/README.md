@@ -20,8 +20,8 @@ M2 functional baseline 已完成，commit `9ae7cc3`。当前 UI 功能可用，�
 - `01-center-surface-foundation.md`：complete；证据在 `validation/ui-01/`。
 - `02-sidebar-navigation-rail.md`：complete；证据在 `validation/ui-02/`。
 - `03-create-modals.md`：complete；证据在 `validation/ui-03/`。
-- `04-channel-surface.md`：当前 frontier；03 已完成，可立即做。
-- `05-thread-surface.md`：blocked by 04。
+- `04-channel-surface.md`：complete；证据在 `validation/ui-04/`。
+- `05-thread-surface.md`：当前 frontier；04 已完成，可立即做。
 - `06-members-responsive-acceptance.md`：blocked by 05。
 
 ## 不要做

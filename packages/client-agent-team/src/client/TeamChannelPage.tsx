@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCloseOutline16, IconPlusOutline16, IconSendOutline16, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
+import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 
 interface TeamChannelPageProps {
@@ -18,6 +20,14 @@ interface TeamChannelPageProps {
   readonly t: TeamConversationProps['t']
 }
 
+const taskStatusKey = (status: AgentTeamTask['status']) => ({
+  todo: 'taskStatusTodo',
+  in_progress: 'taskStatusInProgress',
+  in_review: 'taskStatusInReview',
+  done: 'taskStatusDone',
+  closed: 'taskStatusClosed',
+} as const)[status]
+
 export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
@@ -27,10 +37,16 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const [pending, setPending] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [pendingSend, setPendingSend] = useState<AgentTeamSendMessageRequest>()
+  const [mentionOpen, setMentionOpen] = useState(false)
   const [managingMembers, setManagingMembers] = useState(false)
-  const [membershipPending, setMembershipPending] = useState(false)
+  const [membershipPending, setMembershipPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
+  const [membershipErrors, setMembershipErrors] = useState<ReadonlyMap<AgentTeamMemberId, string>>(new Map())
   const membershipRequests = useRef(new Map<string, AgentTeamSendMessageRequest['requestId']>())
+  const manageTriggerRef = useRef<HTMLSpanElement>(null)
+  const memberListRef = useRef<HTMLDivElement>(null)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
+  const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
+  const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive')
 
   const refresh = async () => {
     setLoading(true)
@@ -48,6 +64,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     setView(undefined)
     setError(undefined)
     setLoading(true)
+    setRecipients(new Set())
+    setMentionOpen(false)
+    setManagingMembers(false)
     void refresh()
     void (async () => {
       let version = 0
@@ -64,6 +83,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     return () => { active = false }
   }, [workspaceId, channelRef])
 
+  useEffect(() => {
+    if (!managingMembers) return
+    queueMicrotask(() => { memberListRef.current?.querySelector('button')?.focus() })
+  }, [managingMembers])
+
   const loadOlder = async () => {
     if (view === undefined || !view.hasMore) return
     const result = await loadChannels({ workspaceId, channelRef, direction: 'before', includeActivities: false, cursor: view.cursor, limit: 20 })
@@ -78,18 +102,41 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     })
   }
 
+  const closeMembers = () => {
+    setManagingMembers(false)
+    queueMicrotask(() => { manageTriggerRef.current?.querySelector('button')?.focus() })
+  }
+
   const changeMembership = async (memberId: AgentTeamMemberId, joined: boolean) => {
-    if (membershipPending) return
-    setMembershipPending(true); setError(undefined)
+    if (membershipPending.has(memberId)) return
+    setMembershipPending(current => new Set(current).add(memberId))
+    setMembershipErrors(current => { const next = new Map(current); next.delete(memberId); return next })
     const key = `${joined ? 'remove' : 'join'}:${memberId}`
     const requestId = membershipRequests.current.get(key) ?? crypto.randomUUID() as AgentTeamSendMessageRequest['requestId']
     membershipRequests.current.set(key, requestId)
     const request = { requestId, workspaceId, channelRef, memberId }
     try {
       const result = joined ? await removeChannelMember(request) : await joinChannel(request)
-      if (result.ok) { membershipRequests.current.delete(key); await refresh() } else setError(result.error.message)
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { setMembershipPending(false) }
+      if (result.ok) {
+        membershipRequests.current.delete(key)
+        await refresh()
+      } else {
+        setMembershipErrors(current => new Map(current).set(memberId, result.error.message))
+      }
+    } catch (cause) {
+      setMembershipErrors(current => new Map(current).set(memberId, cause instanceof Error ? cause.message : String(cause)))
+    } finally {
+      setMembershipPending(current => { const next = new Set(current); next.delete(memberId); return next })
+    }
+  }
+
+  const toggleRecipient = (memberId: AgentTeamMemberId) => {
+    setRecipients(current => {
+      const next = new Set(current)
+      if (next.has(memberId)) next.delete(memberId); else next.add(memberId)
+      return next
+    })
+    setPendingSend(undefined)
   }
 
   const send = async () => {
@@ -111,11 +158,17 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
           setDraft('')
           setRecipients(new Set())
           setPendingSend(undefined)
+          setMentionOpen(false)
         }
       } else setError(result.error.message)
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
   }
+
+  const mentionItems = channelMembers.map(status => ({
+    id: status.member.memberId,
+    label: `@${status.member.handle}`,
+  }))
 
   return <main className={css.surface} data-team-channel={channelRef}>
     <div className={css.surfaceHeader}>
@@ -123,17 +176,30 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
         <div className={css.headerCopy}>
           <h1>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
           <p>{channel?.description ?? t('loadingChannels')}</p>
+          {channel !== undefined && <div className={channelCss.headerMeta}>
+            <span>{t('memberCount', { count: channelMembers.length })}</span>
+          </div>}
         </div>
-        {channel !== undefined && <Button size="sm" variant="outline" aria-expanded={managingMembers} onClick={() => { setManagingMembers(value => !value) }}>{t('manageMembers')}</Button>}
+        {channel !== undefined && <span ref={manageTriggerRef}><Button size="sm" variant="outline" aria-haspopup="dialog" onClick={() => { setManagingMembers(true) }}>{t('manageMembers')}</Button></span>}
       </header>
-      {channel !== undefined && managingMembers && <section className={css.members} aria-label={t('manageMembers')}>
-        {members.filter(status => status.member.state !== 'inactive').map(status => {
-          const joined = view?.members.some(item => item.channelRef === channelRef && item.memberId === status.member.memberId) ?? false
-          const disabled = membershipPending || (!joined && status.presence === 'unavailable')
-          return <div key={status.member.memberId}><span>@{status.member.handle}</span><Button size="sm" disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{joined ? t('removeFromChannel') : t('addToChannel')}</Button></div>
-        })}
-      </section>}
     </div>
+
+    <Modal open={managingMembers} onClose={closeMembers} title={t('channelMembers')} {...(channel === undefined ? {} : { description: `# ${channel.name} · ${t('memberCount', { count: channelMembers.length })}` })} closeLabel={t('close')} contentClassName={channelCss.modalBody!}>
+      <div ref={memberListRef} className={channelCss.memberList}>
+        {members.filter(status => status.member.state !== 'inactive').map(status => {
+          const joined = channelMemberIds.has(status.member.memberId)
+          const rowPending = membershipPending.has(status.member.memberId)
+          const disabled = rowPending || (!joined && status.presence === 'unavailable')
+          const rowError = membershipErrors.get(status.member.memberId)
+          return <div className={channelCss.memberRow} key={status.member.memberId}>
+            <TeamPresenceDot status={status} t={t} />
+            <span className={channelCss.memberCopy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
+            <Button className={channelCss.memberAction} size="sm" disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
+            {rowError !== undefined && <p className={channelCss.memberError} role="alert">{rowError}</p>}
+          </div>
+        })}
+      </div>
+    </Modal>
 
     <section className={css.timeline} aria-label={t('channels')}>
       <div className={css.timelineContent}>
@@ -148,10 +214,14 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
           return <article className={css.messageRow} key={item.message.messageRef}>
             <div className={css.messageIdentity} aria-hidden="true">{sender.slice(0, 1).toUpperCase()}</div>
             <div className={css.messageBody}>
-              <strong title={senderStatus?.member.description}>{sender}</strong>
+              <div><strong title={senderStatus?.member.description}>{sender}</strong><span className={channelCss.messageKind}>{item.message.topLevel ? t('messageKindTask') : t('messageKindReply')}</span></div>
               <small>{human ? t('memberHuman') : t('memberAgent')}</small>
               <p>{item.message.body}</p>
-              {item.message.topLevel && <Button className={css.taskLink} size="sm" onClick={() => { selectThread(item.thread.threadRef) }}>{`Task #${item.taskNumber} · ${item.task.status} · ${item.messageCount} messages`}</Button>}
+              {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef) }}>
+                <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
+                <span className={channelCss.taskStatus}>{t(taskStatusKey(item.task.status))}</span>
+                <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
+              </button>}
             </div>
           </article>
         })}
@@ -160,17 +230,23 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
 
     {channel !== undefined ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void send() }}>
       <div className={css.composerInner}>
-        <fieldset className={css.mentions} disabled={pending}>
-          <legend>{t('mentions')}</legend>
-          {members.filter(status => view?.members.some(item => item.channelRef === channelRef
-            && item.memberId === status.member.memberId) && status.member.state !== 'inactive').map(status => (
-            <label key={status.member.memberId}><input type="checkbox" checked={recipients.has(status.member.memberId)} onChange={event => {
-              setRecipients(current => { const next = new Set(current); if (event.target.checked) next.add(status.member.memberId); else next.delete(status.member.memberId); return next })
-            }} />@{status.member.handle}</label>
-          ))}
-        </fieldset>
+        <div className={channelCss.composerToolbar}>
+          <Menu
+            open={mentionOpen}
+            portal
+            side="top"
+            compact
+            className={channelCss.mentionMenu!}
+            items={mentionItems.length === 0 ? [{ id: 'none', label: t('noMentionMembers'), disabled: true }] : mentionItems}
+            selectedIds={[...recipients]}
+            onSelect={id => { if (id !== 'none') toggleRecipient(id as AgentTeamMemberId) }}
+            onClose={() => { setMentionOpen(false) }}
+            anchor={<button type="button" className={channelCss.mentionTrigger} aria-haspopup="menu" aria-expanded={mentionOpen} disabled={pending} onClick={() => { setMentionOpen(open => !open) }}><IconPlusOutline16 size={14} />{t('addMention')}</button>}
+          />
+          {channelMembers.filter(status => recipients.has(status.member.memberId)).map(status => <button type="button" className={channelCss.recipientToken} key={status.member.memberId} aria-label={t('removeMention', { handle: status.member.handle })} disabled={pending} onClick={() => { toggleRecipient(status.member.memberId) }}><span>@{status.member.handle}</span><IconCloseOutline16 size={12} /></button>)}
+        </div>
         <div className={css.composerMain}>
-          <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value) }} rows={2} />
+          <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value); setPendingSend(undefined) }} rows={2} />
           <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || draft.trim() === ''}>{pending ? t('sendingMessage') : t('sendMessage')}</Button>
         </div>
         {error !== undefined && <p className={css.error} role="alert">{error}</p>}

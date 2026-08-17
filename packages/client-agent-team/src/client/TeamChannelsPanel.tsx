@@ -29,7 +29,7 @@ interface TeamChannelsPanelProps {
 }
 
 export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
-  const { workspaceId, loadMembers, loadChannels, createChannel, joinChannel, removeChannelMember, creatingAgents, selectedChannelRef, selectChannel, t } = props
+  const { workspaceId, loadMembers, loadChannels, createChannel, creatingAgents, selectedChannelRef, selectChannel, t } = props
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
@@ -39,9 +39,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   const [description, setDescription] = useState('')
   const [selected, setSelected] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [mutating, setMutating] = useState(false)
-  const [managing, setManaging] = useState<AgentTeamChannelRef>()
   const [pendingCreate, setPendingCreate] = useState<AgentTeamCreateChannelRequest>()
-  const pendingMembership = useRef(new Map<string, AgentTeamRequestId>())
   const previousCreatingKey = useRef(creatingAgents.map(request => request.requestId).join(','))
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -124,28 +122,6 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
     }
   }
 
-  const changeMembership = async (channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId, joined: boolean) => {
-    if (mutating) return
-    setMutating(true)
-    setError(undefined)
-    const key = `${joined ? 'remove' : 'join'}:${channelRef}:${memberId}`
-    const requestId = pendingMembership.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
-    pendingMembership.current.set(key, requestId)
-    const request = { requestId, workspaceId, channelRef, memberId }
-    try {
-      const result = joined ? await removeChannelMember(request) : await joinChannel(request)
-      if (result.ok) {
-        pendingMembership.current.delete(key)
-        await refresh()
-      }
-      else setError(result.error.message)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setMutating(false)
-    }
-  }
-
   return (
     <div className={css.panel}>
       <div className={css.panelToolbar}>
@@ -201,34 +177,13 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
       <div className={css.channelList}>
         {view?.channels.map(channel => {
           const joined = membership.get(channel.channelRef) ?? new Set<AgentTeamMemberId>()
-          const manageOpen = managing === channel.channelRef
           return (
             <article className={css.channelRow} key={channel.channelRef} aria-current={selectedChannelRef === channel.channelRef ? 'page' : undefined}>
-              <button type="button" className={css.channelSelect} onClick={() => { selectChannel(channel.channelRef) }}>
+              <button type="button" className={css.channelSelect} aria-label={`# ${channel.name}`} onClick={() => { selectChannel(channel.channelRef) }}>
                 <strong className={css.channelName}># {channel.name}</strong>
                 <small className={css.channelDescription}>{channel.description}</small>
                 <small className={css.channelCount}>{joined.size}</small>
               </button>
-              <button type="button" className={`${css.textButton} ${css.channelManage}`} aria-expanded={manageOpen} onClick={() => { setManaging(manageOpen ? undefined : channel.channelRef) }}>{t('manageMembers')}</button>
-              {manageOpen && (
-                <div className={css.memberManager} aria-label={t('manageMembers')}>
-                  {members.map(status => {
-                    const isJoined = joined.has(status.member.memberId)
-                    const disabled = mutating || (!isJoined && status.presence === 'unavailable')
-                    const reasonId = `manage-member-reason-${channel.channelRef}-${status.member.memberId}`
-                    return (
-                      <div key={status.member.memberId}>
-                        <TeamPresenceDot status={status} t={t} />
-                        <span>{status.member.handle}</span>
-                        {!isJoined && status.presence === 'unavailable' && <small id={reasonId}>{t('memberUnavailableReason')}</small>}
-                        <button type="button" className={css.textButton} disabled={disabled} aria-describedby={!isJoined && status.presence === 'unavailable' ? reasonId : undefined} onClick={() => { void changeMembership(channel.channelRef, status.member.memberId, isJoined) }}>
-                          {isJoined ? t('removeFromChannel') : t('addToChannel')}
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
             </article>
           )
         })}

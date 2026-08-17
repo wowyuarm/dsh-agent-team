@@ -1,0 +1,208 @@
+.headerMeta {
+  align-items: center;
+  color: var(--dsw-alias-text-tertiary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 6px;
+  line-height: 18px;
+  margin-top: 7px;
+}
+
+.headerMeta span + span::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+.messageKind {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  margin-left: 6px;
+}
+
+.taskFooter {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--dsw-alias-text-secondary);
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  max-width: 100%;
+  padding: 5px 7px;
+  text-align: left;
+}
+
+.taskFooter:hover,
+.taskFooter:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-text-primary);
+  outline: none;
+}
+
+.taskNumber {
+  color: var(--dsw-alias-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.taskStatus,
+.taskCount {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.composerToolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.mentionMenu {
+  flex: 0 0 auto;
+}
+
+.mentionTrigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--dsw-alias-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 5px;
+  line-height: 20px;
+  min-height: 26px;
+  padding: 2px 7px;
+}
+
+.mentionTrigger:hover,
+.mentionTrigger:focus-visible,
+.mentionTrigger[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-text-primary);
+  outline: none;
+}
+
+.recipientToken {
+  align-items: center;
+  background: var(--dsw-alias-fill-tertiary);
+  border: 0;
+  border-radius: 12px;
+  color: var(--dsw-alias-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 3px;
+  line-height: 18px;
+  max-width: 160px;
+  padding: 2px 7px;
+}
+
+.recipientToken:hover,
+.recipientToken:focus-visible {
+  color: var(--dsw-alias-text-primary);
+  outline: 1px solid var(--dsw-alias-border-default);
+}
+
+.recipientToken span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memberList {
+  display: grid;
+  gap: 3px;
+}
+
+.memberRow {
+  align-items: center;
+  border-radius: 6px;
+  display: grid;
+  gap: 0 8px;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  min-height: 40px;
+  padding: 4px 6px;
+}
+
+.memberRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memberCopy {
+  display: grid;
+  min-width: 0;
+}
+
+.memberCopy strong {
+  color: var(--dsw-alias-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memberCopy small {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memberAction {
+  min-width: 60px;
+}
+
+.memberError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  grid-column: 2 / -1;
+  line-height: 16px;
+  margin: 2px 0;
+}
+
+.modalBody {
+  max-height: min(65vh, 520px);
+  overflow-y: auto;
+}
+
+@media (max-width: 600px) {
+  .taskFooter {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .headerMeta span + span::before {
+    display: none;
+  }
+
+  .composerToolbar {
+    max-height: 64px;
+    overflow-y: auto;
+  }
+
+  .memberRow {
+    grid-template-columns: 14px minmax(0, 1fr);
+  }
+
+  .memberAction {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 3px;
+  }
+}

@@ -12,6 +12,7 @@ const CHROME = '__CHROME__'
 const UI01_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
 const UI02_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-02')
 const UI03_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-03')
+const UI04_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-04')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -33,6 +34,7 @@ async function installLocalBundle(): Promise<void> {
   await mkdir(UI01_SHOTS, { recursive: true })
   await mkdir(UI02_SHOTS, { recursive: true })
   await mkdir(UI03_SHOTS, { recursive: true })
+  await mkdir(UI04_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -85,8 +87,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
   await page.screenshot({ path: join(UI01_SHOTS, 'empty-channel.png'), fullPage: true })
   await page.getByRole('textbox', { name: '消息内容' }).fill('请协作完成验收')
-  await page.getByLabel('@builder').check()
-  await page.getByLabel('@reviewer').check()
+  await page.getByRole('button', { name: '添加提及' }).click()
+  await page.getByRole('menuitem', { name: '@builder' }).click()
+  await page.getByRole('menuitem', { name: '@reviewer' }).click()
+  await page.screenshot({ path: join(UI04_SHOTS, 'mention-menu-selected.png'), fullPage: true })
   await page.getByRole('button', { name: '发送' }).click()
   const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
   await committedMessage.waitFor()
@@ -101,6 +105,18 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(channelGeometry[1]!.bottom).toBeLessThanOrEqual(channelGeometry[2]!.top + 1)
   expect(channelGeometry[1]!.height).toBeGreaterThan(200)
   await page.screenshot({ path: join(UI01_SHOTS, 'desktop-channel.png'), fullPage: true })
+  await page.getByRole('button', { name: '管理成员' }).click()
+  await page.getByRole('dialog', { name: 'Channel 成员' }).waitFor()
+  await page.screenshot({ path: join(UI04_SHOTS, 'channel-members-modal.png'), fullPage: true })
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  const narrowChannelFrame = page.locator('[data-sidebar-collapsed="true"]')
+  await narrowChannelFrame.waitFor()
+  await expect.poll(async () => (await narrowChannelFrame.locator(':scope > div').first().boundingBox())?.width ?? 999).toBeLessThanOrEqual(56)
+  await expect.poll(async () => (await page.locator('[data-team-channel]').boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(330)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(UI04_SHOTS, 'narrow-channel.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
 
   const workspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const projection = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id })
