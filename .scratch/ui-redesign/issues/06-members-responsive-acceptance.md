@@ -4,12 +4,12 @@
 
 **Blocked by:** 05 — Thread, Claims and Activity surface
 
-**Status:** ready-for-agent
+**Status:** complete (`UI-06` implementation commit follows this ticket update)
 
-- [ ] Global Members 只在 Team mode 出现，使用 named public Modal，支持 Escape/mask close、focus restore、narrow body scroll。
-- [ ] Global member list 按 Workspace 分组，loading/empty/transport error 有稳定状态，不伪造 projection。
-- [ ] 390×844 下 Channel、Thread、mention Menu、Members Modal 和 56px rail 无 overflow、遮挡、逐字换行或不可达 controls。
-- [ ] keyboard-only 可完成 enter Team → Members → Channel → Thread → back → leave；focus、tab、menu、dialog、alert 语义完整。
-- [ ] 重复 enter/leave、persisted Team mode、refresh、plugin unload 恢复 shipped WorkspaceBrowser、Conversation、Settings 和 footer registrations。
-- [ ] 更新 `npm run test:browser` 截图和 DOM assertions；保留旧 M2 baseline 作为对照。
-- [ ] 全量 46 functional tests、typecheck、build、pack、browser journey 通过。
+- [x] Global Members 只在 Team mode 出现，使用 named public Modal，支持 Escape/mask close、focus restore、narrow body scroll。
+- [x] Global member list 按 Workspace 分组，loading/empty/transport error 有稳定状态，不伪造 projection。
+- [x] 390×844 下 Channel、Thread、mention Menu、Members Modal 和 56px rail 无 overflow、遮挡、逐字换行或不可达 controls。
+- [x] keyboard-only 可完成 enter Team → Members → Channel → Thread → back → leave；focus、tab、menu、dialog、alert 语义完整。
+- [x] 重复 enter/leave、persisted Team mode、refresh、plugin unload 恢复 shipped WorkspaceBrowser、Conversation、Settings 和 footer registrations。
+- [x] 更新 `npm run test:browser` 截图和 DOM assertions；保留旧 M2 baseline 作为对照。
+- [x] 全量 48 functional tests、typecheck、build、pack、browser journey 通过。

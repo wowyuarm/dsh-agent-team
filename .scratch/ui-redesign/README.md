@@ -22,7 +22,7 @@ M2 functional baseline 已完成，commit `9ae7cc3`。当前 UI 功能可用，�
 - `03-create-modals.md`：complete；证据在 `validation/ui-03/`。
 - `04-channel-surface.md`：complete；证据在 `validation/ui-04/`。
 - `05-thread-surface.md`：complete；证据在 `validation/ui-05/`。
-- `06-members-responsive-acceptance.md`：当前 frontier；05 已完成，可立即做。
+- `06-members-responsive-acceptance.md`：complete；证据在 `validation/ui-06/`。
 
 ## 不要做
 

@@ -115,6 +115,7 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
               style="display: contents;"
             >
               <button
+                aria-haspopup="dialog"
                 aria-label="成员"
                 class="footerAction"
                 type="button"

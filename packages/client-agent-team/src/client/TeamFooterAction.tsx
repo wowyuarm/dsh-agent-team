@@ -1,7 +1,8 @@
-import { useState, useSyncExternalStore } from 'react'
-import { IconAgentPresetOutline16, IconChevronLeftOutline14, IconUserOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { IconAgentPresetOutline16, IconChevronLeftOutline14, IconUserOutline16, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamFooterProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import membersCss from './members.module.css'
 import css from './team.module.css'
 
 export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadMemberGroups, t }: TeamFooterProps) {
@@ -12,6 +13,18 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadM
   const [groups, setGroups] = useState<Awaited<ReturnType<typeof loadMemberGroups>>>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!inTeam) setPanelOpen(false)
+  }, [inTeam])
+
+  useEffect(() => {
+    if (!panelOpen) return
+    queueMicrotask(() => { contentRef.current?.focus() })
+  }, [panelOpen])
+
   const openMembers = () => {
     setPanelOpen(true)
     setLoading(true)
@@ -20,38 +33,45 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadM
       setError(cause instanceof Error ? cause.message : String(cause))
     }).finally(() => { setLoading(false) })
   }
+
+  const closeMembers = () => {
+    setPanelOpen(false)
+    queueMicrotask(() => { triggerRef.current?.focus() })
+  }
+  const keyboardActivate = (event: React.KeyboardEvent<HTMLButtonElement>, action: () => void) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    action()
+  }
+
   return (
     <>
       {inTeam && (
         <Tooltip label={t('members')} delayMs={500} disabled={wide}>
-          <button type="button" className={css.footerAction} aria-label={t('members')} onClick={openMembers}>
+          <button ref={triggerRef} type="button" className={css.footerAction} aria-label={t('members')} aria-haspopup="dialog" onClick={openMembers} onKeyDown={event => { keyboardActivate(event, openMembers) }}>
             <IconUserOutline16 size={wide ? 16 : 18} />
             {wide && <span>{t('members')}</span>}
           </button>
         </Tooltip>
       )}
-      {panelOpen && (
-        <section className={css.membersPanel} role="dialog" aria-modal="true" aria-label={t('members')}>
-          <div className={css.membersHeader}>
-            <strong>{t('members')}</strong>
-            <button type="button" className={css.textButton} onClick={() => { setPanelOpen(false) }}>{t('close')}</button>
-          </div>
-          {loading && <p className={css.emptyWorkspace}>{t('loadingAgents')}</p>}
-          {!loading && groups.length === 0 && error === undefined && <p className={css.emptyWorkspace}>{t('emptyAgents')}</p>}
-          {groups.map(group => (
-            <div className={css.memberGroup} key={group.workspaceId}>
-              <h3>{group.workspaceTitle}</h3>
+      <Modal open={panelOpen && inTeam} onClose={closeMembers} title={t('members')} closeLabel={t('close')} contentClassName={membersCss.body!}>
+        <div ref={contentRef} className={membersCss.content} tabIndex={-1}>
+          {loading && <p className={membersCss.state} role="status">{t('loadingAgents')}</p>}
+          {!loading && groups.length === 0 && error === undefined && <p className={membersCss.state}>{t('emptyAgents')}</p>}
+          {!loading && groups.map(group => (
+            <section className={membersCss.group} key={group.workspaceId} aria-labelledby={`team-members-${group.workspaceId}`}>
+              <h3 id={`team-members-${group.workspaceId}`}>{group.workspaceTitle}</h3>
               {group.members.map(status => (
-                <div className={css.agentRow} key={status.member.memberId}>
+                <div className={membersCss.member} key={status.member.memberId}>
                   <TeamPresenceDot status={status} t={t} />
-                  <span className={css.agentCopy}><strong>{status.member.handle}</strong><small>{status.member.description}</small></span>
+                  <span className={membersCss.copy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
                 </div>
               ))}
-            </div>
+            </section>
           ))}
-          {error !== undefined && <p className={css.error} role="alert">{error}</p>}
-        </section>
-      )}
+          {error !== undefined && <p className={membersCss.error} role="alert">{error}</p>}
+        </div>
+      </Modal>
       <Tooltip label={label} delayMs={500} disabled={wide}>
         <button
           type="button"
@@ -59,6 +79,7 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadM
           aria-label={label}
           data-team-action={inTeam ? 'leave' : 'enter'}
           onClick={inTeam ? leaveTeam : enterTeam}
+          onKeyDown={event => { keyboardActivate(event, inTeam ? leaveTeam : enterTeam) }}
         >
           {inTeam ? <IconChevronLeftOutline14 size={wide ? 16 : 18} /> : <IconAgentPresetOutline16 size={wide ? 16 : 18} />}
           {wide && <span>{label}</span>}
