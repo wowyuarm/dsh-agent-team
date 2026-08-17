@@ -27,10 +27,6 @@ function Frame({ renderSlot }: FrameProps) {
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
 function BaselineConversation() { return <div data-baseline-conversation>普通对话</div> }
-function DirectoryFlow({ open, onPicked }: { open: boolean; onPicked: (path: string) => void }) {
-  return open ? <button type="button" onClick={() => { onPicked('/work/new') }}>选择 /work/new</button> : null
-}
-
 async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string }) {
   if (persisted !== undefined) localStorage.setItem('dsh.agent-team.navigation', JSON.stringify(persisted))
   const runtime = await SlotTestRuntime.create()
@@ -125,7 +121,9 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
   runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeClaim, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
+  runtime.workspaces.stub('pickDirectory', async () => '/work/new')
   await runtime.workspaces.update((draft) => {
     draft.items = [
       { workspaceId: 'w1' as WorkspaceId, title: 'Alpha', path: '/work/alpha', sessionIds: [], createdAt: '', updatedAt: '' },
@@ -140,9 +138,6 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, BaselineWorkspace as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
-  runtime.slots.inject('sidebar.workspaces.directoryFlow', () => runtime.slots.register(
-    { name: 'sidebar.workspaces.directoryFlow' }, DirectoryFlow as never,
-  ))
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
   return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeClaim, changeTask, publishAgentReply }
@@ -167,8 +162,10 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '关闭' }))
 
     fireEvent.click(b.view.getByRole('button', { name: '新建工作区' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '选择 /work/new' }))
-    await vi.waitFor(() => expect(b.runtime.workspaces.calls).toContainEqual({ method: 'create', args: [{ path: '/work/new' }] }))
+    await vi.waitFor(() => {
+      expect(b.runtime.workspaces.calls).toContainEqual({ method: 'pickDirectory', args: [] })
+      expect(b.runtime.workspaces.calls).toContainEqual({ method: 'create', args: [{ path: '/work/new' }] })
+    })
 
     fireEvent.click(b.view.getByRole('button', { name: '← 对话' }))
     expect(await b.view.findByText('普通工作区')).toBeTruthy()

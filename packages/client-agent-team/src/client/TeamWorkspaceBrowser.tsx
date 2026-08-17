@@ -1,6 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { IconAgentPresetOutline16, IconPlusOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { DirectoryFlowOwnerProps } from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { AgentTeamAddMemberRequest } from '@deepseek-ai/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
@@ -9,7 +8,7 @@ import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
 import { TeamChannelsPanel } from './TeamChannelsPanel.tsx'
 import css from './team.module.css'
 
-export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, createWorkspaceFromPath, renderSlot, t, useDirectoryFlow, useWorkspaces, loadMembers, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, createWorkspaceFromPath, pickWorkspaceDirectory, t, useWorkspaces, loadMembers, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -23,29 +22,17 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
     }
   }, [navigationState.mode, selected, selectedId, selectWorkspace])
 
-  const flowAvailable = useDirectoryFlow(occupied => occupied)
-  const [flowOpen, setFlowOpen] = useState(false)
   const [flowBusy, setFlowBusy] = useState(false)
   const [flowError, setFlowError] = useState(false)
   const [creatingAgents, setCreatingAgents] = useState<readonly AgentTeamAddMemberRequest[]>([])
 
-  useEffect(() => {
-    if (!flowAvailable) setFlowOpen(false)
-  }, [flowAvailable])
-  const directoryFlow = (owner: DirectoryFlowOwnerProps) => renderSlot('sidebar.workspaces.directoryFlow', owner)
-  const flowOwner: DirectoryFlowOwnerProps = {
-    open: flowOpen,
-    busy: flowBusy,
-    onPicked: path => {
-      setFlowBusy(true)
-      setFlowError(false)
-      void createWorkspaceFromPath(path).then(workspace => {
-        selectWorkspace(workspace.workspaceId)
-        setFlowOpen(false)
-      }).catch(() => { setFlowError(true) }).finally(() => { setFlowBusy(false) })
-    },
-    onCancel: () => { setFlowOpen(false) },
-    onError: () => { setFlowOpen(false); setFlowError(true) },
+  const createWorkspace = (): void => {
+    if (flowBusy) return
+    setFlowBusy(true)
+    setFlowError(false)
+    void pickWorkspaceDirectory().then(path => path === null ? undefined : createWorkspaceFromPath(path)).then(workspace => {
+      if (workspace !== undefined) selectWorkspace(workspace.workspaceId)
+    }).catch(() => { setFlowError(true) }).finally(() => { setFlowBusy(false) })
   }
 
   if (!wide) {
@@ -60,11 +47,9 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
     <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
       <div className={css.workspaceHeader}>
         <span>{t('workspaces')}</span>
-        {flowAvailable && (
-          <button type="button" className={css.iconButton} onClick={() => { setFlowOpen(true) }} aria-label={t('addWorkspace')} title={t('addWorkspace')}>
+        <button type="button" className={css.iconButton} disabled={flowBusy} onClick={createWorkspace} aria-label={t('addWorkspace')} title={t('addWorkspace')}>
             <IconPlusOutline16 size={15} />
           </button>
-        )}
       </div>
       <div className={css.workspaceList}>
         {workspaces.map(workspace => (
@@ -95,7 +80,6 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
             : <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} createChannel={createChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />}
         </div>
       )}
-      {flowAvailable && directoryFlow(flowOwner)}
       {flowError && <p className={css.error} role="alert">{t('workspaceCreateFailed')}</p>}
     </section>
   )

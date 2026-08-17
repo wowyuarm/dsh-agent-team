@@ -1,4 +1,4 @@
-import type { PropsLocale, PropsRenderSlots, PropsRuntime, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamChannelRef,
@@ -34,12 +34,11 @@ export interface TeamNavigationSource {
 }
 
 export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
-  & PropsRenderSlots<'sidebar.workspaces.directoryFlow'>
   & PropsLocale<'team'>
   & TeamNavigationActions
   & {
     navigation: TeamNavigationSource
-    useDirectoryFlow: SnapshotSelectorHook<boolean>
+    pickWorkspaceDirectory: () => Promise<string | null>
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamAgentMemberStatus[]>>
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>

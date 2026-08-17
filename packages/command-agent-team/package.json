@@ -32,10 +32,10 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent-team": "^0.1.0",
-    "@deepseek-ai/dsh-commands": "^0.1.0",
-    "@deepseek-ai/dsh-invariants": "^0.1.0",
-    "@deepseek-ai/dsh-workspace": "^0.1.0",
+    "@deepseek-ai/dsh-agent-team": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-commands": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-workspace": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/cordis": "^4.0.1"
   }
 }

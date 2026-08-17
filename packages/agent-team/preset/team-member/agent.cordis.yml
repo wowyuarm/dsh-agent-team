@@ -1,5 +1,3 @@
-# Opt-in Agent Team Member preset. The Host must mount the dsh-agent-team bundle.
-
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:

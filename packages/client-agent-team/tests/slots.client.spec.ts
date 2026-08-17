@@ -21,6 +21,7 @@ async function bench(persisted: string | null = null) {
   await ctx.plugin(SlotRegistry).await()
   ctx.provide('locale', new LocaleRuntime(ctx))
   ctx.provide('remote', { $mount: async () => async () => {} } as never)
+  ctx.provide('remote.agentTeam', {})
   ctx.provide('workspaces', {
     list: workspaceFeed(),
     pickDirectory: vi.fn(async () => null),
@@ -59,7 +60,7 @@ describe('Team Client slot takeover', () => {
     expect(slots.entries('conversation')).toHaveLength(2)
     expect(slots.entries('sidebar.settings')).toHaveLength(2)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
-    expect(slots.spec('sidebar.workspaces.directoryFlow')).toEqual({ kind: 'single', scope: 'root' })
+    expect(slots.spec('sidebar.workspaces.directoryFlow')).toBeUndefined()
 
     ctx.teamNavigation.actions().leaveTeam()
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
@@ -71,11 +72,33 @@ describe('Team Client slot takeover', () => {
     expect(slots.spec('sidebar.workspaces.directoryFlow')).toBeUndefined()
   })
 
-  it('fails loudly on an equal-priority primary occupant', async () => {
+  it('fails loudly when another takeover claims a Team primary seat at the same priority', async () => {
     const { ctx, slots } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(() => slots.register({ name: 'conversation', priority: 0 }, () => null)).toThrow()
+    ctx.teamNavigation.actions().enterTeam()
+    expect(() => slots.register({ name: 'conversation', priority: -100 }, () => null))
+      .toThrow(/already has a registration at priority -100/i)
+  })
+
+  it('repeats enter and leave without leaking shadows, then restores every shipped seat on unload', async () => {
+    const { ctx, slots } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    for (let index = 0; index < 3; index += 1) {
+      ctx.teamNavigation.actions().enterTeam()
+      expect(slots.entriesOfSlot('conversation')[0]!.options.priority).toBe(-100)
+      ctx.teamNavigation.actions().leaveTeam()
+      expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
+      expect(slots.entries('conversation')).toHaveLength(1)
+      expect(slots.entries('sidebar.settings')).toHaveLength(1)
+    }
+    ctx.teamNavigation.actions().enterTeam()
+    await fiber.dispose()
+    expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
+    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('sidebar.settings')).toHaveLength(1)
+    expect(slots.entries('sidebar.footer.action')).toHaveLength(0)
   })
 
   it('mounts Team shadows immediately when persisted mode is Team', async () => {

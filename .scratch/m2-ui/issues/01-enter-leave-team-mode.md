@@ -12,7 +12,7 @@
 - [x] A “团队” footer action enters Team mode while the DSH brand row, sidebar collapse control and layout remain owned by shipped UI.
 - [x] Team mode dynamically shadows only the Workspace region, center conversation region and Settings seat; Settings is absent while Team mode is active.
 - [x] The Team sidebar lists real Host Workspaces in Host registry order, defaults to the Channels tab and renders a quiet Team empty state in the center column.
-- [x] Team mode reuses the existing Workspace runtime and directory-flow contract to create a Workspace; it does not copy the shipped WorkspaceBrowser or add search or Team-specific sorting. The Team browser re-declares `sidebar.workspaces.directoryFlow`, while Workspace adoption uses `ctx.workspaces.create({ path })`.
+- [x] Team mode uses the public Workspace runtime to pick and create a Workspace; it does not copy the shipped WorkspaceBrowser, re-declare its private directory-flow child slot, add search or add Team-specific sorting.
 - [x] The sidebar bottom shows global “成员” and “← 对话” actions, and the collapsed rail shows only stable Shell/Team navigation icons rather than Workspace rows.
 - [x] “← 对话” disposes every Team shadow registration, restores the shipped Workspace browser, Settings and Conversation occupants, and returns to the previously selected ordinary Session.
 - [x] Browser-local state persists only Team mode and selected Workspace; stale Workspace ids fall back to the first real Workspace, while tab, Channel and Thread state remain transient.

@@ -225,7 +225,7 @@ Team 读取和创建 Workspace 使用 `ctx.workspaces`：
 
 - `ctx.workspaces.list` 是 real Host projection，顺序保持 Host registry order。
 - `ctx.workspaces.create({ path })` 是唯一 Workspace create 入口。
-- 目录选择通过 `sidebar.workspaces.directoryFlow` 的既有 owner contract 复用，不复制 `WorkspaceBrowser`。
+- 外部 Team plugin 不能重新声明 shipped `WorkspaceBrowser` 私有的 `sidebar.workspaces.directoryFlow` child slot；两个 live parent declaration 会在 SlotCore 中冲突。Team 通过公开的 `ctx.workspaces.pickDirectory()` 获取路径，再调用 `ctx.workspaces.create({ path })`，不复制 `WorkspaceBrowser` 或 Web browse picker。
 - 第一阶段不实现搜索、不实现 Team-specific sort、不创建第二套 Workspace store。
 
 ### 4.3 持久状态
@@ -301,7 +301,7 @@ real Loader
 
 每次会话压缩后，先恢复以下事实：
 
-1. 当前 M2 frontier：`.scratch/m2-ui/issues/01-enter-leave-team-mode.md`。
+1. M2-01 至 M2-06 已完成；完整验收见 `.scratch/m2-ui/issues/06-verify-team-ui-journey.md` 和 `.scratch/m2-ui/validation/m2-06/`。
 2. 本项目 M2 设计出口：`.scratch/m2-ui/spec.md`。
 3. Client plugin contract：本文件 §1-3。
 4. M2-01 slot strategy：本文件 §4。
@@ -310,7 +310,9 @@ real Loader
 
 当前实现已验证：Team Client 使用 `@deepseek-ai/dsh-client-runtime/client` 的类型、真实 Cordis + SlotRegistry composition test、真实 React renderer DOM snapshot，以及根项目显式 `tsc` + Harness `tsdown` bundle。M2-01 的 Chromium browser journey 与完整 Team 流程由 M2-06 统一覆盖。
 
-M2-04 进行中。M2-03 基线提交为 a872cfd。当前 M2-04 已暴露 typed `sendMessage` 与 `changes` Remote；`changes` 是 bundle 自有的轻量长轮询失效通知，只传 version，避免修改 Harness 静态 forwarded-event allowlist，也不向 Client 暴露 Operation。Host `view` 保留默认 after cursor，并新增 before cursor、Activity 开关、Human ref、稳定 Task number 和 Thread Message count。Client 已支持 transient Channel/Thread ref、选择 Channel 后 Team-owned 中央页、显式 Human/Agent Message timeline、最新页/加载更早、结构化 Member-ref mention、失败同 request retry、Host commit 后刷新和 changed 后重新 pull。M2-05 进行中。M2-04 功能提交为 1c6ad6b、0a29ee6。当前 Thread page 已交付 transient Channel↔Thread 导航、Task 合法动作、runtime presence 与 Claim 分栏、Human reply/Claim done/release、stale revision 保留草稿、bounded Message+Activity 分页和 change version 重新 pull。Human `reply`/`changeClaim`/`changeTask` Remote 与既有 `sendMessage` 一样属于受信任 DSH Client 边界：actor 不在请求中，Host 固定注入唯一 Human actor；bundle 只允许用于受信任用户环境。REAL 双 Agent、production domain remount，以及 Human reply/close/reopen 的 SQLite 文件重启已通过；M2-05 功能完成。下一 frontier 是 M2-06，统一完成桌面/窄屏浏览器旅程与最终 Team UI 验收。
+M2-04 提交为 1c6ad6b、0a29ee6；M2-05 提交为 759b513。`changes` Remote 只传 version，避免修改 Harness 静态 forwarded-event allowlist，也不向 Client 暴露 Operation。Human `reply`/`changeClaim`/`changeTask` Remote 由 Host 固定注入唯一 Human actor，Client 请求不携带 actor。M2-06 的真实 Chromium 旅程验证了外部 profile 安装布局、两个 active Member、Channel/mention、Thread reply、Claim done、Task accept、Members panel、刷新恢复、退出 Team、1440x960 与 390x844 布局；窄屏等待 Harness 收栏动画完成后验证 56px rail 和无横向 overflow。
+
+外部 bundle 安装不要求修改 Harness 源码。Team Client 两阶段启动：先 `$mount(agentTeamRemote)`，再通过 `ctx.inject(['remote.agentTeam'], ...)` 注册 UI。Bundle 在隔离的 `agentPresets` scope 中挂载包内 `team-member` roster；普通 Session 的 shipped/user preset roster 不受影响。`npm run test:browser` 会临时使用相邻 Harness 的官方 Web scaffold，测试后删除所有 Harness 临时文件；该 checkout 关系仅是开发测试接缝。
 
 ## 来源
 

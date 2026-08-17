@@ -1,6 +1,14 @@
 - insert:
-    - id: dsh-agent-team
-      name: '@deepseek-ai/dsh-agent-team'
+    - id: dsh-agent-team-scope
+      name: cordis:group
+      group: true
+      isolate:
+        agentPresets: true
+      config:
+        - id: dsh-agent-team-presets
+          name: '@deepseek-ai/dsh-agent-team/preset-roster'
+        - id: dsh-agent-team
+          name: '@deepseek-ai/dsh-agent-team'
     - id: dsh-command-agent-team
       name: '@deepseek-ai/dsh-command-agent-team'
     - id: dsh-client-agent-team

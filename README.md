@@ -11,7 +11,7 @@ dsh plugin --profile team-demo add @deepseek-ai/dsh-agent-team-bundle
 dsh --profile team-demo
 ```
 
-The bundle contributes `cordis.patch.yml`; it does not modify the Harness installation or enable itself in shipped defaults. It also ships `agent-presets/team-member/agent.cordis.yml`. Register that directory as a system AgentPresets root in the opted-in profile, or place the `team-member` directory under `$DSH_HOME/.agent-presets/`, then create Team Members with preset id `team-member`.
+The bundle contributes `cordis.patch.yml`; it does not modify the Harness installation or enable itself in shipped defaults. It mounts a bundle-private, isolated AgentPresets roster containing `team-member`, so `dsh plugin add` needs no source patch, preset copy, or profile root configuration. Ordinary DSH Sessions keep using the profile's shipped/user preset roster.
 
 For local development:
 
@@ -39,10 +39,14 @@ corepack pnpm install
 npm run typecheck
 npm test
 npm run build
+npm run test:browser
+npm run preview
 npm pack --dry-run
 ```
 
-This repository targets the public DSH plugin and bundle interfaces. It does not depend on a sibling DeepSeek Harness checkout at runtime.
+`test:browser` uses the adjacent `../deepseek-harness` checkout's official Web scaffold and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It installs the built packages into an isolated temporary profile, runs the complete desktop/narrow journey, updates `.scratch/m2-ui/validation/m2-06/`, and removes all temporary Harness files. `npm run preview` starts the same real composition, prints a local URL, and keeps it running until `Ctrl+C`.
+
+This repository targets the public DSH plugin and bundle interfaces. Installed users do not need a sibling Harness checkout or Harness source changes; the checkout relationship above is only a development test seam.
 
 ## Known Limitations and Deferred Work
 

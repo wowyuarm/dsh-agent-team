@@ -6,8 +6,8 @@
   "type": "module",
   "files": [
     "cordis.patch.yml",
-    "agent-presets/team-member/agent.cordis.yml",
     "packages/*/lib/**/*",
+    "packages/*/preset/**/*",
     "packages/*/package.json",
     "README.md",
     "README.zh.md"
@@ -18,6 +18,8 @@
     "build": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/command-agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && cd packages/client-agent-team && ../../../deepseek-harness/node_modules/.bin/tsdown",
     "prepack": "npm run build",
     "test": "npm run generate:typert && vitest run",
+    "test:browser": "npm run build && node scripts/run-browser-test.mjs",
+    "preview": "npm run build && node scripts/run-preview.mjs",
     "lint": "eslint ."
   },
   "dsh": {

@@ -87,12 +87,7 @@ function registerModeShadow<T extends object>(
               createChannel: (request: AgentTeamCreateChannelRequest) => ctx.remote.agentTeam.createChannel(request),
               joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
               removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
-              hooks: {
-                directoryFlow: {
-                  getSnapshot: () => ctx.slots.entries('sidebar.workspaces.directoryFlow').length > 0,
-                  subscribe: (listener: () => void) => ctx.slots.subscribe('sidebar.workspaces.directoryFlow', listener),
-                },
-              },
+              pickWorkspaceDirectory: () => ctx.workspaces.pickDirectory(),
             } : {}),
           }),
         } as never, component as never)
@@ -111,9 +106,7 @@ function registerModeShadow<T extends object>(
   })
 }
 
-export async function apply(ctx: ClientContext): Promise<void> {
-  const disposeRemote = await ctx.remote.$mount(agentTeamRemote)
-  ctx.effect(() => () => { void disposeRemote() }, 'agent-team: remote')
+function applyUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agent-team: dictionaries')
 
   const navigation = new TeamNavigation(ctx)
@@ -143,9 +136,13 @@ export async function apply(ctx: ClientContext): Promise<void> {
     }),
   }, TeamFooterAction as never))
 
-  registerModeShadow(ctx, navigation, 'sidebar.workspaces', TeamWorkspaceBrowser as never, {
-    children: { 'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' } },
-  })
+  registerModeShadow(ctx, navigation, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
   registerModeShadow(ctx, navigation, 'conversation', TeamConversation as never)
   registerModeShadow(ctx, navigation, 'sidebar.settings', TeamSettings as never)
+}
+
+export async function apply(ctx: ClientContext): Promise<void> {
+  const disposeRemote = await ctx.remote.$mount(agentTeamRemote)
+  ctx.effect(() => () => { void disposeRemote() }, 'agent-team: remote')
+  ctx.inject(['remote.agentTeam'], ready => { applyUi(ready as ClientContext) })
 }

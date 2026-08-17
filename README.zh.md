@@ -11,7 +11,7 @@ dsh plugin --profile team-demo add @deepseek-ai/dsh-agent-team-bundle
 dsh --profile team-demo
 ```
 
-组合包贡献 `cordis.patch.yml`，不会修改 Harness 安装，也不会进入随附的默认组合。包内同时提供 `agent-presets/team-member/agent.cordis.yml`。在 opt-in profile 中把该目录注册为 system AgentPresets root，或把 `team-member` 目录放到 `$DSH_HOME/.agent-presets/`，然后用 preset id `team-member` 创建 Team Member。
+组合包贡献 `cordis.patch.yml`，不会修改 Harness 安装，也不会进入随附的默认组合。组合包会挂载一个私有、隔离的 AgentPresets roster，其中包含 `team-member`；因此 `dsh plugin add` 后不需要修改源码、复制 preset，也不需要配置 profile root。普通 DSH Session 仍使用 profile 原有的系统/用户 preset roster。
 
 本地开发时可以安装本地项目：
 
@@ -39,10 +39,14 @@ corepack pnpm install
 npm run typecheck
 npm test
 npm run build
+npm run test:browser
+npm run preview
 npm pack --dry-run
 ```
 
-本项目面向 DSH 的公开插件与 bundle 接口，运行时不依赖旁边的 DeepSeek Harness checkout。
+`test:browser` 使用相邻 `../deepseek-harness` checkout 的官方 Web scaffold 和 `/usr/bin/google-chrome`（可用 `CHROME_PATH` 覆盖）。命令会把构建后的包安装到隔离临时 profile，完成桌面/窄屏旅程，更新 `.scratch/m2-ui/validation/m2-06/`，并删除所有 Harness 临时文件。`npm run preview` 会启动同一套真实组合、打印本地 URL，并持续运行到按下 `Ctrl+C`。
+
+本项目面向 DSH 的公开插件与 bundle 接口。安装用户不需要相邻 Harness checkout，也不需要修改 Harness 源码；上述 checkout 关系仅是开发测试接缝。
 
 ## 已知限制与延后工作
 
