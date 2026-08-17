@@ -9,8 +9,10 @@ import type {
   AgentTeamView,
 } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
 interface TeamChannelsPanelProps {
@@ -41,6 +43,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   const [pendingCreate, setPendingCreate] = useState<AgentTeamCreateChannelRequest>()
   const pendingMembership = useRef(new Map<string, AgentTeamRequestId>())
   const previousCreatingKey = useRef(creatingAgents.map(request => request.requestId).join(','))
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -82,6 +85,12 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
     return byChannel
   }, [view])
 
+  const closeForm = () => {
+    if (mutating) return
+    setFormOpen(false)
+    queueMicrotask(() => { triggerRef.current?.focus() })
+  }
+
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (mutating || name.trim() === '' || description.trim() === '') return
@@ -104,6 +113,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
         setSelected(new Set())
         setFormOpen(false)
         await refresh()
+        queueMicrotask(() => { triggerRef.current?.focus() })
       } else {
         setError(result.error.message)
       }
@@ -140,20 +150,25 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
     <div className={css.panel}>
       <div className={css.panelToolbar}>
         <span>{t('channels')}</span>
-        <button type="button" className={css.textButton} onClick={() => { setFormOpen(open => !open) }}>
-          {formOpen ? t('cancel') : t('addChannel')}
-        </button>
+        <button ref={triggerRef} type="button" className={css.textButton} onClick={() => { setError(undefined); setFormOpen(true) }}>{t('addChannel')}</button>
       </div>
-      {formOpen && (
-        <form className={css.agentForm} onSubmit={event => { void submit(event) }}>
-          <label><span>{t('channelName')}</span><input value={name} disabled={mutating} autoFocus onChange={event => { setName(event.target.value) }} /></label>
-          <label><span>{t('channelDescription')}</span><textarea value={description} disabled={mutating} rows={3} onChange={event => { setDescription(event.target.value) }} /></label>
-          <fieldset className={css.memberPicker} disabled={mutating}>
+      <Modal
+        open={formOpen}
+        onClose={closeForm}
+        title={t('addChannel')}
+        closeLabel={t('close')}
+        contentClassName={createCss.dialogContent!}
+        footer={<><Button variant="outline" disabled={mutating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-channel-create-form" variant="primary" disabled={mutating || name.trim() === '' || description.trim() === ''}>{mutating ? t('creatingChannel') : t('createChannel')}</Button></>}
+      >
+        <form id="team-channel-create-form" className={createCss.form} onSubmit={event => { void submit(event) }}>
+          <label className={createCss.field}><span>{t('channelName')}</span><Input className={createCss.input!} value={name} disabled={mutating} autoFocus onChange={event => { setName(event.target.value); setPendingCreate(undefined) }} /></label>
+          <label className={createCss.field}><span>{t('channelDescription')}</span><Input className={createCss.input!} value={description} disabled={mutating} onChange={event => { setDescription(event.target.value); setPendingCreate(undefined) }} /></label>
+          <fieldset className={createCss.memberPicker} disabled={mutating}>
             <legend>{t('initialMembers')}</legend>
             {creatingAgents.map(request => (
-              <label key={request.requestId}>
+              <label className={createCss.memberOption} key={request.requestId}>
                 <input type="checkbox" disabled aria-describedby={`creating-member-reason-${request.requestId}`} />
-                <span className={css.unavailableDot} aria-hidden="true" />
+                <span className={createCss.unavailableDot} aria-hidden="true" />
                 <span>{request.handle}</span>
                 <small id={`creating-member-reason-${request.requestId}`}>{t('memberCreatingReason')}</small>
               </label>
@@ -162,13 +177,14 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
               const disabled = status.presence === 'unavailable'
               const reasonId = `initial-member-reason-${status.member.memberId}`
               return (
-                <label key={status.member.memberId}>
+                <label className={createCss.memberOption} key={status.member.memberId}>
                   <input type="checkbox" disabled={disabled} aria-describedby={disabled ? reasonId : undefined} checked={selected.has(status.member.memberId)} onChange={event => {
                     setSelected(current => {
                       const next = new Set(current)
                       if (event.target.checked) next.add(status.member.memberId); else next.delete(status.member.memberId)
                       return next
                     })
+                    setPendingCreate(undefined)
                   }} />
                   <TeamPresenceDot status={status} t={t} />
                   <span>{status.member.handle}</span>
@@ -177,11 +193,9 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
               )
             })}
           </fieldset>
-          <button type="submit" className={css.primaryButton} disabled={mutating || name.trim() === '' || description.trim() === ''}>
-            {mutating ? t('creatingChannel') : t('createChannel')}
-          </button>
+          {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
-      )}
+      </Modal>
       {loading && view === undefined && <p className={css.emptyState}>{t('loadingChannels')}</p>}
       {!loading && (view?.channels.length ?? 0) === 0 && <p className={css.emptyState}>{t('emptyChannels')}</p>}
       <div className={css.channelList}>
@@ -219,7 +233,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
           )
         })}
       </div>
-      {error !== undefined && <p className={css.error} role="alert">{error}</p>}
+      {!formOpen && error !== undefined && <p className={css.error} role="alert">{error}</p>}
     </div>
   )
 }

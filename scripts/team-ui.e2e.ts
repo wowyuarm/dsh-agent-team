@@ -11,6 +11,7 @@ const HOME = '__HOME__'
 const CHROME = '__CHROME__'
 const UI01_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
 const UI02_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-02')
+const UI03_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-03')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -31,6 +32,7 @@ async function installLocalBundle(): Promise<void> {
   }
   await mkdir(UI01_SHOTS, { recursive: true })
   await mkdir(UI02_SHOTS, { recursive: true })
+  await mkdir(UI03_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -50,10 +52,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
   for (const [name, description] of [['builder', '实现功能'], ['reviewer', '检查结果']] as const) {
     await page.getByRole('button', { name: '添加 Agent' }).click()
-    const form = page.locator('form').filter({ has: page.getByRole('button', { name: '创建 Agent' }) })
-    await form.getByLabel('名称').fill(name)
-    await form.getByLabel('说明').fill(description)
-    await form.getByRole('button', { name: '创建 Agent' }).click()
+    const dialog = page.getByRole('dialog', { name: '添加 Agent' })
+    await dialog.getByLabel('名称').fill(name)
+    await dialog.getByLabel('说明').fill(description)
+    if (name === 'builder') await page.screenshot({ path: join(UI03_SHOTS, 'agent-create-modal.png'), fullPage: true })
+    await dialog.getByRole('button', { name: '创建 Agent' }).click()
     await page.getByText(name, { exact: true }).waitFor({ timeout: 20_000 })
   }
   await expect.poll(() => page.getByLabel('可用').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(2)
@@ -61,12 +64,22 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
   await page.getByRole('tab', { name: 'Channels' }).click()
   await page.getByRole('button', { name: '新建 Channel' }).click()
-  const channelForm = page.locator('form').filter({ has: page.getByRole('button', { name: '创建 Channel' }) })
-  await channelForm.getByLabel('名称').fill('delivery')
-  await channelForm.getByLabel('说明').fill('M2 完整协作验收')
-  await channelForm.getByLabel(/builder/).check()
-  await channelForm.getByLabel(/reviewer/).check()
-  await channelForm.getByRole('button', { name: '创建 Channel' }).click()
+  const channelDialog = page.getByRole('dialog', { name: '新建 Channel' })
+  await channelDialog.getByLabel('名称').fill('delivery')
+  await channelDialog.getByLabel('说明').fill('M2 完整协作验收')
+  await channelDialog.getByLabel(/builder/).check()
+  await channelDialog.getByLabel(/reviewer/).check()
+  await page.screenshot({ path: join(UI03_SHOTS, 'channel-create-modal.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  const dialogBox = await channelDialog.boundingBox()
+  expect(dialogBox).not.toBeNull()
+  expect(dialogBox!.x).toBeGreaterThanOrEqual(0)
+  expect(dialogBox!.y).toBeGreaterThanOrEqual(0)
+  expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(390)
+  expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(844)
+  await page.screenshot({ path: join(UI03_SHOTS, 'channel-create-modal-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await channelDialog.getByRole('button', { name: '创建 Channel' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByText('还没有消息', { exact: true }).waitFor()
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })

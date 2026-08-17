@@ -190,20 +190,30 @@ describe('rendered Team mode composition', () => {
     expect(b.view.getByRole('img', { name: '不可用: preset missing' })).toBeTruthy()
     expect(b.members).toHaveBeenCalledWith({ workspaceId: 'w1' })
 
-    fireEvent.click(b.view.getByRole('button', { name: '添加 Agent' }))
-    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'reviewer' } })
+    const addAgentTrigger = b.view.getByRole('button', { name: '添加 Agent' })
+    fireEvent.click(addAgentTrigger)
+    expect(b.view.getByRole('dialog', { name: '添加 Agent' })).toBeTruthy()
+    const agentName = b.view.getByLabelText('名称')
+    await waitFor(() => expect(document.activeElement).toBe(agentName))
+    fireEvent.change(agentName, { target: { value: 'reviewer' } })
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'Reviews changes' } })
-    const pending = Promise.withResolvers<Awaited<ReturnType<typeof b.addMember>>>()
-    b.addMember.mockReturnValueOnce(pending.promise)
+    b.addMember.mockResolvedValueOnce({ ok: false, error: { message: 'connection lost' } } as never)
     fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
+    expect((await b.view.findByRole('alert')).textContent).toContain('connection lost')
+    expect((b.view.getByLabelText('名称') as HTMLInputElement).value).toBe('reviewer')
     expect(b.view.queryByText('reviewer')).toBeNull()
-    expect((b.view.getByRole('button', { name: '正在创建…' }) as HTMLButtonElement).disabled).toBe(true)
-    pending.resolve({ ok: true, value: { receipt: {} as never, status: b.status('member:new', 'w1', 'reviewer', 'available') as never } })
+    fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
 
     expect(await b.view.findByText('reviewer')).toBeTruthy()
-    expect(b.addMember).toHaveBeenCalledWith(expect.objectContaining({
+    expect(b.addMember).toHaveBeenLastCalledWith(expect.objectContaining({
       workspaceId: 'w1', handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
     }))
+    expect(b.addMember.mock.calls[0]![0].requestId).toBe(b.addMember.mock.calls[1]![0].requestId)
+    await waitFor(() => expect(document.activeElement).toBe(addAgentTrigger))
+    fireEvent.click(addAgentTrigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(b.view.queryByRole('dialog', { name: '添加 Agent' })).toBeNull()
+    await waitFor(() => expect(document.activeElement).toBe(addAgentTrigger))
     await b.runtime.dispose()
   })
 
