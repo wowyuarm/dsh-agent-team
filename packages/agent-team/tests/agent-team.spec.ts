@@ -133,18 +133,23 @@ describe('AgentTeam', () => {
       channelRef: channel.channel.channelRef, body: 'persist in sqlite' })
     await first.ctx.agentTeam.reply({ requestId: requestId('request:sqlite-human-reply'), workspaceId: alpha,
       taskRef: sent.task.taskRef, body: 'Human reply in sqlite', baseRevision: sent.thread.revision })
-    await first.ctx.agentTeam.changeTask({ requestId: requestId('request:sqlite-close'), workspaceId: alpha,
+    const closed = await first.ctx.agentTeam.changeTask({ requestId: requestId('request:sqlite-close'), workspaceId: alpha,
       taskRef: sent.task.taskRef, action: 'close' })
-    await first.ctx.agentTeam.changeTask({ requestId: requestId('request:sqlite-reopen'), workspaceId: alpha,
-      taskRef: sent.task.taskRef, action: 'reopen' })
+    await first.ctx.agentTeam.reply({ requestId: requestId('request:sqlite-reply-after-close'), workspaceId: alpha,
+      taskRef: sent.task.taskRef, body: 'Reply after close in sqlite', baseRevision: closed.thread.revision })
     const before = first.ctx.agentTeam.view({ workspaceId: alpha })
     await first.fiber.dispose(); await first.facility.closeAll()
     const second = await sqliteHarness(path)
     expect(second.ctx.agentTeam.view({ workspaceId: alpha })).toEqual(before)
     expect(second.ctx.agentTeam.status()).toMatchObject({ operationCount: 6, sequence: 6 })
+    expect(second.ctx.agentTeam.view({ workspaceId: alpha }).tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskRef: sent.task.taskRef, status: 'closed', resolution: 'closed' }),
+    ]))
     expect(second.ctx.agentTeam.view({ workspaceId: alpha }).items).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.objectContaining({ sender: AGENT_TEAM_HUMAN_MEMBER_ID,
         body: 'Human reply in sqlite', topLevel: false }) }),
+      expect.objectContaining({ message: expect.objectContaining({ sender: AGENT_TEAM_HUMAN_MEMBER_ID,
+        body: 'Reply after close in sqlite', topLevel: false }) }),
     ]))
   })
 

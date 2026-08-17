@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamClaimRef, AgentTeamConfirmationToken, AgentTeamMemberId, AgentTeamRequestId, AgentTeamTaskRef, AgentTeamThreadRef, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronLeftOutline14, IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
-import { TeamMentionPicker } from './TeamMentionPicker.tsx'
+import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus } from './team-formatters.ts'
 import css from './conversation.module.css'
@@ -163,17 +163,21 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     <section className={css.timeline} aria-label={t('participants')}><div className={css.timelineContent}>
       {activeView === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
       {activeView?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
-      {activeView !== undefined && [...activeView.items.map(item => ({ kind: 'message' as const, sequence: item.message.sequence, item })), ...activeView.activities.map(activity => ({ kind: 'activity' as const, sequence: activity.sequence, activity }))].sort((left, right) => left.sequence - right.sequence).map(entry => entry.kind === 'message' ? <article className={css.messageRow} key={entry.item.message.messageRef}><div className={css.messageIdentity} aria-hidden="true">{memberName(entry.item.message.sender).replace('@', '').slice(0, 1).toUpperCase()}</div><div className={css.messageBody}><strong>{memberName(entry.item.message.sender)}</strong><p>{entry.item.message.body}</p></div></article> : <p className={threadCss.activityRow} key={entry.activity.activityRef}><span className={threadCss.activityMark} aria-hidden="true" />{formatActivity(entry.activity, { t, actorName: memberName, claims: activeView.claims })}</p>)}
+      {activeView !== undefined && [...activeView.items.map(item => ({ kind: 'message' as const, sequence: item.message.sequence, item })), ...activeView.activities.map(activity => ({ kind: 'activity' as const, sequence: activity.sequence, activity }))].sort((left, right) => left.sequence - right.sequence).map(entry => entry.kind === 'message' ? <article className={css.messageRow} key={entry.item.message.messageRef}><div className={css.messageIdentity} aria-hidden="true">{memberName(entry.item.message.sender).replace('@', '').slice(0, 1).toUpperCase()}</div><div className={css.messageBody}><strong>{memberName(entry.item.message.sender)}</strong><p>{entry.item.message.body}</p></div></article> : <p className={threadCss.activityRow} key={entry.activity.activityRef}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(entry.activity, { t, actorName: memberName, claims: activeView.claims })}</span></p>)}
     </div></section>
 
-    {activeView !== undefined && task !== undefined && thread !== undefined && task.resolution === 'open' ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void sendReply() }}><div className={css.composerInner}>
-      <TeamMentionPicker members={channelMembers} recipients={recipients} disabled={pending} onChange={next => { setRecipients(next); setConfirmation(undefined); setRequestId(undefined) }} t={t} />
-      <div className={css.composerMain}>
-        <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value); setConfirmation(undefined); setRequestId(undefined) }} rows={2} />
-        <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || draft.trim() === ''}>{t('sendMessage')}</Button>
-      </div>
-      {error !== undefined && <p className={css.error} role="alert">{error}</p>}
-    </div></form> : activeView !== undefined && task !== undefined && thread !== undefined ? <div className={threadCss.readOnly}><div><p>{task.resolution === 'accepted' ? t('threadAcceptedReadOnly') : t('threadClosedReadOnly')}</p>{error !== undefined && <p className={css.error} role="alert">{error}</p>}</div></div> : <div />}
+    {activeView !== undefined && task !== undefined && thread !== undefined ? <TeamComposer
+      members={channelMembers}
+      recipients={recipients}
+      draft={draft}
+      disabled={false}
+      pending={pending}
+      {...(error === undefined ? {} : { error })}
+      onDraftChange={next => { setDraft(next); setConfirmation(undefined); setRequestId(undefined) }}
+      onRecipientsChange={next => { setRecipients(next); setConfirmation(undefined); setRequestId(undefined) }}
+      onSubmit={() => { void sendReply() }}
+      t={t}
+    /> : <div />}
     {activeView === undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
   </main>
 }

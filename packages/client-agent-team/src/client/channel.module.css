@@ -14,11 +14,17 @@
   margin-right: 6px;
 }
 
+.messageHeader {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 7px;
+}
+
 .messageKind {
   color: var(--dsw-alias-text-tertiary);
   font-size: 11px;
   line-height: 16px;
-  margin-left: 6px;
 }
 
 .taskFooter {
@@ -35,6 +41,7 @@
   max-width: 100%;
   padding: 5px 7px;
   text-align: left;
+  width: 100%;
 }
 
 .taskFooter:hover,
@@ -56,6 +63,13 @@
   color: var(--dsw-alias-text-tertiary);
   font-size: 11px;
   line-height: 18px;
+}
+
+.taskArrow {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 14px;
+  line-height: 18px;
+  margin-left: auto;
 }
 
 .memberList {
@@ -121,8 +135,12 @@
 @media (max-width: 600px) {
   .taskFooter {
     align-items: flex-start;
-    flex-direction: column;
-    gap: 1px;
+    flex-direction: row;
+    gap: 2px 6px;
+  }
+
+  .taskArrow {
+    margin-left: auto;
   }
 
   .headerMeta span + span::before {

@@ -14,11 +14,16 @@ export function TeamConversation({ t, useWorkspaces, navigation, loadChannels, l
   if (current !== undefined && navigationState.channelRef !== undefined) {
     return <TeamChannelPage key={navigationState.channelRef} workspaceId={current.workspaceId} channelRef={navigationState.channelRef} loadChannels={loadChannels} loadChanges={loadChanges} loadMembers={loadMembers} sendMessage={sendMessage} joinChannel={joinChannel} removeChannelMember={removeChannelMember} selectThread={selectThread} t={t} />
   }
+  const welcome = current === undefined
+    ? { eyebrow: t('teamMode'), title: t('team'), body: t('empty') }
+    : navigationState.activeTab === 'agents'
+      ? { eyebrow: current.title, title: t('agents'), body: t('selectAgent') }
+      : { eyebrow: t('teamMode'), title: t('team'), body: `${t('selectWorkspace')} · ${current.title}` }
   return <main className={css.welcomeSurface} data-team-conversation>
     <div className={css.welcome}>
-      <span className={css.welcomeEyebrow}>{t('teamMode')}</span>
-      <h1>{t('team')}</h1>
-      <p>{current === undefined ? t('empty') : `${t('selectWorkspace')} · ${current.title}`}</p>
+      <span className={css.welcomeEyebrow}>{welcome.eyebrow}</span>
+      <h1>{welcome.title}</h1>
+      <p>{welcome.body}</p>
     </div>
   </main>
 }

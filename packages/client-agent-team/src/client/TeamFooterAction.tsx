@@ -46,14 +46,29 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadM
 
   return (
     <>
-      {inTeam && (
-        <Tooltip label={t('members')} delayMs={500} disabled={wide}>
-          <button ref={triggerRef} type="button" className={css.footerAction} aria-label={t('members')} aria-haspopup="dialog" onClick={openMembers} onKeyDown={event => { keyboardActivate(event, openMembers) }}>
-            <IconUserOutline16 size={wide ? 16 : 18} />
-            {wide && <span>{t('members')}</span>}
+      <div className={wide ? css.footerStack : `${css.footerStack} ${css.railStack}`}>
+        {inTeam && (
+          <Tooltip label={t('members')} delayMs={500} disabled={wide}>
+            <button ref={triggerRef} type="button" className={wide ? css.footerAction : `${css.footerAction} ${css.rail}`} aria-label={t('members')} aria-haspopup="dialog" onClick={openMembers} onKeyDown={event => { keyboardActivate(event, openMembers) }}>
+              <IconUserOutline16 size={wide ? 16 : 18} />
+              {wide && <span>{t('members')}</span>}
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip label={label} delayMs={500} disabled={wide}>
+          <button
+            type="button"
+            className={wide ? css.footerAction : `${css.footerAction} ${css.rail}`}
+            aria-label={label}
+            data-team-action={inTeam ? 'leave' : 'enter'}
+            onClick={inTeam ? leaveTeam : enterTeam}
+            onKeyDown={event => { keyboardActivate(event, inTeam ? leaveTeam : enterTeam) }}
+          >
+            {inTeam ? <IconChevronLeftOutline14 size={wide ? 16 : 18} /> : <IconAgentPresetOutline16 size={wide ? 16 : 18} />}
+            {wide && <span>{label}</span>}
           </button>
         </Tooltip>
-      )}
+      </div>
       <Modal open={panelOpen && inTeam} onClose={closeMembers} title={t('members')} closeLabel={t('close')} contentClassName={membersCss.body!}>
         <div ref={contentRef} className={membersCss.content} tabIndex={-1}>
           {loading && <p className={membersCss.state} role="status">{t('loadingAgents')}</p>}
@@ -72,19 +87,6 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadM
           {error !== undefined && <p className={membersCss.error} role="alert">{error}</p>}
         </div>
       </Modal>
-      <Tooltip label={label} delayMs={500} disabled={wide}>
-        <button
-          type="button"
-          className={css.footerAction}
-          aria-label={label}
-          data-team-action={inTeam ? 'leave' : 'enter'}
-          onClick={inTeam ? leaveTeam : enterTeam}
-          onKeyDown={event => { keyboardActivate(event, inTeam ? leaveTeam : enterTeam) }}
-        >
-          {inTeam ? <IconChevronLeftOutline14 size={wide ? 16 : 18} /> : <IconAgentPresetOutline16 size={wide ? 16 : 18} />}
-          {wide && <span>{label}</span>}
-        </button>
-      </Tooltip>
     </>
   )
 }

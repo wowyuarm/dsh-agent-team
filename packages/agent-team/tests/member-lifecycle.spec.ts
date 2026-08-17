@@ -800,6 +800,19 @@ describe('Agent Team Member real composition', () => {
     expect((await executeTool(ctx, workerAgent, 'call:finish-claim-closed', 'team_claim', {
       ...base, action: 'claim', direction: 'blocked',
     })).isError).toBe(true)
+    const closedRevision = closed.thread.revision
+    const closedReply = await executeTool(ctx, peerAgent, 'call:finish-reply-closed', 'team_send', {
+      ...base, body: 'reply after close', baseRevision: closedRevision,
+    })
+    expect(closedReply.isError).toBe(false)
+    expect(closedReply.value).toMatchObject({ kind: 'committed', taskRef: sent.task.taskRef })
+    expect((closedReply.value as { revision: number }).revision).toBeGreaterThan(closedRevision)
+    expect(ctx.agentTeam.view({ workspaceId }).items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.objectContaining({ body: 'reply after close', topLevel: false }) }),
+    ]))
+    expect(ctx.agentTeam.view({ workspaceId }).tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskRef: sent.task.taskRef, status: 'closed', resolution: 'closed' }),
+    ]))
     const reopened = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-reopen'), ...base, action: 'reopen' })
     expect(reopened.task).toMatchObject({ status: 'todo', resolution: 'open' })
     const reply = await executeTool(ctx, workerAgent, 'call:finish-reply', 'team_send', {
@@ -815,8 +828,20 @@ describe('Agent Team Member real composition', () => {
     const accepted = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-accept'), ...base, action: 'accept' })
     expect(accepted.task).toMatchObject({ status: 'done', resolution: 'accepted' })
     const acceptedRevision = accepted.thread.revision
-    expect((await executeTool(ctx, peerAgent, 'call:finish-reply-done', 'team_send', {
-      ...base, body: 'should reject', baseRevision: acceptedRevision,
+    const acceptedReply = await executeTool(ctx, peerAgent, 'call:finish-reply-done', 'team_send', {
+      ...base, body: 'reply after acceptance', baseRevision: acceptedRevision,
+    })
+    expect(acceptedReply.isError).toBe(false)
+    expect(acceptedReply.value).toMatchObject({ kind: 'committed', taskRef: sent.task.taskRef })
+    expect((acceptedReply.value as { revision: number }).revision).toBeGreaterThan(acceptedRevision)
+    expect(ctx.agentTeam.view({ workspaceId }).items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.objectContaining({ body: 'reply after acceptance', topLevel: false }) }),
+    ]))
+    expect(ctx.agentTeam.view({ workspaceId }).tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskRef: sent.task.taskRef, status: 'done', resolution: 'accepted' }),
+    ]))
+    expect((await executeTool(ctx, peerAgent, 'call:finish-claim-accepted', 'team_claim', {
+      ...base, action: 'claim', direction: 'after acceptance',
     })).isError).toBe(true)
     const reopenedAccepted = await ctx.agentTeam.changeTask({ requestId: requestId('request:finish-reopen-accepted'), ...base, action: 'reopen' })
     expect(reopenedAccepted.task).toMatchObject({ status: 'in_review', resolution: 'open' })

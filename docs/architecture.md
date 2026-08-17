@@ -101,6 +101,7 @@ For UI work:
 - Reuse public Harness primitives and `--dsw-*` theme tokens where they exist.
 - Keep CSS in CSS Modules; do not import private Harness CSS.
 - Keep runtime presence separate from Claim and Task state.
+- Task resolution controls Task and Claim mutations, but does not close the conversation: Thread replies remain available after acceptance or closure and preserve the current Task status/resolution.
 - Keep Message, Activity, Claim, and Task presentation distinct and user-readable; do not expose opaque refs or internal enums.
 - Keep durable mutations non-optimistic; preserve input on failure and render the next Host projection.
 - Preserve Team mode enter/leave, refresh recovery, slot restoration, and narrow layout behavior.

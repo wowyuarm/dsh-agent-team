@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconSendOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
-import { TeamMentionPicker } from './TeamMentionPicker.tsx'
+import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { formatTaskStatus } from './team-formatters.ts'
 import channelCss from './channel.module.css'
@@ -183,7 +183,10 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
         {loading && channel === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
         {!loading && channel === undefined && <p className={css.emptyState}>{t('emptyChannels')}</p>}
         {view?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
-        {channel !== undefined && view?.items.length === 0 && <p className={css.emptyState}>{t('emptyMessages')}</p>}
+        {channel !== undefined && view?.items.length === 0 && <div className={css.emptyState}>
+          <strong>{t('emptyMessages')}</strong>
+          <span>{t('emptyMessagesHint')}</span>
+        </div>}
         {view?.items.map(item => {
           const senderStatus = members.find(member => member.member.memberId === item.message.sender)
           const human = item.message.sender === view.humanMemberId
@@ -191,13 +194,16 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
           return <article className={css.messageRow} key={item.message.messageRef}>
             <div className={css.messageIdentity} aria-hidden="true">{sender.slice(0, 1).toUpperCase()}</div>
             <div className={css.messageBody}>
-              <div><strong title={senderStatus?.member.description}>{sender}</strong><span className={channelCss.messageKind}>{item.message.topLevel ? t('messageKindTask') : t('messageKindReply')}</span></div>
-              <small>{human ? t('memberHuman') : t('memberAgent')}</small>
+              <header className={channelCss.messageHeader}>
+                <strong title={senderStatus?.member.description}>{sender}</strong>
+                <span className={channelCss.messageKind}>{item.message.topLevel ? t('messageKindTask') : t('messageKindReply')}</span>
+              </header>
               <p>{item.message.body}</p>
               {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef) }}>
                 <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
                 <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
                 <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
+                <span className={channelCss.taskArrow} aria-hidden="true">→</span>
               </button>}
             </div>
           </article>
@@ -205,16 +211,18 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       </div>
     </section>
 
-    {channel !== undefined ? <form className={css.composer} onSubmit={event => { event.preventDefault(); void send() }}>
-      <div className={css.composerInner}>
-        <TeamMentionPicker members={channelMembers} recipients={recipients} disabled={pending} onChange={next => { setRecipients(next); setPendingSend(undefined) }} t={t} />
-        <div className={css.composerMain}>
-          <textarea aria-label={t('messageDraft')} value={draft} disabled={pending} onChange={event => { setDraft(event.target.value); setPendingSend(undefined) }} rows={2} />
-          <Button type="submit" variant="primary" icon={<IconSendOutline16 />} disabled={pending || draft.trim() === ''}>{pending ? t('sendingMessage') : t('sendMessage')}</Button>
-        </div>
-        {error !== undefined && <p className={css.error} role="alert">{error}</p>}
-      </div>
-    </form> : <div />}
+    {channel !== undefined ? <TeamComposer
+      members={channelMembers}
+      recipients={recipients}
+      draft={draft}
+      disabled={false}
+      pending={pending}
+      {...(error === undefined ? {} : { error })}
+      onDraftChange={next => { setDraft(next); setPendingSend(undefined) }}
+      onRecipientsChange={next => { setRecipients(next); setPendingSend(undefined) }}
+      onSubmit={() => { void send() }}
+      t={t}
+    /> : <div />}
     {channel === undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
   </main>
 }

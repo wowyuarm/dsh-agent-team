@@ -101,36 +101,40 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
               data-slot="sidebar.footer.action"
               style="display: contents;"
             >
-              <button
-                aria-haspopup="dialog"
-                aria-label="成员"
-                class="footerAction"
-                type="button"
+              <div
+                class="footerStack railStack"
               >
-                <svg
-                  data-content="4d654e17"
-                  fill="none"
-                  height="18"
-                  viewBox="0 0 16 16"
-                  width="18"
-                  xmlns="http://www.w3.org/2000/svg"
-                />
-              </button>
-              <button
-                aria-label="← 对话"
-                class="footerAction"
-                data-team-action="leave"
-                type="button"
-              >
-                <svg
-                  data-content="710b3749"
-                  fill="none"
-                  height="18"
-                  viewBox="0 0 14 14"
-                  width="18"
-                  xmlns="http://www.w3.org/2000/svg"
-                />
-              </button>
+                <button
+                  aria-haspopup="dialog"
+                  aria-label="成员"
+                  class="footerAction rail"
+                  type="button"
+                >
+                  <svg
+                    data-content="4d654e17"
+                    fill="none"
+                    height="18"
+                    viewBox="0 0 16 16"
+                    width="18"
+                    xmlns="http://www.w3.org/2000/svg"
+                  />
+                </button>
+                <button
+                  aria-label="对话"
+                  class="footerAction rail"
+                  data-team-action="leave"
+                  type="button"
+                >
+                  <svg
+                    data-content="710b3749"
+                    fill="none"
+                    height="18"
+                    viewBox="0 0 14 14"
+                    width="18"
+                    xmlns="http://www.w3.org/2000/svg"
+                  />
+                </button>
+              </div>
             </div>
           </div>
           <div

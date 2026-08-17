@@ -95,9 +95,17 @@
   display: flex;
   font-size: 11px;
   gap: 8px;
+  justify-content: center;
   line-height: 18px;
-  margin: 0;
-  padding: 5px 38px;
+  margin: 4px auto;
+  max-width: 100%;
+  padding: 5px 12px;
+  text-align: center;
+}
+
+.activityText {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .activityMark {
@@ -107,26 +115,6 @@
   height: 5px;
   width: 5px;
 }
-
-.readOnly {
-  align-items: center;
-  border-top: 1px solid var(--dsw-alias-border-subtle);
-  color: var(--dsw-alias-text-secondary);
-  display: flex;
-  font-size: 12px;
-  gap: 12px;
-  justify-content: space-between;
-  line-height: 18px;
-  padding: 12px clamp(18px, 3vw, 36px) 16px;
-}
-
-.readOnly > div {
-  margin: 0 auto;
-  max-width: 880px;
-  width: 100%;
-}
-
-.readOnly p { margin: 0; }
 
 @media (max-width: 600px) {
   .claimRow {
@@ -143,6 +131,5 @@
     flex-wrap: wrap;
   }
 
-  .activityRow { padding-left: 0; }
-  .readOnly { padding: 10px 12px; }
+  .activityRow { padding-inline: 0; }
 }

@@ -599,7 +599,7 @@ export class AgentTeamLedger {
     })
   }
 
-  /** Append a revision-fenced Member reply to one existing Task Thread. */
+  /** Append a revision-fenced Member reply to one existing Task Thread; Task resolution does not block conversation. */
   reply(request: AgentTeamAuthorizedReplyRequest): Promise<AgentTeamLedgerResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>> {
     return this.enqueue(async () => {
       const explicit = this.normalizeRecipients(request.actor, request.recipients)
@@ -613,7 +613,6 @@ export class AgentTeamLedger {
       const task = this.requireTask(request.workspaceId, request.taskRef)
       const thread = this.requireThread(task.threadRef)
       if (member !== undefined) this.requireMemberChannel(member, task.channelRef)
-      if (task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is ${task.status}; reopen it before replying`)
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       for (const recipient of explicit) {
