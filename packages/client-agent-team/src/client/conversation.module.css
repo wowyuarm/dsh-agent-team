@@ -125,13 +125,20 @@
   width: 8px;
 }
 
-.error {
+.error,
+.errorState {
   color: var(--dsw-alias-state-error-primary);
   font-size: 12px;
   line-height: 18px;
   margin: 0 auto;
   max-width: 880px;
   padding-top: 6px;
+}
+.errorState {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
 }
 
 .welcomeSurface {

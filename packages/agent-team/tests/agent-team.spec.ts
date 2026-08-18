@@ -339,11 +339,15 @@ describe('AgentTeam', () => {
     }
     await test.ctx.agentTeam.changeTask({ requestId: requestId('request:page-close'), workspaceId: alpha,
       taskRef: sent[2]!.task.taskRef, action: 'close' })
+    await test.ctx.agentTeam.reply({ requestId: requestId('request:page-reply'), workspaceId: alpha,
+      taskRef: sent[1]!.task.taskRef, body: 'thread-only reply', baseRevision: sent[1]!.thread.revision })
 
     const latest = test.ctx.agentTeam.view({ workspaceId: alpha, channelRef: channel.channel.channelRef,
       direction: 'before', topLevelOnly: true, limit: 2 })
     expect(latest.items.map(item => item.message.body)).toEqual(['two', 'three'])
     expect(latest.items.map(item => item.taskNumber)).toEqual([2, 3])
+    expect(latest.items.every(item => item.message.topLevel)).toBe(true)
+    expect(latest.items.some(item => item.message.body === 'thread-only reply')).toBe(false)
     expect(latest.items[1]!.task.status).toBe('closed')
     expect(latest.activities).toEqual([])
     expect(latest.hasMore).toBe(true)
@@ -352,6 +356,7 @@ describe('AgentTeam', () => {
       direction: 'before', topLevelOnly: true, cursor: latest.cursor, limit: 2 })
     expect(older.items.map(item => item.message.body)).toEqual(['one'])
     expect(older.items[0]!.taskNumber).toBe(1)
+    expect(older.items.some(item => item.message.body === 'thread-only reply')).toBe(false)
     expect(older.hasMore).toBe(false)
   })
 

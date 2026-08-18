@@ -14,19 +14,6 @@
   margin-right: 6px;
 }
 
-.messageHeader {
-  align-items: baseline;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 7px;
-}
-
-.messageKind {
-  color: var(--dsw-alias-text-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-}
-
 .taskFooter {
   align-items: center;
   background: transparent;

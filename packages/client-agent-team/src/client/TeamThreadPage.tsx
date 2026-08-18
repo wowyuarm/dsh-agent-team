@@ -33,19 +33,32 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
   const mutationRequests = useRef(new Map<string, AgentTeamRequestId>())
+  const mountedRef = useRef(false)
+  const refreshSequenceRef = useRef(0)
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
 
-  const refresh = async () => {
-    const [loaded, statuses] = await Promise.all([
-      loadChannels({ workspaceId, channelRef, threadRef, direction: 'before', limit: 20 }),
-      loadMembers({ workspaceId }),
-    ])
-    if (!loaded.ok) { setError(loaded.error.message); return false }
-    if (!statuses.ok) { setError(statuses.error.message); return false }
-    setView(loaded.value); setMembers(statuses.value); return true
+  const refresh = async (clearError = false) => {
+    if (!mountedRef.current) return false
+    const sequence = refreshSequenceRef.current + 1
+    refreshSequenceRef.current = sequence
+    if (clearError) setError(undefined)
+    try {
+      const [loaded, statuses] = await Promise.all([
+        loadChannels({ workspaceId, channelRef, threadRef, direction: 'before', limit: 20 }),
+        loadMembers({ workspaceId }),
+      ])
+      if (!mountedRef.current || sequence !== refreshSequenceRef.current) return false
+      if (!loaded.ok) { setError(loaded.error.message); return false }
+      if (!statuses.ok) { setError(statuses.error.message); return false }
+      setView(loaded.value); setMembers(statuses.value); return true
+    } catch (cause) {
+      if (mountedRef.current && sequence === refreshSequenceRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+      return false
+    }
   }
   useEffect(() => {
     let active = true
+    mountedRef.current = true
     setView(undefined)
     setError(undefined)
     setRecipients(new Set())
@@ -55,27 +68,41 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     void (async () => {
       let version = 0
       while (active) {
-        const changed = await loadChanges({ afterVersion: version })
-        if (!active) return
-        if (!changed.ok) { setError(changed.error.message); return }
-        if (changed.value.version > version) { version = changed.value.version; await refresh() }
+        try {
+          const changed = await loadChanges({ afterVersion: version })
+          if (!active) return
+          if (!changed.ok) { setError(changed.error.message); return }
+          if (changed.value.version > version) { version = changed.value.version; await refresh() }
+        } catch (cause) {
+          if (active) setError(cause instanceof Error ? cause.message : String(cause))
+          return
+        }
       }
     })()
-    return () => { active = false }
+    return () => {
+      active = false
+      mountedRef.current = false
+      refreshSequenceRef.current += 1
+    }
   }, [workspaceId, channelRef, threadRef])
 
   const loadOlder = async () => {
     if (view === undefined || !view.hasMore) return
-    const result = await loadChannels({ workspaceId, channelRef, threadRef, direction: 'before', cursor: view.cursor, limit: 20 })
-    if (!result.ok) { setError(result.error.message); return }
-    const known = new Set(view.items.map(item => item.message.messageRef))
-    setView(currentView => currentView === undefined ? result.value : {
-      ...currentView,
-      items: [...result.value.items.filter(item => !known.has(item.message.messageRef)), ...currentView.items],
-      activities: [...result.value.activities.filter(activity => !currentView.activities.some(current => current.activityRef === activity.activityRef)), ...currentView.activities],
-      cursor: result.value.cursor,
-      hasMore: result.value.hasMore,
-    })
+    try {
+      const result = await loadChannels({ workspaceId, channelRef, threadRef, direction: 'before', cursor: view.cursor, limit: 20 })
+      if (!mountedRef.current) return
+      if (!result.ok) { setError(result.error.message); return }
+      const known = new Set(view.items.map(item => item.message.messageRef))
+      setView(currentView => currentView === undefined ? result.value : {
+        ...currentView,
+        items: [...result.value.items.filter(item => !known.has(item.message.messageRef)), ...currentView.items],
+        activities: [...result.value.activities.filter(activity => !currentView.activities.some(current => current.activityRef === activity.activityRef)), ...currentView.activities],
+        cursor: result.value.cursor,
+        hasMore: result.value.hasMore,
+      })
+    } catch (cause) {
+      if (mountedRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   const activeView = view
@@ -161,7 +188,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     </div>
 
     <section className={css.timeline} aria-label={t('participants')}><div className={css.timelineContent}>
-      {activeView === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
+      {activeView === undefined && error === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
+      {activeView === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void refresh(true) }}>{t('retry')}</Button></div>}
       {activeView?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
       {activeView !== undefined && [...activeView.items.map(item => ({ kind: 'message' as const, sequence: item.message.sequence, item })), ...activeView.activities.map(activity => ({ kind: 'activity' as const, sequence: activity.sequence, activity }))].sort((left, right) => left.sequence - right.sequence).map(entry => entry.kind === 'message' ? <article className={css.messageRow} key={entry.item.message.messageRef}><div className={css.messageIdentity} aria-hidden="true">{memberName(entry.item.message.sender).replace('@', '').slice(0, 1).toUpperCase()}</div><div className={css.messageBody}><strong>{memberName(entry.item.message.sender)}</strong><p>{entry.item.message.body}</p></div></article> : <p className={threadCss.activityRow} key={entry.activity.activityRef}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(entry.activity, { t, actorName: memberName, claims: activeView.claims })}</span></p>)}
     </div></section>
@@ -178,6 +206,5 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       onSubmit={() => { void sendReply() }}
       t={t}
     /> : <div />}
-    {activeView === undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
   </main>
 }

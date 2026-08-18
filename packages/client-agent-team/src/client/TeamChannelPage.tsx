@@ -37,23 +37,37 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const membershipRequests = useRef(new Map<string, AgentTeamSendMessageRequest['requestId']>())
   const manageTriggerRef = useRef<HTMLSpanElement>(null)
   const memberListRef = useRef<HTMLDivElement>(null)
+  const mountedRef = useRef(false)
+  const refreshSequenceRef = useRef(0)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
   const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive')
 
-  const refresh = async () => {
+  const refresh = async (clearError = false) => {
+    if (!mountedRef.current) return false
+    const sequence = refreshSequenceRef.current + 1
+    refreshSequenceRef.current = sequence
     setLoading(true)
-    const [loaded, loadedMembers] = await Promise.all([
-      loadChannels({ workspaceId, channelRef, direction: 'before', includeActivities: false, limit: 20 }),
-      loadMembers({ workspaceId }),
-    ])
-    if (loaded.ok) setView(loaded.value); else setError(loaded.error.message)
-    if (loadedMembers.ok) setMembers(loadedMembers.value); else setError(loadedMembers.error.message)
-    setLoading(false)
-    return loaded.ok && loadedMembers.ok
+    if (clearError) setError(undefined)
+    try {
+      const [loaded, loadedMembers] = await Promise.all([
+        loadChannels({ workspaceId, channelRef, direction: 'before', topLevelOnly: true, includeActivities: false, limit: 20 }),
+        loadMembers({ workspaceId }),
+      ])
+      if (!mountedRef.current || sequence !== refreshSequenceRef.current) return false
+      if (loaded.ok) setView(loaded.value); else setError(loaded.error.message)
+      if (loadedMembers.ok) setMembers(loadedMembers.value); else setError(loadedMembers.error.message)
+      return loaded.ok && loadedMembers.ok
+    } catch (cause) {
+      if (mountedRef.current && sequence === refreshSequenceRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+      return false
+    } finally {
+      if (mountedRef.current && sequence === refreshSequenceRef.current) setLoading(false)
+    }
   }
   useEffect(() => {
     let active = true
+    mountedRef.current = true
     setView(undefined)
     setError(undefined)
     setLoading(true)
@@ -63,16 +77,25 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     void (async () => {
       let version = 0
       while (active) {
-        const changed = await loadChanges({ afterVersion: version })
-        if (!active) return
-        if (!changed.ok) { setError(changed.error.message); return }
-        if (changed.value.version > version) {
-          version = changed.value.version
-          await refresh()
+        try {
+          const changed = await loadChanges({ afterVersion: version })
+          if (!active) return
+          if (!changed.ok) { setError(changed.error.message); return }
+          if (changed.value.version > version) {
+            version = changed.value.version
+            await refresh()
+          }
+        } catch (cause) {
+          if (active) setError(cause instanceof Error ? cause.message : String(cause))
+          return
         }
       }
     })()
-    return () => { active = false }
+    return () => {
+      active = false
+      mountedRef.current = false
+      refreshSequenceRef.current += 1
+    }
   }, [workspaceId, channelRef])
 
   useEffect(() => {
@@ -82,16 +105,21 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
 
   const loadOlder = async () => {
     if (view === undefined || !view.hasMore) return
-    const result = await loadChannels({ workspaceId, channelRef, direction: 'before', includeActivities: false, cursor: view.cursor, limit: 20 })
-    if (!result.ok) { setError(result.error.message); return }
-    const known = new Set(view.items.map(item => item.message.messageRef))
-    setView(current => current === undefined ? result.value : {
-      ...current,
-      items: [...result.value.items.filter(item => !known.has(item.message.messageRef)), ...current.items],
-      activities: [...result.value.activities, ...current.activities],
-      cursor: result.value.cursor,
-      hasMore: result.value.hasMore,
-    })
+    try {
+      const result = await loadChannels({ workspaceId, channelRef, direction: 'before', topLevelOnly: true, includeActivities: false, cursor: view.cursor, limit: 20 })
+      if (!mountedRef.current) return
+      if (!result.ok) { setError(result.error.message); return }
+      const known = new Set(view.items.map(item => item.message.messageRef))
+      setView(current => current === undefined ? result.value : {
+        ...current,
+        items: [...result.value.items.filter(item => !known.has(item.message.messageRef)), ...current.items],
+        activities: [...result.value.activities, ...current.activities],
+        cursor: result.value.cursor,
+        hasMore: result.value.hasMore,
+      })
+    } catch (cause) {
+      if (mountedRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   const closeMembers = () => {
@@ -152,7 +180,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <h1>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
-          <p>{channel?.description ?? t('loadingChannels')}</p>
+          {channel !== undefined && <p>{channel.description}</p>}
           {channel !== undefined && <div className={channelCss.headerMeta}>
             <span>{t('memberCount', { count: channelMembers.length })}</span>
           </div>}
@@ -180,8 +208,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
 
     <section className={css.timeline} aria-label={t('channels')}>
       <div className={css.timelineContent}>
-        {loading && channel === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
-        {!loading && channel === undefined && <p className={css.emptyState}>{t('emptyChannels')}</p>}
+        {loading && channel === undefined && error === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
+        {!loading && channel === undefined && error === undefined && <p className={css.emptyState}>{t('emptyChannels')}</p>}
+        {!loading && channel === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void refresh(true) }}>{t('retry')}</Button></div>}
         {view?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
         {channel !== undefined && view?.items.length === 0 && <div className={css.emptyState}>
           <strong>{t('emptyMessages')}</strong>
@@ -194,10 +223,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
           return <article className={css.messageRow} key={item.message.messageRef}>
             <div className={css.messageIdentity} aria-hidden="true">{sender.slice(0, 1).toUpperCase()}</div>
             <div className={css.messageBody}>
-              <header className={channelCss.messageHeader}>
-                <strong title={senderStatus?.member.description}>{sender}</strong>
-                <span className={channelCss.messageKind}>{item.message.topLevel ? t('messageKindTask') : t('messageKindReply')}</span>
-              </header>
+              <strong title={senderStatus?.member.description}>{sender}</strong>
               <p>{item.message.body}</p>
               {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef) }}>
                 <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
@@ -223,6 +249,5 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       onSubmit={() => { void send() }}
       t={t}
     /> : <div />}
-    {channel === undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
   </main>
 }

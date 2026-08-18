@@ -64,11 +64,11 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   let viewItems: Array<Record<string, unknown>> = []
   let viewClaims: Array<Record<string, unknown>> = []
   let viewActivities: Array<Record<string, unknown>> = []
-  const viewChannels = vi.fn(async () => ({ ok: true, value: {
+  const viewChannels = vi.fn(async (request: { threadRef?: string; topLevelOnly?: boolean }) => ({ ok: true, value: {
     humanMemberId: 'member:human', channels, members: memberships,
     tasks: viewItems.length === 0 ? [] : [viewItems[0]!.task], threads: viewItems.length === 0 ? [] : [viewItems[0]!.thread],
     taskNumbers: viewItems.length === 0 ? [] : [{ taskRef: 'task:1', taskNumber: 1 }],
-    items: viewItems, claims: viewClaims, activities: viewActivities, cursor: 0, hasMore: false,
+    items: request.threadRef !== undefined || !request.topLevelOnly ? viewItems : viewItems.filter(item => (item.message as { topLevel?: boolean }).topLevel), claims: viewClaims, activities: request.topLevelOnly ? [] : viewActivities, cursor: 0, hasMore: false,
   } }))
   const createChannel = vi.fn(async (request: AgentTeamCreateChannelRequest) => {
     const channel = { channelRef: 'channel:new', workspaceId: request.workspaceId, name: request.name,
@@ -292,17 +292,17 @@ describe('rendered Team mode composition', () => {
     expect(messageInput.value).toBe('hello team @builder ')
     b.sendMessage.mockResolvedValueOnce({ ok: false, error: { message: 'send failed' } } as never)
     fireEvent.click(b.view.getByRole('button', { name: '发送' }))
-    expect((await b.view.findByRole('alert')).textContent).toContain('send failed')
+    expect((await within(channelPage).findByRole('alert')).textContent).toContain('send failed')
     expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value).toBe('hello team @builder ')
     fireEvent.click(b.view.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(b.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ body: 'hello team @builder', recipients: ['member:builder'] })))
     expect(b.sendMessage.mock.calls[0]![0].requestId).toBe(b.sendMessage.mock.calls[1]![0].requestId)
     expect(await b.view.findByText('hello team @builder')).toBeTruthy()
-    expect(b.view.getByText('任务消息')).toBeTruthy()
+    expect(b.view.queryByText('任务消息')).toBeNull()
     expect(b.view.getByText('待处理')).toBeTruthy()
     expect(b.view.getByText('1 条消息')).toBeTruthy()
     b.publishAgentReply()
-    expect(await b.view.findByText('agent reply')).toBeTruthy()
+    await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     expect(b.view.getByText('Implement API')).toBeTruthy()
@@ -329,6 +329,7 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByText('reply after close')).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: '返回 Channel' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
     await b.runtime.dispose()
   })
 
