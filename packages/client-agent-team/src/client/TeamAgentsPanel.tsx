@@ -5,7 +5,7 @@ import type {
   AgentTeamRequestId,
 } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { presenceLabel, TeamPresenceDot } from './TeamPresenceDot.tsx'
 import createCss from './create.module.css'
@@ -104,7 +104,11 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
     <div className={css.panel}>
       <div className={css.panelToolbar}>
         <span>{t('agents')}</span>
-        <button ref={triggerRef} type="button" className={css.textButton} onClick={() => { setError(undefined); setFormOpen(true) }}>{t('addAgent')}</button>
+        <Tooltip label={t('addAgent')} delayMs={500}>
+          <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addAgent')} onClick={() => { setError(undefined); setFormOpen(true) }}>
+            <IconPlusOutline16 size={14} />
+          </button>
+        </Tooltip>
       </div>
       <Modal
         open={formOpen}

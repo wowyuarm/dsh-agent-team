@@ -1,3 +1,4 @@
+import { IconFolderClose16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import css from './sidebar.module.css'
 
@@ -17,7 +18,9 @@ export function TeamWorkspaceRow({ workspaceId, title, path, selected, onSelect 
       onClick={() => { onSelect(workspaceId) }}
       title={`${title} · ${path}`}
     >
-      <span className={css.workspaceGlyph} aria-hidden="true">{title.slice(0, 1).toUpperCase() || 'W'}</span>
+      <span className={css.workspaceIcon} aria-hidden="true">
+        {selected ? <IconFolderOpen16 size={16} /> : <IconFolderClose16 size={16} />}
+      </span>
       <span className={css.workspaceCopy}><strong>{title}</strong></span>
     </button>
   )

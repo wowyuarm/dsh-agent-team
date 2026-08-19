@@ -74,7 +74,7 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
               class="railWorkspace"
             >
               <button
-                aria-label="Channels"
+                aria-label="频道"
                 class="railButton"
                 data-active="true"
                 type="button"

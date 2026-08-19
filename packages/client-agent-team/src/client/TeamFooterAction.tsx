@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { IconAgentPresetOutline16, IconChevronLeftOutline14, IconUserOutline16, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamFooterProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -9,6 +9,15 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, loadM
   const state = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const inTeam = state.mode === 'team'
   const label = inTeam ? t('backToConversations') : t('team')
+
+  useLayoutEffect(() => {
+    if (typeof document === 'undefined') return
+    if (inTeam) {
+      document.documentElement.dataset.agentTeamMode = 'team'
+      return () => { delete document.documentElement.dataset.agentTeamMode }
+    }
+    delete document.documentElement.dataset.agentTeamMode
+  }, [inTeam])
   const [panelOpen, setPanelOpen] = useState(false)
   const [groups, setGroups] = useState<Awaited<ReturnType<typeof loadMemberGroups>>>([])
   const [loading, setLoading] = useState(false)

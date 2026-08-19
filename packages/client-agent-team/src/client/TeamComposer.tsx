@@ -187,7 +187,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, er
           value={draft}
           disabled={disabled || pending}
           placeholder={t('messagePlaceholder')}
-          rows={2}
+          rows={1}
           onChange={onChange}
           onKeyDown={onKeyDown}
           onSelect={event => { updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length) }}

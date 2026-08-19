@@ -1,7 +1,7 @@
 .footerStack {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   width: 100%;
 }
 
@@ -20,7 +20,7 @@
   gap: 8px;
   height: 34px;
   line-height: 22px;
-  margin: 4px -4px;
+  margin: 0 -4px;
   overflow: hidden;
   padding: 6px 2px 6px 10px;
   text-align: left;
@@ -38,12 +38,12 @@
   border-radius: 50%;
   height: 36px;
   justify-content: center;
-  margin: 8px 0 10px;
+  margin: 0;
   padding: 0;
   width: 36px;
 }
 
 .railStack {
   align-items: center;
-  gap: 0;
+  gap: 8px;
 }

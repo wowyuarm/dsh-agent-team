@@ -9,7 +9,7 @@ import type {
   AgentTeamView,
 } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import createCss from './create.module.css'
@@ -126,7 +126,11 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
     <div className={css.panel}>
       <div className={css.panelToolbar}>
         <span>{t('channels')}</span>
-        <button ref={triggerRef} type="button" className={css.textButton} onClick={() => { setError(undefined); setFormOpen(true) }}>{t('addChannel')}</button>
+        <Tooltip label={t('addChannel')} delayMs={500}>
+          <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addChannel')} onClick={() => { setError(undefined); setFormOpen(true) }}>
+            <IconPlusOutline16 size={14} />
+          </button>
+        </Tooltip>
       </div>
       <Modal
         open={formOpen}
@@ -181,7 +185,6 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
             <article className={css.channelRow} key={channel.channelRef} aria-current={selectedChannelRef === channel.channelRef ? 'page' : undefined}>
               <button type="button" className={css.channelSelect} aria-label={`# ${channel.name}`} onClick={() => { selectChannel(channel.channelRef) }}>
                 <strong className={css.channelName}># {channel.name}</strong>
-                <small className={css.channelDescription}>{channel.description}</small>
                 <small className={css.channelCount}>{joined.size}</small>
               </button>
             </article>
