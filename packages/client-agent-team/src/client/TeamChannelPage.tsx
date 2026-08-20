@@ -229,7 +229,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
             <div className={css.messageBody}>
               <strong title={senderStatus?.member.description}>{sender}</strong>
               <p>{item.message.body}</p>
-              {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef) }}>
+              {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
                 <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
                 <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
                 <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>

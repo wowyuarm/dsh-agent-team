@@ -64,6 +64,8 @@ import type {
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
+  AgentTeamThreadObservations,
+  AgentTeamThreadObservationsRequest,
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
@@ -355,6 +357,13 @@ export default class AgentTeam extends TypertRemoteService {
     const result = await this.requireLedger().readThread({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
+  }
+
+  /** Human-only durable Attention observations for one Thread. */
+  @Remote('threadObservations')
+  threadObservations(request: AgentTeamThreadObservationsRequest): AgentTeamThreadObservations {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadObservations(agentTeamHumanActor(), request)
   }
 
   /** Human's non-mutating bounded Thread history. */

@@ -227,6 +227,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '关闭', exact: true }).click()
 
   await page.reload()
+  await page.getByRole('tab', { name: '频道' }).waitFor({ timeout: 20_000 })
+  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '# delivery' }).waitFor({ timeout: 20_000 })
   await expect.poll(() => page.evaluate(() => localStorage.getItem('dsh.agent-team.navigation'))).toContain('"mode":"team"')
   await page.getByRole('button', { name: '# delivery' }).click()

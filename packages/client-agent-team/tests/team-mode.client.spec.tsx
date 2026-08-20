@@ -112,8 +112,30 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
       resolution: request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed' }
     const thread = { ...(top.thread as object), revision: (top.thread as { revision: number }).revision + 1 }
     viewItems = viewItems.map(item => ({ ...item, task, thread }))
-    return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: {}, task, thread, claims: viewClaims } }
+    return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
+  const inbox = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({ ok: true as const, value: {
+    items: viewItems.filter(item => (item.task as { channelRef?: string }).channelRef !== undefined).map(item => ({
+      channelRef: (item.task as { channelRef: string }).channelRef, task: item.task, thread: item.thread,
+      unreadCount: 1, directCount: 1, newestSequence: (item.message as { sequence: number }).sequence,
+    })), totalUnreadCount: viewItems.length > 0 ? 1 : 0, totalDirectCount: viewItems.length > 0 ? 1 : 0,
+  } }))
+  const readThread = vi.fn(async ({ taskRef }: { taskRef: string }) => {
+    const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
+    if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
+    return { ok: true as const, value: {
+      receipt: {}, task: top.task, thread: top.thread, claims: viewClaims,
+      anchor: top.message, facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],
+      readThroughSequence: (top.thread as { revision: number }).revision, consumedDirectMarkers: [],
+    } }
+  })
+  const loadThreadHistory = vi.fn(async ({ taskRef }: { taskRef: string }) => {
+    const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
+    if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
+    return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
+  })
+  const loadThreadObservations = vi.fn(async () => ({ ok: true as const, value: { items: [] } }))
+  const changeAttention = vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' as const, receipt: {}, attention: undefined } }))
   const changes = vi.fn(({ afterVersion }: { afterVersion: number }) => changeVersion > afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
     : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
@@ -125,7 +147,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations: loadThreadObservations, changeAttention, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
@@ -144,7 +166,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, inbox, readThread, loadThreadHistory, loadThreadObservations, changeAttention }
 }
 
 describe('rendered Team mode composition', () => {
@@ -155,7 +177,7 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => expect(document.documentElement.dataset.agentTeamMode).toBe('team'))
     expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
-    expect(await b.view.findByRole('heading', { name: '团队' })).toBeTruthy()
+    expect(await b.view.findByRole('heading', { name: 'Inbox' })).toBeTruthy()
     expect(b.view.getByText('Alpha')).toBeTruthy()
     expect(b.view.queryByText('设置')).toBeNull()
     const membersTrigger = b.view.getByRole('button', { name: '成员' })
@@ -236,6 +258,7 @@ describe('rendered Team mode composition', () => {
   it('creates a Channel atomically with selected available Members and manages committed membership', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
     expect(await b.view.findByText('还没有频道')).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
@@ -266,6 +289,7 @@ describe('rendered Team mode composition', () => {
   it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
@@ -323,7 +347,7 @@ describe('rendered Team mode composition', () => {
     expect(b.reply).toHaveBeenCalledTimes(1)
     fireEvent.click(b.view.getByRole('button', { name: '发送' }))
     expect(await b.view.findByText('human thread reply')).toBeTruthy()
-    expect(b.reply.mock.calls[0]![0].requestId).not.toBe(b.reply.mock.calls[1]![0].requestId)
+    expect(b.reply.mock.calls[0]![0].requestId).toBe(b.reply.mock.calls[1]![0].requestId)
     fireEvent.click(b.view.getByRole('button', { name: '关闭任务' }))
     expect(await b.view.findByRole('button', { name: '重新打开' })).toBeTruthy()
     const closedComposer = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
@@ -340,7 +364,7 @@ describe('rendered Team mode composition', () => {
 
   it('restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'stale' })
-    expect(await b.view.findByRole('heading', { name: '团队' })).toBeTruthy()
+    expect(await b.view.findByRole('heading', { name: 'Inbox' })).toBeTruthy()
     await vi.waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().workspaceId).toBe('w1'))
 
     fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))

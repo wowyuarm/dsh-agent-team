@@ -38,12 +38,13 @@ function mentionCandidates(members: readonly AgentTeamAgentMemberStatus[], query
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
-export function TeamComposer({ members, recipients, draft, disabled, pending, error, onDraftChange, onRecipientsChange, onSubmit, t }: {
+export function TeamComposer({ members, recipients, draft, disabled, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, t }: {
   readonly members: readonly AgentTeamAgentMemberStatus[]
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
   readonly disabled: boolean
   readonly pending: boolean
+  readonly confirmation?: string
   readonly error?: string
   readonly onDraftChange: (draft: string) => void
   readonly onRecipientsChange: (recipients: ReadonlySet<AgentTeamMemberId>) => void
@@ -155,6 +156,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, er
     event.preventDefault()
     if (!pending && draft.trim() !== '') onSubmit()
   }}>
+    {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
     <div className={css.card} data-team-composer>
       <div className={css.inputArea}>
         {menuOpen && <div id={listId} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')}>

@@ -30,6 +30,8 @@ While Attention is active, Messages, Claim changes, and Task accept/close/reopen
 
 The first read in an Attention period returns the Task anchor, current Task state, current Claim snapshot, limited recent background, and the bounded unread batch. Background facts are orientation only and are marked as already read. `team_thread.history` is the only tool for paging older Thread facts.
 
+The Human Client opens the Workspace Inbox first. Inbox rows are Host projections ordered with direct requests first; opening a row performs the durable Human Thread read. The Thread surface keeps public revisioned facts separate from Human-only follow/unfollow observations and runtime risk. History paging and passive change polling do not acknowledge new work; the user must explicitly read the new batch.
+
 ## Structured mentions
 
 Recipients are selected with Member refs. Text such as `@name` has no mention semantics.
@@ -47,6 +49,10 @@ A public mutation on an existing Thread must use the current `baseRevision`. The
 These outcomes are normal collaboration results, not infrastructure failures. The Agent can read the Thread, inspect the returned revision, and decide whether to retry without creating a duplicate Message. There is no force-send or unread bypass.
 
 Human close releases active Claims, ends Attention, and stops ordinary delivery. Reopen restores an open Task but does not restore previous Attention periods.
+
+## Human Remote boundary
+
+The Human Client uses `inbox`, `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`. `threadObservations` is a non-mutating Human-only projection of follow/unfollow Attention transitions for one Thread. Task creation's automatic initial Attention and read watermark updates are not displayed as observations. The Client stores only navigation mode and Workspace selection locally; unread state, Attention, revisions, and observations remain Host-owned.
 
 ## Agent notification boundary
 

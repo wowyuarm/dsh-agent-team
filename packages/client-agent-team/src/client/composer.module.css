@@ -147,6 +147,15 @@
   opacity: 0.4;
 }
 
+.confirmation {
+  align-self: stretch;
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+  padding: 0 4px 6px;
+}
+
 .error {
   align-self: stretch;
   color: var(--dsw-alias-state-error-primary);

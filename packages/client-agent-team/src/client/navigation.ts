@@ -1,31 +1,33 @@
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AgentTeamChannelRef, AgentTeamThreadRef } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamChannelRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@deepseek-ai/dsh-agent-team/types'
 
 export type TeamMode = 'conversation' | 'team'
 
-export type TeamWorkspaceTab = 'channels' | 'agents'
+export type TeamWorkspaceTab = 'inbox' | 'channels' | 'agents'
 
 export interface TeamNavigationSnapshot {
   mode: TeamMode
   workspaceId?: WorkspaceId
   activeTab: TeamWorkspaceTab
   channelRef?: AgentTeamChannelRef
+  taskRef?: AgentTeamTaskRef
   threadRef?: AgentTeamThreadRef
+  taskNumber?: number
 }
 
 const STORAGE_KEY = 'dsh.agent-team.navigation'
 
 function readSnapshot(): TeamNavigationSnapshot {
-  if (typeof localStorage === 'undefined') return { mode: 'conversation', activeTab: 'channels' }
+  if (typeof localStorage === 'undefined') return { mode: 'conversation', activeTab: 'inbox' }
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '') as Partial<TeamNavigationSnapshot>
     return {
       mode: parsed.mode === 'team' ? 'team' : 'conversation',
-      activeTab: 'channels',
+      activeTab: 'inbox',
       ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId as WorkspaceId } : {}),
     }
   } catch {
-    return { mode: 'conversation', activeTab: 'channels' }
+    return { mode: 'conversation', activeTab: 'inbox' }
   }
 }
 
@@ -45,8 +47,9 @@ export interface TeamNavigationActions {
   selectWorkspace: (workspaceId: WorkspaceId) => void
   selectWorkspaceTab: (tab: TeamWorkspaceTab) => void
   selectChannel: (channelRef: AgentTeamChannelRef) => void
-  selectThread: (threadRef: AgentTeamThreadRef) => void
-  backToChannel: () => void
+  selectInbox: () => void
+  selectThread: (taskRef: AgentTeamTaskRef, threadRef: AgentTeamThreadRef, channelRef?: AgentTeamChannelRef, taskNumber?: number) => void
+  backToWorkspace: () => void
 }
 
 /** Root-scoped Team mode state. Slot lifetimes subscribe to this source. */
@@ -68,8 +71,9 @@ export class TeamNavigation {
       selectWorkspace: workspaceId => { this.setWorkspace(workspaceId) },
       selectWorkspaceTab: tab => { this.setTab(tab) },
       selectChannel: channelRef => { this.setChannel(channelRef) },
-      selectThread: threadRef => { this.setThread(threadRef) },
-      backToChannel: () => { this.setThread(undefined) },
+      selectInbox: () => { this.setTab('inbox') },
+      selectThread: (taskRef, threadRef, channelRef, taskNumber) => { this.setThread(taskRef, threadRef, channelRef, taskNumber) },
+      backToWorkspace: () => { this.setThread(undefined) },
     }
   }
 
@@ -85,32 +89,34 @@ export class TeamNavigation {
 
   private setWorkspace(workspaceId: WorkspaceId): void {
     if (this.snapshot.workspaceId === workspaceId) return
-    const { channelRef: _channelRef, threadRef: _threadRef, ...base } = this.snapshot
-    this.snapshot = { ...base, workspaceId, activeTab: 'channels' }
+    const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+    this.snapshot = { ...base, workspaceId, activeTab: 'inbox' }
     this.commit()
   }
 
   private setChannel(channelRef: AgentTeamChannelRef): void {
     if (this.snapshot.channelRef === channelRef && this.snapshot.threadRef === undefined) return
-    const { threadRef: _threadRef, ...base } = this.snapshot
+    const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
     this.snapshot = { ...base, channelRef, activeTab: 'channels' }
     this.commit()
   }
 
-  private setThread(threadRef: AgentTeamThreadRef | undefined): void {
-    if (this.snapshot.threadRef === threadRef) return
-    if (threadRef === undefined) {
-      const { threadRef: _threadRef, ...base } = this.snapshot
+  private setThread(taskRef: AgentTeamTaskRef | undefined, threadRef?: AgentTeamThreadRef, channelRef?: AgentTeamChannelRef, taskNumber?: number): void {
+    if (this.snapshot.threadRef === threadRef && this.snapshot.taskRef === taskRef && this.snapshot.channelRef === channelRef && this.snapshot.taskNumber === taskNumber) return
+    if (threadRef === undefined || taskRef === undefined) {
+      const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
       this.snapshot = base
     } else {
-      this.snapshot = { ...this.snapshot, threadRef }
+      const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+      this.snapshot = { ...base, taskRef, threadRef, ...(channelRef === undefined ? {} : { channelRef }), ...(taskNumber === undefined ? {} : { taskNumber }) }
     }
     this.commit()
   }
 
   private setTab(activeTab: TeamWorkspaceTab): void {
-    if (this.snapshot.activeTab === activeTab) return
-    this.snapshot = { ...this.snapshot, activeTab }
+    if (this.snapshot.activeTab === activeTab && this.snapshot.threadRef === undefined) return
+    const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+    this.snapshot = { ...base, activeTab }
     this.commit()
   }
 

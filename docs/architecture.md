@@ -99,6 +99,7 @@ Components under `packages/client-agent-team/src/client/` do not reach into `ctx
 
 For UI work:
 
+- Human Inbox and Thread reads use Host projections (`inbox`, `readThread`, `threadHistory`, `threadObservations`) and Host mutations (`changeAttention`, replies, and Task actions). The browser persists only navigation mode and Workspace selection; it does not persist unread state or Attention.
 - Reuse public Harness primitives and `--dsw-*` theme tokens where they exist.
 - Keep CSS in CSS Modules; do not import private Harness CSS.
 - Keep runtime presence separate from Claim and Task state.

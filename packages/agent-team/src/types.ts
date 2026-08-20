@@ -753,6 +753,25 @@ export interface AgentTeamThreadHistory {
   readonly hasMore: boolean
 }
 
+/** Human-only observation of a durable personal Attention change. */
+export interface AgentTeamThreadAttentionObservation {
+  readonly sequence: number
+  readonly threadRef: AgentTeamThreadRef
+  readonly taskRef: AgentTeamTaskRef
+  readonly memberId: AgentTeamMemberId
+  readonly action: 'follow' | 'unfollow'
+}
+
+export interface AgentTeamThreadObservationsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly limit?: number
+}
+
+export interface AgentTeamThreadObservations {
+  readonly items: readonly AgentTeamThreadAttentionObservation[]
+}
+
 /** One bounded Workspace view item. */
 export interface AgentTeamViewItem {
   readonly message: AgentTeamMessage

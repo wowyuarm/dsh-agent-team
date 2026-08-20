@@ -27,7 +27,7 @@ describe('TeamNavigation', () => {
     navigation.actions().enterTeam()
     navigation.actions().leaveTeam()
 
-    expect(navigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one', activeTab: 'channels' })
+    expect(navigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one', activeTab: 'inbox' })
     expect(changes).toEqual(['conversation', 'team', 'conversation'])
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
       mode: 'conversation', workspaceId: 'workspace:one',
@@ -47,6 +47,6 @@ describe('TeamNavigation', () => {
 
   it('ignores malformed persisted state', () => {
     localStorage.setItem(STORAGE_KEY, '{broken')
-    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation', activeTab: 'channels' })
+    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation', activeTab: 'inbox' })
   })
 })

@@ -32,6 +32,7 @@ describe('Agent Team generated Typert boundary', () => {
       'reply',
       'sendMessage',
       'threadHistory',
+      'threadObservations',
       'view',
     ]
     expect(host.invocations.map(invocation => invocation.method).sort()).toEqual(expected)

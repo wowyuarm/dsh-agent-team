@@ -78,6 +78,9 @@ import type {
   AgentTeamThreadReadOperation,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
+  AgentTeamThreadAttentionObservation,
+  AgentTeamThreadObservations,
+  AgentTeamThreadObservationsRequest,
   AgentTeamThreadRef,
   AgentTeamThreadRepliedOperation,
   AgentTeamUnreadRequired,
@@ -742,6 +745,54 @@ export class AgentTeamLedger {
       this.apply(operation)
       return this.committed(this.threadReadResult(operation))
     })
+  }
+
+  threadObservations(actor: AgentTeamHumanActor, request: AgentTeamThreadObservationsRequest): AgentTeamThreadObservations {
+    this.assertHumanActor(actor)
+    const task = this.requireTask(request.workspaceId, request.taskRef)
+    const limit = request.limit ?? 50
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('observation limit must be an integer between 1 and 100')
+    const threadRef = task.threadRef
+    const current = new Map<AgentTeamMemberId, AgentTeamThreadAttention>()
+    const observations: AgentTeamThreadAttentionObservation[] = []
+    for (const operation of this.ordered) {
+      const delta = this.attentionDelta(operation)
+      if (delta === undefined) continue
+      for (const removed of delta.attention.removed) {
+        if (removed.threadRef !== threadRef) continue
+        if (!current.delete(removed.memberId)) continue
+        observations.push(Object.freeze({ sequence: operation.sequence, threadRef, taskRef: task.taskRef,
+          memberId: removed.memberId, action: 'unfollow' }))
+      }
+      for (const next of delta.attention.set) {
+        if (next.threadRef !== threadRef) continue
+        const prior = current.get(next.memberId)
+        current.set(next.memberId, next)
+        // Task creation establishes initial Attention; reads only advance its watermark.
+        if (operation.kind === 'team/message-sent' || (prior !== undefined && prior.startSequence === next.startSequence)) continue
+        observations.push(Object.freeze({ sequence: operation.sequence, threadRef, taskRef: task.taskRef,
+          memberId: next.memberId, action: 'follow' }))
+      }
+    }
+    return Object.freeze({ items: Object.freeze(observations.slice(-limit)) })
+  }
+
+  private attentionDelta(operation: AgentTeamOperation): AgentTeamInboxDelta | undefined {
+    switch (operation.kind) {
+      case 'team/channel-member-removed':
+      case 'team/message-sent':
+      case 'team/thread-replied':
+      case 'team/claim-created':
+      case 'team/claim-done':
+      case 'team/claim-released':
+      case 'team/task-changed':
+      case 'team/thread-attention-changed':
+      case 'team/thread-read':
+      case 'team/member-removed':
+        return operation.data.inbox
+      default:
+        return undefined
+    }
   }
 
   threadHistory(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {

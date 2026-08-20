@@ -74,17 +74,45 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
               class="railWorkspace"
             >
               <button
-                aria-label="频道"
+                aria-label="Inbox"
                 class="railButton"
                 data-active="true"
                 type="button"
               >
                 <svg
+                  data-content="f869e73c"
+                  fill="none"
+                  height="16"
+                  viewBox="0 0 14 14"
+                  width="16"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </button>
+              <button
+                aria-label="频道"
+                class="railButton"
+                type="button"
+              >
+                <svg
+                  data-content="a606f920"
+                  fill="none"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  width="16"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </button>
+              <button
+                aria-label="Agents"
+                class="railButton"
+                type="button"
+              >
+                <svg
                   data-content="56ac24c5"
                   fill="none"
-                  height="18"
+                  height="16"
                   viewBox="0 0 16 16"
-                  width="18"
+                  width="16"
                   xmlns="http://www.w3.org/2000/svg"
                 />
               </button>
@@ -153,24 +181,31 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
       style="display: contents;"
     >
       <main
-        class="welcomeSurface"
-        data-team-conversation="true"
+        class="surface"
+        data-team-inbox="true"
       >
-        <div
-          class="welcome"
+        <header
+          class="header"
         >
-          <span
-            class="welcomeEyebrow"
+          <div>
+            <h1>
+              Inbox
+            </h1>
+            <p>
+              没有待处理更新
+            </p>
+          </div>
+        </header>
+        <section
+          aria-label="Inbox"
+          class="list"
+        >
+          <p
+            class="state"
           >
-            团队模式
-          </span>
-          <h1>
-            团队
-          </h1>
-          <p>
-            选择工作区 · Alpha
+            没有待处理更新
           </p>
-        </div>
+        </section>
       </main>
     </div>
   </div>

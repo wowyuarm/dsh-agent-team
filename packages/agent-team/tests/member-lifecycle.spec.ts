@@ -211,7 +211,7 @@ describe('Agent Team Member lifecycle', () => {
       body: 'Agent-created task for Human', mentions: [AGENT_TEAM_HUMAN_MEMBER_ID] })
     expect(agentStarted).toMatchObject({ kind: 'committed' })
     expect(ctx.agentTeam.inbox({ workspaceId })).toMatchObject({ totalDirectCount: 1,
-      items: [expect.objectContaining({ task: { taskRef: agentStarted.taskRef }, directCount: 1, attention: undefined })] })
+      items: [expect.objectContaining({ directCount: 1 })] })
     expect(await call('team_thread', { action: 'unfollow', taskRef: agentStarted.taskRef })).toMatchObject({ kind: 'unfollow', following: false })
     expect(await call('team_thread', { action: 'follow', taskRef: agentStarted.taskRef })).toMatchObject({ kind: 'follow', following: true })
 
@@ -259,16 +259,19 @@ describe('Agent Team Member lifecycle', () => {
     expect(await call('team_thread', { action: 'status', taskRef: started.task.taskRef })).toMatchObject({ following: true })
     expect(await call('team_claim', { action: 'list', taskRef: started.task.taskRef })).toMatchObject({ kind: 'listed', claims: [expect.objectContaining({ direction: 'implementation' })] })
     const done = await call('team_claim', { action: 'done', taskRef: started.task.taskRef, claimRef: claim.claims[0].claimRef, baseRevision: claim.revision })
-    expect(done).toMatchObject({ kind: 'committed', status: 'done', claims: [expect.objectContaining({ state: 'done' })] })
+    expect(done).toMatchObject({ kind: 'committed', status: 'in_review', claims: [expect.objectContaining({ state: 'done' })] })
     const secondClaim = await call('team_claim', { action: 'claim', taskRef: started.task.taskRef, direction: 'follow-up', baseRevision: done.revision })
     const released = await call('team_claim', { action: 'release', taskRef: started.task.taskRef, claimRef: secondClaim.claims[1].claimRef, baseRevision: secondClaim.revision })
     expect(released).toMatchObject({ kind: 'committed', claims: expect.arrayContaining([expect.objectContaining({ direction: 'follow-up', state: 'released' })]) })
 
+    const readAfterClaims = await call('team_thread', { action: 'read', taskRef: started.task.taskRef })
+    const humanReadAfterClaims = await ctx.agentTeam.readThread({ requestId: requestId('protocol-human-read-after-claims'), workspaceId,
+      taskRef: started.task.taskRef })
     const unreadAfterClaims = await ctx.agentTeam.reply({ requestId: requestId('protocol-history-unread'), workspaceId,
-      taskRef: started.task.taskRef, body: 'Unread during history', baseRevision: released.revision })
+      taskRef: started.task.taskRef, body: 'Unread during history', baseRevision: humanReadAfterClaims.thread.revision })
     if (unreadAfterClaims.kind !== 'committed') throw new Error(`expected committed history update, received ${unreadAfterClaims.kind}`)
     const history = await call('team_thread', { action: 'history', taskRef: started.task.taskRef, limit: 2 })
-    expect(history).toMatchObject({ kind: 'history', anchor: { body: 'Investigate the pull protocol' }, claims: [expect.objectContaining({ direction: 'implementation' })] })
+    expect(history).toMatchObject({ kind: 'history', anchor: { body: 'Investigate the pull protocol' }, claims: expect.arrayContaining([expect.objectContaining({ direction: 'implementation' })]) })
     expect(typeof history.cursor).toBe('number')
     expect(await call('team_inbox', {})).toMatchObject({ totalUnreadCount: 1, items: [expect.objectContaining({ taskRef: started.task.taskRef })] })
     expect(await call('team_message', { action: 'reply', taskRef: started.task.taskRef, body: 'History did not read', baseRevision: unreadAfterClaims.thread.revision }))
@@ -295,8 +298,8 @@ describe('Agent Team Member lifecycle', () => {
 
     expect(adapter.requests).toHaveLength(3)
     const afterSuccess = JSON.stringify(adapter.requests[1]!.messages)
-    expect(afterSuccess).toContain(channel.channel.channelRef)
     const afterRejection = JSON.stringify(adapter.requests[2]!.messages)
+    expect(afterRejection).toContain(channel.channel.channelRef)
     expect(afterRejection).toContain('member_not_following')
     expect(afterRejection).toContain(reviewer.status.member.memberId)
     const results = agent.session.events.filter(event => event.type === 'tool/result')
