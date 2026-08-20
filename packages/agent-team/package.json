@@ -63,6 +63,7 @@
   "peerDependencies": {
     "@deepseek-ai/dsh-agent": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-agent-default-model": ">=0.1.0-rc.5 <0.2.0",
+    "@deepseek-ai/dsh-agent-tool-presentation": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-agent-presets": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-tool-bash": ">=0.1.0-rc.5 <0.2.0",
     "@deepseek-ai/dsh-tool-pwsh": ">=0.1.0-rc.5 <0.2.0",

@@ -24,6 +24,8 @@ describe('Agent Team shipping contract', () => {
     expect(patch).not.toContain('dsh-tool-agent-team')
 
     expect(preset).toContain("name: '@deepseek-ai/dsh-tool-agent-team'")
+    expect(preset).toContain("name: '@deepseek-ai/dsh-agent-tool-presentation'")
+    expect(preset).toContain('mode: native')
     expect(preset).toContain("name: '@deepseek-ai/dsh-agent-team/member-context'")
     for (const capability of [
       '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
