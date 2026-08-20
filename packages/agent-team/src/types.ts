@@ -69,6 +69,14 @@ export interface AgentTeamAgentMemberStatus {
   readonly diagnostic?: string
 }
 
+/** Browser-safe Member identity with Host-only paths removed. */
+export type AgentTeamClientMember = Omit<AgentTeamAgentMember, 'privateMemoryPath'>
+
+/** Browser-safe lifecycle projection. */
+export interface AgentTeamClientMemberStatus extends Omit<AgentTeamAgentMemberStatus, 'member'> {
+  readonly member: AgentTeamClientMember
+}
+
 /** Workspace-scoped request used by the Client Remote projection. */
 export interface AgentTeamMembersRequest {
   readonly workspaceId: WorkspaceId

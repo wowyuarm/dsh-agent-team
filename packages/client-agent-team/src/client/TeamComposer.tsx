@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
-import type { AgentTeamAgentMemberStatus, AgentTeamMemberId } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@deepseek-ai/dsh-agent-team/types'
 import { IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -31,7 +31,7 @@ function containsMention(draft: string, handle: string): boolean {
   return new RegExp(`(?:^|[^\\p{L}\\p{N}_])@${escapeRegExp(handle)}(?=$|[^\\p{L}\\p{N}_])`, 'u').test(draft)
 }
 
-function mentionCandidates(members: readonly AgentTeamAgentMemberStatus[], query: string): readonly AgentTeamAgentMemberStatus[] {
+function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], query: string): readonly AgentTeamClientMemberStatus[] {
   const normalized = query.toLocaleLowerCase()
   return members.filter(status => status.presence !== 'unavailable'
     && status.member.state !== 'inactive'
@@ -39,7 +39,7 @@ function mentionCandidates(members: readonly AgentTeamAgentMemberStatus[], query
 }
 
 export function TeamComposer({ members, recipients, draft, disabled, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, t }: {
-  readonly members: readonly AgentTeamAgentMemberStatus[]
+  readonly members: readonly AgentTeamClientMemberStatus[]
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
   readonly disabled: boolean
@@ -107,7 +107,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
     updateMention(nextDraft, event.target.selectionStart ?? nextDraft.length)
   }
 
-  const selectMention = (member: AgentTeamAgentMemberStatus): void => {
+  const selectMention = (member: AgentTeamClientMemberStatus): void => {
     if (mention === undefined) return
     const inserted = `@${member.member.handle} `
     const nextDraft = `${draft.slice(0, mention.start)}${inserted}${draft.slice(mention.end)}`

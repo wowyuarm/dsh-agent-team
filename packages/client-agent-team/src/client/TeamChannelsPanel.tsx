@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
-  AgentTeamAgentMemberStatus,
+  AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
   AgentTeamCreateChannelRequest,
   AgentTeamMemberId,
@@ -31,7 +31,7 @@ interface TeamChannelsPanelProps {
 export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   const { workspaceId, loadMembers, loadChannels, createChannel, creatingAgents, selectedChannelRef, selectChannel, t } = props
   const [view, setView] = useState<AgentTeamView>()
-  const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
+  const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [formOpen, setFormOpen] = useState(false)

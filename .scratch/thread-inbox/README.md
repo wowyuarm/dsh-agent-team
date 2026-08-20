@@ -1,6 +1,6 @@
 # Thread Inbox / Team Member Context Handoff
 
-状态：Ticket 01/02/03/04 已完成，Ticket 05 可开始
+状态：Ticket 01/02/03/04/05 已完成，Ticket 06 可开始
 
 这是 Agent Team 下一阶段的唯一工作入口：Thread Inbox、Thread Attention、模型工具、Human Inbox、Team Member preset/private memory 和 preview 分层必须一起按本目录资料推进。
 
@@ -20,8 +20,8 @@
 02  Make Agent Thread Collaboration Pull-Based complete
 03  Wake Members from Durable Inbox State      complete
 04  Human Inbox and Thread Attention UX        complete
-05  Equip Team Members for Work and Memory     ready
-06  Preview Modes and Whole-Trace Acceptance   blocked by 03, 04, 05
+05  Equip Team Members for Work and Memory     complete
+06  Preview Modes and Whole-Trace Acceptance   ready
 ```
 
 当前没有需要保留的持久 Team 数据。Ticket 01 已直接切换到新模型，Ticket 02 已验证最终五工具的拉取式 Agent 协作协议，Ticket 04 已完成 Human Inbox/Thread surface；不得引入旧工具名、旧 Follow/Delivery 路径、双读写、迁移或兼容层。Host/ledger、五个工具、durable Inbox wake、命令、Client 和 Remote 变更已通过当前测试、构建和浏览器检查。

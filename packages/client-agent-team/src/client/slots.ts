@@ -4,7 +4,7 @@ import type {
   AgentTeamChannelRef,
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
-  AgentTeamAgentMemberStatus,
+  AgentTeamClientMemberStatus,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamJoinChannelRequest,
@@ -46,7 +46,7 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & TeamNavigationActions
   & {
     navigation: TeamNavigationSource
-    loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamAgentMemberStatus[]>>
+    loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
     loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
     loadChanges: (request: AgentTeamChangesRequest) => Promise<RemoteResult<AgentTeamChangesResult>>
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
@@ -72,7 +72,7 @@ export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'
   removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>
   changeTask: (request: AgentTeamTaskRequest) => Promise<RemoteResult<AgentTeamTaskResult>>
-  loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamAgentMemberStatus[]>>
+  loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
 }
 
 export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'team'> & {
@@ -82,7 +82,7 @@ export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'
 export interface TeamMemberGroup {
   readonly workspaceId: string
   readonly workspaceTitle: string
-  readonly members: readonly AgentTeamAgentMemberStatus[]
+  readonly members: readonly AgentTeamClientMemberStatus[]
 }
 
 export type TeamFooterProps = PropsRuntime<'sidebar.footer.action'> & PropsLocale<'team'> & TeamNavigationActions & {

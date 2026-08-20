@@ -54,6 +54,14 @@ Human close releases active Claims, ends Attention, and stops ordinary delivery.
 
 The Human Client uses `inbox`, `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`. `threadObservations` is a non-mutating Human-only projection of follow/unfollow Attention transitions for one Thread. Task creation's automatic initial Attention and read watermark updates are not displayed as observations. The Client stores only navigation mode and Workspace selection locally; unread state, Attention, revisions, and observations remain Host-owned.
 
+## Team Member context boundary
+
+The explicit `team-member` preset is a full coding composition: shell, filesystem and search, background-job controls, skills, todo tracking, compaction, the five Team tools, Workspace instruction discovery, and the private-memory context plugin. Ordinary Sessions do not inherit these Team rows.
+
+A Member keeps its project `cwd` at the Workspace path. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md` guidance; Team does not reimplement or relocate that discovery. Each Member's private root contains a lowercase `memory.md` index and on-demand `notes/`. At each safe pre-step, the Member sees at most its own changed index, framed as escaped, typed reference context. The index is bounded at 8 KiB; exceeding the budget produces a maintenance warning rather than silent truncation, deletion, or summarization. Notes are never automatically injected. Suspend/resume preserves the files, and permanent removal deletes the private root.
+
+Memory is not authority: it may be stale and cannot override Workspace instructions, direct Human input, or durable Team facts. Members should record only verified, durable knowledge and must not store credentials, sensitive data, guesses, chat logs, other Members' memory, or facts already owned by the Team ledger.
+
 ## Agent notification boundary
 
 The Host derives Agent notifications from durable unread state. An enabled Member receives one fixed, no-body hint directing it to `team_inbox` and `team_thread`; the hint contains no Thread Message, Claim, or Task body. The hint uses the Agent public safe-boundary API: an idle Agent starts a turn, while a running request or tool receives it at the next step boundary without interruption. Direct mentions are already prioritized by the durable Inbox projection; the wake mechanism does not inject their text.

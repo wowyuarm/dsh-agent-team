@@ -34,6 +34,7 @@ import type {
   AgentTeamClaimList,
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
+  AgentTeamClientMemberStatus,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamInbox,
@@ -173,7 +174,10 @@ export default class AgentTeam extends TypertRemoteService {
     this.ledger = ledger
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
-    for (const member of ledger.listMembers()) if (member.state === 'enabled') await this.activateMember(member)
+    for (const member of ledger.listMembers()) {
+      if (member.state === 'enabled') await this.activateMember(member)
+      else if (member.state === 'inactive') await this.cleanupRemovedMember(member)
+    }
   }
 
   /** Resolve one exact live Agent to its durable Team Member; forks do not inherit identity. */
@@ -191,9 +195,11 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Return only this Workspace's current Member projection to the Client. */
   @Remote('members')
-  membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamAgentMemberStatus[] {
+  membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamClientMemberStatus[] {
     this.requireWorkspace(request.workspaceId)
-    return this.members().filter(status => status.member.workspaceId === request.workspaceId)
+    return this.members()
+      .filter(status => status.member.workspaceId === request.workspaceId)
+      .map(({ member: { privateMemoryPath: _privateMemoryPath, ...member }, ...status }) => Object.freeze({ ...status, member: Object.freeze(member) }))
   }
 
   /** Wait for a lightweight projection invalidation without exposing ledger records. */
@@ -290,8 +296,7 @@ export default class AgentTeam extends TypertRemoteService {
       }
       this.diagnostics.delete(request.memberId)
       this.clearMemberNotificationState(request.memberId)
-      await this.ctx.workspaceRegistry.archiveSession(result.value.member.sessionId)
-      await rm(result.value.member.privateMemoryPath, { recursive: true, force: true })
+      await this.cleanupRemovedMember(result.value.member)
       return result.value
     })
   }
@@ -560,10 +565,19 @@ export default class AgentTeam extends TypertRemoteService {
   private async initializePrivateMemory(path: string): Promise<void> {
     await mkdir(join(path, 'notes'), { recursive: true })
     try {
-      await writeFile(join(path, 'memory.md'), '', { flag: 'wx' })
+      await writeFile(join(path, 'memory.md'), '# Member memory\n\n## Stable facts\n- Add only verified, durable facts that help future work.\n\n## Notes index\n- Add focused `notes/*.md` entries here when a reusable detail needs on-demand reading.\n', { flag: 'wx' })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }
+  }
+
+  private async cleanupRemovedMember(member: AgentTeamAgentMember): Promise<void> {
+    const results = await Promise.allSettled([
+      this.ctx.workspaceRegistry.archiveSession(member.sessionId),
+      rm(member.privateMemoryPath, { recursive: true, force: true }),
+    ])
+    const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length > 0) throw new AggregateError(failures, `failed to clean up removed Member '${member.memberId}'`)
   }
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {

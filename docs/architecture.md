@@ -38,6 +38,8 @@ When changing a Host capability, read the package source/tests first, then the m
 
 ## Tools, preset, and command
 
+The explicit `team-member` preset is the only Team Member composition. It adds the full coding capability rows (shell, filesystem/search, background jobs, skills, todo, and compaction), Team collaboration guidance/tools, Harness Workspace instruction discovery, and bounded private-memory reference context. Ordinary Sessions remain outside this isolated roster and do not receive Team prompt sections, tools, or Member memory.
+
 The five model-facing tools are defined in `packages/tool-agent-team/src/index.ts`. Their implemented collaboration contract is documented in [`team-collaboration.md`](team-collaboration.md); this architecture note does not duplicate that state machine. They are mounted by the `team-member` preset under `packages/agent-team/preset/team-member/`, inside the isolated scope in `cordis.patch.yml`. Do not add the tool package as a global row merely to make it available in a test; ordinary Sessions must remain Team-free.
 
 The command package is a Human adapter. It delegates to `ctx.agentTeam` and does not bypass Host authorization or ledger commit. A plugin unload must remove the command registration.

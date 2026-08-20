@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type {
-  AgentTeamAgentMemberStatus,
+  AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
   AgentTeamMemberId,
@@ -78,7 +78,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   } = props
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
-  const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
+  const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [observations, setObservations] = useState<readonly AgentTeamThreadAttentionObservation[]>([])
   const [currentFacts, setCurrentFacts] = useState<readonly AgentTeamThreadFact[]>([])
   const [olderFacts, setOlderFacts] = useState<readonly AgentTeamThreadFact[]>([])

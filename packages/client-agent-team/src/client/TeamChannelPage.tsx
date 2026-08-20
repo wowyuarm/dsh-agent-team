@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
@@ -24,7 +24,7 @@ interface TeamChannelPageProps {
 
 export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
-  const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
+  const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(true)

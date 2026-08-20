@@ -1,9 +1,9 @@
 import { StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AgentTeamAgentMemberStatus } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus } from '@deepseek-ai/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import css from './presence.module.css'
 
-export function presenceLabel(status: AgentTeamAgentMemberStatus, t: TeamSidebarProps['t']): string {
+export function presenceLabel(status: AgentTeamClientMemberStatus, t: TeamSidebarProps['t']): string {
   const label = status.presence === 'available' ? t('statusAvailable')
     : status.presence === 'working' ? t('statusWorking')
       : status.presence === 'error' ? t('statusError') : t('statusUnavailable')
@@ -11,7 +11,7 @@ export function presenceLabel(status: AgentTeamAgentMemberStatus, t: TeamSidebar
 }
 
 export function TeamPresenceDot({ status, t }: {
-  readonly status: AgentTeamAgentMemberStatus
+  readonly status: AgentTeamClientMemberStatus
   readonly t: TeamSidebarProps['t']
 }) {
   const label = presenceLabel(status, t)

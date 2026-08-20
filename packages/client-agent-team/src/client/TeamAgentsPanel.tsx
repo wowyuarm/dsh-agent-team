@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
-  AgentTeamAgentMemberStatus,
+  AgentTeamClientMemberStatus,
   AgentTeamChannel,
   AgentTeamRequestId,
 } from '@deepseek-ai/dsh-agent-team/types'
@@ -22,7 +22,7 @@ interface TeamAgentsPanelProps {
 }
 
 export function TeamAgentsPanel({ workspaceId, loadMembers, loadChannels, addMember, onCreatingChange, t }: TeamAgentsPanelProps) {
-  const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
+  const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
   const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
   const [loading, setLoading] = useState(true)

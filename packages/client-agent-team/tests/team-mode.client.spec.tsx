@@ -39,7 +39,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: string) => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
-      presetId: 'team-member', privateMemoryPath: `/memory/${memberId}`, state: 'enabled', sessionId: `session:${memberId}`,
+      presetId: 'team-member', state: 'enabled', sessionId: `session:${memberId}`,
     },
     availability: presence === 'unavailable' ? 'unavailable' : 'active',
     presence,
@@ -56,7 +56,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     status: {
       member: {
         memberId: 'member:new', workspaceId: request.workspaceId, handle: request.handle, description: request.description,
-        presetId: request.presetId, privateMemoryPath: '/memory/new', state: 'enabled', sessionId: 'session:new',
+        presetId: request.presetId, state: 'enabled', sessionId: 'session:new',
       },
       availability: 'active', presence: 'available',
     },

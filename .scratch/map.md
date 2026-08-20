@@ -1,7 +1,7 @@
 # dsh-agent-team 工作区索引
 
 日期：2026-08-19
-状态：D1-D27、M1 与 M2 functional baseline 已完成；UI native-feel redesign 已完成。当前 frontier 为 Thread Inbox、Attention、Team Member context 与 preview 分层。
+状态：D1-D27、M1 与 M2 functional baseline 已完成；UI native-feel redesign 已完成。当前 frontier 为 Ticket 06 preview 分层与 whole-trace acceptance。
 位置：本仓库 `.scratch/`（独立项目 dsh-agent-team；探索性内容，不走 docs gate）。
 
 ## 目的
@@ -68,7 +68,7 @@
 - **M1 已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/09-ship-m1-runnable-composition.md`（REAL Loader/Agent/Session/command/tool/persistence workflow、SQLite 文件重开、durable failure windows、并发线性化、remove/archive 补偿、teardown、npm build/pack 与 opt-in preset shipping 均有自动验证）。
 - **M2 functional baseline 已完成**：`m2-ui/issues/01-*.md` 至 `06-*.md` 的领域与交互闭环已交付。
 - **UI redesign 已完成**：`ui-redesign/issues/01-*.md` 至 `06-*.md` 已完成；其视觉/UI 证据仍供后续 Inbox UI 修改参考。
-- **当前 frontier**：Ticket 01/02/03/04 已完成；`thread-inbox/issues/05-full-coding-member-private-context.md` 可开始，Ticket 06 仍依赖 Ticket 05。
+- **当前 frontier**：Ticket 01/02/03/04/05 已完成；`thread-inbox/issues/06-preview-modes-whole-trace-acceptance.md` 可开始。
 - **实施边界**：Thread Inbox 改变 Host、ledger、typed Remote、tools、preset、Client 和 preview；仍不修改 Harness core、agent loop 或 shipped defaults。
 - **本轮明确延期**：Agent DM、附件、搜索、URL、Model/provider 选择、跨 Workspace Inbox、浏览器/桌面通知和多 Human Members。
 
