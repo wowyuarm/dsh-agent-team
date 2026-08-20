@@ -24,11 +24,11 @@ profile 必须提供当前组合所需的 Harness 服务。发布包包含构建
 
 ## 组合内容
 
-Host 包提供 `agentTeam` Service、operation ledger、Team 管理的 Agent 生命周期、Channel membership 和 durable Inbox admission，command 包注册 `/team`。随包的 opt-in `team-member` preset 提供 Team guidance、按 membership 授权的 `team_send`、`team_view`、`team_claim`、`team_follow`，以及隔离的 compaction service。Host patch 同时挂载两个 invariant companion。
+Host 包提供 `agentTeam` Service、operation ledger、Team 管理的 Agent 生命周期、Channel membership 和持久 Thread Inbox，command 包注册 `/team`。随包的 opt-in `team-member` preset 提供 Team guidance，以及按 membership 授权的 `team_inbox`、`team_thread`、`team_message`、`team_claim`、`team_view` 五个工具，并提供隔离的 compaction service。Host patch 同时挂载两个 invariant companion。已实现的拉取式协作协议见 [`docs/team-collaboration.md`](docs/team-collaboration.md)。
 
 Bundle 使用 profile 已有的 Host provider，不替换 `agents`、默认模型选择、`tools`、filesystem/shell、sandbox policy、Session store/persistence、Workspace registry 或 storage；这些服务保持 singleton。Team 管理的 session 持久使用 `danger-full-access`，普通 session 继续使用 profile 原有策略。Preset tool 冲突会在 unpublished setup 内失败，只让对应 Member unavailable。
 
-一个 DSH home 对应一个协作域。operation ledger 是持久权威；Channel、Message、Task、Thread、Follow 和 Delivery 投影都由已提交 Operation 派生。
+一个 DSH home 对应一个协作域。operation ledger 是持久权威；Channel、Message、Task、Thread、Claim、Thread Attention 和 Inbox 投影都由已提交 Operation 派生。
 
 ## 开发
 

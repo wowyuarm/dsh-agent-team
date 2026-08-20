@@ -24,11 +24,11 @@ The profile must include the Harness packages that provide the injected services
 
 ## Composition
 
-The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Inbox admission. The command package registers `/team`. The shipped opt-in `team-member` preset provides Team guidance, membership-authorized `team_send`, `team_view`, `team_claim`, and `team_follow`, plus an isolated compaction service. The Host patch mounts both invariant companions.
+The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Thread Inbox. The command package registers `/team`. The shipped opt-in `team-member` preset provides Team guidance and the membership-authorized `team_inbox`, `team_thread`, `team_message`, `team_claim`, and `team_view` tools, plus an isolated compaction service. The Host patch mounts both invariant companions. The implemented pull-based protocol is documented in [`docs/team-collaboration.md`](docs/team-collaboration.md).
 
 The bundle consumes the profile's existing Host providers instead of replacing them: `agents`, default model selection, `tools`, filesystem/shell, sandbox policy, Session store/persistence, Workspace registry, and storage remain singletons. Team-managed sessions persist `danger-full-access`; ordinary sessions keep the profile's normal policy. A conflicting preset tool registration fails inside unpublished setup and makes only that Member unavailable.
 
-The Team is one collaboration domain per DSH home. Its operation ledger is the durable authority; Channel, Message, Task, Thread, Follow, and Delivery projections are derived from committed operations.
+The Team is one collaboration domain per DSH home. Its operation ledger is the durable authority; Channel, Message, Task, Thread, Claim, Thread Attention, and Inbox projections are derived from committed operations.
 
 ## Development
 

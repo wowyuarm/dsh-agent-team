@@ -9,7 +9,8 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
-import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { CallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -17,7 +18,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import AgentTeam, { AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
+import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
 import { apply as applyAgentTeamTools } from '@deepseek-ai/dsh-tool-agent-team'
 import type { AgentTeamChannelRef, AgentTeamRequestId } from '../src/types.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -34,10 +35,58 @@ afterEach(async () => {
 
 class EmptyAdapter extends LlmAdapter {
   override resolveModel(provider: string, model: string) { return Promise.resolve({ provider, id: model, name: model }) }
-  async * stream(): AsyncIterable<never> { return }
+  async * stream(_options: GenerateOptions): AsyncIterable<StreamChunk> { return }
 }
 
-async function realHarness(): Promise<{
+class ScriptedAdapter extends EmptyAdapter {
+  readonly requests: GenerateOptions[] = []
+  private readonly responses: StreamChunk[][] = []
+
+  enqueue(response: StreamChunk[]): void {
+    this.responses.push(response)
+  }
+
+  override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.requests.push(options)
+    const response = this.responses.shift()
+    if (response === undefined) throw new Error('ScriptedAdapter response queue is empty')
+    for (const chunk of response) yield chunk
+  }
+}
+
+function toolCallResponse(rawCallId: string, name: string, args: object): StreamChunk[] {
+  const id = CallId(rawCallId)
+  const argumentsJson = JSON.stringify(args)
+  return [
+    { type: 'block-start', index: 0, blockType: 'tool-call' },
+    { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: argumentsJson },
+    { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: argumentsJson } },
+    { type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } },
+    { type: 'finish', reason: { kind: 'tool-calls' } },
+  ]
+}
+
+function textResponse(text: string): StreamChunk[] {
+  return [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text },
+    { type: 'block-end', index: 0, block: { type: 'text', text } },
+    { type: 'usage', usage: { inputTokens: 10, outputTokens: text.length } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]
+}
+
+function waitForIdle(ctx: Context, agent: NonNullable<ReturnType<Context['agents']['get']>>): Promise<void> {
+  return new Promise(resolve => {
+    const dispose = ctx.on('agent/status', ({ agent: subject, status }) => {
+      if (subject !== agent || status !== 'idle') return
+      dispose()
+      resolve()
+    })
+  })
+}
+
+async function realHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<{
   readonly ctx: Context
   readonly workspaceId: WorkspaceId
   readonly root: string
@@ -70,7 +119,7 @@ async function realHarness(): Promise<{
     },
   } as unknown as NonNullable<typeof ctx.loader.internal>
   await ctx.plugin(LlmRuntime)
-  ctx.llm.registerAdapter(['mock'], new EmptyAdapter())
+  ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SessionStore)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -131,6 +180,131 @@ describe('Agent Team Member lifecycle', () => {
     const first = await ctx.agentTeam.addMember({ requestId: requestId('first'), workspaceId, handle: 'first', description: 'First', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     await expect(ctx.agentTeam.addMember({ requestId: requestId('duplicate'), workspaceId, handle: 'FIRST', description: 'Duplicate', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).rejects.toThrow(/already active/)
     expect(first.status.member.state).toBe('enabled')
+  })
+
+  it('runs the five-tool pull protocol through one live Team Member', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('protocol-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('protocol-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const reviewer = await ctx.agentTeam.addMember({ requestId: requestId('protocol-reviewer'), workspaceId, handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    let callNumber = 0
+    const call = async (name: string, args: unknown) => {
+      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-protocol-${++callNumber}`), name, arguments: args, agent })
+      expect(result.isError).toBe(false)
+      expect(result.concludesTurn).toBeUndefined()
+      if (result.isError) throw new Error(result.error.message)
+      return result.value as Record<string, any>
+    }
+
+    const discovered = await call('team_view', {})
+    expect(discovered.channels).toEqual([{ channelRef: channel.channel.channelRef, name: 'engineering' }])
+    expect(discovered.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'human' }),
+      expect.objectContaining({ memberId: builder.status.member.memberId, handle: 'builder' }),
+      expect.objectContaining({ memberId: reviewer.status.member.memberId, handle: 'reviewer' }),
+    ]))
+    expect(discovered).not.toHaveProperty('items')
+    expect(ctx.tools.schemas(agent).every(schema => !Object.hasOwn(schema.parameters.properties ?? {}, 'workspaceId'))).toBe(true)
+
+    const agentStarted = await call('team_message', { action: 'start', channelRef: channel.channel.channelRef,
+      body: 'Agent-created task for Human', mentions: [AGENT_TEAM_HUMAN_MEMBER_ID] })
+    expect(agentStarted).toMatchObject({ kind: 'committed' })
+    expect(ctx.agentTeam.inbox({ workspaceId })).toMatchObject({ totalDirectCount: 1,
+      items: [expect.objectContaining({ task: { taskRef: agentStarted.taskRef }, directCount: 1, attention: undefined })] })
+    expect(await call('team_thread', { action: 'unfollow', taskRef: agentStarted.taskRef })).toMatchObject({ kind: 'unfollow', following: false })
+    expect(await call('team_thread', { action: 'follow', taskRef: agentStarted.taskRef })).toMatchObject({ kind: 'follow', following: true })
+
+    const beforeRejectedStart = ctx.agentTeam.status().sequence
+    expect(await call('team_message', { action: 'start', channelRef: channel.channel.channelRef, body: 'Do not enroll', mentions: [reviewer.status.member.memberId] }))
+      .toMatchObject({ kind: 'member_not_following', memberIds: [reviewer.status.member.memberId] })
+    expect(ctx.agentTeam.status().sequence).toBe(beforeRejectedStart)
+
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('protocol-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate the pull protocol' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const background = await ctx.agentTeam.reply({ requestId: requestId('protocol-background'), workspaceId, taskRef: started.task.taskRef, body: 'Older context', baseRevision: started.thread.revision })
+    if (background.kind !== 'committed') throw new Error(`expected committed background, received ${background.kind}`)
+    const held = await ctx.agentTeam.reply({ requestId: requestId('protocol-invite'), workspaceId, taskRef: started.task.taskRef, body: 'Builder, please investigate', baseRevision: background.thread.revision, recipients: [builder.status.member.memberId] })
+    if (held.kind !== 'confirmation_required') throw new Error(`expected confirmation, received ${held.kind}`)
+    const invitation = await ctx.agentTeam.reply({ requestId: requestId('protocol-invite-confirmed'), workspaceId, taskRef: started.task.taskRef, body: 'Builder, please investigate', baseRevision: background.thread.revision, recipients: [builder.status.member.memberId], confirmationToken: held.confirmationToken })
+    if (invitation.kind !== 'committed') throw new Error(`expected committed invitation, received ${invitation.kind}`)
+
+    const inbox = await call('team_inbox', {})
+    expect(inbox).toMatchObject({ totalDirectCount: 1, items: [expect.objectContaining({ taskRef: started.task.taskRef, directCount: 1 })] })
+    expect(JSON.stringify(inbox)).not.toContain('Builder, please investigate')
+
+    const firstRead = await call('team_thread', { action: 'read', taskRef: started.task.taskRef })
+    expect(firstRead).toMatchObject({
+      kind: 'read', taskRef: started.task.taskRef, status: 'todo', resolution: 'open', following: true,
+      anchor: { body: 'Investigate the pull protocol' }, claims: [],
+    })
+    expect(firstRead.facts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ body: 'Older context', unread: false }),
+      expect.objectContaining({ body: 'Builder, please investigate', unread: true, direct: true }),
+    ]))
+
+    const update = await ctx.agentTeam.reply({ requestId: requestId('protocol-update'), workspaceId, taskRef: started.task.taskRef, body: 'New evidence', baseRevision: invitation.thread.revision })
+    if (update.kind !== 'committed') throw new Error(`expected committed update, received ${update.kind}`)
+    expect(await call('team_message', { action: 'reply', taskRef: started.task.taskRef, body: 'Premature reply', baseRevision: invitation.thread.revision }))
+      .toMatchObject({ kind: 'unread_required', revision: update.thread.revision, unreadCount: 1 })
+    await call('team_thread', { action: 'read', taskRef: started.task.taskRef })
+    expect(await call('team_message', { action: 'reply', taskRef: started.task.taskRef, body: 'Stale reply', baseRevision: invitation.thread.revision }))
+      .toMatchObject({ kind: 'stale_revision', expectedRevision: invitation.thread.revision, revision: update.thread.revision })
+    const reply = await call('team_message', { action: 'reply', taskRef: started.task.taskRef, body: 'Current reply', baseRevision: update.thread.revision })
+    expect(reply).toMatchObject({ kind: 'committed', taskRef: started.task.taskRef })
+
+    expect(await call('team_thread', { action: 'unfollow', taskRef: started.task.taskRef })).toMatchObject({ following: false })
+    const claim = await call('team_claim', { action: 'claim', taskRef: started.task.taskRef, direction: 'implementation', baseRevision: reply.revision })
+    expect(claim).toMatchObject({ kind: 'committed', threadRef: started.thread.threadRef, status: 'in_progress', claims: [expect.objectContaining({ owner: builder.status.member.memberId, direction: 'implementation', state: 'active' })] })
+    expect(await call('team_thread', { action: 'status', taskRef: started.task.taskRef })).toMatchObject({ following: true })
+    expect(await call('team_claim', { action: 'list', taskRef: started.task.taskRef })).toMatchObject({ kind: 'listed', claims: [expect.objectContaining({ direction: 'implementation' })] })
+    const done = await call('team_claim', { action: 'done', taskRef: started.task.taskRef, claimRef: claim.claims[0].claimRef, baseRevision: claim.revision })
+    expect(done).toMatchObject({ kind: 'committed', status: 'done', claims: [expect.objectContaining({ state: 'done' })] })
+    const secondClaim = await call('team_claim', { action: 'claim', taskRef: started.task.taskRef, direction: 'follow-up', baseRevision: done.revision })
+    const released = await call('team_claim', { action: 'release', taskRef: started.task.taskRef, claimRef: secondClaim.claims[1].claimRef, baseRevision: secondClaim.revision })
+    expect(released).toMatchObject({ kind: 'committed', claims: expect.arrayContaining([expect.objectContaining({ direction: 'follow-up', state: 'released' })]) })
+
+    const unreadAfterClaims = await ctx.agentTeam.reply({ requestId: requestId('protocol-history-unread'), workspaceId,
+      taskRef: started.task.taskRef, body: 'Unread during history', baseRevision: released.revision })
+    if (unreadAfterClaims.kind !== 'committed') throw new Error(`expected committed history update, received ${unreadAfterClaims.kind}`)
+    const history = await call('team_thread', { action: 'history', taskRef: started.task.taskRef, limit: 2 })
+    expect(history).toMatchObject({ kind: 'history', anchor: { body: 'Investigate the pull protocol' }, claims: [expect.objectContaining({ direction: 'implementation' })] })
+    expect(typeof history.cursor).toBe('number')
+    expect(await call('team_inbox', {})).toMatchObject({ totalUnreadCount: 1, items: [expect.objectContaining({ taskRef: started.task.taskRef })] })
+    expect(await call('team_message', { action: 'reply', taskRef: started.task.taskRef, body: 'History did not read', baseRevision: unreadAfterClaims.thread.revision }))
+      .toMatchObject({ kind: 'unread_required', unreadCount: 1 })
+    await call('team_thread', { action: 'read', taskRef: started.task.taskRef })
+    expect(await call('team_inbox', {})).toMatchObject({ totalUnreadCount: 0, items: [] })
+  })
+
+  it('returns a rejected Team result to the next model step without ending the turn', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('loop-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('loop-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const reviewer = await ctx.agentTeam.addMember({ requestId: requestId('loop-reviewer'), workspaceId, handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    adapter.enqueue(toolCallResponse('model-team-view', 'team_view', {}))
+    adapter.enqueue(toolCallResponse('model-team-rejected', 'team_message', { action: 'start', channelRef: channel.channel.channelRef,
+      body: 'Attempted invitation', mentions: [reviewer.status.member.memberId] }))
+    adapter.enqueue(textResponse('I will continue without enrolling the reviewer.'))
+
+    const idle = waitForIdle(ctx, agent)
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Start the task.' }], source: { kind: 'user' } }))
+    await idle
+
+    expect(adapter.requests).toHaveLength(3)
+    const afterSuccess = JSON.stringify(adapter.requests[1]!.messages)
+    expect(afterSuccess).toContain(channel.channel.channelRef)
+    const afterRejection = JSON.stringify(adapter.requests[2]!.messages)
+    expect(afterRejection).toContain('member_not_following')
+    expect(afterRejection).toContain(reviewer.status.member.memberId)
+    const results = agent.session.events.filter(event => event.type === 'tool/result')
+    expect(results).toHaveLength(2)
+    expect(results.map(result => result.data.message.content[0])).toEqual([
+      expect.objectContaining({ type: 'tool-result', isError: false }),
+      expect.objectContaining({ type: 'tool-result', isError: false }),
+    ])
   })
 
   it('validates the final five-tool Team marker during unpublished setup', async () => {

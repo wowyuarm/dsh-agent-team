@@ -29,7 +29,7 @@ Keep production code self-explanatory through clear names, types, and structure.
 ## Architecture guardrails
 
 - `packages/agent-team` is the only Team authority. Its append-only operation ledger is the durable source of Team facts; projections, tools, commands, Remote, and UI do not maintain parallel authority.
-- `packages/tool-agent-team` provides the four model-facing Team tools only through the explicit `team-member` preset. `packages/command-agent-team` is a Human `/team` adapter, not a second authority.
+- `packages/tool-agent-team` provides the five model-facing Team tools only through the explicit `team-member` preset. `packages/command-agent-team` is a Human `/team` adapter, not a second authority.
 - Team is an external plugin. Do not modify `../deepseek-harness`, its agent loop, or shipped defaults for ordinary Team work. If a public Harness extension point is insufficient, record the limitation and decide whether to implement a Team-owned plugin or change the design.
 - Typed Remote declarations are the input; Typert artifacts are generated. Never hand-edit `packages/agent-team/lib/typert.*`.
 - The Client uses public Harness plugin and slot APIs. Mount the generated Remote, wait for `remote.agentTeam`, and use `ctx.slots.inject()` when a declaration may not exist yet; `dsh.client.inject` is not an activation-order guarantee.
