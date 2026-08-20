@@ -30,8 +30,8 @@ The Team is one collaboration domain per DSH home. Its append-only operation led
 - A mutation enters through the Host authority and commits one durable operation.
 - Projections, Inbox results, tools, commands, Remote responses, and UI derive from committed operations.
 - Client code must not interpret ledger records or create a parallel authority.
-- Agent lifecycle, JSON/SQLite replay, authorization, idempotency, and revision checks stay on the Host side.
-- Thread Attention is private Member x Thread state. Ordinary unread comes from current Attention; structured mentions create direct markers. The Host is the only Inbox authority; no Session inbox or model-context injection is maintained by this package.
+- Agent lifecycle, JSON/SQLite replay, authorization, idempotency, and revision checks stay on the Host side. Durable unread changes may produce one coalesced, body-free Agent Inbox hint through the public Agent safe-boundary API; this notification is not a second authority and does not promise exactly-once model processing.
+- Thread Attention is private Member x Thread state. Ordinary unread comes from current Attention; structured mentions create direct markers. The Host is the only Inbox authority. Session history may retain the generic wake hint, but never Thread bodies or a parallel unread projection.
 - Team-managed Agent sessions use the explicit Team preset and its trusted `danger-full-access` policy. This is an intentional product boundary for trusted workspaces.
 
 When changing a Host capability, read the package source/tests first, then the matching Harness capability contract. The navigation table in [`harness-navigation.md`](harness-navigation.md) maps Host changes to `deepseek-harness/docs/subsystems/` and source packages.

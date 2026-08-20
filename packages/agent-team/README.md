@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The Host capability for one Agent Team in a dshHome. `ctx.agentTeam` owns the append-only operation ledger, reconstructs the current collaboration projection, and is the lifecycle owner for member Agents managed by the same capability. Thread Attention and the Member Inbox are durable Host projections; this package does not run a Session delivery worker. The [Agent Team architecture note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md) owns the persistence and package-topology decisions.
+The Host capability for one Agent Team in a dshHome. `ctx.agentTeam` owns the append-only operation ledger, reconstructs the current collaboration projection, and is the lifecycle owner for member Agents managed by the same capability. Thread Attention and the Member Inbox are durable Host projections. When unread state changes, this package sends one coalesced, body-free hint through the Agent's public safe-boundary API; it never interrupts an active request or acts as a Session delivery worker. The [Agent Team architecture note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md) owns the persistence and package-topology decisions.
 
 ## Service contract
 
@@ -20,7 +20,7 @@ Member creation commits one stable Member/session/Workspace/preset/private-memor
 
 Every team-managed session records `danger-full-access`. Project cwd remains the Workspace path, while private memory lives under `$DSH_HOME/agent-team/members/<memberId>/`. Ordinary sessions and forks receive no Team identity.
 
-Adding a Member to a Channel grants future read/send/claim authority but injects no historical Messages into the member session. Thread Attention starts when a Task is created, a Claim is created, a member follows, or a Human confirms an invitation. Ordinary unread is derived from Attention; structured mentions create durable direct markers. `team_inbox` and Thread reads are Host projections, not Session inbox contents.
+Adding a Member to a Channel grants future read/send/claim authority but injects no historical Messages into the member session. Thread Attention starts when a Task is created, a Claim is created, a member follows, or a Human confirms an invitation. Ordinary unread is derived from Attention; structured mentions create durable direct markers. `team_inbox` and Thread reads are Host projections, not Session inbox contents. An enabled Member receives only a fixed prompt to inspect `team_inbox`; the prompt carries no Thread body. Pending hints are coalesced, ignored hints do not loop, and resume/error recovery derives a new hint from durable unread state.
 
 Member replies require the exact current Thread revision and atomically update Message and Thread facts. Unread work must be read before a mutation; stale revisions are rejected after that unread gate. A closed Task rejects replies and new Attention; reopening restores the Task without restoring prior Attention. A Human mention of an unfollowed Agent requires a process-local, one-use confirmation token before any operation is committed. Claim/done/release and Task changes are ordered host-authored Activities. Active Claims exclude only the same normalized Direction; different Directions can run concurrently. Task state is derived from Claims unless Human acceptance or closure overrides it. Close releases active Claims and clears Thread Attention atomically. Member removal marks the member inactive, releases owned active Claims, clears its Attention and direct markers, and archives the session after the durable commit. Message and Activity facts share one bounded sequence cursor.
 
@@ -38,7 +38,7 @@ A team-enabled preset registers the five tools in its own agent scope and marks 
 
 #### What the model sees
 
-Nothing from this package. `ctx.agentTeam` registers no prompt, tool, schema, or model-visible message; model-facing Agent Team Consumers own those effects.
+An enabled Member may receive one fixed, body-free Inbox hint after durable unread work appears: `Team Inbox has unread work. Use team_inbox to triage it, then team_thread to read the relevant Thread.` The hint is queued at the Agent's safe step boundary, so active model requests and tools are not interrupted. The model must use Team tools to read facts; no Thread body is injected. Model-facing Agent Team Consumers own the tools and protocol.
 
 #### Token effect
 

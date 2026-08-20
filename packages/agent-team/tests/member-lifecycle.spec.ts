@@ -54,6 +54,24 @@ class ScriptedAdapter extends EmptyAdapter {
   }
 }
 
+class GatedAdapter extends ScriptedAdapter {
+  readonly started = Promise.withResolvers<void>()
+  readonly release = Promise.withResolvers<void>()
+  private first = true
+
+  override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (!this.first) {
+      yield* super.stream(options)
+      return
+    }
+    this.first = false
+    this.requests.push(options)
+    this.started.resolve()
+    await this.release.promise
+    for (const chunk of textResponse('Initial work finished.')) yield chunk
+  }
+}
+
 function toolCallResponse(rawCallId: string, name: string, args: object): StreamChunk[] {
   const id = CallId(rawCallId)
   const argumentsJson = JSON.stringify(args)
@@ -308,6 +326,137 @@ describe('Agent Team Member lifecycle', () => {
       expect.objectContaining({ type: 'tool-result', isError: false }),
       expect.objectContaining({ type: 'tool-result', isError: false }),
     ])
+  })
+
+  it('coalesces updates and delivers a running Member hint only at the next step boundary', async () => {
+    const adapter = new GatedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('safe-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('safe-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('safe-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate safe delivery' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('safe-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+    let revision = (await ctx.agentTeam.readThread({ requestId: requestId('safe-human-read'), workspaceId, taskRef: started.task.taskRef })).thread.revision
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Start ordinary project work.' }], source: { kind: 'user' } }))
+    await adapter.started.promise
+
+    const first = await ctx.agentTeam.reply({ requestId: requestId('safe-update-1'), workspaceId, taskRef: started.task.taskRef, body: 'First hidden update', baseRevision: revision })
+    if (first.kind !== 'committed') throw new Error(`expected committed reply, received ${first.kind}`)
+    revision = first.thread.revision
+    const second = await ctx.agentTeam.reply({ requestId: requestId('safe-update-2'), workspaceId, taskRef: started.task.taskRef, body: 'Second hidden update', baseRevision: revision })
+    if (second.kind !== 'committed') throw new Error(`expected committed reply, received ${second.kind}`)
+    expect(adapter.requests).toHaveLength(1)
+    adapter.enqueue(textResponse('I will triage Team Inbox next.'))
+    adapter.release.resolve()
+    await agent.whenIdle()
+
+    expect(adapter.requests).toHaveLength(2)
+    const safeBoundaryRequest = JSON.stringify(adapter.requests[1]!.messages)
+    expect(safeBoundaryRequest).toContain('Team Inbox has unread work')
+    expect(safeBoundaryRequest).not.toContain('First hidden update')
+    expect(safeBoundaryRequest).not.toContain('Second hidden update')
+    const hints = agent.session.events.filter(event => event.type === 'user/message'
+      && JSON.stringify(event.data).includes('Team Inbox has unread work'))
+    expect(hints).toHaveLength(1)
+  })
+
+  it('wakes an idle Member from durable Inbox state without injecting Thread bodies', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('wake-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('wake-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('wake-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate the wake path' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('wake-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('wake-human-read'), workspaceId, taskRef: started.task.taskRef })
+    adapter.enqueue(textResponse('I will inspect Team Inbox.'))
+    const first = await ctx.agentTeam.reply({ requestId: requestId('wake-reply-1'), workspaceId, taskRef: started.task.taskRef, body: 'Please inspect the durable wake.', baseRevision: humanRead.thread.revision })
+    if (first.kind !== 'committed') throw new Error(`expected committed reply, received ${first.kind}`)
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    expect(JSON.stringify(adapter.requests[0]!.messages)).toContain('Team Inbox has unread work')
+    expect(JSON.stringify(adapter.requests[0]!.messages)).not.toContain('Please inspect the durable wake.')
+
+    adapter.enqueue(textResponse('I will triage both updates.'))
+    const second = await ctx.agentTeam.reply({ requestId: requestId('wake-reply-2'), workspaceId, taskRef: started.task.taskRef, body: 'A second update should coalesce.', baseRevision: first.thread.revision })
+    if (second.kind !== 'committed') throw new Error(`expected committed reply, received ${second.kind}`)
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(2)
+    expect(JSON.stringify(adapter.requests[1]!.messages)).not.toContain('A second update should coalesce.')
+  })
+
+  it('recovers a needed hint from durable unread state on Member resume', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('resume-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('resume-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('resume-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate resume recovery' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('resume-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('resume-human-read'), workspaceId, taskRef: started.task.taskRef })
+    await ctx.agentTeam.suspendMember({ requestId: requestId('resume-suspend'), memberId: builder.status.member.memberId })
+    const update = await ctx.agentTeam.reply({ requestId: requestId('resume-update'), workspaceId, taskRef: started.task.taskRef, body: 'Unread while suspended', baseRevision: humanRead.thread.revision })
+    if (update.kind !== 'committed') throw new Error(`expected committed reply, received ${update.kind}`)
+
+    adapter.enqueue(textResponse('I will inspect recovered Inbox work.'))
+    await ctx.agentTeam.resumeMember({ requestId: requestId('resume-enable'), memberId: builder.status.member.memberId })
+    const resumed = ctx.agents.get(builder.status.member.sessionId)!
+    await resumed.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    const request = JSON.stringify(adapter.requests[0]!.messages)
+    expect(request).toContain('Team Inbox has unread work')
+    expect(request).not.toContain('Unread while suspended')
+  })
+
+  it('reissues a durable hint when a failed Member starts recovery work', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('error-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('error-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('error-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate error recovery' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('error-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('error-human-read'), workspaceId, taskRef: started.task.taskRef })
+    const update = await ctx.agentTeam.reply({ requestId: requestId('error-update'), workspaceId, taskRef: started.task.taskRef, body: 'Unread through runtime error', baseRevision: humanRead.thread.revision })
+    if (update.kind !== 'committed') throw new Error(`expected committed reply, received ${update.kind}`)
+    await agent.whenIdle()
+    expect(ctx.agentTeam.members().find(status => status.member.memberId === builder.status.member.memberId)?.presence).toBe('error')
+
+    adapter.enqueue(textResponse('I will recover by inspecting Team Inbox.'))
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Recover now.' }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+    const request = JSON.stringify(adapter.requests.at(-1)!.messages)
+    expect(request).toContain('Team Inbox has unread work')
+    expect(request).not.toContain('Unread through runtime error')
+  })
+
+  it('reissues a needed hint from durable unread state after Host remount', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, teamFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('remount-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('remount-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('remount-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate remount recovery' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('remount-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('remount-human-read'), workspaceId, taskRef: started.task.taskRef })
+    const update = await ctx.agentTeam.reply({ requestId: requestId('remount-update'), workspaceId, taskRef: started.task.taskRef, body: 'Unread across Host remount', baseRevision: humanRead.thread.revision })
+    if (update.kind !== 'committed') throw new Error(`expected committed reply, received ${update.kind}`)
+    await agent.whenIdle()
+    expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId }).totalUnreadCount).toBe(1)
+
+    adapter.enqueue(textResponse('I will inspect remounted Inbox work.'))
+    await teamFiber.dispose()
+    await ctx.plugin(AgentTeam)
+    const restored = ctx.agents.get(builder.status.member.sessionId)!
+    await restored.whenIdle()
+    const lastRequest = JSON.stringify(adapter.requests.at(-1)!.messages)
+    expect(lastRequest).toContain('Team Inbox has unread work')
+    expect(lastRequest).not.toContain('Unread across Host remount')
   })
 
   it('validates the final five-tool Team marker during unpublished setup', async () => {

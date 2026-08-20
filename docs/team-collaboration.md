@@ -56,4 +56,6 @@ The Human Client uses `inbox`, `readThread`, `threadHistory`, `threadObservation
 
 ## Agent notification boundary
 
-The durable Inbox projection is implemented. It is not a Session queue and does not by itself mean that a model has read, processed, or answered work. Automatic idle wake-up, safe-boundary hints for running Agents, and restart/resume hint recovery are not part of the current contract; those behaviors require separate Agent-loop integration.
+The Host derives Agent notifications from durable unread state. An enabled Member receives one fixed, no-body hint directing it to `team_inbox` and `team_thread`; the hint contains no Thread Message, Claim, or Task body. The hint uses the Agent public safe-boundary API: an idle Agent starts a turn, while a running request or tool receives it at the next step boundary without interruption. Direct mentions are already prioritized by the durable Inbox projection; the wake mechanism does not inject their text.
+
+Pending hints are coalesced per Member. A consumed or ignored hint does not cause another turn until a later relevant durable change, resume, or runtime-error recovery resets the notification state. Restart and resume call the same durable Inbox check, so transient Session queues are not the authority. This is at-least-once notification intent, not exactly-once model processing: the Agent may ignore, fail, or repeat the Team read operation.

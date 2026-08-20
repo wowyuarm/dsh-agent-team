@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-一个 dshHome 内唯一 Agent Team 的 Host capability。`ctx.agentTeam` 拥有 append-only operation ledger、重建当前协作 projection，并作为同一 capability 内 Member Agent 的 lifecycle owner。Thread Attention 和 Member Inbox 是 Host 的持久 projection；本包不运行 Session delivery worker。[Agent Team 架构 Agent Note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md)记录持久化和包拓扑决策。
+一个 dshHome 内唯一 Agent Team 的 Host capability。`ctx.agentTeam` 拥有 append-only operation ledger、重建当前协作 projection，并作为同一 capability 内 Member Agent 的 lifecycle owner。Thread Attention 和 Member Inbox 是 Host 的持久 projection。未读状态变化时，本包通过 Agent 的公开安全边界 API 发送一次合并的无正文提示；不会中断正在执行的请求，也不运行 Session delivery worker。[Agent Team 架构 Agent Note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md)记录持久化和包拓扑决策。
 
 ## Service 约定
 
@@ -20,7 +20,7 @@ Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`c
 
 每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。普通 session 和 fork 不获得 Team 身份。
 
-把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。创建 Task、创建 Claim、显式 follow 或 Human 确认邀请会开始 Thread Attention。普通未读从 Attention 派生，structured mention 形成持久 direct marker。`team_inbox` 和 Thread read 是 Host projection，不是 Session inbox 内容。
+把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。创建 Task、创建 Claim、显式 follow 或 Human 确认邀请会开始 Thread Attention。普通未读从 Attention 派生，structured mention 形成持久 direct marker。`team_inbox` 和 Thread read 是 Host projection，不是 Session inbox 内容。启用的 Member 只会收到固定的 `team_inbox` 检查提示，不携带 Thread 正文；待处理提示会合并，忽略提示不会形成循环，resume/runtime error recovery 会从持久未读状态重新判断是否提示。
 
 Member reply 必须携带准确的当前 Thread revision，并在一个 operation 内更新 Message 和 Thread facts。未读工作必须先 read；revision 过期时拒绝写入。Closed Task 拒绝 reply 和新的 Attention；reopen 恢复 Task，但不恢复之前的 Attention。结构化 mention 指向 unfollowed Agent 时，Human 必须先取得 process-local one-use confirmation token，首次调用不提交 operation。claim/done/release 和 Task change 是有序的 host-authored Activity。Active Claim 只排斥相同的 normalized Direction；不同 Direction 可以并行。Task status 从 Claims 派生，Human accept/close 是覆盖事实。Close 原子释放 active Claims 并清除 Thread Attention。Member remove 原子标记 inactive、释放 owned active Claims、清除该成员的 Attention 和 direct markers，再归档 session。Message 与 Activity facts 共用一个有界 sequence cursor。
 
@@ -38,7 +38,7 @@ Team-enabled preset 在自身 Agent scope 注册五个工具，并用 `markAgent
 
 #### What the model sees
 
-本包不向模型提供任何内容。`ctx.agentTeam` 不注册 prompt、tool、schema 或模型可见 message；面向模型的 Agent Team Consumer 拥有这些影响。
+启用的 Member 在持久未读工作出现后，可能收到一次固定、无正文的 Inbox 提示：`Team Inbox has unread work. Use team_inbox to triage it, then team_thread to read the relevant Thread.` 提示通过 Agent 的安全 step 边界排队，正在执行的模型请求和工具不会被中断。模型必须使用 Team tools 读取事实；Thread 正文不会被注入。面向模型的 Agent Team Consumer 仍负责工具和协作协议。
 
 #### Token effect
 

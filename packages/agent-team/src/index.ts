@@ -11,6 +11,8 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -124,6 +126,8 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
+  private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
+  private readonly pendingInboxHints = new Map<AgentTeamMemberId, MessageId>()
   private lifecycleTail: Promise<void> = Promise.resolve()
   private accepting = true
   private changeVersion = 0
@@ -141,11 +145,20 @@ export default class AgentTeam extends TypertRemoteService {
       this.emitChanged()
     })
     this.ctx.on('agent/status', ({ agent, status }) => {
-      if (status === 'running' && this.memberForAgent(agent) !== undefined) {
-        this.runtimeErrors.delete(agent.id)
+      const member = this.memberForAgent(agent)
+      if (status === 'running' && member !== undefined) {
+        const recovered = this.runtimeErrors.delete(agent.id)
+        if (recovered) this.notifiedInbox.delete(member.memberId)
         this.emitChanged()
+        this.notifyMember(agent)
       }
     })
+    const clearPendingHint = (agent: Agent, messageId: MessageId): void => {
+      const member = this.memberForAgent(agent)
+      if (member !== undefined && this.pendingInboxHints.get(member.memberId) === messageId) this.pendingInboxHints.delete(member.memberId)
+    }
+    this.ctx.on('agent/inbox/claimed', ({ agent, message }) => clearPendingHint(agent, message.id))
+    this.ctx.on('agent/inbox/discarded', ({ agent, message }) => clearPendingHint(agent, message.id))
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
       this.accepting = false
@@ -249,6 +262,7 @@ export default class AgentTeam extends TypertRemoteService {
         this.handles.delete(request.memberId)
       }
       this.diagnostics.delete(request.memberId)
+      this.clearMemberNotificationState(request.memberId)
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
   }
@@ -258,6 +272,7 @@ export default class AgentTeam extends TypertRemoteService {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().resumeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
+      this.clearMemberNotificationState(result.value.member.memberId)
       await this.activateMember(result.value.member)
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
@@ -274,6 +289,7 @@ export default class AgentTeam extends TypertRemoteService {
         this.handles.delete(request.memberId)
       }
       this.diagnostics.delete(request.memberId)
+      this.clearMemberNotificationState(request.memberId)
       await this.ctx.workspaceRegistry.archiveSession(result.value.member.sessionId)
       await rm(result.value.member.privateMemoryPath, { recursive: true, force: true })
       return result.value
@@ -521,6 +537,7 @@ export default class AgentTeam extends TypertRemoteService {
       await workspace.attachSession(member.sessionId)
       this.handles.set(member.memberId, created)
       this.diagnostics.delete(member.memberId)
+      this.notifyMember(created.agent)
     } catch (error) {
       await created?.dispose()
       this.diagnostics.set(member.memberId, error instanceof Error ? error.message : String(error))
@@ -579,6 +596,49 @@ export default class AgentTeam extends TypertRemoteService {
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
     this.ctx.emit('agent-team/committed', { receipt })
     this.emitChanged()
+    for (const handle of this.handles.values()) this.notifyMember(handle.agent)
+  }
+
+  /** Wake only from durable unread state; the message contains no Team facts. */
+  private notifyMember(agent: Agent): void {
+    const member = this.memberForAgent(agent)
+    if (member === undefined || member.state !== 'enabled') return
+    const inbox = this.inboxForAgent(agent, { workspaceId: member.workspaceId })
+    if (inbox.totalUnreadCount === 0) {
+      this.notifiedInbox.delete(member.memberId)
+      return
+    }
+    const signature = JSON.stringify(inbox.items.map(item => [
+      item.thread.threadRef, item.thread.revision, item.unreadCount, item.directCount, item.newestSequence,
+    ]))
+    if (this.pendingInboxHints.has(member.memberId)) return
+    const existingHint = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message =>
+      message.source.kind === 'plugin' && message.source.plugin === '@deepseek-ai/dsh-agent-team')
+    if (existingHint !== undefined) {
+      agent.inbox.remove(existingHint.id)
+      this.pendingInboxHints.set(member.memberId, existingHint.id)
+      this.notifiedInbox.set(member.memberId, signature)
+      agent.steer(existingHint)
+      return
+    }
+    if (this.notifiedInbox.get(member.memberId) === signature) return
+    const hint = createUserMessage({
+      content: [{ type: 'text', text: 'Team Inbox has unread work. Use team_inbox to triage it, then team_thread to read the relevant Thread.' }],
+      source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' },
+    })
+    this.pendingInboxHints.set(member.memberId, hint.id)
+    this.notifiedInbox.set(member.memberId, signature)
+    try {
+      agent.steer(hint)
+    } catch (error) {
+      this.clearMemberNotificationState(member.memberId)
+      throw error
+    }
+  }
+
+  private clearMemberNotificationState(memberId: AgentTeamMemberId): void {
+    this.notifiedInbox.delete(memberId)
+    this.pendingInboxHints.delete(memberId)
   }
 
   private emitChanged(): void {
