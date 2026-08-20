@@ -147,6 +147,30 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(records.join('\n')).not.toContain('follow-changed')
   })
 
+  it('keeps the later follow watermark when an older direct marker is consumed', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' }))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const unfollowed = (await ledger.changeAttention({ requestId: requestId('unfollow'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'unfollow', actor: agentTeamHumanActor() })).value
+    const mentioned = committed((await ledger.reply({ requestId: requestId('mention'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'Please check this', baseRevision: unfollowed.thread.revision, recipients: [AGENT_TEAM_HUMAN_MEMBER_ID], actor })).value)
+    const ordinary = committed((await ledger.reply({ requestId: requestId('ordinary'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'Later reply', baseRevision: mentioned.thread.revision, actor })).value)
+    const followed = (await ledger.changeAttention({ requestId: requestId('follow'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'follow', actor: agentTeamHumanActor() })).value
+    const read = (await ledger.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef,
+      actor: agentTeamHumanActor() })).value
+    expect(followed.attention).toMatchObject({ readThroughSequence: ordinary.message.sequence })
+    expect(read.readThroughSequence).toBe(ordinary.message.sequence)
+    expect(read.consumedDirectMarkers).toEqual([expect.objectContaining({ messageRef: mentioned.message.messageRef })])
+    expect(ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+    const replay = replayLedger(test)
+    expect(replay.inbox(agentTeamHumanActor(), { workspaceId: alpha })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+  })
+
   it('does not duplicate a direct marker when follow starts after the marker', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
@@ -265,6 +289,39 @@ describe('AgentTeam durable Thread Attention ledger', () => {
         inbox: { ...typed.data.inbox, attention: { ...typed.data.inbox.attention, set: [attention] } } } }] as [string, unknown]
     })
     await expect(harness(storedPool(records))).rejects.toThrow(/invalid Thread read projection/)
+  })
+
+  it('rejects forged member cleanup snapshots during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const member = await test.ctx.agentTeam.addMember({ requestId: requestId('member'), workspaceId: alpha, handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' }))
+    await test.ctx.agentTeam.removeChannelMember({ requestId: requestId('remove'), workspaceId: alpha, channelRef: channel.channel.channelRef, memberId: member.status.member.memberId })
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/channel-member-removed') return [id, typed] as [string, unknown]
+      return [id, { ...typed, data: { ...typed.data, tasks: [started.task] } }] as [string, unknown]
+    })
+    await expect(harness(storedPool(records))).rejects.toThrow(/invalid released Claim Task or Thread projection/)
+  })
+
+  it('rejects a forged direct marker that does not match its Message during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' }))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const followed = await ledger.changeAttention({ requestId: requestId('follow'), workspaceId: alpha, taskRef: started.task.taskRef, action: 'follow', actor })
+    committed((await ledger.reply({ requestId: requestId('mention'), workspaceId: alpha, taskRef: started.task.taskRef, body: 'Check this', baseRevision: followed.value.thread.revision, recipients: [actor.memberId], actor: agentTeamHumanActor() })).value)
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/thread-replied') return [id, typed] as [string, unknown]
+      const marker = typed.data.inbox.directMarkers.added[0]!
+      return [id, { ...typed, data: { ...typed.data, inbox: { ...typed.data.inbox, directMarkers: {
+        ...typed.data.inbox.directMarkers, added: [{ ...marker, sequence: marker.sequence + 1 }],
+      } } } }] as [string, unknown]
+    })
+    await expect(harness(storedPool(records))).rejects.toThrow(/invalid direct marker addition/)
   })
 
   it('replays an Agent Attention read watermark from SQLite across a Host restart', async () => {
