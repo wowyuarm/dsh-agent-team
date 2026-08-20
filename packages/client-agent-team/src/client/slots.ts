@@ -18,12 +18,8 @@ import type {
   AgentTeamConfirmationRequired,
   AgentTeamInbox,
   AgentTeamInboxRequest,
-  AgentTeamThreadAttentionRequest,
-  AgentTeamThreadAttentionResult,
   AgentTeamThreadHistory,
   AgentTeamThreadHistoryRequest,
-  AgentTeamThreadObservations,
-  AgentTeamThreadObservationsRequest,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
   AgentTeamTaskRequest,
@@ -64,8 +60,6 @@ export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'
   loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   readThread: (request: AgentTeamThreadReadRequest) => Promise<RemoteResult<AgentTeamThreadReadResult>>
   loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => Promise<RemoteResult<AgentTeamThreadHistory>>
-  loadThreadObservations: (request: AgentTeamThreadObservationsRequest) => Promise<RemoteResult<AgentTeamThreadObservations>>
-  changeAttention: (request: AgentTeamThreadAttentionRequest) => Promise<RemoteResult<AgentTeamThreadAttentionResult>>
   loadChanges: (request: AgentTeamChangesRequest) => Promise<RemoteResult<AgentTeamChangesResult>>
   sendMessage: (request: AgentTeamSendMessageRequest) => Promise<RemoteResult<AgentTeamSendMessageResult>>
   joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>

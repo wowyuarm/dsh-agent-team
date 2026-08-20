@@ -62,7 +62,7 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
   }, [selectedId, loadInbox, loadChanges])
 
   const tabs = [
-    { id: INBOX_PANEL_ID, tab: 'inbox' as const, label: t('inbox'), icon: <IconChecklistOutline14 size={16} />, count: inbox?.items.length ?? 0 },
+    { id: INBOX_PANEL_ID, tab: 'inbox' as const, label: t('inbox'), icon: <IconChecklistOutline14 size={16} />, count: inbox?.totalUnreadCount ?? 0 },
     { id: CHANNELS_PANEL_ID, tab: 'channels' as const, label: t('channels'), icon: <IconListPenOutline16 size={16} />, count: 0 },
     { id: AGENTS_PANEL_ID, tab: 'agents' as const, label: t('agents'), icon: <IconAgentPresetOutline16 size={16} />, count: 0 },
   ]

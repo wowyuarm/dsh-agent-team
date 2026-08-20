@@ -126,7 +126,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     return { ok: true as const, value: {
       receipt: {}, task: top.task, thread: top.thread, claims: viewClaims,
       anchor: top.message, facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],
-      readThroughSequence: (top.thread as { revision: number }).revision, consumedDirectMarkers: [],
+      readThroughSequence: (top.thread as { revision: number }).revision, remainingUnreadCount: 0, consumedDirectMarkers: [],
     } }
   })
   const loadThreadHistory = vi.fn(async ({ taskRef }: { taskRef: string }) => {

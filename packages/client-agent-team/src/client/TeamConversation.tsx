@@ -5,12 +5,12 @@ import { TeamInboxPanel } from './TeamInboxPanel.tsx'
 import { TeamThreadPage } from './TeamThreadPage.tsx'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, loadChannels, loadInbox, readThread, loadThreadHistory, loadThreadObservations, changeAttention, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, reply, changeTask, selectThread, backToWorkspace }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, loadChannels, loadInbox, readThread, loadThreadHistory, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, reply, changeTask, selectThread, backToWorkspace }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const current = workspaces.find(workspace => workspace.workspaceId === navigationState.workspaceId)
   if (current !== undefined && navigationState.taskRef !== undefined && navigationState.threadRef !== undefined) {
-    return <TeamThreadPage key={navigationState.threadRef} workspaceId={current.workspaceId} taskRef={navigationState.taskRef} threadRef={navigationState.threadRef} originTab={navigationState.activeTab} backToWorkspace={backToWorkspace} {...(navigationState.channelRef === undefined ? {} : { channelRef: navigationState.channelRef })} {...(navigationState.taskNumber === undefined ? {} : { taskNumber: navigationState.taskNumber })} readThread={readThread} loadChannels={loadChannels} loadThreadHistory={loadThreadHistory} loadThreadObservations={loadThreadObservations} changeAttention={changeAttention} loadChanges={loadChanges} loadMembers={loadMembers} reply={reply} changeTask={changeTask} t={t} />
+    return <TeamThreadPage key={navigationState.threadRef} workspaceId={current.workspaceId} taskRef={navigationState.taskRef} threadRef={navigationState.threadRef} originTab={navigationState.activeTab} backToWorkspace={backToWorkspace} {...(navigationState.channelRef === undefined ? {} : { channelRef: navigationState.channelRef })} {...(navigationState.taskNumber === undefined ? {} : { taskNumber: navigationState.taskNumber })} readThread={readThread} loadChannels={loadChannels} loadThreadHistory={loadThreadHistory} loadChanges={loadChanges} loadMembers={loadMembers} reply={reply} changeTask={changeTask} t={t} />
   }
   if (current !== undefined && navigationState.activeTab === 'inbox') {
     return <TeamInboxPanel workspaceId={current.workspaceId} loadInbox={loadInbox} loadChannels={loadChannels} loadChanges={loadChanges} selectThread={selectThread} t={t} />

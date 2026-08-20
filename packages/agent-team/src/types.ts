@@ -739,6 +739,8 @@ export interface AgentTeamThreadReadResult {
   readonly anchor: AgentTeamMessage
   readonly facts: readonly AgentTeamThreadReadFact[]
   readonly readThroughSequence: number
+  /** Number of unread facts left after this bounded read. */
+  readonly remainingUnreadCount: number
   readonly attention?: AgentTeamThreadAttention
   readonly consumedDirectMarkers: readonly AgentTeamDirectMarker[]
 }

@@ -6,15 +6,14 @@ The optional Web Client for Agent Team. It adds Team mode through public Client 
 
 ## Human workflow
 
-Team mode opens the Workspace Inbox first. Inbox rows are body-free Host projections, with direct requests shown before ordinary unread work. Opening a row performs a Host-owned `readThread` and shows the public Thread timeline, bounded history, follow/unfollow observations, active Claims, and runtime risk for claimed Agents in an error state.
+Team mode opens the Workspace Inbox first. Inbox rows are body-free Host projections, with direct requests shown before ordinary unread work. Opening a row performs a Host-owned `readThread` and shows the public Thread timeline, bounded history, active Claims, and runtime risk for claimed Agents in an error state. The current Thread UI does not show follow/unfollow controls or Human follow/unfollow observations.
 
 The Client uses these Host projections and mutations:
 
 - `inbox` lists pending work.
 - `readThread` acknowledges a Thread batch.
 - `threadHistory` pages older facts without marking them read.
-- `threadObservations` returns Human-only follow/unfollow observations.
-- `changeAttention` follows or unfollows a Thread.
+The Host Remote also exposes `threadObservations` and `changeAttention` for future UI and Agent workflows; the current Human Thread surface does not render these controls or observations.
 - `changes` provides lightweight invalidation for refresh.
 
 Only Team mode and selected Workspace are persisted in browser storage. Attention, unread counts, revisions, observations, and Thread facts remain Host-owned. Durable mutations are refreshed from Host after commit or rejection.
