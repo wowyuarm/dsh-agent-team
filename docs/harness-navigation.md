@@ -8,14 +8,14 @@
 
 | 问题 | 先看本仓库 | 再看 `../deepseek-harness` | 权威性 |
 | --- | --- | --- | --- |
-| Agent Team 的领域对象、权限、ledger、Task/Claim/Thread Attention/Inbox 语义 | `.scratch/CONTEXT.md`、`.scratch/spec.md`、`.scratch/design/feasibility.md`、`.scratch/design/architecture.md` | 只在需要确认被消费的 DSH service contract 时查 Harness | 本仓库设计与实现 |
+| Agent Team 的领域对象、权限、ledger、Task/Claim/Thread Attention/Inbox 语义 | `docs/domain-model.md`、`docs/team-collaboration.md`、`packages/agent-team/src/` 与 tests；历史来由按 `.scratch/README.md` 查 archive | 只在需要确认被消费的 DSH service contract 时查 Harness | 本仓库实现；历史资料不定义当前行为 |
 | Host package 的具体行为 | `packages/agent-team/src/{index,ledger,spec,types}.ts` 及 `tests/` | `docs/architecture.md`、相关 `subsystems/*`，确认 Agent/Session/Workspace/Storage/Typert 的宿主能力 | 本仓库实现；Harness 只拥有底层能力事实 |
-| Model-facing tools 与 preset | `.scratch/design/architecture.md`、`packages/tool-agent-team/src/index.ts`、`packages/agent-team/preset/team-member/agent.cordis.yml` | `docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md` | 本仓库工具语义；Harness 规定扩展接口 |
+| Model-facing tools 与 preset | `docs/team-collaboration.md`、`packages/tool-agent-team/src/index.ts`、`packages/agent-team/preset/team-member/agent.cordis.yml` | `docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md` | 本仓库工具语义；Harness 规定扩展接口 |
 | Human command | `packages/command-agent-team/src/index.ts` | `docs/subsystems/commands.md`、`docs/cookbook/extension-cookbook.md` | 本仓库命令；Harness 规定 `ctx.commands` |
-| Client plugin / Team mode / UI | `.scratch/design/dsh-client-plugin-development.md`、`.scratch/design/team-ui-redesign.md`、`.scratch/ui-redesign/README.md`、`packages/client-agent-team/src/client/` | `docs/subsystems/client-modules.md`、`.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.md`、`packages/client/AGENTS.md`、对应 shipped UI package 源码 | 本仓库体验与范围；Harness 规定加载、slot、React 分层 |
-| Typed Remote | `.scratch/design/architecture.md`、`packages/agent-team/src/index.ts` 的 `@Remote`、`scripts/generate-typert.mjs` | `docs/subsystems/typert.md`、`packages/typert/{generator,loader,protocol,registry}`、`packages/api/remotes` | Harness 规定生成/装配，Host 与 Team 规定远程方法 |
+| Client plugin / Team mode / UI | `docs/architecture.md`、`docs/development.md`、`packages/client-agent-team/src/client/`；历史取舍见 `.scratch/archive/2026-08/ui-redesign/` | `docs/subsystems/client-modules.md`、`.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.md`、`packages/client/AGENTS.md`、对应 shipped UI package 源码 | 本仓库实现与 UI 验收规则；Harness 规定加载、slot、React 分层 |
+| Typed Remote | `docs/architecture.md`、`packages/agent-team/src/index.ts` 的 `@Remote`、`scripts/generate-typert.mjs` | `docs/subsystems/typert.md`、`packages/typert/{generator,loader,protocol,registry}`、`packages/api/remotes` | Harness 规定生成/装配，Host 与 Team 规定远程方法 |
 | 发布、profile、bundle 安装 | `README.md` / `README.zh.md`、`cordis.patch.yml`、四个 package manifests | `README.md`、`docs/cookbook/adding-a-package.md`、profile/bundle 文档和 `packages/bundle/*` | Harness 规定安装器与 bundle 机制；本仓库规定外部 bundle 布局 |
-| 实际 Web 验收 | `scripts/run-browser-test.mjs`、`scripts/team-ui.e2e.ts`、`.scratch/m2-ui/validation/m2-06/` | `apps/web` scaffold、`docs/testing.md`、`packages/client/*/tests` | 测试命令和证据各自归属 |
+| 实际 Web 验收 | `docs/development.md`、`scripts/run-browser-test.mjs`、`scripts/team-ui.e2e.ts`、`artifacts/browser/` | `apps/web` scaffold、`docs/testing.md`、`packages/client/*/tests` | 脚本产生本次审查材料；归档证据只保留里程碑代表图 |
 
 **遇到不确定的 Harness 行为时，先查上游文档，再读实现和测试。** 不要把 `.scratch/` 中的探索结论当作 Harness API；也不要为了适应 Harness 猜测而改写 Team 的领域语义。若现有公共接口不支持目标交互，记录为 Harness 限制并调整 Team 接入设计，或在本 bundle 内实现替代 plugin。
 
@@ -23,7 +23,7 @@
 
 ### 2.1 修改 Host service、ledger 或生命周期
 
-1. 本仓库：`packages/agent-team/src/` 和测试是当前实现；`.scratch/CONTEXT.md`、`.scratch/design/feasibility.md`、`.scratch/design/architecture.md` 只提供领域和设计背景。
+1. 本仓库：`packages/agent-team/src/` 和测试是当前实现；`docs/domain-model.md` 和 `docs/team-collaboration.md` 是正式领域入口。需要历史设计背景时按 `.scratch/README.md` 定位 archive。
 2. 先读 `packages/agent-team/src/index.ts`、`ledger.ts`、`spec.ts`、`types.ts`，再读同目录 tests，确认 operation 是否通过唯一 authority/ledger 写入；不要把 `.scratch/` 当作当前实现规范。
 3. Harness：
    - `docs/architecture.md`：插件平面、Service Definition/Provider/Consumer 与 agent-loop 边界；
@@ -37,7 +37,7 @@
 
 ### 2.2 修改 model-facing tool 或 preset
 
-- 本仓库：`packages/tool-agent-team/src/index.ts`（五个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；`.scratch/design/tools-research.md` 只提供设计背景。
+- 本仓库：`docs/team-collaboration.md`、`packages/tool-agent-team/src/index.ts`（五个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
 - Harness 文档：`docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md`、`docs/subsystems/system-prompt.md`。
 - Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-presets/src`。
 
@@ -52,7 +52,7 @@
 
 ### 2.4 修改 Client package、browser bundle 或加载图
 
-1. 本仓库：先读 `.scratch/design/dsh-client-plugin-development.md` §1-3 和当前 ticket；UI redesign 时再读 `.scratch/design/team-ui-redesign.md`、`.scratch/ui-redesign/README.md`。
+1. 本仓库：先读 `docs/architecture.md` 的 Client 章节、`docs/development.md` 的 UI 验收规则和目标组件；需要解释既有视觉结构时，再读 `.scratch/archive/2026-08/m2-ui/design/dsh-client-plugin-development.md` 与 `.scratch/archive/2026-08/ui-redesign/`。
 2. Harness：
    - `docs/subsystems/client-modules.md`：`dsh.client`、boot graph、browser module；
    - `.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.md`：Loader 与 client module runtime 的两层模型；
@@ -91,7 +91,7 @@ Workspace ID 是 branded id；路径通过 Host service 规范化；session cwd 
 
 ### 2.7 修改 storage / persistence / replay / Thread Inbox
 
-- 本项目：`packages/agent-team/src/ledger.ts`、相关 projection/lifecycle 源码和 JSON/SQLite backend tests；`.scratch/thread-inbox/spec.md` 只用于理解 Thread Attention 与 Inbox 的设计背景。
+- 本项目：`docs/team-collaboration.md`、`packages/agent-team/src/ledger.ts`、相关 projection/lifecycle 源码和 JSON/SQLite backend tests；Thread Attention 与 Inbox 的历史设计背景在 `.scratch/archive/2026-08/thread-inbox/`。
 - Harness docs：`docs/subsystems/storage.md`、`docs/subsystems/persistence.md`、`docs/subsystems/session-persistence` 相关章节、`docs/defensive-patterns.md`。
 - Harness source：`packages/storage/storage-domain/src`、`storage-json/src`、`storage-sqlite/src`、`packages/session/session-persistence*/src`。
 
@@ -99,7 +99,7 @@ Team ledger 是唯一持久权威；projection、Inbox、Remote 和 UI 不能另
 
 ### 2.8 修改 CSS、UI primitives 或 responsive layout
 
-- 本项目：先读目标组件和 `*.module.css`，再读 `.scratch/design/team-ui-redesign.md`、`.scratch/design/research/dsh-ui-reuse-inventory.md`、`.scratch/design/research/team-ui-visual-audit.md` 了解设计背景；当前行为以组件源码和测试为准。
+- 本项目：先读目标组件和 `*.module.css`，再读 `docs/architecture.md` 与 `docs/development.md`；需要历史视觉审计或 public UI reuse 清单时，查 `.scratch/archive/2026-08/ui-redesign/{design,research}/`。当前行为以组件源码和测试为准。
 - Harness：`docs/web-styling.md`；`packages/client/ui-primitives/src`；`packages/client/ui-theme/src/styles`；`packages/client/AGENTS.md` 的 styling 和 component 规则。
 
 先解决 surface grid、信息层级和 control reuse，再调颜色/圆角。保证 CSS Modules、`--dsw-*` token、键盘焦点、dialog/menu accessible name 和 390×844 reflow。
@@ -157,7 +157,7 @@ dsh --profile team-demo
 
 ## 5. 当前状态
 
-实现状态、已完成事项和延期范围以当前源码、测试、package README 与维护中的 `.scratch/` 设计材料交叉确认；本文不复制一份会快速过时的状态清单。UI redesign 的设计入口是 `.scratch/ui-redesign/README.md`，但完成与否必须以代码和实际验证为准。
+实现状态、已完成事项和延期范围以当前源码、测试和 package README 确认；本文不复制会快速过时的状态清单。`.scratch/` 仅提供 active work 或归档溯源，不承担当前项目入口。
 
 ## 6. 维护边界
 

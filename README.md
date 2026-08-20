@@ -32,7 +32,7 @@ The Team is one collaboration domain per DSH home. Its operation ledger is the d
 
 ## Development
 
-The design and ticket sequence live under [.scratch/](.scratch/). Build and test with:
+Current engineering guidance is in [`docs/`](docs/README.md); active work and historical design evidence are organized under [`.scratch/`](.scratch/README.md). Build and test with:
 
 ```sh
 corepack pnpm install
@@ -45,7 +45,7 @@ DEEPSEEK_API_KEY=... npm run preview
 npm pack --dry-run
 ```
 
-`test:browser` uses the adjacent `../deepseek-harness` checkout's official Web scaffold and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It installs the built packages into an isolated temporary profile and runs the credential-free, deterministic assembled journey, including the existing-Thread invitation, Agent read/reply, Human Inbox, reload, and ordinary DSH restoration. It updates `.scratch/ui-redesign/validation/` and removes all temporary Harness files.
+`test:browser` uses the adjacent `../deepseek-harness` checkout's official Web scaffold and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It installs the built packages into an isolated temporary profile and runs the credential-free, deterministic assembled journey, including the existing-Thread invitation, Agent read/reply, Human Inbox, reload, and ordinary DSH restoration. It writes this run's review screenshots to ignored `artifacts/browser/` and removes all temporary Harness files.
 
 `npm run preview` is the live interactive mode. It requires `DEEPSEEK_API_KEY` before build, mounts the real provider in an isolated temporary profile, prints a local URL, and cleans up on `Ctrl+C`; it never silently falls back to replay. `npm run preview:ui` loads isolated Team fixture state with model streaming disabled, for presentation inspection without an accidental provider call.
 

@@ -69,6 +69,19 @@ npm run test:browser
 
 `test:browser` 固定使用 keyless、确定性的 Host/Client 驱动，不读取真实 provider 凭据。代表性链路从已有 Thread 开始，Human 两次确认邀请未关注 Agent，随后验证 Agent Inbox 读取/回复、Human Inbox 与 Thread、页面 reload 后的 Host 持久事实，以及退出 Team mode 后普通 DSH surface 恢复。
 
+## UI 改动与浏览器证据
+
+可见 UI、Client bundle、slot、Remote activation 或交互行为改动必须运行 `npm run test:browser`。该脚本把本次 journey 的截图写入 Git 忽略的 `artifacts/browser/`，不会覆盖归档证据或制造工作区 diff。检查截图时至少覆盖：
+
+```text
+1440×960：信息层级、空/加载/错误状态、控件密度与普通 DSH 恢复
+390×844 ：无横向溢出、关键内容可见、modal/menu 位于视口内
+键盘     ：焦点可见、Tab/Enter/Space/Escape 行为、dialog/menu 的 accessible name
+状态     ：提交失败保留输入；durable mutation 以 Host 返回投影为准
+```
+
+这组截图是本次变更的人工审查材料，不是像素级 snapshot test。完成一个 UI 工作项后，只有能说明验收结论的少量代表图可以提交到 `.scratch/archive/YYYY-MM/<work>/validation/`，并必须附带文件名、验收点和复跑命令。调试截图、重复截图、录屏、浏览器日志和每次 test run 的完整图片集保持在 `artifacts/` 或 `.scratch/local/`，不得提交。
+
 ## 生成文件
 
 以下文件由脚本生成，不要直接编辑：

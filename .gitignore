@@ -3,3 +3,5 @@ lib/
 *.tsbuildinfo
 *.log
 .DS_Store
+artifacts/
+.scratch/local/

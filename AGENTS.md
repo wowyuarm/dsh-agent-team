@@ -15,7 +15,7 @@ Use this authority order:
 1. **Current behavior:** source and tests under `packages/`. When prose disagrees with code, code wins.
 2. **Maintained engineering guidance:** `docs/`. Update it when a code or workflow change invalidates it; it must not define behavior that the code does not implement.
 3. **Harness contract:** `../deepseek-harness/docs/`, its applicable `AGENTS.md`, and the corresponding Harness source/tests.
-4. **Design context:** `.scratch/`. It contains design intent, research, tickets, and historical validation. It is not an implementation or API authority, may be stale, and is not expected to stay synchronized with later code changes. Use it to locate intent and likely files, then verify against code, tests, and the Harness contract.
+4. **Work history:** `.scratch/`. It contains active work items and archived design, research, tickets, prototypes, and validation evidence. It is not an implementation or API authority. Read [`.scratch/README.md`](.scratch/README.md) before using it; then verify relevant history against code, tests, and the Harness contract.
 
 Keep production code self-explanatory through clear names, types, and structure. Comments explain only non-obvious constraints, ownership, or reasons; they are not the sole definition of current behavior.
 
@@ -24,7 +24,7 @@ Keep production code self-explanatory through clear names, types, and structure.
 - Identify the owning package and read its source, tests, package manifest, and README.
 - Read the matching section of [`docs/architecture.md`](docs/architecture.md).
 - For anything that consumes a Harness capability, follow [`docs/harness-navigation.md`](docs/harness-navigation.md) into the adjacent checkout before designing the change.
-- Treat `.scratch/` as background context, not as a specification to implement blindly.
+- Treat `.scratch/` as background context, not as a specification to implement blindly. New cross-session work belongs in one `.scratch/active/<work>/` directory; close it into the archive only after durable conclusions have moved to maintained documents.
 
 ## Architecture guardrails
 
@@ -42,8 +42,9 @@ Keep production code self-explanatory through clear names, types, and structure.
 - Use ESM, strict TypeScript, `.ts`/`.tsx` local imports, existing package names, and existing branded domain types.
 - Keep one authoritative formatter/projection per domain concept. Do not add speculative registries, compatibility layers, fallback authorities, or duplicate stores.
 - Do not hand-edit generated `tsconfig*.json` path facades. Change `scripts/sync-paths.mjs` and regenerate.
-- Update the affected maintained document, package README, and tests when a non-trivial change alters a public contract or workflow. Do not update `.scratch/` merely to make it agree with new code.
-- Do not commit credentials, temporary profiles, browser overlays, generated test files, or build residue.
+- Update the affected maintained document, package README, and tests when a non-trivial change alters a public contract or workflow. Do not update archived `.scratch/` material merely to make it agree with new code.
+- For visible UI changes, run the applicable component checks and `npm run test:browser`, inspect the new `artifacts/browser/` screenshots at desktop and 390×844, and verify keyboard/focus, dialog/menu accessibility, loading/error/empty states, and ordinary DSH restoration. Keep only a small, human-approved milestone set under `.scratch/archive/.../validation/`; routine screenshots stay ignored.
+- Do not commit credentials, temporary profiles, browser overlays, generated test files, browser artifacts, or build residue.
 
 ## Checks
 
@@ -66,4 +67,4 @@ git diff --check
 - Domain and Host behavior: `packages/agent-team/src/`, its tests, and `docs/architecture.md`.
 - Tools, preset, and command: `packages/tool-agent-team/`, `packages/agent-team/preset/`, `packages/command-agent-team/`, and the matching Harness subsystem docs.
 - Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, and `docs/harness-navigation.md`.
-- UI redesign scope: `.scratch/ui-redesign/README.md` and `.scratch/design/team-ui-redesign.md` as design context only; verify all behavior in code and tests.
+- Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, `docs/harness-navigation.md`, and, when needed, the relevant `.scratch/archive/` work history; verify all behavior in code and tests.

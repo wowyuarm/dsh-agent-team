@@ -32,7 +32,7 @@ Bundle 使用 profile 已有的 Host provider，不替换 `agents`、默认模�
 
 ## 开发
 
-设计文档和票据顺序位于 [.scratch/](.scratch/)。使用以下命令构建和测试：
+当前工程说明位于 [`docs/`](docs/README.md)；进行中的工作和历史设计证据按 [`.scratch/`](.scratch/README.md) 组织。使用以下命令构建和测试：
 
 ```sh
 corepack pnpm install
@@ -45,7 +45,7 @@ DEEPSEEK_API_KEY=... npm run preview
 npm pack --dry-run
 ```
 
-`test:browser` 使用相邻 `../deepseek-harness` checkout 的官方 Web scaffold 和 `/usr/bin/google-chrome`（可用 `CHROME_PATH` 覆盖）。命令会把构建后的包安装到隔离临时 profile，运行无凭据且确定性的组装旅程，包括已有 Thread 邀请、Agent 读取/回复、Human Inbox、reload 和普通 DSH surface 恢复；随后更新 `.scratch/ui-redesign/validation/` 并删除所有 Harness 临时文件。
+`test:browser` 使用相邻 `../deepseek-harness` checkout 的官方 Web scaffold 和 `/usr/bin/google-chrome`（可用 `CHROME_PATH` 覆盖）。命令会把构建后的包安装到隔离临时 profile，运行无凭据且确定性的组装旅程，包括已有 Thread 邀请、Agent 读取/回复、Human Inbox、reload 和普通 DSH surface 恢复；本次审查截图写入 Git 忽略的 `artifacts/browser/`，随后删除所有 Harness 临时文件。
 
 `npm run preview` 是真实交互模式。它在 build 前要求 `DEEPSEEK_API_KEY`，在隔离临时 profile 中挂载真实 provider，打印本地 URL，并在 `Ctrl+C` 后清理；它不会静默切换到 replay。`npm run preview:ui` 会加载隔离的 Team fixture，并禁用模型 streaming，供开发者检查界面而不会意外调用 provider。
 

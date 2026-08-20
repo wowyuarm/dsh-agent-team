@@ -9,12 +9,13 @@ const TEAM_ROOT = '__TEAM_ROOT__'
 const OVERLAY = '__OVERLAY__'
 const HOME = '__HOME__'
 const CHROME = '__CHROME__'
-const UI01_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-01')
-const UI02_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-02')
-const UI03_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-03')
-const UI04_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-04')
-const UI05_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-05')
-const UI06_SHOTS = join(TEAM_ROOT, '.scratch/ui-redesign/validation/ui-06')
+const BROWSER_ARTIFACTS = join(TEAM_ROOT, 'artifacts/browser')
+const UI01_SHOTS = join(BROWSER_ARTIFACTS, 'ui-01')
+const UI02_SHOTS = join(BROWSER_ARTIFACTS, 'ui-02')
+const UI03_SHOTS = join(BROWSER_ARTIFACTS, 'ui-03')
+const UI04_SHOTS = join(BROWSER_ARTIFACTS, 'ui-04')
+const UI05_SHOTS = join(BROWSER_ARTIFACTS, 'ui-05')
+const UI06_SHOTS = join(BROWSER_ARTIFACTS, 'ui-06')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -25,6 +26,7 @@ afterEach(async () => {
 
 async function installLocalBundle(): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
+  await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
   const scope = `${HOME}/profiles/node_modules/@deepseek-ai`
   await mkdir(scope, { recursive: true })
   for (const name of ['agent-team', 'client-agent-team', 'command-agent-team', 'tool-agent-team']) {

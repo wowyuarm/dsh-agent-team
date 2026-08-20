@@ -1,6 +1,6 @@
 # Architecture
 
-本文记录当前实现必须保持的边界。领域决策的历史背景在 `.scratch/`，但当前行为以源码和测试为准；Harness API 以相邻 checkout 的文档、源码和测试为准。
+本文记录当前实现必须保持的边界。稳定领域词汇见 [`domain-model.md`](domain-model.md)；历史设计背景按 [`.scratch/README.md`](../.scratch/README.md) 查阅。当前行为以源码和测试为准；Harness API 以相邻 checkout 的文档、源码和测试为准。
 
 ## Package ownership
 
@@ -110,7 +110,7 @@ For UI work:
 - Keep durable mutations non-optimistic; preserve input on failure and render the next Host projection.
 - Preserve Team mode enter/leave, refresh recovery, slot restoration, and narrow layout behavior.
 
-The active visual redesign is tracked in `.scratch/ui-redesign/README.md` and `.scratch/design/team-ui-redesign.md`. Those files are design context, not current implementation authority.
+UI redesign 已完成。需要理解当时的取舍时，查 [`.scratch/archive/2026-08/ui-redesign/`](../.scratch/archive/2026-08/ui-redesign/)；它是历史设计背景，不是当前实现权威。UI 改动的当前验收规则见 [`development.md`](development.md)。
 
 ## Workspace, Session, and storage reuse
 
