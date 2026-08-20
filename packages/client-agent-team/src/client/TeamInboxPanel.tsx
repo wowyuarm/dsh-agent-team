@@ -101,12 +101,14 @@ export function TeamInboxPanel({ workspaceId, loadInbox, loadChannels, loadChang
           className={css.item}
           onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, item.channelRef, taskNumber) }}
         >
-          <span className={css.priority} data-direct={item.directCount > 0} aria-label={item.directCount > 0 ? t('inboxDirectCount', { count: item.directCount }) : t('inboxUnreadCount', { count: item.unreadCount })} />
+          <span className={css.priority} data-direct={item.directCount > 0} aria-hidden="true" />
           <span className={css.copy}>
             <strong>{taskNumber === undefined ? t('task') : `Task #${taskNumber}`}</strong>
             <small>{channel === undefined ? t('channelUnknown') : `# ${channel.name}`} · {formatTaskStatus(item.task.status, t)}</small>
           </span>
-          <span className={css.count}>{item.directCount > 0 ? t('inboxDirectCount', { count: item.directCount }) : t('inboxUnreadCount', { count: item.unreadCount })}</span>
+          <span className={css.count} aria-label={`${t('inboxUnreadCount', { count: item.unreadCount })}${item.directCount > 0 ? `, ${t('inboxDirectCount', { count: item.directCount })}` : ''}`}>
+            {t('inboxUnreadCount', { count: item.unreadCount })}{item.directCount > 0 && <> · {t('inboxDirectCount', { count: item.directCount })}</>}
+          </span>
         </button>
       })}
     </section>

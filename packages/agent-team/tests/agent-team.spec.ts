@@ -226,6 +226,27 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     ledger.validate()
   })
 
+  it('makes a 21-update read continue explicit with a remaining unread count', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' }))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const followed = await ledger.changeAttention({ requestId: requestId('follow-21'), workspaceId: alpha, taskRef: started.task.taskRef, action: 'follow', actor })
+    let revision = followed.value.attention?.readThroughSequence ?? started.thread.revision
+    for (let index = 0; index < 21; index++) {
+      const sent = committed((await ledger.reply({ requestId: requestId(`update-21-${index}`), workspaceId: alpha, taskRef: started.task.taskRef,
+        body: `Update ${index + 1}`, baseRevision: revision, actor: agentTeamHumanActor() })).value)
+      revision = sent.thread.revision
+    }
+    const first = (await ledger.readThread({ requestId: requestId('read-21-first'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    expect(first.facts.filter(fact => fact.unread)).toHaveLength(20)
+    expect(first.remainingUnreadCount).toBe(1)
+    const second = (await ledger.readThread({ requestId: requestId('read-21-second'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    expect(second.facts.filter(fact => fact.unread)).toHaveLength(1)
+    expect(second.remainingUnreadCount).toBe(0)
+  })
+
   it('releases Claims and clears Attention on close without restoring it on reopen', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

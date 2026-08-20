@@ -6,7 +6,6 @@ import type {
   AgentTeamMemberId,
   AgentTeamRequestId,
   AgentTeamTaskRef,
-  AgentTeamThreadAttentionObservation,
   AgentTeamThreadFact,
   AgentTeamThreadReadFact,
   AgentTeamThreadRef,
@@ -33,8 +32,6 @@ interface TeamThreadPageProps {
   readonly loadChannels: TeamConversationProps['loadChannels']
   readonly readThread: TeamConversationProps['readThread']
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
-  readonly loadThreadObservations: TeamConversationProps['loadThreadObservations']
-  readonly changeAttention: TeamConversationProps['changeAttention']
   readonly loadChanges: TeamConversationProps['loadChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly reply: TeamConversationProps['reply']
@@ -73,18 +70,18 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, channelRef, taskRef, threadRef, taskNumber, originTab, backToWorkspace,
-    loadChannels, readThread, loadThreadHistory, loadThreadObservations, changeAttention,
+    loadChannels, readThread, loadThreadHistory,
     loadChanges, loadMembers, reply, changeTask, t,
   } = props
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
-  const [observations, setObservations] = useState<readonly AgentTeamThreadAttentionObservation[]>([])
   const [currentFacts, setCurrentFacts] = useState<readonly AgentTeamThreadFact[]>([])
   const [olderFacts, setOlderFacts] = useState<readonly AgentTeamThreadFact[]>([])
   const [readFacts, setReadFacts] = useState<readonly AgentTeamThreadReadFact[]>([])
   const [historyCursor, setHistoryCursor] = useState<number>()
   const [historyHasMore, setHistoryHasMore] = useState(false)
+  const [remainingUnreadCount, setRemainingUnreadCount] = useState(0)
   const [newFactsCount, setNewFactsCount] = useState(0)
   const [draft, setDraft] = useState('')
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
@@ -92,7 +89,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
   const [pending, setPending] = useState(false)
-  const [attentionPending, setAttentionPending] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const mountedRef = useRef(false)
@@ -104,6 +100,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const updateProjection = (next: ReadProjection): void => {
     setProjection(next)
     setReadFacts(next.facts)
+    setRemainingUnreadCount(next.remainingUnreadCount)
     const anchor = messageFact(next.anchor)
     const batch = [anchor, ...next.facts.map(fact => fact.fact)]
     setCurrentFacts(current => {
@@ -137,16 +134,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const refreshSupplemental = async (): Promise<void> => {
     try {
-      const [loadedMembers, loadedObservations, loadedView] = await Promise.all([
+      const [loadedMembers, loadedView] = await Promise.all([
         loadMembers({ workspaceId }),
-        loadThreadObservations({ workspaceId, taskRef }),
         loadChannels({ workspaceId, ...(channelRef === undefined ? {} : { channelRef }), threadRef, includeActivities: false, limit: 1 }),
       ])
       if (!mountedRef.current) return
       if (loadedMembers.ok) setMembers(loadedMembers.value)
-      if (loadedObservations.ok) setObservations(loadedObservations.value.items)
       if (loadedView.ok) setChannelView(loadedView.value)
-      const failure = [loadedMembers, loadedObservations, loadedView].find(result => !result.ok)
+      const failure = [loadedMembers, loadedView].find(result => !result.ok)
       if (failure !== undefined && !failure.ok) setError(failure.error.message)
     } catch (cause) {
       if (mountedRef.current) setError(cause instanceof Error ? cause.message : String(cause))
@@ -178,13 +173,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setProjection(undefined)
     setChannelView(undefined)
     setMembers([])
-    setObservations([])
     setCurrentFacts([])
     currentFactsRef.current = []
     setOlderFacts([])
     setReadFacts([])
     setHistoryCursor(undefined)
     setHistoryHasMore(false)
+    setRemainingUnreadCount(0)
     setNewFactsCount(0)
     setError(undefined)
     setStatusMessage(undefined)
@@ -257,7 +252,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const effectiveChannelRef = task?.channelRef ?? channelRef
   const channelMemberIds = useMemo(() => new Set(channelView?.members.filter(item => item.channelRef === effectiveChannelRef).map(item => item.memberId) ?? []), [channelView, effectiveChannelRef])
   const channelMembers = members.filter(status => channelMemberIds.size === 0 || channelMemberIds.has(status.member.memberId))
-  const following = activeProjection?.attention !== undefined
   const metadata = useMemo(() => readMeta(readFacts), [readFacts])
   const unreadIndex = useMemo(() => {
     const all = mergeFacts([messageFact(activeProjection?.anchor ?? ({ messageRef: 'missing', sequence: 0 } as never)), ...readFacts.map(fact => fact.fact), ...currentFacts])
@@ -319,20 +313,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally { setPending(false) }
-  }
-
-  const changeFollowing = async (): Promise<void> => {
-    if (pending || attentionPending || task === undefined) return
-    setAttentionPending(true)
-    setError(undefined)
-    try {
-      const result = await changeAttention({ requestId: crypto.randomUUID() as AgentTeamRequestId, workspaceId, taskRef: task.taskRef, action: following ? 'unfollow' : 'follow' })
-      if (!result.ok) { setError(result.error.message); return }
-      await readCurrent(true)
-      await refreshSupplemental()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally { setAttentionPending(false) }
   }
 
   const sendReply = async (): Promise<void> => {
@@ -404,7 +384,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           <div className={threadCss.statusLine}>{task === undefined ? <p>{t('loadingThread')}</p> : <span className={threadCss.status}>{formatTaskStatus(task.status, t)}</span>}</div>
         </div>
         {task !== undefined && thread !== undefined && <div className={css.headerActions}>
-          <Button size="sm" variant="outline" disabled={attentionPending || pending} onClick={() => { void changeFollowing() }}>{attentionPending ? t('membershipUpdating') : following ? t('unfollow') : t('follow')}</Button>
           {task.resolution === 'open' && task.status === 'in_review' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{t('acceptTask')}</Button>}
           {task.resolution === 'open' && <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>}
           {task.resolution !== 'open' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
@@ -441,13 +420,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           {currentFactsWithAnchor.map((fact, index) => <Fragment key={`${factKey(fact)}-wrap`}>{unreadBoundary === index && <p className={threadCss.unreadBoundary} role="separator"><span>{t('unreadBoundary')}</span></p>}{renderFact(fact)}</Fragment>)}
         </section>}
         {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status"><span>{t('readNewUpdates', { count: newFactsCount })}</span><Button size="sm" variant="outline" disabled={loading} onClick={() => { void readCurrent(true) }}>{t('readNewUpdates', { count: newFactsCount })}</Button></div>}
+        {remainingUnreadCount > 0 && <div className={css.timelineAction} role="status"><span>{t('remainingUnread', { count: remainingUnreadCount })}</span><Button size="sm" onClick={() => { void readCurrent(true) }} disabled={loading}>{t('continueReading')}</Button></div>}
       </div>
     </section>
-
-    {observations.length > 0 && <section className={threadCss.observationSection} aria-label={t('observations')}>
-      <h2>{t('observations')}</h2>
-      {observations.map(observation => <p className={threadCss.observationRow} key={`${observation.sequence}:${observation.memberId}:${observation.action}`}><span>{observation.action === 'follow' ? t('observationFollowed', { member: members.find(status => status.member.memberId === observation.memberId)?.member.handle ?? t('memberUnknown') }) : t('observationUnfollowed', { member: members.find(status => status.member.memberId === observation.memberId)?.member.handle ?? t('memberUnknown') })}</span></p>)}
-    </section>}
 
     {projection !== undefined && task !== undefined && thread !== undefined ? <TeamComposer
       members={channelMembers}

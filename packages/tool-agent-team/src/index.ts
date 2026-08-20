@@ -67,7 +67,7 @@ const teamThread = defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       kind: { type: 'string', required: true }, taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true },
       revision: { type: 'number', required: true }, status: { type: 'string', required: true }, resolution: { type: 'string', required: true },
-      following: { type: 'boolean', required: true }, readThroughSequence: { type: 'number' }, cursor: { type: 'number' }, hasMore: { type: 'boolean' },
+      following: { type: 'boolean', required: true }, readThroughSequence: { type: 'number' }, remainingUnreadCount: { type: 'number' }, cursor: { type: 'number' }, hasMore: { type: 'boolean' },
       anchor: { type: 'object', required: true, additionalProperties: false, properties: {
         messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, body: { type: 'string', required: true }, sequence: { type: 'number', required: true },
       } },
@@ -109,7 +109,7 @@ const teamThread = defineTool({
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
         ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, unread: entry.unread, direct: entry.direct }
-        : { sequence: entry.fact.sequence, kind: 'activity', activity: entry.fact.activity.kind, unread: entry.unread, direct: entry.direct }), { readThroughSequence: read.readThroughSequence })
+        : { sequence: entry.fact.sequence, kind: 'activity', activity: entry.fact.activity.kind, unread: entry.unread, direct: entry.direct }), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount })
   },
 })
 
@@ -118,7 +118,7 @@ function threadResult(
   snapshot: Awaited<ReturnType<AgentTeam['readThreadForAgent']>> | ReturnType<AgentTeam['threadHistoryForAgent']>,
   attention: Awaited<ReturnType<AgentTeam['readThreadForAgent']>>['attention'],
   facts: Array<{ sequence: number; kind: string; body?: string; activity?: string; unread?: boolean; direct?: boolean }>,
-  extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number } = {},
+  extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number } = {},
 ) {
   return {
     kind, taskRef: snapshot.task.taskRef, threadRef: snapshot.thread.threadRef, revision: snapshot.thread.revision,
@@ -255,8 +255,8 @@ const teamView = defineTool({
         ...host.members().filter(status => visibleMemberIds.has(status.member.memberId)).map(status => ({ memberId: status.member.memberId,
           kind: 'agent', handle: status.member.handle, description: status.member.description, presence: status.presence })),
       ],
-      tasks: view.items.map(({ task, thread }) => ({ taskRef: task.taskRef, threadRef: task.threadRef, channelRef: task.channelRef,
-        status: task.status, revision: thread.revision })),
+      tasks: view.tasks.map(task => ({ taskRef: task.taskRef, threadRef: task.threadRef, channelRef: task.channelRef,
+        status: task.status, revision: view.threads.find(thread => thread.threadRef === task.threadRef)?.revision ?? 0 })),
       cursor: view.cursor, hasMore: view.hasMore,
     }
   },

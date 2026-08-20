@@ -10,10 +10,16 @@ describe('Team Member private memory context', () => {
     expect(rendered).not.toContain('Maintenance warning')
   })
 
-  it('warns explicitly when the index exceeds its context budget', () => {
+  it('warns explicitly without injecting any body when the index exceeds its context budget', () => {
     const rendered = renderMemberMemory(Buffer.alloc(9 * 1024, 'x'))
     expect(rendered).toContain('exceeds the 8 KiB context budget')
-    expect(rendered).toContain('injected copy is bounded')
-    expect(rendered.length).toBeLessThan(9 * 1024)
+    expect(rendered).toContain('contents were not injected')
+    expect(rendered).not.toContain('x'.repeat(100))
+  })
+
+  it('keeps the exact 8 KiB boundary eligible for injection', () => {
+    const rendered = renderMemberMemory(Buffer.alloc(8 * 1024, 'y'))
+    expect(rendered).toContain('y'.repeat(100))
+    expect(rendered).not.toContain('Maintenance warning')
   })
 })

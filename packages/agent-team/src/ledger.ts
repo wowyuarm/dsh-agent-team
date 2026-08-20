@@ -1847,9 +1847,19 @@ export class AgentTeamLedger {
   }
 
   private threadReadResult(operation: AgentTeamThreadReadOperation): AgentTeamThreadReadResult {
+    const projection = this.projection()
+    const attention = this.attentionForFrom(projection, operation.data.memberId, operation.data.thread.threadRef)
+    const directKeys = new Set(this.directMarkersForFrom(projection, operation.data.memberId, operation.data.thread.threadRef)
+      .map(marker => this.directMarkerKey(marker)))
+    const remainingUnreadCount = this.threadFactsFrom(projection, operation.data.thread.threadRef).filter(fact => {
+      const direct = fact.kind === 'message' && directKeys.has(this.directMarkerKey({ memberId: operation.data.memberId,
+        threadRef: operation.data.thread.threadRef, messageRef: fact.message.messageRef, sequence: fact.sequence }))
+      const ordinary = attention !== undefined && fact.sequence > operation.data.readThroughSequence && this.visibleToFollower(fact, operation.data.memberId)
+      return direct || ordinary
+    }).length
     return Object.freeze({ receipt: this.receipt(operation), task: operation.data.task, thread: operation.data.thread,
       claims: operation.data.claims, anchor: operation.data.anchor, facts: operation.data.facts,
-      readThroughSequence: operation.data.readThroughSequence,
+      readThroughSequence: operation.data.readThroughSequence, remainingUnreadCount,
       ...(operation.data.attention === undefined ? {} : { attention: operation.data.attention }),
       consumedDirectMarkers: operation.data.inbox.directMarkers.removed })
   }
