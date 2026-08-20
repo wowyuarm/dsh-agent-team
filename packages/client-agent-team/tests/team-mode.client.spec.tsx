@@ -27,7 +27,7 @@ function Frame({ renderSlot }: FrameProps) {
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
 function BaselineConversation() { return <div data-baseline-conversation>普通对话</div> }
-async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean }) {
+async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -120,13 +120,16 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
       unreadCount: 1, directCount: 1, newestSequence: (item.message as { sequence: number }).sequence,
     })), totalUnreadCount: viewItems.length > 0 ? 1 : 0, totalDirectCount: viewItems.length > 0 ? 1 : 0,
   } }))
+  let nextRemainingUnreadCount = options?.remainingUnreadCount ?? 0
   const readThread = vi.fn(async ({ taskRef }: { taskRef: string }) => {
     const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
+    const remainingUnreadCount = nextRemainingUnreadCount
+    nextRemainingUnreadCount = 0
     return { ok: true as const, value: {
       receipt: {}, task: top.task, thread: top.thread, claims: viewClaims,
       anchor: top.message, facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],
-      readThroughSequence: (top.thread as { revision: number }).revision, remainingUnreadCount: 0, consumedDirectMarkers: [],
+      readThroughSequence: (top.thread as { revision: number }).revision, remainingUnreadCount, consumedDirectMarkers: [],
     } }
   })
   const loadThreadHistory = vi.fn(async ({ taskRef }: { taskRef: string }) => {
@@ -134,8 +137,6 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
   })
-  const loadThreadObservations = vi.fn(async () => ({ ok: true as const, value: { items: [] } }))
-  const changeAttention = vi.fn(async () => ({ ok: true as const, value: { kind: 'committed' as const, receipt: {}, attention: undefined } }))
   const changes = vi.fn(({ afterVersion }: { afterVersion: number }) => changeVersion > afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
     : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
@@ -147,7 +148,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations: loadThreadObservations, changeAttention, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
@@ -166,7 +167,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, inbox, readThread, loadThreadHistory, loadThreadObservations, changeAttention }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, inbox, readThread, loadThreadHistory }
 }
 
 describe('rendered Team mode composition', () => {
@@ -287,7 +288,7 @@ describe('rendered Team mode composition', () => {
   })
 
   it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
-    const b = await runtimeWithTeam()
+    const b = await runtimeWithTeam({ remainingUnreadCount: 1 })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
@@ -330,11 +331,20 @@ describe('rendered Team mode composition', () => {
     expect(b.view.queryByText('任务消息')).toBeNull()
     expect(b.view.getByText('待处理')).toBeTruthy()
     expect(b.view.getByText('1 条消息')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('tab', { name: 'Inbox' }))
+    await waitFor(() => expect(b.view.getByRole('button', { name: /1 条未读更新, 1 条直接请求/ })).toBeTruthy())
+    fireEvent.click(b.view.getByRole('tab', { name: '频道' }))
     b.publishAgentReply()
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     expect(b.view.getByText('Implement API')).toBeTruthy()
+    expect(b.view.queryByRole('button', { name: '关注 Thread' })).toBeNull()
+    expect(b.view.queryByRole('button', { name: '取消关注' })).toBeNull()
+    expect(b.view.queryByText('Human 观察')).toBeNull()
+    fireEvent.click(await b.view.findByRole('button', { name: '继续阅读' }))
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
+    expect(b.view.queryByRole('button', { name: '继续阅读' })).toBeNull()
     expect(b.view.getByText('@builder 认领了「Implement API」')).toBeTruthy()
     expect(b.view.queryByText(/member:builder/)).toBeNull()
     expect(b.view.queryByText(/claim ·/)).toBeNull()

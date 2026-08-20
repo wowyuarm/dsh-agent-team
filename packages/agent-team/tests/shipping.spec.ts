@@ -28,8 +28,12 @@ describe('Agent Team shipping contract', () => {
     for (const capability of [
       '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
       '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-skill-filesystem',
-      '@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-tool-todo',
+      '@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-web',
     ]) expect(preset).toContain(`name: '${capability}'`)
+    const hostManifest = JSON.parse(await readFile(resolve(root, 'packages/agent-team/package.json'), 'utf8')) as {
+      peerDependencies: Record<string, string>
+    }
+    expect(hostManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.0-rc.5 <0.2.0')
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')

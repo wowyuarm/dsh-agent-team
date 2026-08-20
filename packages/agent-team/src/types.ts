@@ -394,6 +394,8 @@ export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
     readonly anchor: AgentTeamMessage
     readonly facts: readonly AgentTeamThreadReadFact[]
     readonly readThroughSequence: number
+    /** Number of unread facts left after this bounded read. */
+    readonly remainingUnreadCount: number
     /** The reader's post-read Attention snapshot, when the reader follows. */
     readonly attention?: AgentTeamThreadAttention | undefined
     readonly inbox: AgentTeamInboxDelta

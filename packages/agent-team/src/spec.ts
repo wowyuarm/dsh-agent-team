@@ -305,6 +305,7 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
       anchor: messageSchema,
       facts: z.array(readFactSchema),
       readThroughSequence: z.number().int().nonnegative(),
+      remainingUnreadCount: z.number().int().nonnegative(),
       attention: attentionSchema.optional(),
       inbox: inboxDeltaSchema,
     }).strict(),
@@ -324,10 +325,10 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
   }).strict(),
 ])
 
-/** Versioned durable Agent Team ledger declaration. v6 has no v5 compatibility path. */
+/** Versioned durable Agent Team ledger declaration. v7 has no compatibility path for older record shapes. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 6,
+  version: 7,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },

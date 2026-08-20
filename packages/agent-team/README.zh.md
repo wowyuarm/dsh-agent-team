@@ -18,7 +18,7 @@ Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`c
 
 创建 Member 时，先提交稳定的 Member/session/Workspace/preset/private-memory 身份，再执行 unpublished Agent setup。Setup 挂载指定 preset，并在发布前检查带 marker 的 `team_message` 和全部五个 Team tools。失败只把该 Member 标为 unavailable。Suspend 等待所属 `AgentHandle` 完全停止；resume 和 Host remount 恢复同一个持久 session。
 
-每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。隔离的 `team-member` preset 还提供 coding 工具、Workspace instruction discovery 和 Team protocol guidance。小写 `memory.md` 是有界的 8 KiB 参考索引，只有该 Member 的内容变化时才注入；`notes/` 只通过 filesystem tools 按需读取。超预算索引只产生维护警告，不静默截断。普通 session 和 fork 不获得 Team 身份或私有记忆上下文。
+每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。隔离的 `team-member` preset 还提供 coding 工具、面向模型的 Web 搜索、Workspace instruction discovery 和 Team protocol guidance。共享的 Web service 与 provider 仍由 Host 持有；preset 只挂载面向模型的 Web tool。小写 `memory.md` 是有界的 8 KiB 参考索引，只有该 Member 的内容变化时才注入；`notes/` 只通过 filesystem tools 按需读取。超预算索引只产生维护警告，不静默截断。普通 session 和 fork 不获得 Team 身份或私有记忆上下文。
 
 把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。创建 Task、创建 Claim、显式 follow 或 Human 确认邀请会开始 Thread Attention。普通未读从 Attention 派生，structured mention 形成持久 direct marker。`team_inbox` 和 Thread read 是 Host projection，不是 Session inbox 内容。启用的 Member 只会收到固定的 `team_inbox` 检查提示，不携带 Thread 正文；待处理提示会合并，忽略提示不会形成循环，resume/runtime error recovery 会从持久未读状态重新判断是否提示。
 

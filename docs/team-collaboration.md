@@ -14,7 +14,7 @@ The tools have separate responsibilities:
 
 - `team_view` discovers authorized Channel, Task, and Member summaries. Results are bounded and contain no Thread timeline.
 - `team_inbox` returns bounded, body-free summaries for Threads with unread work. Direct requests sort before ordinary unread work, then by newest relevant sequence. Listing does not change read state.
-- `team_thread` owns personal Attention and Thread reading. `read` atomically returns one chronological unread batch and advances the durable watermark; `history` returns bounded older public facts without changing read state. `follow` and `unfollow` change personal Attention.
+- `team_thread` owns personal Attention and Thread reading. `read` atomically returns one chronological unread batch, advances the durable watermark, and reports how many unread facts remain; `history` returns bounded older public facts without changing read state. `follow` and `unfollow` change personal Attention.
 - `team_message.start` creates a top-level Task. `team_message.reply` appends an explicit reply to an existing Thread.
 - `team_claim` lists Claims and lets an Agent create, complete, or release only its own Direction Claims. A successful Claim starts Attention automatically.
 
@@ -30,7 +30,7 @@ While Attention is active, Messages, Claim changes, and Task accept/close/reopen
 
 The first read in an Attention period returns the Task anchor, current Task state, current Claim snapshot, limited recent background, and the bounded unread batch. Background facts are orientation only and are marked as already read. `team_thread.history` is the only tool for paging older Thread facts.
 
-The Human Client opens the Workspace Inbox first. Inbox rows are Host projections ordered with direct requests first; opening a row performs the durable Human Thread read. The current Thread surface shows public revisioned facts, Claims, and runtime risk, but intentionally does not render follow/unfollow buttons or Human-only follow/unfollow observations. History paging and passive change polling do not acknowledge new work; the user must explicitly read the new batch.
+The Human Client opens the Workspace Inbox first. Inbox rows are Host projections ordered with direct requests first and show both the total unread count and direct-request count. Opening a row performs the durable Human Thread read. A bounded read that leaves unread facts exposes an explicit continue-reading action. The current Thread surface shows public revisioned facts, Claims, and runtime risk, but intentionally does not render follow/unfollow buttons or Human-only follow/unfollow observations. History paging and passive change polling do not acknowledge new work; the user must explicitly read the new batch.
 
 ## Structured mentions
 
@@ -56,7 +56,7 @@ The Human Client Remote surface exposes `inbox`, `readThread`, `threadHistory`, 
 
 ## Team Member context boundary
 
-The explicit `team-member` preset is a full coding composition: shell, filesystem and search, background-job controls, skills, todo tracking, compaction, the five Team tools, Workspace instruction discovery, and the private-memory context plugin. Ordinary Sessions do not inherit these Team rows.
+The explicit `team-member` preset is a full coding composition: shell, filesystem and search, web search, background-job controls, skills, todo tracking, compaction, the five Team tools, Workspace instruction discovery, and the private-memory context plugin. The host owns the Web service/provider; the Team preset adds only the model-facing web tool. Ordinary Sessions do not inherit these Team rows.
 
 A Member keeps its project `cwd` at the Workspace path. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md` guidance; Team does not reimplement or relocate that discovery. Each Member's private root contains a lowercase `memory.md` index and on-demand `notes/`. At each safe pre-step, the Member sees at most its own changed index, framed as escaped, typed reference context. The index is bounded at 8 KiB; exceeding the budget produces a maintenance warning rather than silent truncation, deletion, or summarization. Notes are never automatically injected. Suspend/resume preserves the files, and permanent removal deletes the private root.
 

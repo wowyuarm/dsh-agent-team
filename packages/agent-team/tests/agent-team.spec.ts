@@ -71,7 +71,7 @@ async function sqliteHarness(path: string): Promise<TeamHarness> {
   return { ctx, fiber, facility }
 }
 
-function storedPool(records: Array<[string, unknown]>, version = 6): MemoryMediaPool {
+function storedPool(records: Array<[string, unknown]>, version = 7): MemoryMediaPool {
   const pool = new MemoryMediaPool()
   pool.versions.set('agent_team', version)
   pool.media.set('agent_team', { tables: new Map([['operations', new Map(records)]]), global: null })
@@ -112,7 +112,7 @@ async function addLedgerMember(
 }
 
 describe('AgentTeam durable Thread Attention ledger', () => {
-  it('boots a v6 empty Team and rejects old ledger media', async () => {
+  it('boots a v7 empty Team and rejects old ledger media', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     expect(first.ctx.agentTeam.status()).toEqual({ initialized: true, sequence: 1, operationCount: 1, channelCount: 0, agentMemberCount: 0, humanMemberId: AGENT_TEAM_HUMAN_MEMBER_ID })
@@ -122,7 +122,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(first.ctx.agentTeam.status()).toMatchObject({ sequence: 1 })
     expect([...pool.media.get('agent_team')!.tables.get('operations')!.values()]).toEqual(records)
     await replay.dispose()
-    await expect(harness(storedPool([], 5))).rejects.toThrow(/stamped v5, descriptor wants v6/)
+    await expect(harness(storedPool([], 6))).rejects.toThrow(/stamped v6, descriptor wants v7/)
   })
 
   it('creates a top-level Task, starts creator Attention, and returns no own unread work', async () => {
@@ -263,9 +263,12 @@ describe('AgentTeam durable Thread Attention ledger', () => {
         body: `Update ${index + 1}`, baseRevision: revision, actor: agentTeamHumanActor() })).value)
       revision = sent.thread.revision
     }
-    const first = (await ledger.readThread({ requestId: requestId('read-21-first'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    const firstRequest = { requestId: requestId('read-21-first'), workspaceId: alpha, taskRef: started.task.taskRef, actor }
+    const first = (await ledger.readThread(firstRequest)).value
     expect(first.facts.filter(fact => fact.unread)).toHaveLength(20)
     expect(first.remainingUnreadCount).toBe(1)
+    const retry = (await ledger.readThread(firstRequest)).value
+    expect(retry).toEqual(first)
     const second = (await ledger.readThread({ requestId: requestId('read-21-second'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
     expect(second.facts.filter(fact => fact.unread)).toHaveLength(1)
     expect(second.remainingUnreadCount).toBe(0)
