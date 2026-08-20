@@ -40,11 +40,14 @@ npm run typecheck
 npm test
 npm run build
 npm run test:browser
-npm run preview
+npm run preview:ui
+DEEPSEEK_API_KEY=... npm run preview
 npm pack --dry-run
 ```
 
-`test:browser` 使用相邻 `../deepseek-harness` checkout 的官方 Web scaffold 和 `/usr/bin/google-chrome`（可用 `CHROME_PATH` 覆盖）。命令会把构建后的包安装到隔离临时 profile，完成桌面/窄屏旅程，更新 `.scratch/m2-ui/validation/m2-06/`，并删除所有 Harness 临时文件。`npm run preview` 会启动同一套真实组合、打印本地 URL，并持续运行到按下 `Ctrl+C`。
+`test:browser` 使用相邻 `../deepseek-harness` checkout 的官方 Web scaffold 和 `/usr/bin/google-chrome`（可用 `CHROME_PATH` 覆盖）。命令会把构建后的包安装到隔离临时 profile，运行无凭据且确定性的组装旅程，包括已有 Thread 邀请、Agent 读取/回复、Human Inbox、reload 和普通 DSH surface 恢复；随后更新 `.scratch/ui-redesign/validation/` 并删除所有 Harness 临时文件。
+
+`npm run preview` 是真实交互模式。它在 build 前要求 `DEEPSEEK_API_KEY`，在隔离临时 profile 中挂载真实 provider，打印本地 URL，并在 `Ctrl+C` 后清理；它不会静默切换到 replay。`npm run preview:ui` 会加载隔离的 Team fixture，并禁用模型 streaming，供开发者检查界面而不会意外调用 provider。
 
 本项目面向 DSH 的公开插件与 bundle 接口。安装用户不需要相邻 Harness checkout，也不需要修改 Harness 源码；上述 checkout 关系仅是开发测试接缝。
 

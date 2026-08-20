@@ -40,11 +40,14 @@ npm run typecheck
 npm test
 npm run build
 npm run test:browser
-npm run preview
+npm run preview:ui
+DEEPSEEK_API_KEY=... npm run preview
 npm pack --dry-run
 ```
 
-`test:browser` uses the adjacent `../deepseek-harness` checkout's official Web scaffold and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It installs the built packages into an isolated temporary profile, runs the complete desktop/narrow journey, updates `.scratch/m2-ui/validation/m2-06/`, and removes all temporary Harness files. `npm run preview` starts the same real composition, prints a local URL, and keeps it running until `Ctrl+C`.
+`test:browser` uses the adjacent `../deepseek-harness` checkout's official Web scaffold and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It installs the built packages into an isolated temporary profile and runs the credential-free, deterministic assembled journey, including the existing-Thread invitation, Agent read/reply, Human Inbox, reload, and ordinary DSH restoration. It updates `.scratch/ui-redesign/validation/` and removes all temporary Harness files.
+
+`npm run preview` is the live interactive mode. It requires `DEEPSEEK_API_KEY` before build, mounts the real provider in an isolated temporary profile, prints a local URL, and cleans up on `Ctrl+C`; it never silently falls back to replay. `npm run preview:ui` loads isolated Team fixture state with model streaming disabled, for presentation inspection without an accidental provider call.
 
 This repository targets the public DSH plugin and bundle interfaces. Installed users do not need a sibling Harness checkout or Harness source changes; the checkout relationship above is only a development test seam.
 

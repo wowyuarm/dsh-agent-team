@@ -6,7 +6,7 @@
 
 | 文档 | 用途 | 什么时候读 |
 | --- | --- | --- |
-| [`development.md`](development.md) | 安装、命令、生成物、测试和发布检查 | 开始开发、运行验证、修改 package 或发布布局 |
+| [`development.md`](development.md) | 安装、命令、生成物、live/UI preview、browser replay 和发布检查 | 开始开发、运行验证、修改 package 或发布布局 |
 | [`architecture.md`](architecture.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
 | [`team-collaboration.md`](team-collaboration.md) | 已实现的五工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
 | [`harness-navigation.md`](harness-navigation.md) | 本仓库与 `../deepseek-harness` 的查阅路线、源码入口、已知接入陷阱 | 不确定应该查哪个 Harness 文档/package/source 时 |

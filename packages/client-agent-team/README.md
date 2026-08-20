@@ -32,4 +32,7 @@ npm run typecheck
 npm test
 npm run build
 npm run test:browser
+npm run preview:ui
 ```
+
+`test:browser` runs the deterministic, credential-free assembled Team journey. `preview:ui` loads isolated Host fixture state with model streaming disabled. Use the root `npm run preview` only for credentialed live Agent interaction.

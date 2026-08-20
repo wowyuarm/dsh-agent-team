@@ -52,13 +52,22 @@ npm run test:browser
 
 它会先 build，然后在临时 profile 中复制已构建 package，启动 Harness 官方 Web scaffold，用 `/usr/bin/google-chrome` 跑真实 journey；`CHROME_PATH` 可以覆盖浏览器路径。测试结束后会清理临时 profile 和 Harness 测试文件。
 
-需要手动查看真实页面时运行：
+预览与浏览器验证分为三条显式路径：
 
 ```sh
+# 真实模型交互；启动前要求 DEEPSEEK_API_KEY
 npm run preview
+
+# 无模型 UI 检查；加载隔离的 Team fixture，意外模型调用会明确失败
+npm run preview:ui
+
+# 无凭据、可重复的组装浏览器验收
+npm run test:browser
 ```
 
-命令输出本地 URL，使用 `Ctrl+C` 停止。
+`preview` 与 `preview:ui` 都使用临时 profile、临时 storage 和已构建 package，输出本地 URL，并在 `Ctrl+C` 后清理。`preview` 固定使用 Harness 的真实 DeepSeek adapter，不会因缺少凭据静默切换到 replay；凭据缺失时会在 build 和启动前失败。`preview:ui` 固定使用 keyless route-only adapter，初始 fixture 不触发模型；任何误触发的模型请求都会以明确错误终止，不能伪装成可用的真实交互。
+
+`test:browser` 固定使用 keyless、确定性的 Host/Client 驱动，不读取真实 provider 凭据。代表性链路从已有 Thread 开始，Human 两次确认邀请未关注 Agent，随后验证 Agent Inbox 读取/回复、Human Inbox 与 Thread、页面 reload 后的 Host 持久事实，以及退出 Team mode 后普通 DSH surface 恢复。
 
 ## 生成文件
 
@@ -107,4 +116,5 @@ dsh --profile team-demo
 - Client 改动有真实 composition 或 browser 证据，而不只有组件单测。
 - 测试和 lint 命令实际执行过，汇报时只写真实结果。
 - `git diff --check` 通过。
+- Live preview、UI preview 与 browser replay 没有隐式模式切换；需要模型的检查明确选择 live 或 replay。
 - 没有 API key、profile 凭据、临时 overlay、临时 Harness 测试或浏览器产物被提交。

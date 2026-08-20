@@ -32,4 +32,7 @@ npm run typecheck
 npm test
 npm run build
 npm run test:browser
+npm run preview:ui
 ```
+
+`test:browser` 运行无凭据且确定性的组装 Team 旅程。`preview:ui` 加载隔离的 Host fixture，并禁用模型 streaming。只有需要真实 Agent 交互时才使用根目录的 `npm run preview`，该命令要求有效凭据。
