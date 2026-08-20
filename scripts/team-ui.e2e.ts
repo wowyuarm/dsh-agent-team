@@ -108,9 +108,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const channelComposer = page.getByRole('textbox', { name: '消息内容' })
   await channelComposer.fill('请协作完成验收 @')
   await page.getByRole('option', { name: /@builder/ }).click()
-  await channelComposer.press('End')
-  await channelComposer.type('@')
-  await page.getByRole('option', { name: /@reviewer/ }).click()
   await page.screenshot({ path: join(UI04_SHOTS, 'mention-menu-selected.png'), fullPage: true })
   await page.getByRole('button', { name: '发送' }).click()
   await page.getByRole('alert').waitFor()
@@ -144,9 +141,53 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const workspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const projection = scaffold.ctx.agentTeam.view({ workspaceId: workspace.id })
   const task = projection.tasks[0]!
-  const builder = scaffold.ctx.agentTeam.members({ workspaceId: workspace.id })
-    .find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
+  const statuses = scaffold.ctx.agentTeam.members({ workspaceId: workspace.id })
+  const builder = statuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
+  const reviewer = statuses.find((status: { member: { handle: string } }) => status.member.handle === 'reviewer')!
   const agent = scaffold.ctx.agents.get(builder.member.sessionId)!
+  const reviewerAgent = scaffold.ctx.agents.get(reviewer.member.sessionId)!
+
+  await page.getByRole('button', { name: /Task #1/ }).click()
+  const invitationComposer = page.getByRole('textbox', { name: '消息内容' })
+  await invitationComposer.fill('请 reviewer 加入这个已有 Thread 并回复 Human @re')
+  await page.getByRole('option', { name: /@reviewer/ }).click()
+  await page.getByRole('button', { name: '发送' }).click()
+  await page.getByRole('status').filter({ hasText: '再次发送' }).waitFor()
+  await page.getByRole('button', { name: '发送' }).click()
+  await page.locator('[data-team-thread] article').filter({ hasText: '请 reviewer 加入这个已有 Thread 并回复 Human' }).waitFor()
+  const reviewerInbox = scaffold.ctx.agentTeam.inboxForAgent(reviewerAgent, { workspaceId: workspace.id })
+  expect(reviewerInbox).toMatchObject({ totalDirectCount: 1, items: [expect.objectContaining({
+    task: expect.objectContaining({ taskRef: task.taskRef }), directCount: 1,
+  })] })
+  const reviewerRead = await scaffold.ctx.agentTeam.readThreadForAgent(reviewerAgent, {
+    requestId: 'm2-06-reviewer-read' as never, workspaceId: workspace.id, taskRef: task.taskRef,
+  })
+  const reviewerReply = await scaffold.ctx.agentTeam.replyForAgent(reviewerAgent, {
+    requestId: 'm2-06-reviewer-reply' as never,
+    workspaceId: workspace.id,
+    taskRef: task.taskRef,
+    body: 'reviewer 已读取邀请并回复 Human',
+    baseRevision: reviewerRead.thread.revision,
+    recipients: [scaffold.ctx.agentTeam.status().humanMemberId],
+  })
+  expect(reviewerReply.kind).toBe('committed')
+
+  await page.getByRole('button', { name: '返回频道' }).click()
+  await page.getByRole('tab', { name: 'Inbox' }).click()
+  await page.getByRole('button', { name: /Task #1/ }).waitFor()
+  await page.reload()
+  await page.getByRole('heading', { name: 'Inbox' }).waitFor({ timeout: 20_000 })
+  await page.getByRole('button', { name: /Task #1/ }).click()
+  await page.getByText('reviewer 已读取邀请并回复 Human', { exact: true }).waitFor()
+  await expect.poll(() => scaffold!.ctx.agentTeam.inbox({ workspaceId: workspace.id }).totalUnreadCount).toBe(0)
+
+  const replayedThread = scaffold.ctx.agentTeam.threadHistory({ workspaceId: workspace.id, taskRef: task.taskRef, limit: 100 })
+  expect(JSON.stringify(replayedThread)).toContain('请 reviewer 加入这个已有 Thread 并回复 Human @reviewer')
+  expect(JSON.stringify(replayedThread)).toContain('reviewer 已读取邀请并回复 Human')
+
+  await page.getByRole('tab', { name: '频道' }).click()
+  await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByRole('button', { name: /Task #1/ }).click()
   const agentRead = await scaffold.ctx.agentTeam.readThreadForAgent(agent, {
     requestId: 'm2-06-agent-read' as never, workspaceId: workspace.id, taskRef: task.taskRef,
   })
@@ -156,7 +197,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   })
   if (agentClaim.kind !== 'committed') throw new Error(`Agent Claim was rejected: ${agentClaim.kind}`)
 
-  await page.getByRole('button', { name: /Task #1/ }).click()
   await page.getByText('实现验收功能', { exact: true }).waitFor()
   await page.getByText(/认领了「实现验收功能」/).waitFor()
   await page.screenshot({ path: join(UI05_SHOTS, 'active-thread.png'), fullPage: true })

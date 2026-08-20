@@ -19,7 +19,8 @@
     "prepack": "npm run build",
     "test": "npm run generate:typert && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
-    "preview": "npm run build && node scripts/run-preview.mjs",
+    "preview": "node scripts/check-preview-credentials.mjs && npm run build && node scripts/run-preview.mjs",
+    "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
     "lint": "eslint ."
   },
   "dsh": {

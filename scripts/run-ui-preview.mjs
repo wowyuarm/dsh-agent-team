@@ -7,34 +7,30 @@ import { spawn } from 'node:child_process'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const harness = resolve(root, '../deepseek-harness')
-if (process.env.DEEPSEEK_API_KEY?.trim() === '') {
-  throw new Error('npm run preview requires DEEPSEEK_API_KEY; export a valid credential before launching the live Team preview')
-}
-if (process.env.DEEPSEEK_API_KEY === undefined) {
-  throw new Error('npm run preview requires DEEPSEEK_API_KEY; export a valid credential before launching the live Team preview')
-}
-const temporary = await mkdtemp(join(tmpdir(), 'dsh-agent-team-preview-'))
+const temporary = await mkdtemp(join(tmpdir(), 'dsh-agent-team-ui-preview-'))
 const overlay = join(temporary, 'overlay.yml')
 const home = join(temporary, 'home')
-const test = join(harness, 'apps/web/tests/__external-agent-team-preview.e2e.ts')
+const test = join(harness, 'apps/web/tests/__external-agent-team-ui-preview.e2e.ts')
 const quote = value => value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")
 const overlayText = `- insert:\n    - id: dsh-agent-team-scope\n      name: cordis:group\n      group: true\n      isolate:\n        agentPresets: true\n      config:\n        - id: dsh-agent-team-presets\n          name: '@deepseek-ai/dsh-agent-team/preset-roster'\n        - id: dsh-agent-team\n          name: '@deepseek-ai/dsh-agent-team'\n    - id: dsh-agent-team-invariant\n      name: '@deepseek-ai/dsh-agent-team/invariant'\n    - id: dsh-command-agent-team\n      name: '@deepseek-ai/dsh-command-agent-team'\n    - id: dsh-command-agent-team-invariant\n      name: '@deepseek-ai/dsh-command-agent-team/invariant'\n    - id: dsh-client-agent-team\n      name: '@deepseek-ai/dsh-client-agent-team'\n`
 
 try {
   await access(join(harness, 'apps/web/dist/index.html'), constants.R_OK)
   await writeFile(overlay, overlayText)
-  const rendered = (await readFile(join(root, 'scripts/team-ui.preview.ts'), 'utf8'))
+  const rendered = (await readFile(join(root, 'scripts/team-ui.ui-preview.ts'), 'utf8'))
     .replace('__TEAM_ROOT__', quote(root)).replace('__OVERLAY__', quote(overlay)).replace('__HOME__', quote(home))
   await writeFile(test, rendered)
-  const child = spawn('corepack', ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.web.config.ts', 'apps/web/tests/__external-agent-team-preview.e2e.ts', '--reporter=verbose'], {
-    cwd: harness, stdio: 'inherit', env: { ...process.env, DSH_SNAPSHOT: 'record' },
+  const child = spawn('corepack', ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.web.config.ts', 'apps/web/tests/__external-agent-team-ui-preview.e2e.ts', '--reporter=verbose'], {
+    cwd: harness,
+    stdio: 'inherit',
+    env: { ...process.env, DSH_SNAPSHOT: 'replay' },
   })
   const stop = () => { child.kill('SIGTERM') }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
   await new Promise((resolveExit, reject) => {
     child.once('error', reject)
-    child.once('exit', code => code === 0 || code === null || code === 143 ? resolveExit() : reject(new Error(`preview exited with ${code}`)))
+    child.once('exit', code => code === 0 || code === null || code === 143 ? resolveExit() : reject(new Error(`UI preview exited with ${code}`)))
   })
 } finally {
   await rm(test, { force: true })
