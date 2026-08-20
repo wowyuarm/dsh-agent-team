@@ -27,8 +27,10 @@ function Frame({ renderSlot }: FrameProps) {
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
 function BaselineConversation() { return <div data-baseline-conversation>普通对话</div> }
-async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string }) {
-  if (persisted !== undefined) localStorage.setItem('dsh.agent-team.navigation', JSON.stringify(persisted))
+async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean }) {
+  if (options?.mode !== undefined) {
+    localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
+  }
   const runtime = await SlotTestRuntime.create()
   const locale = new LocaleRuntime(runtime.ctx)
   runtime.provide('locale', locale)
@@ -59,7 +61,9 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
       availability: 'active', presence: 'available',
     },
   } }))
-  let channels: Array<Record<string, unknown>> = []
+  let channels: Array<Record<string, unknown>> = options?.initialChannels === true
+    ? [{ channelRef: 'channel:engineering', workspaceId: 'w1', name: 'engineering', description: 'Engineering work', createdAtSequence: 1 }]
+    : []
   let memberships: Array<Record<string, unknown>> = []
   let viewItems: Array<Record<string, unknown>> = []
   let viewClaims: Array<Record<string, unknown>> = []
@@ -90,7 +94,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
     const message = { messageRef: 'message:1', channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, topLevel: true, sequence: 2 }
     viewItems = [{ message, task, thread, taskNumber: 1, messageCount: 1 }]
-    return { ok: true, value: { receipt: {}, message, task, thread, follows: [], deliveries: [] } }
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
   })
   let changeVersion = 0
   const changeWaiters: Array<(value: { ok: true; value: { version: number } }) => void> = []
@@ -99,17 +103,16 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     const message = { ...(top.message as object), messageRef: 'message:human-reply', sender: 'member:human', body: request.body, topLevel: false, sequence: request.baseRevision + 1 }
     const thread = { ...(top.thread as object), revision: request.baseRevision + 1 }
     viewItems = [{ ...top, thread, messageCount: 2 }, { ...top, message, thread, messageCount: 2 }]
-    return { ok: true as const, value: { kind: 'committed', receipt: {}, message, task: top.task, thread, deliveries: [] } }
-  })
-  const changeClaim = vi.fn(async (request: { claimRef?: string; action: string }) => {
-    viewClaims = viewClaims.map(claim => claim.claimRef === request.claimRef ? { ...claim, state: request.action === 'done' ? 'done' : 'released' } : claim)
-    return { ok: true as const, value: {} }
+    return { ok: true as const, value: { kind: 'committed', receipt: {}, message, task: top.task, thread, attention: [], directMarkers: [] } }
   })
   const changeTask = vi.fn(async (request: { action: 'accept' | 'close' | 'reopen' }) => {
-    viewItems = viewItems.map(item => ({ ...item, task: { ...(item.task as object),
+    const top = viewItems[0]!
+    const task = { ...(top.task as object),
       status: request.action === 'reopen' ? 'todo' : request.action === 'accept' ? 'done' : 'closed',
-      resolution: request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed' } }))
-    return { ok: true as const, value: {} }
+      resolution: request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed' }
+    const thread = { ...(top.thread as object), revision: (top.thread as { revision: number }).revision + 1 }
+    viewItems = viewItems.map(item => ({ ...item, task, thread }))
+    return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: {}, task, thread, claims: viewClaims } }
   })
   const changes = vi.fn(({ afterVersion }: { afterVersion: number }) => changeVersion > afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
@@ -122,7 +125,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeClaim, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
@@ -141,7 +144,7 @@ async function runtimeWithTeam(persisted?: { mode: 'team'; workspaceId?: string 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeClaim, changeTask, publishAgentReply }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply }
 }
 
 describe('rendered Team mode composition', () => {
@@ -186,7 +189,7 @@ describe('rendered Team mode composition', () => {
   })
 
   it('loads Workspace Agents and creates a durable Member without optimistic rows', async () => {
-    const b = await runtimeWithTeam()
+    const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     const agentsTab = await b.view.findByRole('tab', { name: 'Agents' })
     fireEvent.click(agentsTab)
@@ -209,6 +212,7 @@ describe('rendered Team mode composition', () => {
     await waitFor(() => expect(document.activeElement).toBe(agentName))
     fireEvent.change(agentName, { target: { value: 'reviewer' } })
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'Reviews changes' } })
+    fireEvent.click(await b.view.findByRole('checkbox', { name: 'engineering' }))
     b.addMember.mockResolvedValueOnce({ ok: false, error: { message: 'connection lost' } } as never)
     fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
     expect((await b.view.findByRole('alert')).textContent).toContain('connection lost')
@@ -218,7 +222,7 @@ describe('rendered Team mode composition', () => {
 
     expect(await b.view.findByText('reviewer')).toBeTruthy()
     expect(b.addMember).toHaveBeenLastCalledWith(expect.objectContaining({
-      workspaceId: 'w1', handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
+      workspaceId: 'w1', channelRefs: ['channel:engineering'], handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
     }))
     expect(b.addMember.mock.calls[0]![0].requestId).toBe(b.addMember.mock.calls[1]![0].requestId)
     await waitFor(() => expect(document.activeElement).toBe(addAgentTrigger))
@@ -310,8 +314,7 @@ describe('rendered Team mode composition', () => {
     expect(b.view.getByText('@builder 认领了「Implement API」')).toBeTruthy()
     expect(b.view.queryByText(/member:builder/)).toBeNull()
     expect(b.view.queryByText(/claim ·/)).toBeNull()
-    fireEvent.click(b.view.getByRole('button', { name: '标记完成' }))
-    await waitFor(() => expect(b.changeClaim).toHaveBeenCalledWith(expect.objectContaining({ claimRef: 'claim:1', action: 'done' })))
+    expect(b.view.queryByRole('button', { name: '标记完成' })).toBeNull()
     fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: 'human thread reply' } })
     b.reply.mockResolvedValueOnce({ ok: false, error: { message: 'stale Thread revision 2' } } as never)
     fireEvent.click(b.view.getByRole('button', { name: '发送' }))
@@ -323,11 +326,12 @@ describe('rendered Team mode composition', () => {
     expect(b.reply.mock.calls[0]![0].requestId).not.toBe(b.reply.mock.calls[1]![0].requestId)
     fireEvent.click(b.view.getByRole('button', { name: '关闭任务' }))
     expect(await b.view.findByRole('button', { name: '重新打开' })).toBeTruthy()
-    const closedComposer = b.view.getByRole('textbox', { name: '消息内容' })
-    expect(closedComposer).toBeTruthy()
-    fireEvent.change(closedComposer, { target: { value: 'reply after close' } })
-    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
-    expect(await b.view.findByText('reply after close')).toBeTruthy()
+    const closedComposer = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    expect(closedComposer.disabled).toBe(true)
+    expect((b.view.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(b.reply).toHaveBeenCalledTimes(2)
+    fireEvent.click(b.view.getByRole('button', { name: '重新打开' }))
+    await waitFor(() => expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).disabled).toBe(false))
     fireEvent.click(b.view.getByRole('button', { name: '返回频道' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())

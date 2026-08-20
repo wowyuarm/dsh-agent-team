@@ -25,8 +25,6 @@ export function formatActivity(activity: AgentTeamActivity, options: {
   readonly claims: readonly AgentTeamClaim[]
 }): string {
   const actor = options.actorName(activity.actor)
-  if (activity.kind === 'follow') return options.t('activityFollowed', { actor })
-  if (activity.kind === 'unfollow') return options.t('activityUnfollowed', { actor })
   if (activity.kind === 'accept') return options.t('activityAccepted', { actor })
   if (activity.kind === 'close') return options.t('activityClosed', { actor })
   if (activity.kind === 'reopen') return options.t('activityReopened', { actor })
@@ -35,5 +33,7 @@ export function formatActivity(activity: AgentTeamActivity, options: {
     : options.t('claims')
   if (activity.kind === 'claim') return options.t('activityClaimed', { actor, direction })
   if (activity.kind === 'done') return options.t('activityClaimDone', { actor, direction })
-  return options.t('activityClaimReleased', { actor, direction })
+  if (activity.kind === 'release') return options.t('activityClaimReleased', { actor, direction })
+  if (activity.kind === 'claims_released') return options.t('activityClaimsReleased', { actor, count: activity.claimRefs.length })
+  throw new Error(`unknown Team Activity kind: ${(activity as { kind: string }).kind}`)
 }

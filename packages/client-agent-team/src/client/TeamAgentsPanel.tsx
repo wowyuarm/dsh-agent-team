@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMemberStatus,
+  AgentTeamChannel,
   AgentTeamRequestId,
 } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -14,13 +15,16 @@ import css from './sidebar.module.css'
 interface TeamAgentsPanelProps {
   readonly workspaceId: WorkspaceId
   readonly loadMembers: TeamSidebarProps['loadMembers']
+  readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly addMember: TeamSidebarProps['addMember']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, loadChannels, addMember, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamAgentMemberStatus[]>([])
+  const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
+  const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [formOpen, setFormOpen] = useState(false)
@@ -43,6 +47,14 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
   }, [loadMembers, workspaceId])
 
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    let active = true
+    void loadChannels({ workspaceId, topLevelOnly: true, includeActivities: false, limit: 1 }).then(result => {
+      if (!active || !result.ok) return
+      setChannels(result.value.channels)
+    })
+    return () => { active = false }
+  }, [loadChannels, workspaceId])
 
   const closeForm = () => {
     if (creating) return
@@ -64,6 +76,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
         })
         setHandle('')
         setDescription('')
+        setChannelRefs([])
         setFormOpen(false)
         if (result.value.status.presence === 'unavailable') {
           setRetryRequest(request)
@@ -89,14 +102,17 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
     const normalizedHandle = handle.trim()
     const normalizedDescription = description.trim()
     if (normalizedHandle.length === 0 || normalizedDescription.length === 0 || creating) return
+    if (channelRefs.length === 0) return
     const sameRequest = retryRequest !== undefined && retryRequest.workspaceId === workspaceId
       && retryRequest.handle === normalizedHandle && retryRequest.description === normalizedDescription
+      && retryRequest.channelRefs.length === channelRefs.length && retryRequest.channelRefs.every(ref => channelRefs.includes(ref))
     void provision(sameRequest ? retryRequest : {
       requestId: crypto.randomUUID() as AgentTeamRequestId,
       workspaceId,
       handle: normalizedHandle,
       description: normalizedDescription,
       presetId: 'team-member',
+      channelRefs,
     })
   }
 
@@ -116,7 +132,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
         title={t('addAgent')}
         closeLabel={t('close')}
         contentClassName={createCss.dialogContent!}
-        footer={<><Button variant="outline" disabled={creating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-agent-create-form" variant="primary" disabled={creating || handle.trim().length === 0 || description.trim().length === 0}>{creating ? t('creatingAgent') : t('createAgent')}</Button></>}
+        footer={<><Button variant="outline" disabled={creating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-agent-create-form" variant="primary" disabled={creating || handle.trim().length === 0 || description.trim().length === 0 || channelRefs.length === 0}>{creating ? t('creatingAgent') : t('createAgent')}</Button></>}
       >
         <form id="team-agent-create-form" className={createCss.form} onSubmit={submit}>
           <label className={createCss.field}>
@@ -127,6 +143,15 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, addMember, onCreatin
             <span>{t('agentDescription')}</span>
             <Input className={createCss.input!} value={description} onChange={event => { setDescription(event.target.value); setRetryRequest(undefined) }} disabled={creating} />
           </label>
+          <fieldset className={createCss.field}>
+            <legend>{t('initialChannels')}</legend>
+            {channels.length === 0 ? <span>{t('noChannelsForAgent')}</span> : channels.map(channel => <label key={channel.channelRef}>
+              <input type="checkbox" checked={channelRefs.includes(channel.channelRef)} disabled={creating} onChange={event => {
+                setChannelRefs(current => event.target.checked ? [...current, channel.channelRef] : current.filter(ref => ref !== channel.channelRef))
+                setRetryRequest(undefined)
+              }} /> {channel.name}
+            </label>)}
+          </fieldset>
           {formOpen && error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
       </Modal>

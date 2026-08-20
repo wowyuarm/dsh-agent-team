@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { MessageId } from '@deepseek-ai/dsh-llm'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -7,7 +6,6 @@ import type {
   AgentTeamActivityRef,
   AgentTeamChannelRef,
   AgentTeamClaimRef,
-  AgentTeamDeliveryId,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamOperation,
@@ -26,21 +24,20 @@ const channelRefSchema = z.string().regex(/^channel:[^:]+$/).transform(value => 
 const messageRefSchema = z.string().regex(/^message:[^:]+$/).transform(value => value as AgentTeamMessageRef)
 const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value as AgentTeamTaskRef)
 const threadRefSchema = z.string().regex(/^thread:[^:]+$/).transform(value => value as AgentTeamThreadRef)
-const deliveryIdSchema = z.string().regex(/^delivery:[^:]+$/).transform(value => value as AgentTeamDeliveryId)
 const claimRefSchema = z.string().regex(/^claim:[^:]+$/).transform(value => value as AgentTeamClaimRef)
 const activityRefSchema = z.string().regex(/^activity:[^:]+$/).transform(value => value as AgentTeamActivityRef)
-const messageIdSchema = z.string().min(1).transform(MessageId)
+
+const actorSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal('member'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
+])
 
 const operationBase = {
   sequence: z.number().int().positive(),
   operationId: operationIdSchema,
   requestId: requestIdSchema,
   occurredAt: z.string().datetime(),
-  actor: z.union([
-    z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
-    z.object({ kind: z.literal('member'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
-    z.object({ kind: z.literal('host'), handle: z.literal('agent-team') }).strict(),
-  ]),
+  actor: actorSchema,
 }
 
 const memberSchema = z.object({
@@ -87,25 +84,35 @@ const threadSchema = z.object({
   revision: z.number().int().positive(),
 }).strict()
 
-const followSchema = z.object({
+const attentionSchema = z.object({
   memberId: memberIdSchema,
   threadRef: threadRefSchema,
-  following: z.boolean(),
+  startSequence: z.number().int().positive(),
+  readThroughSequence: z.number().int().nonnegative(),
 }).strict()
 
-const deliverySourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('message'), messageRef: messageRefSchema }).strict(),
-  z.object({ kind: z.literal('activity'), activityRef: activityRefSchema }).strict(),
-])
-
-const deliveryFields = {
-  deliveryId: deliveryIdSchema,
-  source: deliverySourceSchema,
-  messageId: messageIdSchema,
+const attentionKeySchema = z.object({
+  memberId: memberIdSchema,
   threadRef: threadRefSchema,
-  taskRef: taskRefSchema,
-  recipient: memberIdSchema,
-}
+}).strict()
+
+const directMarkerSchema = z.object({
+  memberId: memberIdSchema,
+  threadRef: threadRefSchema,
+  messageRef: messageRefSchema,
+  sequence: z.number().int().positive(),
+}).strict()
+
+const inboxDeltaSchema = z.object({
+  attention: z.object({
+    set: z.array(attentionSchema),
+    removed: z.array(attentionKeySchema),
+  }).strict(),
+  directMarkers: z.object({
+    added: z.array(directMarkerSchema),
+    removed: z.array(directMarkerSchema),
+  }).strict(),
+}).strict()
 
 const claimSchema = z.object({
   claimRef: claimRefSchema,
@@ -131,24 +138,30 @@ const claimActivitySchema = z.object({
   claimRef: claimRefSchema,
 }).strict()
 
-const followActivitySchema = z.object({
-  ...activityBase,
-  kind: z.union([z.literal('follow'), z.literal('unfollow')]),
-}).strict()
-
 const taskActivitySchema = z.object({
   ...activityBase,
   kind: z.union([z.literal('accept'), z.literal('close'), z.literal('reopen')]),
+  releasedClaimRefs: z.array(claimRefSchema).min(1).optional(),
 }).strict()
 
-const messageOperationData = {
-  workspaceId: workspaceIdSchema,
-  message: messageSchema,
-  task: taskSchema,
-  thread: threadSchema,
-  follows: z.array(followSchema),
-  deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('queued') }).strict()),
-}
+const claimsReleasedActivitySchema = z.object({
+  ...activityBase,
+  kind: z.literal('claims_released'),
+  claimRefs: z.array(claimRefSchema).min(1),
+}).strict()
+
+const activitySchema = z.discriminatedUnion('kind', [claimActivitySchema, taskActivitySchema, claimsReleasedActivitySchema])
+
+const threadFactSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('message'), sequence: z.number().int().positive(), message: messageSchema }).strict(),
+  z.object({ kind: z.literal('activity'), sequence: z.number().int().positive(), activity: activitySchema }).strict(),
+])
+
+const readFactSchema = z.object({
+  fact: threadFactSchema,
+  unread: z.boolean(),
+  direct: z.boolean(),
+}).strict()
 
 const claimOperation = (kind: 'team/claim-created' | 'team/claim-done' | 'team/claim-released') => z.object({
   ...operationBase,
@@ -156,11 +169,12 @@ const claimOperation = (kind: 'team/claim-created' | 'team/claim-done' | 'team/c
   kind: z.literal(kind),
   data: z.object({
     workspaceId: workspaceIdSchema,
+    baseRevision: z.number().int().positive(),
     activity: claimActivitySchema,
     claim: claimSchema,
     task: taskSchema,
     thread: threadSchema,
-    deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('queued') }).strict()),
+    inbox: inboxDeltaSchema,
   }).strict(),
 }).strict()
 
@@ -185,37 +199,8 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/channel-member-removed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      channelRef: channelRefSchema,
-      memberId: memberIdSchema,
-      claims: z.array(claimSchema),
-      tasks: z.array(taskSchema),
-      follows: z.array(followSchema),
-      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('canceled') }).strict()),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/channel-member-added'),
-    data: z.object({ workspaceId: workspaceIdSchema, channelRef: channelRefSchema, memberId: memberIdSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/delivery-admitted'),
-    data: z.object({
-      delivery: z.object({ ...deliveryFields, state: z.literal('admitted') }).strict(),
-      evidence: z.union([z.literal('agent/inbox/spliced'), z.literal('user/message')]),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/member-added'),
-    data: z.object({ member: memberSchema }).strict(),
+    data: z.object({ member: memberSchema, channelRefs: z.array(channelRefSchema).min(1) }).strict(),
   }).strict(),
   z.object({
     ...operationBase,
@@ -232,43 +217,96 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/channel-member-added'),
+    data: z.object({ workspaceId: workspaceIdSchema, channelRef: channelRefSchema, memberId: memberIdSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/channel-member-removed'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      channelRef: channelRefSchema,
+      memberId: memberIdSchema,
+      claims: z.array(claimSchema),
+      activities: z.array(claimsReleasedActivitySchema),
+      tasks: z.array(taskSchema),
+      threads: z.array(threadSchema),
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/message-sent'),
-    data: z.object(messageOperationData).strict(),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      mentions: z.array(memberIdSchema),
+      message: messageSchema,
+      task: taskSchema,
+      thread: threadSchema,
+      inbox: inboxDeltaSchema,
+    }).strict(),
   }).strict(),
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/thread-replied'),
     data: z.object({
-      ...messageOperationData,
+      workspaceId: workspaceIdSchema,
       baseRevision: z.number().int().positive(),
       mentions: z.array(memberIdSchema),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/follow-changed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      activity: followActivitySchema,
-      follow: followSchema,
+      message: messageSchema,
       task: taskSchema,
       thread: threadSchema,
-      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('queued') }).strict()),
+      inbox: inboxDeltaSchema,
     }).strict(),
   }).strict(),
+  claimOperation('team/claim-created'),
+  claimOperation('team/claim-done'),
+  claimOperation('team/claim-released'),
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/task-changed'),
     data: z.object({
       workspaceId: workspaceIdSchema,
+      baseRevision: z.number().int().positive(),
       activity: taskActivitySchema,
       task: taskSchema,
       thread: threadSchema,
       claims: z.array(claimSchema),
-      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('queued') }).strict()),
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-attention-changed'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      action: z.union([z.literal('follow'), z.literal('unfollow')]),
+      memberId: memberIdSchema,
+      task: taskSchema,
+      thread: threadSchema,
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-read'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      memberId: memberIdSchema,
+      task: taskSchema,
+      thread: threadSchema,
+      claims: z.array(claimSchema),
+      anchor: messageSchema,
+      facts: z.array(readFactSchema),
+      readThroughSequence: z.number().int().nonnegative(),
+      attention: attentionSchema.optional(),
+      inbox: inboxDeltaSchema,
     }).strict(),
   }).strict(),
   z.object({
@@ -278,20 +316,18 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
     data: z.object({
       member: memberSchema,
       claims: z.array(claimSchema),
+      activities: z.array(claimsReleasedActivitySchema),
       tasks: z.array(taskSchema),
-      follows: z.array(followSchema),
-      deliveries: z.array(z.object({ ...deliveryFields, state: z.literal('canceled') }).strict()),
+      threads: z.array(threadSchema),
+      inbox: inboxDeltaSchema,
     }).strict(),
   }).strict(),
-  claimOperation('team/claim-created'),
-  claimOperation('team/claim-done'),
-  claimOperation('team/claim-released'),
 ])
 
-/** Versioned durable Agent Team ledger declaration. */
+/** Versioned durable Agent Team ledger declaration. v6 has no v5 compatibility path. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 5,
+  version: 6,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },

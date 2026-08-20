@@ -8,7 +8,6 @@ import type {
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamReplyRequest,
-  AgentTeamClaimRequest,
   AgentTeamTaskRequest,
   AgentTeamViewRequest,
 } from '@deepseek-ai/dsh-agent-team/types'
@@ -77,7 +76,6 @@ function registerModeShadow<T extends object>(
               joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
               removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
               reply: (request: AgentTeamReplyRequest) => ctx.remote.agentTeam.reply(request),
-              changeClaim: (request: AgentTeamClaimRequest) => ctx.remote.agentTeam.changeClaim(request),
               changeTask: (request: AgentTeamTaskRequest) => ctx.remote.agentTeam.changeTask(request),
             } : {}),
             ...(name === 'sidebar.workspaces' ? {

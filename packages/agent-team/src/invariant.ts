@@ -20,11 +20,6 @@ const install: InvariantInstaller = Object.assign(
       }
     }
     validateLedger()
-    try {
-      await ctx.agentTeam.validateDeliveryEvidence()
-    } catch (error) {
-      fail(`Delivery admission evidence is invalid: ${String(error)}`)
-    }
     ctx.on('agent-team/committed', validateLedger)
   },
   { inject: ['agentTeam'] },

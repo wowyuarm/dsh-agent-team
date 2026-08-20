@@ -1,18 +1,18 @@
 # dsh-agent-team 工作区索引
 
-日期：2026-08-17
-状态：D1-D27、M1 与 M2 functional baseline 已完成；UI native-feel 未达标，当前 frontier 为 Client-only UI redesign。
+日期：2026-08-19
+状态：D1-D27、M1 与 M2 functional baseline 已完成；UI native-feel redesign 已完成。当前 frontier 为 Thread Inbox、Attention、Team Member context 与 preview 分层。
 位置：本仓库 `.scratch/`（独立项目 dsh-agent-team；探索性内容，不走 docs gate）。
 
 ## 目的
 
-在 dsh 上以原生 Cordis plugins 实现受 Raft 启发的 agent team 协作层，不接入 Raft 服务、不改 dsh 内核。dsh 借鉴 Member/Channel/Message/Thread/Task/Follow 等对象，但有意采用自动 Task、多 Direction Claims、默认静默、baseRevision 和本地 operation-ledger Delivery。
+在 dsh 上以原生 Cordis plugins 实现受 Raft 启发的 agent team 协作层，不接入 Raft 服务、不改 dsh 内核。dsh 借鉴 Member/Channel/Message/Thread/Task 等对象，但采用自动 Task、多 Direction Claims、Thread Attention、durable Inbox、默认静默和 baseRevision。
 
 ## 文档地图
 
 | 文件 | 一句话定位 | 层级 |
 | --- | --- | --- |
-| `CONTEXT.md` | 领域词汇：Member、Workspace、Channel、Task、Claim、Activity、Delivery、Operation | 词汇层 |
+| `CONTEXT.md` | 领域词汇：Member、Workspace、Channel、Task、Claim、Thread Attention、Inbox、Activity、Operation | 词汇层 |
 | `spec.md` | 综合 spec：问题、方案、用户故事、决策、测试、范围 | 交付物 |
 | `design/panorama.md` | 上层思想与设计原则（成员认知独立、协作事实分离） | 思想层 |
 | `design/architecture.md` | M1 当前架构：Cordis 平面、包、ledger、authority、生命周期、投递与验收 | 架构层 |
@@ -36,8 +36,14 @@
 | `validation/pitfalls.md` | 31 条动态验证与正式架构踩坑记录 | 验证层 |
 | `issues/01-*.md` … `issues/09-*.md` | M1 九个已完成 tracer-bullet tickets | 实施层 |
 | `m2-ui/issues/01-*.md` … `06-*.md` | M2 第一阶段六个 tracer-bullet tickets，含 blocking edges 与验收标准 | 实施层 |
+| `research/raft-tools-prompt-2026-08-19.md` | Raft 官方 CLI、外部 Agent tools 与 orientation/wake 机制的一手资料调研 | 事实层 |
+| `design/thread-inbox-member-context.md` | Thread Inbox、Team Member context、私有 memory 与灰色 mention 确认的设计草案 | 设计层 |
+| `thread-inbox/README.md` | Thread Inbox 后续工作的唯一接续入口、阅读顺序、ticket 状态与 compaction 恢复规则 | 交付物 |
+| `thread-inbox/spec.md` | 已确认的 Thread Inbox / Team Member Context 综合 spec | 交付物 |
+| `thread-inbox/ticket-plan.md` | 六张后续 vertical tickets 的依赖图与交付范围 | 交付物 |
+| `thread-inbox/issues/*.md` | Thread Inbox 01–06 本地 tickets，含 blocking edges 与验收标准 | 实施层 |
 
-相互联系：`CONTEXT.md` 固定领域词汇；`spec.md` 是领域综合出口；`feasibility.md` 的 D1-D27 是决策清单；`design/architecture.md` 是 Host 实现基线；`design-ux.md` 保存 M2 功能 UX；`design/team-ui-redesign.md` 是当前 UI 设计权威；`ui-redesign/README.md` 是下次会话唯一入口；`validation/` 保存真实机制证据。
+相互联系：`CONTEXT.md` 固定领域词汇；`spec.md` 是 M1 历史综合出口；`feasibility.md` 的 D1-D27 是 M1/M2 决策清单；`design/architecture.md` 是当前 Host 实现基线；`design-ux.md` 保存 M2 历史功能 UX；`design/team-ui-redesign.md` 保存已完成 UI redesign 基线；`thread-inbox/README.md` 是当前后续工作的唯一入口；`validation/` 保存真实机制证据。
 
 ## 决策基线状态
 
@@ -61,8 +67,9 @@
 
 - **M1 已完成**：`issues/01-boot-empty-agent-team.md` 至 `issues/09-ship-m1-runnable-composition.md`（REAL Loader/Agent/Session/command/tool/persistence workflow、SQLite 文件重开、durable failure windows、并发线性化、remove/archive 补偿、teardown、npm build/pack 与 opt-in preset shipping 均有自动验证）。
 - **M2 functional baseline 已完成**：`m2-ui/issues/01-*.md` 至 `06-*.md` 的领域与交互闭环已交付。
-- **当前 frontier**：`ui-redesign/spec.md`；实施前读取 `design/team-ui-redesign.md` 与 `design/research/*.md`。
-- **实施边界**：Client presentation only；保留 Host、ledger、typed Remote、authority、projection、slot takeover 与 persistence。
-- **M2 第一阶段明确延期**：Agent DM、Thread inbox/未读门禁、新工具/prompt、附件、搜索、URL、Model/provider 选择。
+- **UI redesign 已完成**：`ui-redesign/issues/01-*.md` 至 `06-*.md` 已完成；其视觉/UI 证据仍供后续 Inbox UI 修改参考。
+- **当前 frontier**：Ticket 01 已完成，下一步是 `thread-inbox/issues/02-agent-thread-collaboration-pull-protocol.md`；Ticket 03 依赖 02，Ticket 04 可在 01 基础上推进。
+- **实施边界**：Thread Inbox 改变 Host、ledger、typed Remote、tools、preset、Client 和 preview；仍不修改 Harness core、agent loop 或 shipped defaults。
+- **本轮明确延期**：Agent DM、附件、搜索、URL、Model/provider 选择、跨 Workspace Inbox、浏览器/桌面通知和多 Human Members。
 
 每个 ticket 必须独立保持其声明的验证路径成立；不要把 package 层完成当作 vertical slice 完成。

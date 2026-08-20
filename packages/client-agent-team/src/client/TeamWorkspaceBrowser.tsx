@@ -66,7 +66,7 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
           </div>
           <div id={panelId} className={css.panel} role="tabpanel" aria-labelledby={navigationState.activeTab === 'channels' ? 'team-tab-channels' : 'team-tab-agents'}>
             {navigationState.activeTab === 'agents'
-              ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} addMember={addMember} onCreatingChange={(request, creating) => {
+              ? <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} addMember={addMember} onCreatingChange={(request, creating) => {
                   setCreatingAgents(current => creating
                     ? [...current.filter(item => item.requestId !== request.requestId), request]
                     : current.filter(item => item.requestId !== request.requestId))

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamClaimRef, AgentTeamConfirmationToken, AgentTeamMemberId, AgentTeamRequestId, AgentTeamTaskRef, AgentTeamThreadRef, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAgentMemberStatus, AgentTeamChannelRef, AgentTeamConfirmationToken, AgentTeamMemberId, AgentTeamRequestId, AgentTeamTaskRef, AgentTeamThreadRef, AgentTeamView } from '@deepseek-ai/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
@@ -18,13 +18,12 @@ interface TeamThreadPageProps {
   readonly loadChanges: TeamConversationProps['loadChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly reply: TeamConversationProps['reply']
-  readonly changeClaim: TeamConversationProps['changeClaim']
   readonly changeTask: TeamConversationProps['changeTask']
   readonly t: TeamConversationProps['t']
 }
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
-  const { workspaceId, channelRef, threadRef, backToChannel, loadChannels, loadChanges, loadMembers, reply, changeClaim, changeTask, t } = props
+  const { workspaceId, channelRef, threadRef, backToChannel, loadChannels, loadChanges, loadMembers, reply, changeTask, t } = props
   const [view, setView] = useState<AgentTeamView>()
   const [draft, setDraft] = useState('')
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
@@ -118,23 +117,15 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   }
 
   const mutateTask = async (action: 'accept' | 'close' | 'reopen') => {
-    if (pending || task === undefined) return
+    if (pending || task === undefined || thread === undefined) return
     setPending(true); setError(undefined)
     const key = `task:${action}`
     const id = mutationRequests.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
     mutationRequests.current.set(key, id)
-    const result = await changeTask({ requestId: id, workspaceId, taskRef: task.taskRef, action })
-    if (result.ok) { mutationRequests.current.delete(key); await refresh() } else { setError(result.error.message); await refresh() }
-    setPending(false)
-  }
-  const mutateClaim = async (taskRef: AgentTeamTaskRef, claimRef: AgentTeamClaimRef, action: 'done' | 'release') => {
-    if (pending) return
-    setPending(true); setError(undefined)
-    const key = `claim:${action}:${claimRef}`
-    const id = mutationRequests.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
-    mutationRequests.current.set(key, id)
-    const result = await changeClaim({ requestId: id, workspaceId, taskRef, action, claimRef })
-    if (result.ok) { mutationRequests.current.delete(key); await refresh() } else { setError(result.error.message); await refresh() }
+    const result = await changeTask({ requestId: id, workspaceId, taskRef: task.taskRef, action, baseRevision: thread.revision })
+    if (!result.ok) { setError(result.error.message); await refresh() }
+    else if (result.value.kind === 'committed') { mutationRequests.current.delete(key); await refresh() }
+    else { setError(result.value.kind === 'unread_required' ? `Read ${result.value.unreadCount} unread update(s) before changing this Task.` : `This Task changed; current revision is ${result.value.revision}.`); await refresh() }
     setPending(false)
   }
   const sendReply = async () => {
@@ -149,8 +140,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       await refresh()
     } else if (result.value.kind === 'committed') {
       if (await refresh()) { setDraft(''); setRecipients(new Set()); setRequestId(undefined); setConfirmation(undefined) }
-    } else {
+    } else if (result.value.kind === 'confirmation_required') {
       setConfirmation(result.value.confirmationToken); setError(t('mentionConfirmation'))
+    } else if (result.value.kind === 'unread_required') {
+      setError(`Read ${result.value.unreadCount} unread update(s) before replying.`); setConfirmation(undefined); setRequestId(undefined); await refresh()
+    } else if (result.value.kind === 'stale_revision') {
+      setError(`This Task changed; current revision is ${result.value.revision}.`); setConfirmation(undefined); setRequestId(undefined); await refresh()
+    } else {
+      setError(`Agent Member(s) must already follow this Thread: ${result.value.memberIds.join(', ')}`); setConfirmation(undefined); setRequestId(undefined); await refresh()
     }
     setPending(false)
   }
@@ -180,7 +177,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
               <strong className={threadCss.claimOwner}>{memberName(claim.owner)}</strong>
               <span className={threadCss.claimDirection}>{claim.direction}</span>
               <small className={threadCss.claimState}>{formatClaimState(claim.state, t)}</small>
-              {claim.state === 'active' && task.resolution === 'open' && <div className={threadCss.claimActions}><Button size="sm" disabled={pending} onClick={() => { void mutateClaim(task.taskRef, claim.claimRef, 'done') }}>{t('markClaimDone')}</Button><Button size="sm" disabled={pending} onClick={() => { void mutateClaim(task.taskRef, claim.claimRef, 'release') }}>{t('releaseClaim')}</Button></div>}
             </article>
           })}
         </div>
@@ -198,7 +194,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       members={channelMembers}
       recipients={recipients}
       draft={draft}
-      disabled={false}
+      disabled={task.resolution === 'closed'}
       pending={pending}
       {...(error === undefined ? {} : { error })}
       onDraftChange={next => { setDraft(next); setConfirmation(undefined); setRequestId(undefined) }}

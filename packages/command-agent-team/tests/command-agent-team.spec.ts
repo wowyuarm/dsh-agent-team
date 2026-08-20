@@ -119,13 +119,13 @@ describe('@deepseek-ai/dsh-command-agent-team', () => {
     const definition = ctx.commands.find(agent, 'team')!
 
     await expect(definition.handler({
-      rawInput: 'member add workspace:alpha builder team-member Builds features',
+      rawInput: 'member add workspace:alpha channel:work builder team-member Builds features',
       commandId: 'command:add',
     } as never)).resolves.toMatchObject({ kind: 'success', text: 'Agent Member member:builder is active' })
     await definition.handler({ rawInput: 'member suspend member:builder', commandId: 'command:suspend' } as never)
     await definition.handler({ rawInput: 'member resume member:builder', commandId: 'command:resume' } as never)
     expect(calls).toEqual([
-      ['add', expect.objectContaining({ handle: 'builder', presetId: 'team-member', description: 'Builds features' })],
+      ['add', expect.objectContaining({ channelRefs: ['channel:work'], handle: 'builder', presetId: 'team-member', description: 'Builds features' })],
       ['suspend', expect.objectContaining({ memberId: 'member:builder' })],
       ['resume', expect.objectContaining({ memberId: 'member:builder' })],
     ])

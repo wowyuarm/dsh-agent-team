@@ -1,5 +1,4 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 
@@ -24,29 +23,20 @@ export type AgentTeamTaskRef = Branded<'AgentTeamTaskRef'>
 /** Stable identifier of one Task Thread. */
 export type AgentTeamThreadRef = Branded<'AgentTeamThreadRef'>
 
-/** Stable identifier of one Delivery intent. */
-export type AgentTeamDeliveryId = Branded<'AgentTeamDeliveryId'>
-
 /** Stable identifier of one Claim. */
 export type AgentTeamClaimRef = Branded<'AgentTeamClaimRef'>
 
-/** Stable identifier of one host-authored Activity. */
+/** Stable identifier of one public Thread Activity. */
 export type AgentTeamActivityRef = Branded<'AgentTeamActivityRef'>
 
-/** Process-local one-use authorization to pierce one unfollowed mention. */
+/** Process-local one-use authorization for one Human invitation. */
 export type AgentTeamConfirmationToken = Branded<'AgentTeamConfirmationToken'>
 
-/** Snapshot of the actor authorized for an operation. */
+/** Snapshot of the Human authority authorized for an operation. */
 export interface AgentTeamHumanActor {
   readonly kind: 'human'
   readonly memberId: AgentTeamMemberId
   readonly handle: string
-}
-
-/** Host actor used only for durable observations such as Inbox admission. */
-export interface AgentTeamHostActor {
-  readonly kind: 'host'
-  readonly handle: 'agent-team'
 }
 
 /** Snapshot of the exact Agent Member authorized by its live Agent binding. */
@@ -56,7 +46,7 @@ export interface AgentTeamMemberActor {
   readonly handle: string
 }
 
-export type AgentTeamActor = AgentTeamHumanActor | AgentTeamHostActor | AgentTeamMemberActor
+export type AgentTeamActor = AgentTeamHumanActor | AgentTeamMemberActor
 
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
@@ -66,6 +56,7 @@ export interface AgentTeamAgentMember {
   readonly handle: string
   readonly description: string
   readonly presetId: string
+  /** Host-internal namespace; never exposed through Client projections. */
   readonly privateMemoryPath: string
   readonly state: 'enabled' | 'suspended' | 'inactive'
 }
@@ -107,7 +98,7 @@ export interface AgentTeamChannelMembership {
   readonly memberId: AgentTeamMemberId
 }
 
-/** One immutable top-level Channel Message. */
+/** One immutable top-level or reply Message. */
 export interface AgentTeamMessage {
   readonly messageRef: AgentTeamMessageRef
   readonly channelRef: AgentTeamChannelRef
@@ -132,14 +123,50 @@ export interface AgentTeamTask {
 export interface AgentTeamThread {
   readonly threadRef: AgentTeamThreadRef
   readonly taskRef: AgentTeamTaskRef
+  /** Last public Message, Claim, or Task-resolution sequence. */
   readonly revision: number
 }
 
-/** Explicit subscription state committed with a Message. */
-export interface AgentTeamFollow {
+/**
+ * A Member's current attention period for one Thread.
+ *
+ * Its absence means the Member is not following. Read state is compact: all
+ * follower-visible facts from `startSequence` through `readThroughSequence`
+ * are acknowledged, except for sparse direct markers retained separately.
+ */
+export interface AgentTeamThreadAttention {
   readonly memberId: AgentTeamMemberId
   readonly threadRef: AgentTeamThreadRef
-  readonly following: boolean
+  readonly startSequence: number
+  readonly readThroughSequence: number
+}
+
+/** Identity of one Member × Thread attention period. */
+export interface AgentTeamThreadAttentionKey {
+  readonly memberId: AgentTeamMemberId
+  readonly threadRef: AgentTeamThreadRef
+}
+
+/** Sparse direct-priority marker for one structured Message mention. */
+export interface AgentTeamDirectMarker {
+  readonly memberId: AgentTeamMemberId
+  readonly threadRef: AgentTeamThreadRef
+  readonly messageRef: AgentTeamMessageRef
+  readonly sequence: number
+}
+
+/** Durable changes to private Member inbox state carried by one operation. */
+export interface AgentTeamInboxDelta {
+  readonly attention: {
+    /** New or replacement current Attention records. */
+    readonly set: readonly AgentTeamThreadAttention[]
+    /** Attention periods ended by this operation. */
+    readonly removed: readonly AgentTeamThreadAttentionKey[]
+  }
+  readonly directMarkers: {
+    readonly added: readonly AgentTeamDirectMarker[]
+    readonly removed: readonly AgentTeamDirectMarker[]
+  }
 }
 
 /** One Direction Claim retained as Task progress history. */
@@ -166,30 +193,33 @@ export interface AgentTeamClaimActivity extends AgentTeamActivityBase {
   readonly claimRef: AgentTeamClaimRef
 }
 
-export interface AgentTeamFollowActivity extends AgentTeamActivityBase {
-  readonly kind: 'follow' | 'unfollow'
-}
-
 export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
   readonly kind: 'accept' | 'close' | 'reopen'
+  /** Claims atomically released by close; absent for other Task transitions. */
+  readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
 }
 
-/** One ordered host-authored Thread Activity. */
-export type AgentTeamActivity = AgentTeamClaimActivity | AgentTeamFollowActivity | AgentTeamTaskActivity
+/** One automatic, public release summary caused by a membership lifecycle action. */
+export interface AgentTeamClaimsReleasedActivity extends AgentTeamActivityBase {
+  readonly kind: 'claims_released'
+  readonly claimRefs: readonly AgentTeamClaimRef[]
+}
 
-export type AgentTeamDeliverySource =
-  | { readonly kind: 'message'; readonly messageRef: AgentTeamMessageRef }
-  | { readonly kind: 'activity'; readonly activityRef: AgentTeamActivityRef }
+/** One ordered public Thread Activity. */
+export type AgentTeamActivity = AgentTeamClaimActivity | AgentTeamTaskActivity | AgentTeamClaimsReleasedActivity
 
-/** Durable delivery state for one Message or Activity recipient. */
-export interface AgentTeamDelivery {
-  readonly deliveryId: AgentTeamDeliveryId
-  readonly source: AgentTeamDeliverySource
-  readonly messageId: MessageId
-  readonly threadRef: AgentTeamThreadRef
-  readonly taskRef: AgentTeamTaskRef
-  readonly recipient: AgentTeamMemberId
-  readonly state: 'queued' | 'admitted' | 'canceled'
+/** One public, revisioned fact in a Thread timeline. */
+export type AgentTeamThreadFact =
+  | { readonly kind: 'message'; readonly sequence: number; readonly message: AgentTeamMessage }
+  | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity }
+
+/** One fact returned by a durable Thread read. */
+export interface AgentTeamThreadReadFact {
+  readonly fact: AgentTeamThreadFact
+  /** This fact was part of the unread batch advanced by this read. */
+  readonly unread: boolean
+  /** This fact carries one of the recipient's structured direct mentions. */
+  readonly direct: boolean
 }
 
 /** The first durable operation in every Agent Team ledger. */
@@ -211,21 +241,28 @@ export interface AgentTeamChannelCreatedOperation extends AgentTeamOperationBase
   }
 }
 
-/** Durable removal of one Agent Member from one Channel with Channel-scoped cleanup. */
-export interface AgentTeamChannelMemberRemovedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/channel-member-removed'
+/** Durable Agent Member creation with at least one initial Channel membership. */
+export interface AgentTeamMemberAddedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-added'
   readonly data: {
-    readonly workspaceId: WorkspaceId
-    readonly channelRef: AgentTeamChannelRef
-    readonly memberId: AgentTeamMemberId
-    readonly claims: readonly AgentTeamClaim[]
-    readonly tasks: readonly AgentTeamTask[]
-    readonly follows: readonly AgentTeamFollow[]
-    readonly deliveries: readonly AgentTeamDelivery[]
+    readonly member: AgentTeamAgentMember
+    readonly channelRefs: readonly AgentTeamChannelRef[]
   }
 }
 
-/** Durable atomic facts created by one top-level Message. */
+/** Durable suspension of one existing Agent Member. */
+export interface AgentTeamMemberSuspendedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-suspended'
+  readonly data: { readonly member: AgentTeamAgentMember }
+}
+
+/** Durable re-enablement of one suspended Agent Member. */
+export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-resumed'
+  readonly data: { readonly member: AgentTeamAgentMember }
+}
+
+/** Durable addition of one Agent Member to one Channel. */
 export interface AgentTeamChannelMemberAddedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/channel-member-added'
   readonly data: {
@@ -235,28 +272,37 @@ export interface AgentTeamChannelMemberAddedOperation extends AgentTeamOperation
   }
 }
 
-/** Durable admission proof for one queued Delivery. */
-export interface AgentTeamDeliveryAdmittedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/delivery-admitted'
+/** Durable removal of one Agent Member from one Channel and Channel-scoped cleanup. */
+export interface AgentTeamChannelMemberRemovedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/channel-member-removed'
   readonly data: {
-    readonly delivery: AgentTeamDelivery
-    readonly evidence: 'agent/inbox/spliced' | 'user/message'
+    readonly workspaceId: WorkspaceId
+    readonly channelRef: AgentTeamChannelRef
+    readonly memberId: AgentTeamMemberId
+    /** Claims released because this Member lost Channel authority. */
+    readonly claims: readonly AgentTeamClaim[]
+    /** Public release summaries for the affected Threads. */
+    readonly activities: readonly AgentTeamClaimsReleasedActivity[]
+    readonly tasks: readonly AgentTeamTask[]
+    readonly threads: readonly AgentTeamThread[]
+    readonly inbox: AgentTeamInboxDelta
   }
 }
 
+/** Durable top-level Message, Task, Thread, and initial inbox facts. */
 export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   readonly kind: 'team/message-sent'
   readonly data: {
     readonly workspaceId: WorkspaceId
+    readonly mentions: readonly AgentTeamMemberId[]
     readonly message: AgentTeamMessage
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
-    readonly follows: readonly AgentTeamFollow[]
-    readonly deliveries: readonly AgentTeamDelivery[]
+    readonly inbox: AgentTeamInboxDelta
   }
 }
 
-/** Durable creation intent for one team-managed Agent Member. */
+/** Durable existing-Thread reply and any invitation/direct-mention facts. */
 export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/thread-replied'
   readonly data: {
@@ -266,53 +312,18 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
     readonly message: AgentTeamMessage
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
-    readonly follows: readonly AgentTeamFollow[]
-    readonly deliveries: readonly AgentTeamDelivery[]
-  }
-}
-
-export interface AgentTeamFollowChangedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/follow-changed'
-  readonly data: {
-    readonly workspaceId: WorkspaceId
-    readonly activity: AgentTeamFollowActivity
-    readonly follow: AgentTeamFollow
-    readonly task: AgentTeamTask
-    readonly thread: AgentTeamThread
-    readonly deliveries: readonly AgentTeamDelivery[]
-  }
-}
-
-export interface AgentTeamTaskChangedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/task-changed'
-  readonly data: {
-    readonly workspaceId: WorkspaceId
-    readonly activity: AgentTeamTaskActivity
-    readonly task: AgentTeamTask
-    readonly thread: AgentTeamThread
-    readonly claims: readonly AgentTeamClaim[]
-    readonly deliveries: readonly AgentTeamDelivery[]
-  }
-}
-
-export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/member-removed'
-  readonly data: {
-    readonly member: AgentTeamAgentMember
-    readonly claims: readonly AgentTeamClaim[]
-    readonly tasks: readonly AgentTeamTask[]
-    readonly follows: readonly AgentTeamFollow[]
-    readonly deliveries: readonly AgentTeamDelivery[]
+    readonly inbox: AgentTeamInboxDelta
   }
 }
 
 export interface AgentTeamClaimOperationData {
   readonly workspaceId: WorkspaceId
-  readonly activity: AgentTeamActivity
+  readonly baseRevision: number
+  readonly activity: AgentTeamClaimActivity
   readonly claim: AgentTeamClaim
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
-  readonly deliveries: readonly AgentTeamDelivery[]
+  readonly inbox: AgentTeamInboxDelta
 }
 
 export interface AgentTeamClaimCreatedOperation extends AgentTeamOperationBase {
@@ -335,26 +346,64 @@ export type AgentTeamClaimChangedOperation =
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
 
-export interface AgentTeamMemberAddedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/member-added'
+/** Durable Human Task-resolution change. */
+export interface AgentTeamTaskChangedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/task-changed'
   readonly data: {
-    readonly member: AgentTeamAgentMember
+    readonly workspaceId: WorkspaceId
+    readonly baseRevision: number
+    readonly activity: AgentTeamTaskActivity
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly claims: readonly AgentTeamClaim[]
+    readonly inbox: AgentTeamInboxDelta
   }
 }
 
-/** Durable suspension of one existing Agent Member. */
-export interface AgentTeamMemberSuspendedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/member-suspended'
+/** Durable personal Attention follow or unfollow; it does not revise the Thread. */
+export interface AgentTeamThreadAttentionChangedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-attention-changed'
   readonly data: {
-    readonly member: AgentTeamAgentMember
+    readonly workspaceId: WorkspaceId
+    readonly action: 'follow' | 'unfollow'
+    readonly memberId: AgentTeamMemberId
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly inbox: AgentTeamInboxDelta
   }
 }
 
-/** Durable re-enablement of one suspended Agent Member. */
-export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase {
-  readonly kind: 'team/member-resumed'
+/** Durable one-batch read and direct-marker consumption. It does not revise the Thread. */
+export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-read'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly memberId: AgentTeamMemberId
+    /** Current public state captured for a stable idempotent read response. */
+    readonly task: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly claims: readonly AgentTeamClaim[]
+    readonly anchor: AgentTeamMessage
+    readonly facts: readonly AgentTeamThreadReadFact[]
+    readonly readThroughSequence: number
+    /** The reader's post-read Attention snapshot, when the reader follows. */
+    readonly attention?: AgentTeamThreadAttention | undefined
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
+/** Durable irreversible Member removal and global inbox cleanup. */
+export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-removed'
   readonly data: {
     readonly member: AgentTeamAgentMember
+    /** Claims released because this Member became inactive. */
+    readonly claims: readonly AgentTeamClaim[]
+    /** Public release summaries for the affected Threads. */
+    readonly activities: readonly AgentTeamClaimsReleasedActivity[]
+    readonly tasks: readonly AgentTeamTask[]
+    readonly threads: readonly AgentTeamThread[]
+    readonly inbox: AgentTeamInboxDelta
   }
 }
 
@@ -362,20 +411,20 @@ export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase 
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
   | AgentTeamChannelCreatedOperation
+  | AgentTeamMemberAddedOperation
+  | AgentTeamMemberSuspendedOperation
+  | AgentTeamMemberResumedOperation
+  | AgentTeamChannelMemberAddedOperation
   | AgentTeamChannelMemberRemovedOperation
   | AgentTeamMessageSentOperation
   | AgentTeamThreadRepliedOperation
   | AgentTeamClaimCreatedOperation
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
-  | AgentTeamFollowChangedOperation
   | AgentTeamTaskChangedOperation
+  | AgentTeamThreadAttentionChangedOperation
+  | AgentTeamThreadReadOperation
   | AgentTeamMemberRemovedOperation
-  | AgentTeamChannelMemberAddedOperation
-  | AgentTeamDeliveryAdmittedOperation
-  | AgentTeamMemberAddedOperation
-  | AgentTeamMemberSuspendedOperation
-  | AgentTeamMemberResumedOperation
 
 /** Receipt returned after an operation is durable or an identical retry resolves it. */
 export interface AgentTeamOperationReceipt {
@@ -400,6 +449,29 @@ export interface AgentTeamCreateChannelResult {
   readonly memberIds: readonly AgentTeamMemberId[]
 }
 
+/** Human intent to provision one team-managed Agent Member with initial Channels. */
+export interface AgentTeamAddMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly handle: string
+  readonly description: string
+  readonly presetId: string
+  /** At least one existing Channel in this Workspace. */
+  readonly channelRefs: readonly AgentTeamChannelRef[]
+}
+
+/** Human intent to suspend or resume one Agent Member. */
+export interface AgentTeamSetMemberStateRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly memberId: AgentTeamMemberId
+}
+
+/** Result of a Member lifecycle operation. */
+export interface AgentTeamMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly status: AgentTeamAgentMemberStatus
+}
+
 /** Human intent to remove one Agent Member from one Channel. */
 export interface AgentTeamRemoveChannelMemberRequest {
   readonly requestId: AgentTeamRequestId
@@ -408,26 +480,16 @@ export interface AgentTeamRemoveChannelMemberRequest {
   readonly memberId: AgentTeamMemberId
 }
 
-/** Result of removing one Agent Member from one Channel with Channel-scoped cleanup. */
+/** Result of Channel-scoped member cleanup. */
 export interface AgentTeamRemoveChannelMemberResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly channelRef: AgentTeamChannelRef
   readonly memberId: AgentTeamMemberId
   readonly releasedClaims: readonly AgentTeamClaim[]
-  readonly removedFollows: readonly AgentTeamFollow[]
-  readonly canceledDeliveries: readonly AgentTeamDelivery[]
+  readonly removedAttention: readonly AgentTeamThreadAttentionKey[]
 }
 
-/** Human intent to send one top-level Channel Message. */
-export interface AgentTeamSendMessageRequest {
-  readonly requestId: AgentTeamRequestId
-  readonly workspaceId: WorkspaceId
-  readonly channelRef: AgentTeamChannelRef
-  readonly body: string
-  readonly recipients?: readonly AgentTeamMemberId[]
-}
-
-/** Result of atomically creating a Message and its derived collaboration facts. */
+/** Human intent to add one Agent Member to one Channel. */
 export interface AgentTeamJoinChannelRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -441,15 +503,17 @@ export interface AgentTeamJoinChannelResult {
   readonly memberId: AgentTeamMemberId
 }
 
-export interface AgentTeamSendMessageResult {
-  readonly receipt: AgentTeamOperationReceipt
-  readonly message: AgentTeamMessage
-  readonly task: AgentTeamTask
-  readonly thread: AgentTeamThread
-  readonly follows: readonly AgentTeamFollow[]
-  readonly deliveries: readonly AgentTeamDelivery[]
+/** Intent to create one top-level Message, Task, and Thread. */
+export interface AgentTeamSendMessageRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  readonly body: string
+  readonly recipients?: readonly AgentTeamMemberId[]
+  readonly confirmationToken?: AgentTeamConfirmationToken
 }
 
+/** Intent to append one public Message to an existing Thread. */
 export interface AgentTeamReplyRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -460,40 +524,104 @@ export interface AgentTeamReplyRequest {
   readonly confirmationToken?: AgentTeamConfirmationToken
 }
 
+/** A Human must send the same invitation one more time with this token. */
 export interface AgentTeamConfirmationRequired {
   readonly kind: 'confirmation_required'
   readonly confirmationToken: AgentTeamConfirmationToken
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  readonly recipients: readonly AgentTeamMemberId[]
+  readonly taskRef?: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly revision?: number
+}
+
+/** Existing unread work must be read before this Thread mutation can proceed. */
+export interface AgentTeamUnreadRequired {
+  readonly kind: 'unread_required'
   readonly taskRef: AgentTeamTaskRef
   readonly threadRef: AgentTeamThreadRef
   readonly revision: number
-  readonly recipients: readonly AgentTeamMemberId[]
+  readonly unreadCount: number
+  readonly directCount: number
 }
 
-export interface AgentTeamReplyResult {
+/** A public Thread mutation used an obsolete optimistic-concurrency revision. */
+export interface AgentTeamStaleRevision {
+  readonly kind: 'stale_revision'
+  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly expectedRevision: number
+  readonly revision: number
+}
+
+/** An Agent tried to address an Agent who is not already following. */
+export interface AgentTeamMemberNotFollowing {
+  readonly kind: 'member_not_following'
+  readonly memberIds: readonly AgentTeamMemberId[]
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  readonly taskRef?: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly revision?: number
+}
+
+export interface AgentTeamSendMessageCommittedResult {
   readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
   readonly message: AgentTeamMessage
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
-  readonly deliveries: readonly AgentTeamDelivery[]
+  readonly attention: readonly AgentTeamThreadAttention[]
+  readonly directMarkers: readonly AgentTeamDirectMarker[]
 }
 
+export type AgentTeamSendMessageResult =
+  | AgentTeamSendMessageCommittedResult
+  | AgentTeamConfirmationRequired
+  | AgentTeamMemberNotFollowing
+
+export interface AgentTeamReplyCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly attention: readonly AgentTeamThreadAttention[]
+  readonly directMarkers: readonly AgentTeamDirectMarker[]
+}
+
+export type AgentTeamReplyResult =
+  | AgentTeamReplyCommittedResult
+  | AgentTeamConfirmationRequired
+  | AgentTeamUnreadRequired
+  | AgentTeamStaleRevision
+  | AgentTeamMemberNotFollowing
+
+/** Human Task resolution intent. */
 export interface AgentTeamTaskRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly taskRef: AgentTeamTaskRef
   readonly action: 'accept' | 'close' | 'reopen'
+  readonly baseRevision: number
 }
 
-export interface AgentTeamTaskResult {
+export interface AgentTeamTaskCommittedResult {
+  readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
   readonly activity: AgentTeamTaskActivity
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly claims: readonly AgentTeamClaim[]
-  readonly deliveries: readonly AgentTeamDelivery[]
 }
 
+export type AgentTeamTaskResult =
+  | AgentTeamTaskCommittedResult
+  | AgentTeamUnreadRequired
+  | AgentTeamStaleRevision
+
+/** Human intent to permanently remove one Agent Member. */
 export interface AgentTeamRemoveMemberRequest {
   readonly requestId: AgentTeamRequestId
   readonly memberId: AgentTeamMemberId
@@ -503,48 +631,56 @@ export interface AgentTeamRemoveMemberResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly member: AgentTeamAgentMember
   readonly releasedClaims: readonly AgentTeamClaim[]
-  readonly canceledDeliveries: readonly AgentTeamDelivery[]
+  readonly removedAttention: readonly AgentTeamThreadAttentionKey[]
 }
 
-export interface AgentTeamFollowRequest {
+/** Personal Thread Attention mutation; it is exempt from public mutation fences. */
+export interface AgentTeamThreadAttentionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly taskRef: AgentTeamTaskRef
   readonly action: 'follow' | 'unfollow'
 }
 
-export interface AgentTeamFollowResult {
+export interface AgentTeamThreadAttentionResult {
   readonly receipt: AgentTeamOperationReceipt
-  readonly activity: AgentTeamFollowActivity
-  readonly follow: AgentTeamFollow
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
-  readonly deliveries: readonly AgentTeamDelivery[]
+  /** Present after follow, absent after unfollow. */
+  readonly attention?: AgentTeamThreadAttention
 }
 
-export interface AgentTeamFollowStatus {
+export interface AgentTeamThreadAttentionStatus {
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
-  readonly following: boolean
+  readonly attention?: AgentTeamThreadAttention
 }
 
+/** Direction Claim mutation. `baseRevision` fences every non-list public mutation. */
 export interface AgentTeamClaimRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly taskRef: AgentTeamTaskRef
   readonly action: 'claim' | 'done' | 'release'
+  readonly baseRevision: number
   readonly direction?: string
   readonly claimRef?: AgentTeamClaimRef
 }
 
-export interface AgentTeamClaimResult {
+export interface AgentTeamClaimCommittedResult {
+  readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
-  readonly activity: AgentTeamActivity
+  readonly activity: AgentTeamClaimActivity
   readonly claim: AgentTeamClaim
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
-  readonly deliveries: readonly AgentTeamDelivery[]
+  readonly attention?: AgentTeamThreadAttention
 }
+
+export type AgentTeamClaimResult =
+  | AgentTeamClaimCommittedResult
+  | AgentTeamUnreadRequired
+  | AgentTeamStaleRevision
 
 export interface AgentTeamClaimListRequest {
   readonly workspaceId: WorkspaceId
@@ -557,25 +693,64 @@ export interface AgentTeamClaimList {
   readonly claims: readonly AgentTeamClaim[]
 }
 
-/** Human intent to provision one team-managed Agent Member. */
-export interface AgentTeamAddMemberRequest {
+/** Read-only, personal Workspace Inbox projection. */
+export interface AgentTeamInboxRequest {
+  readonly workspaceId: WorkspaceId
+  readonly limit?: number
+}
+
+/** One Thread summary containing no Message bodies. */
+export interface AgentTeamInboxItem {
+  readonly channelRef: AgentTeamChannelRef
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly unreadCount: number
+  readonly directCount: number
+  readonly newestSequence: number
+  readonly attention?: AgentTeamThreadAttention
+}
+
+export interface AgentTeamInbox {
+  readonly items: readonly AgentTeamInboxItem[]
+  readonly totalUnreadCount: number
+  readonly totalDirectCount: number
+}
+
+/** Request to atomically receive and acknowledge one contiguous Thread batch. */
+export interface AgentTeamThreadReadRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
-  readonly handle: string
-  readonly description: string
-  readonly presetId: string
+  readonly taskRef: AgentTeamTaskRef
 }
 
-/** Human intent to suspend or resume one Agent Member. */
-export interface AgentTeamSetMemberStateRequest {
-  readonly requestId: AgentTeamRequestId
-  readonly memberId: AgentTeamMemberId
-}
-
-/** Result of a Member lifecycle operation. */
-export interface AgentTeamMemberResult {
+export interface AgentTeamThreadReadResult {
   readonly receipt: AgentTeamOperationReceipt
-  readonly status: AgentTeamAgentMemberStatus
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly claims: readonly AgentTeamClaim[]
+  readonly anchor: AgentTeamMessage
+  readonly facts: readonly AgentTeamThreadReadFact[]
+  readonly readThroughSequence: number
+  readonly attention?: AgentTeamThreadAttention
+  readonly consumedDirectMarkers: readonly AgentTeamDirectMarker[]
+}
+
+/** Non-mutating Thread history request. */
+export interface AgentTeamThreadHistoryRequest {
+  readonly workspaceId: WorkspaceId
+  readonly taskRef: AgentTeamTaskRef
+  readonly beforeSequence?: number
+  readonly limit?: number
+}
+
+export interface AgentTeamThreadHistory {
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+  readonly anchor: AgentTeamMessage
+  readonly claims: readonly AgentTeamClaim[]
+  readonly facts: readonly AgentTeamThreadFact[]
+  readonly cursor: number
+  readonly hasMore: boolean
 }
 
 /** One bounded Workspace view item. */
@@ -602,11 +777,11 @@ export interface AgentTeamViewRequest {
   readonly direction?: 'after' | 'before'
   /** Exclude Thread replies from a top-level-only projection. */
   readonly topLevelOnly?: boolean
-  /** Include relevant Activity facts in the shared bounded stream (default true). */
+  /** Include public Claim and Task activities in the bounded stream (default true). */
   readonly includeActivities?: boolean
 }
 
-/** Bounded collaboration facts plus a continuation sequence. */
+/** Bounded public collaboration facts plus a continuation sequence. */
 export interface AgentTeamView {
   readonly humanMemberId: AgentTeamMemberId
   readonly channels: readonly AgentTeamChannel[]

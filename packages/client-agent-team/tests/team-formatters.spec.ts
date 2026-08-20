@@ -30,14 +30,14 @@ describe('Team presentation formatters', () => {
       ['claim', 'builder 认领了「实现 API」'],
       ['done', 'builder 完成了「实现 API」'],
       ['release', 'builder 释放了「实现 API」'],
-      ['follow', 'builder 开始关注此 Task'],
-      ['unfollow', 'builder 停止关注此 Task'],
+      ['claims_released', 'builder 因成员权限变化释放了 1 个 Claim'],
       ['accept', 'builder 验收了此 Task'],
       ['close', 'builder 关闭了此 Task'],
       ['reopen', 'builder 重新打开了此 Task'],
     ] as const
     for (const [kind, text] of expected) {
-      const claimFields = kind === 'claim' || kind === 'done' || kind === 'release' ? { claimRef: claim.claimRef } : {}
+      const claimFields = kind === 'claim' || kind === 'done' || kind === 'release' ? { claimRef: claim.claimRef }
+        : kind === 'claims_released' ? { claimRefs: [claim.claimRef] } : {}
       const rendered = formatActivity(activity({ kind, ...claimFields }), { t, actorName: () => 'builder', claims: [claim] })
       expect(rendered).toBe(text)
       expect(rendered).not.toContain('member:')

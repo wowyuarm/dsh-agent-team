@@ -20,15 +20,18 @@ describe('Agent Team generated Typert boundary', () => {
     const client = remote as unknown as GeneratedRemote
     const expected = [
       'addMember',
-      'changeClaim',
+      'changeAttention',
       'changeTask',
       'changes',
       'createChannel',
+      'inbox',
       'joinChannel',
       'members',
+      'readThread',
       'removeChannelMember',
       'reply',
       'sendMessage',
+      'threadHistory',
       'view',
     ]
     expect(host.invocations.map(invocation => invocation.method).sort()).toEqual(expected)

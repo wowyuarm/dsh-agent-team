@@ -163,14 +163,18 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     setPendingSend(request); setPending(true); setError(undefined)
     try {
       const result = await sendMessage(request)
-      if (result.ok) {
-        const refreshed = await refresh()
-        if (refreshed) {
-          setDraft('')
-          setRecipients(new Set())
-          setPendingSend(undefined)
-        }
-      } else setError(result.error.message)
+      if (!result.ok) setError(result.error.message)
+      else if (result.value.kind === 'committed') {
+        await refresh()
+        setDraft('')
+        setRecipients(new Set())
+        setPendingSend(undefined)
+      } else if (result.value.kind === 'confirmation_required') {
+        setPendingSend({ ...request, confirmationToken: result.value.confirmationToken })
+        setError(t('mentionConfirmation'))
+      } else {
+        setError(`Agent Member(s) must already follow this Thread: ${result.value.memberIds.join(', ')}`)
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
   }

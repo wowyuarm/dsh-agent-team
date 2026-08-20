@@ -9,7 +9,7 @@ packages/agent-team
   Host service + operation ledger + projections + Agent lifecycle + Remote declarations
         │
         ├── packages/tool-agent-team
-        │     model-facing team_send / team_view / team_claim / team_follow
+        │     model-facing team_inbox / team_thread / team_message / team_claim / team_view
         │
         ├── packages/command-agent-team
         │     Human /team adapter
@@ -25,19 +25,20 @@ packages/agent-team
 
 ## Host authority
 
-The Team is one collaboration domain per DSH home. Its append-only operation ledger is the durable authority for Member, Workspace, Channel, Message, Task, Thread, Claim, Follow, Activity, and Delivery facts.
+The Team is one collaboration domain per DSH home. Its append-only operation ledger is the durable authority for Member, Workspace, Channel, Message, Task, Thread, Claim, Thread Attention, Inbox, and Activity facts.
 
 - A mutation enters through the Host authority and commits one durable operation.
-- Projections, Inbox admission, tools, commands, Remote responses, and UI derive from committed operations.
+- Projections, Inbox results, tools, commands, Remote responses, and UI derive from committed operations.
 - Client code must not interpret ledger records or create a parallel authority.
-- Agent lifecycle, delivery compensation, JSON/SQLite replay, authorization, idempotency, and revision checks stay on the Host side.
+- Agent lifecycle, JSON/SQLite replay, authorization, idempotency, and revision checks stay on the Host side.
+- Thread Attention is private Member x Thread state. Ordinary unread comes from current Attention; structured mentions create direct markers. The Host is the only Inbox authority; no Session inbox or model-context injection is maintained by this package.
 - Team-managed Agent sessions use the explicit Team preset and its trusted `danger-full-access` policy. This is an intentional product boundary for trusted workspaces.
 
 When changing a Host capability, read the package source/tests first, then the matching Harness capability contract. The navigation table in [`harness-navigation.md`](harness-navigation.md) maps Host changes to `deepseek-harness/docs/subsystems/` and source packages.
 
 ## Tools, preset, and command
 
-The four model-facing tools are defined in `packages/tool-agent-team/src/index.ts`. They are mounted by the `team-member` preset under `packages/agent-team/preset/team-member/`, inside the isolated scope in `cordis.patch.yml`. Do not add the tool package as a global row merely to make it available in a test; ordinary Sessions must remain Team-free.
+The five model-facing tools are defined in `packages/tool-agent-team/src/index.ts`. They are mounted by the `team-member` preset under `packages/agent-team/preset/team-member/`, inside the isolated scope in `cordis.patch.yml`. Do not add the tool package as a global row merely to make it available in a test; ordinary Sessions must remain Team-free.
 
 The command package is a Human adapter. It delegates to `ctx.agentTeam` and does not bypass Host authorization or ledger commit. A plugin unload must remove the command registration.
 
@@ -101,7 +102,7 @@ For UI work:
 - Reuse public Harness primitives and `--dsw-*` theme tokens where they exist.
 - Keep CSS in CSS Modules; do not import private Harness CSS.
 - Keep runtime presence separate from Claim and Task state.
-- Task resolution controls Task and Claim mutations, but does not close the conversation: Thread replies remain available after acceptance or closure and preserve the current Task status/resolution.
+- Task resolution controls Task and Claim mutations. A closed Task is terminal for replies and new Attention; reopening restores an open Task without restoring prior Attention.
 - Keep Message, Activity, Claim, and Task presentation distinct and user-readable; do not expose opaque refs or internal enums.
 - Keep durable mutations non-optimistic; preserve input on failure and render the next Host projection.
 - Preserve Team mode enter/leave, refresh recovery, slot restoration, and narrow layout behavior.
@@ -112,7 +113,7 @@ The active visual redesign is tracked in `.scratch/ui-redesign/README.md` and `.
 
 Team reads the existing Harness Workspace projection and does not create a second Workspace store or Session tree. The current Client does not call `ctx.workspaces.pickDirectory()` or `ctx.workspaces.create()`; users return to the ordinary Session UI when they need to create a Workspace.
 
-For Workspace, Session, storage, persistence, or delivery changes, read the relevant Team source/tests and then:
+For Workspace, Session, storage, persistence, or Thread Inbox changes, read the relevant Team source/tests and then:
 
 - `../deepseek-harness/docs/subsystems/workspace.md`
 - `../deepseek-harness/docs/subsystems/session.md`

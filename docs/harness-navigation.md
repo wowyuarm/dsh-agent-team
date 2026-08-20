@@ -8,7 +8,7 @@
 
 | 问题 | 先看本仓库 | 再看 `../deepseek-harness` | 权威性 |
 | --- | --- | --- | --- |
-| Agent Team 的领域对象、权限、ledger、Task/Claim/Follow/Delivery 语义 | `.scratch/CONTEXT.md`、`.scratch/spec.md`、`.scratch/design/feasibility.md`、`.scratch/design/architecture.md` | 只在需要确认被消费的 DSH service contract 时查 Harness | 本仓库设计与实现 |
+| Agent Team 的领域对象、权限、ledger、Task/Claim/Thread Attention/Inbox 语义 | `.scratch/CONTEXT.md`、`.scratch/spec.md`、`.scratch/design/feasibility.md`、`.scratch/design/architecture.md` | 只在需要确认被消费的 DSH service contract 时查 Harness | 本仓库设计与实现 |
 | Host package 的具体行为 | `packages/agent-team/src/{index,ledger,spec,types}.ts` 及 `tests/` | `docs/architecture.md`、相关 `subsystems/*`，确认 Agent/Session/Workspace/Storage/Typert 的宿主能力 | 本仓库实现；Harness 只拥有底层能力事实 |
 | Model-facing tools 与 preset | `.scratch/design/architecture.md`、`packages/tool-agent-team/src/index.ts`、`packages/agent-team/preset/team-member/agent.cordis.yml` | `docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md` | 本仓库工具语义；Harness 规定扩展接口 |
 | Human command | `packages/command-agent-team/src/index.ts` | `docs/subsystems/commands.md`、`docs/cookbook/extension-cookbook.md` | 本仓库命令；Harness 规定 `ctx.commands` |
@@ -37,7 +37,7 @@
 
 ### 2.2 修改 model-facing tool 或 preset
 
-- 本仓库：`packages/tool-agent-team/src/index.ts`（四个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；`.scratch/design/tools-research.md` 只提供设计背景。
+- 本仓库：`packages/tool-agent-team/src/index.ts`（五个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；`.scratch/design/tools-research.md` 只提供设计背景。
 - Harness 文档：`docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md`、`docs/subsystems/system-prompt.md`。
 - Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-presets/src`。
 
@@ -89,9 +89,9 @@
 
 Workspace ID 是 branded id；路径通过 Host service 规范化；session cwd 归属必须由 Host projection 判断。不要在 Client 自己实现路径语义或第二套 Workspace store。
 
-### 2.7 修改 storage / persistence / replay / delivery
+### 2.7 修改 storage / persistence / replay / Thread Inbox
 
-- 本项目：`packages/agent-team/src/ledger.ts`、相关 projection/lifecycle 源码和 JSON/SQLite backend tests；`.scratch/design/architecture.md` 只用于理解 ledger 与 delivery 的设计背景。
+- 本项目：`packages/agent-team/src/ledger.ts`、相关 projection/lifecycle 源码和 JSON/SQLite backend tests；`.scratch/thread-inbox/spec.md` 只用于理解 Thread Attention 与 Inbox 的设计背景。
 - Harness docs：`docs/subsystems/storage.md`、`docs/subsystems/persistence.md`、`docs/subsystems/session-persistence` 相关章节、`docs/defensive-patterns.md`。
 - Harness source：`packages/storage/storage-domain/src`、`storage-json/src`、`storage-sqlite/src`、`packages/session/session-persistence*/src`。
 

@@ -1,15 +1,15 @@
 /**
- * Durable Agent Team host capability: authorized collaboration intents,
- * operation-ledger replay, and team-managed Agent lifecycles.
+ * Durable Agent Team Host capability.
+ *
+ * The Host owns the append-only collaboration ledger and all Member lifecycle
+ * effects. Session history and browser state are projections, never Team facts.
  * @module @deepseek-ai/dsh-agent-team
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
-import { freezeMessage } from '@deepseek-ai/dsh-llm'
-import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
@@ -21,99 +21,74 @@ import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-p
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
-  AgentTeamActivity,
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
-  AgentTeamMembersRequest,
-  AgentTeamCreateChannelRequest,
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
-  AgentTeamConfirmationRequired,
   AgentTeamClaimResult,
+  AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
-  AgentTeamDelivery,
+  AgentTeamInbox,
+  AgentTeamInboxRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
-  AgentTeamFollowRequest,
-  AgentTeamFollowResult,
-  AgentTeamFollowStatus,
   AgentTeamMemberActor,
   AgentTeamMemberId,
   AgentTeamMemberResult,
-  AgentTeamRemoveMemberRequest,
-  AgentTeamRemoveMemberResult,
+  AgentTeamMembersRequest,
+  AgentTeamOperationReceipt,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
-  AgentTeamOperationReceipt,
+  AgentTeamRemoveMemberRequest,
+  AgentTeamRemoveMemberResult,
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
+  AgentTeamRequestId,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
   AgentTeamSetMemberStateRequest,
   AgentTeamStatus,
-  AgentTeamView,
-  AgentTeamViewRequest,
-  AgentTeamMessage,
   AgentTeamTask,
   AgentTeamTaskRequest,
   AgentTeamTaskResult,
+  AgentTeamThreadAttentionRequest,
+  AgentTeamThreadAttentionResult,
+  AgentTeamThreadAttentionStatus,
+  AgentTeamThreadHistory,
+  AgentTeamThreadHistoryRequest,
+  AgentTeamThreadReadRequest,
+  AgentTeamThreadReadResult,
+  AgentTeamView,
+  AgentTeamViewRequest,
 } from './types.ts'
 
 export { agentTeamDomainSpec, agentTeamOperationSchema } from './spec.ts'
 export type * from './types.ts'
+export { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './ledger.ts'
 
-export {
-  AGENT_TEAM_HUMAN_MEMBER_ID,
-  AGENT_TEAM_INITIALIZE_REQUEST_ID,
-} from './ledger.ts'
-
-/** Process-stable marker carried by the team_send definition in a team-enabled preset. */
+/** Process-stable marker carried by the final Team message tool definition. */
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@deepseek-ai/dsh-agent-team.preset')
 
-/** Mark the preset's team_send definition as an Agent Team consumer. */
+/** Mark the preset's `team_message` definition as an Agent Team consumer. */
 export function markAgentTeamPreset<T extends object>(definition: T): T {
   Object.defineProperty(definition, AGENT_TEAM_PRESET_MARKER, { value: true })
   return definition
 }
 
-/** Model-facing capabilities every team-enabled preset must publish. */
+/** Model-facing capabilities every Team-enabled preset must publish. */
 export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
-  'team_send',
-  'team_view',
+  'team_inbox',
+  'team_thread',
+  'team_message',
   'team_claim',
-  'team_follow',
+  'team_view',
 ] as const)
-
-/** Data emitted after one new Team operation has become durable and projected. */
-declare module '@deepseek-ai/dsh-llm' {
-  interface MessageSourceMap {
-    'agent-team-relay': {
-      readonly kind: 'agent-team-relay'
-      readonly form: 'relay'
-      readonly sender: AgentTeamMemberId
-      readonly channelRef: import('./types.ts').AgentTeamChannelRef
-      readonly taskRef: import('./types.ts').AgentTeamTaskRef
-      readonly messageRef: import('./types.ts').AgentTeamMessageRef
-      readonly revision: number
-    }
-    'agent-team-activity': {
-      readonly kind: 'agent-team-activity'
-      readonly form: 'notice'
-      readonly summary: string
-      readonly actor: { readonly memberId: AgentTeamMemberId; readonly handle: string }
-      readonly activityRef: import('./types.ts').AgentTeamActivityRef
-      readonly channelRef: import('./types.ts').AgentTeamChannelRef
-      readonly taskRef: import('./types.ts').AgentTeamTaskRef
-      readonly revision: number
-    }
-  }
-}
 
 export interface AgentTeamCommitted {
   readonly receipt: AgentTeamOperationReceipt
@@ -125,11 +100,7 @@ declare module '@deepseek-ai/cordis' {
   }
 
   interface Events {
-    /**
-     * One new Agent Team operation is durable and visible through the projection.
-     * @param event - Committed operation receipt.
-     * @mode emit
-     */
+    /** One new Team operation is durable and visible through Host projections. */
     'agent-team/committed'(event: AgentTeamCommitted): void
   }
 }
@@ -143,7 +114,6 @@ export default class AgentTeam extends TypertRemoteService {
     'agentDefaultModel',
     'agentPresets',
     'tools',
-    'sessions',
     'sessionPersistence',
   ]
 
@@ -153,17 +123,15 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
   private lifecycleTail: Promise<void> = Promise.resolve()
-  private deliveryTail: Promise<void> = Promise.resolve()
   private accepting = true
   private changeVersion = 0
   private readonly changeWaiters = new Set<(version: number) => void>()
 
-  /** Create the service; Cordis runs durable initialization before publication. */
   constructor(ctx: Context) {
     super(ctx, 'agentTeam')
   }
 
-  /** Open the ledger, bind teardown, and restore every enabled Member independently. */
+  /** Open the durable ledger and restore every enabled Member independently. */
   protected async [Service.init](): Promise<void> {
     this.ctx.on('agent/error', ({ agent, error }) => {
       if (this.memberForAgent(agent) === undefined) return
@@ -181,7 +149,6 @@ export default class AgentTeam extends TypertRemoteService {
       this.accepting = false
       this.emitChanged()
       await this.lifecycleTail
-      await this.deliveryTail
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
       await domain.close()
@@ -191,18 +158,13 @@ export default class AgentTeam extends TypertRemoteService {
     this.ledger = ledger
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
-
-    for (const member of ledger.listMembers()) {
-      if (member.state === 'enabled') await this.activateMember(member)
-    }
-    await this.recoverDeliveries()
+    for (const member of ledger.listMembers()) if (member.state === 'enabled') await this.activateMember(member)
   }
 
-  /** Resolve one exact live Agent to its Team Member; forks and bare sessions do not inherit identity. */
+  /** Resolve one exact live Agent to its durable Team Member; forks do not inherit identity. */
   memberForAgent(agent: Agent): AgentTeamAgentMember | undefined {
     for (const [memberId, handle] of this.handles) {
-      if (handle.agent !== agent) continue
-      return this.requireLedger().getMember(memberId)
+      if (handle.agent === agent) return this.requireLedger().getMember(memberId)
     }
     return undefined
   }
@@ -212,23 +174,20 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
   }
 
-  /** Return only the current Workspace's members to the Client projection. */
+  /** Return only this Workspace's current Member projection to the Client. */
   @Remote('members')
   membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamAgentMemberStatus[] {
+    this.requireWorkspace(request.workspaceId)
     return this.members().filter(status => status.member.workspaceId === request.workspaceId)
   }
 
-  /** Wait for a lightweight projection invalidation without exposing operation data. */
+  /** Wait for a lightweight projection invalidation without exposing ledger records. */
   @Remote('changes')
   async changes(request: AgentTeamChangesRequest): Promise<AgentTeamChangesResult> {
-    if (!Number.isInteger(request.afterVersion) || request.afterVersion < 0) {
-      throw new Error('afterVersion must be a non-negative integer')
-    }
-    if (this.changeVersion > request.afterVersion || !this.accepting) {
-      return Object.freeze({ version: this.changeVersion })
-    }
+    if (!Number.isInteger(request.afterVersion) || request.afterVersion < 0) throw new Error('afterVersion must be a non-negative integer')
+    if (this.changeVersion > request.afterVersion || !this.accepting) return Object.freeze({ version: this.changeVersion })
     return new Promise(resolve => {
-      const waiter = (version: number) => { clearTimeout(timeout); resolve(Object.freeze({ version })) }
+      const waiter = (version: number): void => { clearTimeout(timeout); resolve(Object.freeze({ version })) }
       const timeout = setTimeout(() => {
         this.changeWaiters.delete(waiter)
         resolve(Object.freeze({ version: this.changeVersion }))
@@ -237,12 +196,11 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /** Return the current Human-facing Team status without starting a model turn. */
+  /** Return durable Team status without issuing a model request or a storage write. */
   status(): AgentTeamStatus {
     return this.requireLedger().status()
   }
 
-  /** Resolve Human authority and create one Channel with its atomic initial Members. */
   @Remote('createChannel')
   async createChannel(request: AgentTeamCreateChannelRequest): Promise<AgentTeamCreateChannelResult> {
     this.requireAccepting()
@@ -254,7 +212,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Provision one durable Member, then publish its Agent only after preset validation succeeds. */
+  /** Create a durable Member and atomically grant its declared initial Channels. */
   @Remote('addMember')
   async addMember(request: AgentTeamAddMemberRequest): Promise<AgentTeamMemberResult> {
     return this.enqueueLifecycle(async () => {
@@ -270,11 +228,7 @@ export default class AgentTeam extends TypertRemoteService {
         privateMemoryPath: dshHomePath('agent-team', 'members', memberId),
         state: 'enabled',
       })
-      const result = await this.requireLedger().addMember({
-        ...request,
-        actor: agentTeamHumanActor(),
-        member,
-      })
+      const result = await this.requireLedger().addMember({ ...request, actor: agentTeamHumanActor(), member })
       if (result.committed) this.emitCommitted(result.value.receipt)
       const stored = result.value.member
       if (!this.handles.has(stored.memberId)) await this.activateMember(stored, workspace.path)
@@ -297,18 +251,17 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /** Commit enabled intent and restore the exact persisted session. */
+  /** Commit enabled intent and restore the exact persisted Session. */
   async resumeMember(request: AgentTeamSetMemberStateRequest): Promise<AgentTeamMemberResult> {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().resumeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
       await this.activateMember(result.value.member)
-      await this.recoverDeliveries()
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
   }
 
-  /** Irreversibly remove one Member, quiesce its Agent, and archive its session. */
+  /** Irreversibly remove one Member, archive its Session, and delete its private namespace. */
   async removeMember(request: AgentTeamRemoveMemberRequest): Promise<AgentTeamRemoveMemberResult> {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().removeMember({ ...request, actor: agentTeamHumanActor() })
@@ -320,23 +273,22 @@ export default class AgentTeam extends TypertRemoteService {
       }
       this.diagnostics.delete(request.memberId)
       await this.ctx.workspaceRegistry.archiveSession(result.value.member.sessionId)
+      await rm(result.value.member.privateMemoryPath, { recursive: true, force: true })
       return result.value
     })
   }
 
-  /** Accept, close, or reopen one Task as the Human authority. */
+  /** Human-only Task resolution. Business fences are returned as typed outcomes. */
   @Remote('changeTask')
   async changeTask(request: AgentTeamTaskRequest): Promise<AgentTeamTaskResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().changeTask({ ...request, actor: agentTeamHumanActor() })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+    this.emitCommittedOutcome(result)
+    return result.value
   }
 
-  /** Add one Agent Member to a Channel without replaying historical Messages. */
+  /** Human-only Channel membership grant; it never injects historical Thread bodies. */
   @Remote('joinChannel')
   async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
     this.requireAccepting()
@@ -348,14 +300,9 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /**
-   * Remove one Agent Member from one Channel and clean only that Channel's
-   * Claims, Follows, and queued Deliveries while preserving every other fact.
-   */
+  /** Human-only Channel membership removal and Channel-scoped cleanup. */
   @Remote('removeChannelMember')
-  async removeChannelMember(
-    request: AgentTeamRemoveChannelMemberRequest,
-  ): Promise<AgentTeamRemoveChannelMemberResult> {
+  async removeChannelMember(request: AgentTeamRemoveChannelMemberRequest): Promise<AgentTeamRemoveChannelMemberResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().removeChannelMember({ ...request, actor: agentTeamHumanActor() })
@@ -363,132 +310,164 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Resolve Human authority and send one atomic top-level Message bundle. */
+  /** Human top-level Task creation; unfollowed Agent mentions use the two-send result. */
   @Remote('sendMessage')
   async sendMessage(request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().sendMessage({ ...request, actor: agentTeamHumanActor() })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({
-      ...result.value,
-      deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-        this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)),
-    })
+    this.emitCommittedOutcome(result)
+    return result.value
   }
 
-  /** Append one revision-fenced Thread reply with Host-injected Human authority. */
+  /** Human existing-Thread reply; unread and revision conflicts are business outcomes. */
   @Remote('reply')
-  async reply(request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult | AgentTeamConfirmationRequired> {
+  async reply(request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().reply({ ...request, actor: agentTeamHumanActor() })
-    if (result.value.kind === 'confirmation_required') return result.value
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+    this.emitCommittedOutcome(result)
+    return result.value
   }
 
-  /** Resolve one existing Agent-owned Claim with Host-injected Human authority. */
-  @Remote('changeClaim')
-  async changeClaim(request: AgentTeamClaimRequest): Promise<AgentTeamClaimResult> {
+  /** Human's personal Attention operation. */
+  @Remote('changeAttention')
+  async changeAttention(request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    if (request.action === 'claim') throw new Error('Human cannot create a Claim for an Agent')
-    const result = await this.requireLedger().changeClaim({ ...request, actor: agentTeamHumanActor() })
+    const result = await this.requireLedger().changeAttention({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+    return result.value
   }
 
-  /** Append one revision-fenced Thread reply from the exact live Agent Member. */
-  async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult | AgentTeamConfirmationRequired> {
+  /** Human's body-free Workspace Inbox. */
+  @Remote('inbox')
+  inbox(request: AgentTeamInboxRequest): AgentTeamInbox {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().inbox(agentTeamHumanActor(), request)
+  }
+
+  /** Human's durable, atomically acknowledged Thread read. */
+  @Remote('readThread')
+  async readThread(request: AgentTeamThreadReadRequest): Promise<AgentTeamThreadReadResult> {
     this.requireAccepting()
-    const actor = this.memberActor(agent)
-    const result = await this.requireLedger().reply({ ...request, actor })
-    if (result.value.kind === 'confirmation_required') return result.value
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().readThread({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+    return result.value
   }
 
-  /** Change one Thread Follow as the exact live Agent Member. */
-  async changeFollowForAgent(agent: Agent, request: AgentTeamFollowRequest): Promise<AgentTeamFollowResult> {
-    this.requireAccepting()
-    const result = await this.requireLedger().changeFollow({ ...request, actor: this.memberActor(agent) })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
+  /** Human's non-mutating bounded Thread history. */
+  @Remote('threadHistory')
+  threadHistory(request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
+    this.requireWorkspace(request.workspaceId)
+    return this.requireLedger().threadHistory(agentTeamHumanActor(), request)
   }
 
-  followStatusForAgent(agent: Agent, request: {
-    workspaceId: AgentTeamViewRequest['workspaceId']
-    taskRef: AgentTeamTask['taskRef']
-  }): AgentTeamFollowStatus {
-    return this.requireLedger().followStatus(this.memberActor(agent), request)
-  }
-
-  /** Mutate one Direction Claim as the exact live Agent Member. */
-  async changeClaimForAgent(agent: Agent, request: AgentTeamClaimRequest): Promise<AgentTeamClaimResult> {
-    this.requireAccepting()
-    const actor = this.memberActor(agent)
-    const result = await this.requireLedger().changeClaim({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    await Promise.all(result.value.deliveries.map(delivery => this.admitDelivery(delivery)))
-    return Object.freeze({ ...result.value, deliveries: Object.freeze(result.value.deliveries.map(delivery =>
-      this.requireLedger().getDelivery(delivery.deliveryId) ?? delivery)) })
-  }
-
-  /** List complete Claim history for one Task authorized by the exact live Member. */
-  listClaimsForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; taskRef: AgentTeamTask['taskRef'] }): AgentTeamClaimList {
-    return this.requireLedger().listClaims(this.memberActor(agent), request)
-  }
-
-  /** Return a bounded view authorized by the exact live Agent identity. */
-  viewForAgent(agent: Agent, request: AgentTeamViewRequest): AgentTeamView {
-    const member = this.memberForAgent(agent)
-    if (member === undefined) throw new Error('Agent is not an active Team Member')
-    return this.requireLedger().view(request, member.memberId)
-  }
-
-  /** Return a bounded Human-authorized Workspace view. */
+  /** Return the existing bounded public Workspace discovery projection. */
   @Remote('view')
   view(request: AgentTeamViewRequest): AgentTeamView {
     this.requireWorkspace(request.workspaceId)
     return this.requireLedger().view(request)
   }
 
-  /** Validate the durable ledger against the current in-memory projection. */
+  /** Agent-only top-level Task creation. Workspace identity is verified against the live binding. */
+  async sendMessageForAgent(agent: Agent, request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    const result = await this.requireLedger().sendMessage({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Agent-only existing-Thread reply. */
+  async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    const result = await this.requireLedger().reply({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Agent-only personal Attention change. */
+  async changeAttentionForAgent(agent: Agent, request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    const result = await this.requireLedger().changeAttention({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  attentionStatusForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; taskRef: AgentTeamTask['taskRef'] }): AgentTeamThreadAttentionStatus {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().attentionStatus(actor, request)
+  }
+
+  /** Agent-only Claim mutation. */
+  async changeClaimForAgent(agent: Agent, request: AgentTeamClaimRequest): Promise<AgentTeamClaimResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    const result = await this.requireLedger().changeClaim({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  listClaimsForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; taskRef: AgentTeamTask['taskRef'] }): AgentTeamClaimList {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().listClaims(actor, request)
+  }
+
+  inboxForAgent(agent: Agent, request: AgentTeamInboxRequest): AgentTeamInbox {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().inbox(actor, request)
+  }
+
+  async readThreadForAgent(agent: Agent, request: AgentTeamThreadReadRequest): Promise<AgentTeamThreadReadResult> {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    const result = await this.requireLedger().readThread({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  threadHistoryForAgent(agent: Agent, request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, request.workspaceId)
+    return this.requireLedger().threadHistory(actor, request)
+  }
+
+  /** Agent-only bounded discovery projection. */
+  viewForAgent(agent: Agent, request: AgentTeamViewRequest): AgentTeamView {
+    const member = this.memberForAgent(agent)
+    if (member === undefined) throw new Error('Agent is not an active Team Member')
+    if (member.workspaceId !== request.workspaceId) throw new Error('Member cannot view another Workspace')
+    return this.requireLedger().view(request, member.memberId)
+  }
+
+  /** Validate the durable ledger against an independently replayed projection. */
   validateLedger(): void {
     this.requireLedger().validate()
   }
 
-  /** Prove every admitted Delivery still has matching target-session evidence. */
-  async validateDeliveryEvidence(): Promise<void> {
-    for (const delivery of this.requireLedger().listDeliveries()) {
-      if (delivery.state !== 'admitted') continue
-      const member = this.requireLedger().getMember(delivery.recipient)
-      if (member === undefined) throw new Error(`Delivery '${delivery.deliveryId}' has no target Member`)
-      const live = this.ctx.agents.get(member.sessionId)
-      const events = live?.session.events ?? (await this.ctx.sessionPersistence.inspect(member.sessionId)).events
-      if (!this.eventsContainMessage(events, delivery.messageId)) {
-        throw new Error(`admitted Delivery '${delivery.deliveryId}' has no target-session evidence`)
-      }
-    }
+  private emitCommittedOutcome<T extends { readonly kind: string; readonly receipt?: AgentTeamOperationReceipt }>(
+    result: { readonly committed: boolean; readonly value: T },
+  ): void {
+    if (result.committed && result.value.kind === 'committed' && result.value.receipt !== undefined) this.emitCommitted(result.value.receipt)
   }
 
   private assertChannelMembersAvailable(memberIds: readonly AgentTeamMemberId[] | undefined): void {
     for (const memberId of memberIds ?? []) {
       const member = this.requireLedger().getMember(memberId)
       if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
-      if (this.memberStatus(member).availability !== 'active') {
-        throw new Error(`Agent Member '${memberId}' is not available for Channel membership`)
-      }
+      if (this.memberStatus(member).availability !== 'active') throw new Error(`Agent Member '${memberId}' is not available for Channel membership`)
     }
   }
 
@@ -498,103 +477,8 @@ export default class AgentTeam extends TypertRemoteService {
     return Object.freeze({ kind: 'member', memberId: member.memberId, handle: member.handle })
   }
 
-  private async recoverDeliveries(): Promise<void> {
-    for (const delivery of this.requireLedger().queuedDeliveries()) await this.admitDelivery(delivery)
-  }
-
-  private admitDelivery(delivery: AgentTeamDelivery): Promise<void> {
-    const result = this.deliveryTail.then(() => this.admitDeliveryCore(delivery))
-    this.deliveryTail = result.then(() => {}, () => {})
-    return result
-  }
-
-  private async admitDeliveryCore(delivery: AgentTeamDelivery): Promise<void> {
-    const member = this.requireLedger().getMember(delivery.recipient)
-    const handle = this.handles.get(delivery.recipient)
-    const message = this.requireLedger().messageForDelivery(delivery.deliveryId)
-    const activity = this.requireLedger().activityForDelivery(delivery.deliveryId)
-    if (member?.state !== 'enabled' || handle === undefined || (message === undefined && activity === undefined)) return
-    let evidence = this.deliveryEvidence(handle.agent, delivery.messageId)
-    if (evidence === undefined) {
-      const relay = message === undefined
-        ? this.activityMessage(activity!, delivery.messageId)
-        : this.relayMessage(message, delivery.messageId)
-      handle.agent.send(relay, 'next-step', true)
-      evidence = this.deliveryEvidence(handle.agent, delivery.messageId)
-    }
-    if (evidence === undefined) throw new Error(`Delivery '${delivery.deliveryId}' has no Inbox evidence`)
-    const durable = await this.ctx.sessions.flush(handle.agent.session)
-    if (!durable) throw new Error(`Delivery '${delivery.deliveryId}' has no session persistence durability barrier`)
-    const result = await this.requireLedger().admitDelivery({
-      requestId: `agent-team:admit:${delivery.deliveryId}` as import('./types.ts').AgentTeamRequestId,
-      actor: agentTeamHostActor(),
-      deliveryId: delivery.deliveryId,
-      evidence,
-    })
-    if (result.committed) this.emitCommitted(result.value)
-  }
-
-  private eventsContainMessage(events: readonly { readonly type: string; readonly data: unknown }[], messageId: MessageId): boolean {
-    return events.some((event) => {
-      if (event.type === 'user/message') return (event.data as { id?: unknown }).id === messageId
-      if (event.type !== 'agent/inbox/spliced') return false
-      const inserted = (event.data as { inserted?: readonly { id?: unknown }[] }).inserted
-      return inserted?.some(message => message.id === messageId) === true
-    })
-  }
-
-  private deliveryEvidence(agent: Agent, messageId: MessageId): 'agent/inbox/spliced' | 'user/message' | undefined {
-    for (const event of agent.session.events) {
-      if (event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.id === messageId)) {
-        return 'agent/inbox/spliced'
-      }
-      if (event.type === 'user/message' && event.data.id === messageId) return 'user/message'
-    }
-    return undefined
-  }
-
-  private activityMessage(activity: AgentTeamActivity, messageId: MessageId) {
-    const ledger = this.requireLedger()
-    const task = ledger.getTask(activity.taskRef)
-    const member = ledger.getMember(activity.actor)
-    const actor = member === undefined && activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID
-      ? { memberId: AGENT_TEAM_HUMAN_MEMBER_ID, handle: 'human' } : member
-    if (task === undefined || actor === undefined) throw new Error(`Activity '${activity.activityRef}' has an incomplete projection`)
-    const summary = activity.kind === 'claim' || activity.kind === 'done' || activity.kind === 'release'
-      ? `${actor.handle} ${activity.kind} Claim ${activity.claimRef}`
-      : `${actor.handle} ${activity.kind} Thread ${activity.threadRef}`
-    return freezeMessage({
-      id: messageId,
-      role: 'user' as const,
-      content: [{ type: 'text' as const, text: `${summary} on Task ${activity.taskRef}.` }],
-      source: {
-        kind: 'agent-team-activity' as const,
-        form: 'notice' as const,
-        summary,
-        actor: { memberId: actor.memberId, handle: actor.handle },
-        activityRef: activity.activityRef,
-        channelRef: task.channelRef,
-        taskRef: task.taskRef,
-        revision: activity.sequence,
-      },
-    })
-  }
-
-  private relayMessage(message: AgentTeamMessage, messageId: MessageId) {
-    return freezeMessage({
-      id: messageId,
-      role: 'user' as const,
-      content: [{ type: 'text' as const, text: message.body }],
-      source: {
-        kind: 'agent-team-relay' as const,
-        form: 'relay' as const,
-        sender: message.sender,
-        channelRef: message.channelRef,
-        taskRef: message.taskRef,
-        messageRef: message.messageRef,
-        revision: message.sequence,
-      },
-    })
+  private requireAgentWorkspace(actor: AgentTeamMemberActor, workspaceId: AgentTeamViewRequest['workspaceId']): void {
+    if (this.requireLedger().getMember(actor.memberId)?.workspaceId !== workspaceId) throw new Error('Member cannot mutate another Workspace')
   }
 
   private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string): Promise<void> {
@@ -604,8 +488,7 @@ export default class AgentTeam extends TypertRemoteService {
       const workspace = this.requireWorkspace(member.workspaceId)
       const workspacePath = knownWorkspacePath ?? workspace.path
       await this.initializePrivateMemory(member.privateMemoryPath)
-      const persisted = (await this.ctx.sessionPersistence.list())
-        .some(header => header.id === member.sessionId)
+      const persisted = (await this.ctx.sessionPersistence.list()).some(header => header.id === member.sessionId)
       const setup = async (agentCtx: Context) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.validateMemberPreset(agentCtx)
@@ -613,9 +496,7 @@ export default class AgentTeam extends TypertRemoteService {
           commit: () => {
             const agent = agentCtx.agent
             if (agent === undefined) throw new Error('agent-team setup has no unpublished Agent')
-            if (effectiveSandboxMode(agent.session.events) !== 'danger-full-access') {
-              setSandboxMode(agent.session, 'danger-full-access')
-            }
+            if (effectiveSandboxMode(agent.session.events) !== 'danger-full-access') setSandboxMode(agent.session, 'danger-full-access')
           },
         }
       }
@@ -641,8 +522,8 @@ export default class AgentTeam extends TypertRemoteService {
 
   private validateMemberPreset(agentCtx: Context): void {
     const scope = scopeOf(agentCtx)
-    const teamSend = this.ctx.tools.get('team_send', scope)
-    if ((teamSend as Record<PropertyKey, unknown> | undefined)?.[AGENT_TEAM_PRESET_MARKER] !== true) {
+    const teamMessage = this.ctx.tools.get('team_message', scope)
+    if ((teamMessage as Record<PropertyKey, unknown> | undefined)?.[AGENT_TEAM_PRESET_MARKER] !== true) {
       throw new Error('selected preset is not team-enabled')
     }
     const available = new Set(this.ctx.tools.schemas(scope).map(tool => tool.name))
@@ -668,11 +549,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (handle === undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable' })
     const runtimeError = this.runtimeErrors.get(handle.agent.id)
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
-    return Object.freeze({
-      member,
-      availability: 'active',
-      presence: handle.agent.status === 'running' ? 'working' : 'available',
-    })
+    return Object.freeze({ member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available' })
   }
 
   private requireWorkspace(workspaceId: AgentTeamViewRequest['workspaceId']) {

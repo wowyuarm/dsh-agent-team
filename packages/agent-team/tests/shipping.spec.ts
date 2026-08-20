@@ -26,10 +26,10 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain("name: '@deepseek-ai/dsh-tool-agent-team'")
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
-    expect(preset).toContain('team_send, team_view, team_claim, and team_follow')
+    expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
     const toolSource = await readFile(resolve(root, 'packages/tool-agent-team/src/index.ts'), 'utf8')
     expect([...toolSource.matchAll(/name: '(team_[a-z]+)'/g)].map(match => match[1])).toEqual([
-      'team_send', 'team_claim', 'team_follow', 'team_view',
+      'team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view',
     ])
 
     const manifest = JSON.parse(manifestText) as {
