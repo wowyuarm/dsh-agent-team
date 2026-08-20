@@ -15,13 +15,14 @@ import css from './sidebar.module.css'
 interface TeamAgentsPanelProps {
   readonly workspaceId: WorkspaceId
   readonly loadMembers: TeamSidebarProps['loadMembers']
+  readonly loadChanges: TeamSidebarProps['loadChanges']
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly addMember: TeamSidebarProps['addMember']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, loadChannels, addMember, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, loadChanges, loadChannels, addMember, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
   const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
@@ -47,6 +48,30 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, loadChannels, addMem
   }, [loadMembers, workspaceId])
 
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    let active = true
+    let version = 0
+    void (async () => {
+      while (active) {
+        try {
+          const changed = await loadChanges({ afterVersion: version })
+          if (!active) return
+          if (!changed.ok) {
+            setError(changed.error.message)
+            return
+          }
+          if (changed.value.version > version) {
+            version = changed.value.version
+            await refresh()
+          }
+        } catch (cause) {
+          if (active) setError(cause instanceof Error ? cause.message : String(cause))
+          return
+        }
+      }
+    })()
+    return () => { active = false }
+  }, [loadChanges, refresh, workspaceId])
   useEffect(() => {
     let active = true
     void loadChannels({ workspaceId, topLevelOnly: true, includeActivities: false, limit: 1 }).then(result => {

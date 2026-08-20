@@ -27,6 +27,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
+  const [statusMessage, setStatusMessage] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
@@ -48,7 +49,10 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     const sequence = refreshSequenceRef.current + 1
     refreshSequenceRef.current = sequence
     setLoading(true)
-    if (clearError) setError(undefined)
+    if (clearError) {
+      setError(undefined)
+      setStatusMessage(undefined)
+    }
     try {
       const [loaded, loadedMembers] = await Promise.all([
         loadChannels({ workspaceId, channelRef, direction: 'before', topLevelOnly: true, includeActivities: false, limit: 20 }),
@@ -160,7 +164,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       requestId: crypto.randomUUID() as AgentTeamSendMessageRequest['requestId'], workspaceId,
       channelRef, body: draft.trim(), recipients: recipientIds,
     }
-    setPendingSend(request); setPending(true); setError(undefined)
+    setPendingSend(request); setPending(true); setError(undefined); setStatusMessage(undefined)
     try {
       const result = await sendMessage(request)
       if (!result.ok) setError(result.error.message)
@@ -169,9 +173,10 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
         setDraft('')
         setRecipients(new Set())
         setPendingSend(undefined)
+        setStatusMessage(undefined)
       } else if (result.value.kind === 'confirmation_required') {
         setPendingSend({ ...request, confirmationToken: result.value.confirmationToken })
-        setError(t('mentionConfirmation'))
+        setStatusMessage(t('mentionConfirmation'))
       } else {
         setError(`Agent Member(s) must already follow this Thread: ${result.value.memberIds.join(', ')}`)
       }
@@ -247,9 +252,10 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       draft={draft}
       disabled={false}
       pending={pending}
+      {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}
-      onDraftChange={next => { setDraft(next); setPendingSend(undefined) }}
-      onRecipientsChange={next => { setRecipients(next); setPendingSend(undefined) }}
+      onDraftChange={next => { setDraft(next); setPendingSend(undefined); setStatusMessage(undefined) }}
+      onRecipientsChange={next => { setRecipients(next); setPendingSend(undefined); setStatusMessage(undefined) }}
       onSubmit={() => { void send() }}
       t={t}
     /> : <div />}
