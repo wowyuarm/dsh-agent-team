@@ -988,15 +988,18 @@ export class AgentTeamLedger {
       assertHuman()
       const channel = projection.channels.get(operation.data.channelRef)
       const member = projection.members.get(operation.data.memberId)
-      if (channel === undefined || member === undefined || !projection.memberships.get(channel.channelRef)?.has(member.memberId)) throw new Error('invalid Channel membership removal')
-      this.validateInboxDelta(operation.data.inbox, projection, refs)
+      if (channel === undefined || member === undefined || operation.data.workspaceId !== channel.workspaceId
+        || member.workspaceId !== channel.workspaceId || !projection.memberships.get(channel.channelRef)?.has(member.memberId)) throw new Error('invalid Channel membership removal')
+      const threadRefs = new Set([...projection.tasks.values()].filter(task => task.channelRef === channel.channelRef).map(task => task.threadRef))
+      this.validateReleaseCleanup(operation.data, projection, member.memberId, threadRefs, operation.sequence, refs)
       return
     }
     if (operation.kind === 'team/member-removed') {
       assertHuman()
       const prior = projection.members.get(operation.data.member.memberId)
       if (prior === undefined || prior.state === 'inactive' || operation.data.member.state !== 'inactive' || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member removal')
-      this.validateInboxDelta(operation.data.inbox, projection, refs)
+      const threadRefs = new Set([...projection.tasks.values()].map(task => task.threadRef))
+      this.validateReleaseCleanup(operation.data, projection, prior.memberId, threadRefs, operation.sequence, refs)
       return
     }
     if (operation.kind === 'team/thread-attention-changed') {
@@ -1007,6 +1010,11 @@ export class AgentTeamLedger {
       if (task === undefined || thread === undefined || !this.sameTask(task, operation.data.task)
         || !this.sameThread(thread, operation.data.thread)
         || (actor !== undefined && !projection.memberships.get(task.channelRef)?.has(actor.memberId))) throw new Error('invalid Attention operation')
+      const current = this.attentionForFrom(projection, operation.data.memberId, thread.threadRef)
+      const expected = operation.data.action === 'follow'
+        ? this.inboxDelta([this.followAttentionFrom(projection, operation.data.memberId, thread.threadRef)])
+        : current === undefined ? undefined : this.inboxDelta([], [{ memberId: operation.data.memberId, threadRef: thread.threadRef }], [], this.directMarkersForFrom(projection, operation.data.memberId, thread.threadRef))
+      if (expected === undefined || !isDeepStrictEqual(operation.data.inbox, expected)) throw new Error('invalid Attention projection')
       this.validateInboxDelta(operation.data.inbox, projection, refs)
       return
     }
@@ -1040,7 +1048,9 @@ export class AgentTeamLedger {
           || priorThread.taskRef !== thread.taskRef || operation.data.baseRevision !== priorThread.revision) throw new Error('invalid Thread reply')
       }
       this.addRef(refs, message.messageRef)
-      this.validateInboxDelta(operation.data.inbox, projection, refs, [thread.threadRef])
+      this.validateMentions(operation.data.mentions, message, projection)
+      this.validateInboxDelta(operation.data.inbox, projection, refs, [thread.threadRef], [message])
+      this.validateMessageInbox(operation, projection)
       return
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
@@ -1107,6 +1117,7 @@ export class AgentTeamLedger {
     projection: Projection,
     _refs: Set<string>,
     additionalThreadRefs: readonly AgentTeamThreadRef[] = [],
+    additionalMessages: readonly AgentTeamMessage[] = [],
   ): void {
     const attentionKeys = new Set<string>()
     const knownThreadRefs = new Set([...projection.threads.keys(), ...additionalThreadRefs])
@@ -1122,9 +1133,113 @@ export class AgentTeamLedger {
     for (const key of delta.attention.removed) {
       if (attentionKeys.has(this.attentionKey(key.memberId, key.threadRef))) throw new Error('conflicting Attention delta')
     }
-    for (const marker of [...delta.directMarkers.added, ...delta.directMarkers.removed]) {
-      if (marker.sequence < 1 || marker.threadRef === '' || marker.messageRef === '') throw new Error('invalid direct marker')
+    const markerKeys = new Set<string>()
+    const messages = [...projection.messages, ...additionalMessages]
+    for (const marker of delta.directMarkers.added) {
+      const key = this.directMarkerKey(marker)
+      if (markerKeys.has(key) || projection.directMarkers.has(key)) throw new Error('invalid direct marker addition')
+      markerKeys.add(key)
+      const message = messages.find(candidate => candidate.messageRef === marker.messageRef)
+      if (message === undefined || message.threadRef !== marker.threadRef || message.sequence !== marker.sequence
+        || !this.validMentionTarget(projection, message.channelRef, marker.memberId)) throw new Error('invalid direct marker addition')
     }
+    for (const marker of delta.directMarkers.removed) {
+      const key = this.directMarkerKey(marker)
+      if (markerKeys.has(key) || !projection.directMarkers.has(key)) throw new Error('invalid direct marker removal')
+      markerKeys.add(key)
+      const current = projection.directMarkers.get(key)!
+      const message = messages.find(candidate => candidate.messageRef === marker.messageRef)
+      if (!isDeepStrictEqual(current, marker) || message === undefined || message.threadRef !== marker.threadRef
+        || message.sequence !== marker.sequence || !this.validMentionTarget(projection, message.channelRef, marker.memberId)) {
+        throw new Error('invalid direct marker removal')
+      }
+    }
+  }
+
+  private validateReleaseCleanup(
+    data: AgentTeamChannelMemberRemovedOperation['data'] | AgentTeamMemberRemovedOperation['data'],
+    projection: Projection,
+    memberId: AgentTeamMemberId,
+    threadRefs: ReadonlySet<AgentTeamThreadRef>,
+    sequence: number,
+    refs: Set<string>,
+  ): void {
+    const releasedClaims = [...projection.claims.values()]
+      .filter(claim => claim.owner === memberId && claim.state === 'active' && threadRefs.has(claim.threadRef))
+      .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
+    if (data.claims.length !== releasedClaims.length || data.claims.some((claim, index) => {
+      const expected = releasedClaims[index]
+      return expected === undefined || !this.sameClaim(expected, claim)
+    })) throw new Error('invalid released Claim projection')
+
+    const byThread = new Map<AgentTeamThreadRef, AgentTeamClaim[]>()
+    for (const claim of releasedClaims) byThread.set(claim.threadRef, [...(byThread.get(claim.threadRef) ?? []), claim])
+    const expectedActivities = [...byThread.entries()].map(([threadRef, claims]) => ({
+      kind: 'claims_released' as const, taskRef: claims[0]!.taskRef, threadRef, actor: memberId, sequence,
+      claimRefs: claims.map(claim => claim.claimRef).sort(),
+    }))
+    if (data.activities.length !== expectedActivities.length || data.activities.some((activity, index) => {
+      const expected = expectedActivities[index]
+      return expected === undefined || activity.kind !== expected.kind || activity.taskRef !== expected.taskRef
+        || activity.threadRef !== expected.threadRef || activity.actor !== expected.actor || activity.sequence !== expected.sequence
+        || !this.sameList(activity.claimRefs, expected.claimRefs)
+    })) throw new Error('invalid released Claim activities')
+    for (const claim of data.claims) {
+      const prior = projection.claims.get(claim.claimRef)
+      if (prior === undefined) throw new Error('invalid released Claim reference')
+    }
+    for (const activity of data.activities) this.addRef(refs, activity.activityRef)
+
+    const projectedClaims = new Map(projection.claims)
+    for (const claim of releasedClaims) projectedClaims.set(claim.claimRef, claim)
+    const expectedTasks = [...new Set(releasedClaims.map(claim => claim.taskRef))].map(taskRef => {
+      const task = projection.tasks.get(taskRef)!
+      return Object.freeze({ ...task, status: this.deriveResolvedTaskStatus(task, projectedClaims.values()) })
+    })
+    const expectedThreads = expectedActivities.map(activity => {
+      const thread = projection.threads.get(activity.threadRef)!
+      return Object.freeze({ ...thread, revision: sequence })
+    })
+    if (!isDeepStrictEqual(data.tasks, expectedTasks) || !isDeepStrictEqual(data.threads, expectedThreads)) {
+      throw new Error('invalid released Claim Task or Thread projection')
+    }
+
+    const expectedAttention = [...projection.attention.values()]
+      .filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
+      .map(attention => ({ memberId: attention.memberId, threadRef: attention.threadRef }))
+    const expectedMarkers = [...projection.directMarkers.values()]
+      .filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    const expectedInbox = this.inboxDelta([], expectedAttention, [], expectedMarkers)
+    if (!isDeepStrictEqual(data.inbox, expectedInbox)) throw new Error('invalid Member inbox cleanup')
+    this.validateInboxDelta(data.inbox, projection, refs)
+  }
+
+  private validateMessageInbox(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation, projection: Projection): void {
+    const { message, mentions } = operation.data
+    const started = operation.kind === 'team/message-sent'
+      ? [this.startAttention(message.sender, message.threadRef, message.sequence),
+        ...mentions.filter(memberId => projection.members.has(memberId)).map(memberId => this.startAttention(memberId, message.threadRef, message.sequence))]
+      : mentions.filter(memberId => projection.members.has(memberId) && !this.isFollowingFrom(projection, message.threadRef, memberId))
+        .map(memberId => this.startAttention(memberId, message.threadRef, message.sequence))
+    const markers = mentions.map(memberId => Object.freeze({ memberId, threadRef: message.threadRef,
+      messageRef: message.messageRef, sequence: message.sequence }))
+    const expected = this.inboxDelta(started, [], markers)
+    if (!isDeepStrictEqual(operation.data.inbox, expected)) throw new Error('invalid Message inbox projection')
+  }
+
+  private validateMentions(
+    mentions: readonly AgentTeamMemberId[],
+    message: AgentTeamMessage,
+    projection: Projection,
+  ): void {
+    if (!this.sameList(mentions, [...new Set(mentions)].sort())) throw new Error('invalid Message mentions')
+    for (const memberId of mentions) if (!this.validMentionTarget(projection, message.channelRef, memberId)) throw new Error('invalid Message mention target')
+  }
+
+  private validMentionTarget(projection: Projection, channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): boolean {
+    if (memberId === AGENT_TEAM_HUMAN_MEMBER_ID) return true
+    const member = projection.members.get(memberId)
+    return member?.state === 'enabled' && this.isChannelMemberFrom(projection, channelRef, memberId)
   }
 
   private apply(operation: AgentTeamOperation): void {
@@ -1253,7 +1368,12 @@ export class AgentTeamLedger {
       : []
     const combined = [...background.map(fact => this.readFactFrom(projection, memberId, fact, false)), ...unreadFacts]
       .sort((left, right) => left.fact.sequence - right.fact.sequence)
-    const readThroughSequence = unreadFacts.length === 0 ? attention?.readThroughSequence ?? 0 : unreadFacts.at(-1)!.fact.sequence
+    // Direct markers are sparse acknowledgements, not part of the contiguous
+    // follower watermark. Consuming an old marker after a later follow must
+    // never move that watermark backwards.
+    const ordinaryUnread = unreadFacts.filter(item => item.fact.sequence >= (attention?.startSequence ?? Number.MAX_SAFE_INTEGER)
+      && this.visibleToFollower(item.fact, memberId))
+    const readThroughSequence = Math.max(attention?.readThroughSequence ?? 0, ordinaryUnread.at(-1)?.fact.sequence ?? 0)
     const nextAttention = attention === undefined || readThroughSequence === attention.readThroughSequence ? []
       : [Object.freeze({ ...attention, readThroughSequence })]
     const consumedDirectMarkers = new Set(unreadFacts.flatMap(item => item.direct && item.fact.kind === 'message'
@@ -1372,6 +1492,11 @@ export class AgentTeamLedger {
     return Object.freeze({ memberId, threadRef, startSequence: tail + 1, readThroughSequence: tail })
   }
 
+  private followAttentionFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): AgentTeamThreadAttention {
+    const tail = this.threadFactsFrom(projection, threadRef).at(-1)?.sequence ?? 1
+    return Object.freeze({ memberId, threadRef, startSequence: tail + 1, readThroughSequence: tail })
+  }
+
   private currentTail(threadRef: AgentTeamThreadRef): number {
     return this.threadFacts(threadRef).at(-1)?.sequence ?? 1
   }
@@ -1386,6 +1511,10 @@ export class AgentTeamLedger {
 
   private isFollowing(threadRef: AgentTeamThreadRef, memberId: AgentTeamMemberId): boolean {
     return this.attentionFor(memberId, threadRef) !== undefined
+  }
+
+  private isFollowingFrom(projection: Projection, threadRef: AgentTeamThreadRef, memberId: AgentTeamMemberId): boolean {
+    return this.attentionForFrom(projection, memberId, threadRef) !== undefined
   }
 
   private directMarkersFor(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamDirectMarker[] {
@@ -1625,6 +1754,10 @@ export class AgentTeamLedger {
     return this.memberships.get(channelRef)?.has(memberId) === true
   }
 
+  private isChannelMemberFrom(projection: Projection, channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): boolean {
+    return projection.memberships.get(channelRef)?.has(memberId) === true
+  }
+
   private channelThreadRefs(channelRef: AgentTeamChannelRef): Set<AgentTeamThreadRef> {
     return new Set([...this.tasks.values()].filter(task => task.channelRef === channelRef).map(task => task.threadRef))
   }
@@ -1752,6 +1885,10 @@ export class AgentTeamLedger {
 
   private sameTaskIdentity(left: AgentTeamTask, right: AgentTeamTask): boolean {
     return left.taskRef === right.taskRef && left.channelRef === right.channelRef && left.threadRef === right.threadRef
+  }
+
+  private sameClaim(left: AgentTeamClaim, right: AgentTeamClaim): boolean {
+    return this.sameClaimIdentity(left, right) && left.state === right.state
   }
 
   private sameClaimIdentity(left: AgentTeamClaim, right: AgentTeamClaim): boolean {
