@@ -110,8 +110,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('option', { name: /@builder/ }).click()
   await page.screenshot({ path: join(UI04_SHOTS, 'mention-menu-selected.png'), fullPage: true })
   await page.getByRole('button', { name: '发送' }).click()
-  await page.getByRole('status').waitFor()
-  await page.getByRole('button', { name: '发送' }).click()
   const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
   await committedMessage.waitFor()
   await expect.poll(() => page.getByRole('textbox', { name: '消息内容' }).inputValue()).toBe('')

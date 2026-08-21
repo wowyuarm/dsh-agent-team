@@ -385,21 +385,18 @@ describe('Agent Team Member lifecycle', () => {
     expect(hints).toHaveLength(1)
   })
 
-  it('wakes an idle Member after a confirmed top-level mention without injecting its body', async () => {
+  it('wakes an idle Member after a top-level mention without injecting its body', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('top-level-wake-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const builder = await ctx.agentTeam.addMember({ requestId: requestId('top-level-wake-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     const agent = ctx.agents.get(builder.status.member.sessionId)!
-    const pending = await ctx.agentTeam.sendMessage({ requestId: requestId('top-level-wake-pending'), workspaceId, channelRef: channel.channel.channelRef,
+    const committed = await ctx.agentTeam.sendMessage({ requestId: requestId('top-level-wake'), workspaceId, channelRef: channel.channel.channelRef,
       body: 'Please investigate the top-level wake path', recipients: [builder.status.member.memberId] })
-    expect(pending.kind).toBe('confirmation_required')
+    expect(committed.kind).toBe('committed')
     expect(adapter.requests).toHaveLength(0)
-    if (pending.kind !== 'confirmation_required') throw new Error('expected top-level mention confirmation')
 
     adapter.enqueue(textResponse('I will inspect Team Inbox.'))
-    const committed = await ctx.agentTeam.sendMessage({ requestId: requestId('top-level-wake-confirmed'), workspaceId, channelRef: channel.channel.channelRef,
-      body: 'Please investigate the top-level wake path', recipients: [builder.status.member.memberId], confirmationToken: pending.confirmationToken })
     if (committed.kind !== 'committed') throw new Error(`expected committed top-level mention, received ${committed.kind}`)
     expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1,
       items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: committed.task.taskRef }), directCount: 1 })] })

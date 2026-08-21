@@ -156,8 +156,8 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
     event.preventDefault()
     if (!pending && draft.trim() !== '') onSubmit()
   }}>
-    {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
     <div className={css.card} data-team-composer>
+      {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
       <div className={css.inputArea}>
         {menuOpen && <div id={listId} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')}>
           {candidates.map((status, index) => {

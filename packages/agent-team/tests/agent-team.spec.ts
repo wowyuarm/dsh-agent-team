@@ -143,21 +143,15 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(records.join('\n')).not.toContain('follow-changed')
   })
 
-  it('starts Agent Attention and direct Inbox delivery after a confirmed top-level mention', async () => {
+  it('starts Agent Attention and direct Inbox delivery after a top-level mention without confirmation', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
     const ledger = replayLedger(test)
     const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
     const before = ledger.status().sequence
-    const pending = (await ledger.sendMessage({ requestId: requestId('mention'), workspaceId: alpha, channelRef: channel.channel.channelRef,
-      body: 'Please investigate this', recipients: [member.memberId], actor: agentTeamHumanActor() })).value
-    expect(pending).toMatchObject({ kind: 'confirmation_required', recipients: [member.memberId] })
-    expect(ledger.status().sequence).toBe(before)
-    expect(ledger.inbox(actor, { workspaceId: alpha })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
-    if (pending.kind !== 'confirmation_required') throw new Error('expected top-level mention confirmation')
-
-    const sent = committed((await ledger.sendMessage({ requestId: requestId('mention-confirmed'), workspaceId: alpha, channelRef: channel.channel.channelRef,
-      body: 'Please investigate this', recipients: [member.memberId], confirmationToken: pending.confirmationToken, actor: agentTeamHumanActor() })).value)
+    const sent = committed((await ledger.sendMessage({ requestId: requestId('mention'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Please investigate this', recipients: [member.memberId], actor: agentTeamHumanActor() })).value)
+    expect(ledger.status().sequence).toBe(before + 1)
     expect(sent.attention).toEqual(expect.arrayContaining([expect.objectContaining({ memberId: member.memberId,
       startSequence: sent.message.sequence, readThroughSequence: sent.message.sequence - 1 })]))
     expect(sent.directMarkers).toEqual([expect.objectContaining({ memberId: member.memberId, messageRef: sent.message.messageRef })])

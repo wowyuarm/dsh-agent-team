@@ -9,7 +9,7 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
   position: relative;
   width: 100%;
   max-width: var(--dsh-composer-card-max-width, 780px);
@@ -153,7 +153,7 @@
   font-size: 12px;
   line-height: 18px;
   margin: 0;
-  padding: 0 4px 6px;
+  padding: 0 16px;
 }
 
 .error {

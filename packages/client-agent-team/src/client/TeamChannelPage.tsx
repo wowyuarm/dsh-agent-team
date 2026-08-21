@@ -31,7 +31,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
-  const [pendingSend, setPendingSend] = useState<AgentTeamSendMessageRequest>()
   const [managingMembers, setManagingMembers] = useState(false)
   const [membershipPending, setMembershipPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [membershipErrors, setMembershipErrors] = useState<ReadonlyMap<AgentTeamMemberId, string>>(new Map())
@@ -157,14 +156,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
   const send = async () => {
     if (pending || draft.trim() === '') return
     const recipientIds = [...recipients].sort()
-    const samePending = pendingSend !== undefined && pendingSend.workspaceId === workspaceId
-      && pendingSend.channelRef === channelRef && pendingSend.body === draft.trim()
-      && JSON.stringify(pendingSend.recipients) === JSON.stringify(recipientIds)
-    const request: AgentTeamSendMessageRequest = samePending ? pendingSend : {
+    const request: AgentTeamSendMessageRequest = {
       requestId: crypto.randomUUID() as AgentTeamSendMessageRequest['requestId'], workspaceId,
       channelRef, body: draft.trim(), recipients: recipientIds,
     }
-    setPendingSend(request); setPending(true); setError(undefined); setStatusMessage(undefined)
+    setPending(true); setError(undefined); setStatusMessage(undefined)
     try {
       const result = await sendMessage(request)
       if (!result.ok) setError(result.error.message)
@@ -172,13 +168,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
         await refresh()
         setDraft('')
         setRecipients(new Set())
-        setPendingSend(undefined)
         setStatusMessage(undefined)
-      } else if (result.value.kind === 'confirmation_required') {
-        setPendingSend({ ...request, confirmationToken: result.value.confirmationToken })
-        setStatusMessage(t('mentionConfirmation'))
-      } else {
+      } else if (result.value.kind === 'member_not_following') {
         setError(`Agent Member(s) must already follow this Thread: ${result.value.memberIds.join(', ')}`)
+      } else {
+        setError(`Unable to send message: ${result.value.kind}`)
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
@@ -254,8 +248,8 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}
-      onDraftChange={next => { setDraft(next); setPendingSend(undefined); setStatusMessage(undefined) }}
-      onRecipientsChange={next => { setRecipients(next); setPendingSend(undefined); setStatusMessage(undefined) }}
+      onDraftChange={next => { setDraft(next); setStatusMessage(undefined) }}
+      onRecipientsChange={next => { setRecipients(next); setStatusMessage(undefined) }}
       onSubmit={() => { void send() }}
       t={t}
     /> : <div />}

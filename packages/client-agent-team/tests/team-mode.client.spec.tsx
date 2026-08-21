@@ -326,7 +326,7 @@ describe('rendered Team mode composition', () => {
     expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value).toBe('hello team @builder ')
     fireEvent.click(b.view.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(b.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ body: 'hello team @builder', recipients: ['member:builder'] })))
-    expect(b.sendMessage.mock.calls[0]![0].requestId).toBe(b.sendMessage.mock.calls[1]![0].requestId)
+    expect(b.sendMessage.mock.calls[0]![0].requestId).not.toBe(b.sendMessage.mock.calls[1]![0].requestId)
     expect(await b.view.findByText('hello team @builder')).toBeTruthy()
     expect(b.view.queryByText('任务消息')).toBeNull()
     expect(b.view.getByText('待处理')).toBeTruthy()

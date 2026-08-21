@@ -428,12 +428,6 @@ export class AgentTeamLedger {
       if (unfollowedAgents.length > 0 && actor.kind === 'member') {
         return this.resolved(this.memberNotFollowing(request.workspaceId, channel.channelRef, unfollowedAgents))
       }
-      if (unfollowedAgents.length > 0 && request.confirmationToken === undefined) {
-        return this.resolved(this.issueConfirmation(request.actor, request.workspaceId, channel.channelRef, body, recipients))
-      }
-      if (request.confirmationToken !== undefined) {
-        this.consumeConfirmation(request.confirmationToken, request.actor, request.workspaceId, channel.channelRef, undefined, undefined, body, recipients)
-      }
       const sequence = this.nextSequence()
       const taskRef = this.ref('task')
       const threadRef = this.ref('thread')
