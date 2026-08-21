@@ -4,7 +4,6 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'wowyuarm-agent-team-member-context'
-export const inject = ['agentTeam']
 const MAX_MEMORY_BYTES = 8 * 1024
 const BEGIN = '<team-member-private-memory>'
 const END = '</team-member-private-memory>'
@@ -13,7 +12,13 @@ export function apply(ctx: Context): void {
   ctx.on('agent/pre-step', async ({ agent, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
-    const member = ctx.agentTeam.memberForAgent(agent)
+    // The Host service is resolved at step time, never through plugin inject:
+    // this row mounts while the Host itself is still restoring Members, and a
+    // declared dependency on `agentTeam` would hold the preset mount open
+    // until the Host service is active, failing every startup restore.
+    const host = ctx.get('agentTeam')
+    if (host === undefined) return decision
+    const member = host.memberForAgent(agent)
     if (member === undefined) return decision
     let text: string
     try {

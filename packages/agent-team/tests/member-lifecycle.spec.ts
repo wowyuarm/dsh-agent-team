@@ -14,6 +14,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SqliteSessionPersistence from '@deepseek-ai/dsh-session-persistence-sqlite'
+import SessionTitle from '@deepseek-ai/dsh-session-title'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -155,6 +156,7 @@ async function realHarness(
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   else await ctx.plugin(SqliteSessionPersistence, { path: sqlite, journalMode: 'delete' })
+  await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
   await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
@@ -187,6 +189,8 @@ describe('Agent Team Member lifecycle', () => {
     expect(live?.session.events).toContainEqual(expect.objectContaining({ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }))
     expect(ctx.agentTeam.memberForAgent(live!)).toEqual(added.status.member)
     expect(ctx.agentTeam.membersForClient({ workspaceId })[0]?.member).not.toHaveProperty('privateMemoryPath')
+    const sessionTitle = ctx.get('sessionTitle')
+    expect(sessionTitle?.get(live!.session)).toMatchObject({ title: 'builder', source: { kind: 'user' } })
 
     const suspended = await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: added.status.member.memberId })
     expect(suspended.status.availability).toBe('suspended')
@@ -194,6 +198,8 @@ describe('Agent Team Member lifecycle', () => {
     const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume'), memberId: added.status.member.memberId })
     expect(resumed.status.availability).toBe('active')
     expect(resumed.status.member.sessionId).toBe(added.status.member.sessionId)
+    const resumedLive = ctx.agents.get(added.status.member.sessionId)
+    expect(sessionTitle?.get(resumedLive!.session)).toMatchObject({ title: 'builder', source: { kind: 'user' } })
 
     const removed = await ctx.agentTeam.removeMember({ requestId: requestId('remove'), memberId: added.status.member.memberId })
     expect(removed.member.state).toBe('inactive')

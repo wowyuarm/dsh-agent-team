@@ -34,13 +34,23 @@ async function mount(ctx: Context): Promise<void> {
 }
 
 describe('Team Member private memory composition', () => {
-  it('keeps its required Host service when loaded as a Cordis namespace plugin', () => {
+  it('resolves the Host service lazily when loaded as a Cordis namespace plugin', () => {
     expect('default' in memberContext).toBe(false)
     const loader = Object.create(Loader.prototype) as Loader
     const plugin = loader.unwrapExports(memberContext) as Record<string, unknown>
     expect(plugin).toBe(memberContext)
     expect(plugin.name).toBe('wowyuarm-agent-team-member-context')
-    expect(plugin.inject).toEqual(['agentTeam'])
+    // No declared inject: the row mounts while the Host restores Members, so a
+    // dependency on `agentTeam` would fail every startup preset mount.
+    expect(plugin.inject).toBeUndefined()
+  })
+
+  it('does nothing while the Host service is absent', async () => {
+    const ctx = new Context()
+    const agent = fakeAgent(ctx)
+    await mount(ctx)
+    expect(await preStep(ctx, agent)).toEqual({ kind: 'enter', messages: [] })
+    await ctx.fiber.dispose()
   })
 
   it('injects only the bound Member index and replaces changed or removed content', async () => {
