@@ -60,7 +60,8 @@ const teamThread = defineTool({
   description: 'Read or manage your Attention on one Task Thread. read acknowledges one chronological batch; history does not change read state.',
   parameters: {
     action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history'] },
-    taskRef: { type: 'string', required: true }, beforeSequence: { type: 'number' }, limit: { type: 'number' },
+    taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
+    beforeSequence: { type: 'number' }, limit: { type: 'number' },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
@@ -134,7 +135,9 @@ const teamMessage = markAgentTeamPreset(defineTool({
   name: 'team_message',
   description: 'Create a top-level Task or reply to one existing Task Thread. Read the Thread first; replies require its current revision. Structured mentions use Member refs, not @name text.',
   parameters: {
-    action: { type: 'string', required: true, enum: ['start', 'reply'] }, channelRef: { type: 'string' }, taskRef: { type: 'string' },
+    action: { type: 'string', required: true, enum: ['start', 'reply'] },
+    channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
+    taskRef: { type: 'string', description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
     body: { type: 'string', required: true }, baseRevision: { type: 'number' }, mentions: { type: 'array', items: { type: 'string' } },
   },
   output: {
@@ -184,8 +187,10 @@ const teamClaim = defineTool({
   name: 'team_claim',
   description: 'List or mutate your Direction Claims. Read the Thread first; every mutation uses the current Thread revision.',
   parameters: {
-    action: { type: 'string', required: true, enum: ['list', 'claim', 'done', 'release'] }, taskRef: { type: 'string', required: true },
-    baseRevision: { type: 'number' }, direction: { type: 'string' }, claimRef: { type: 'string' },
+    action: { type: 'string', required: true, enum: ['list', 'claim', 'done', 'release'] },
+    taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
+    baseRevision: { type: 'number' }, direction: { type: 'string' },
+    claimRef: { type: 'string', description: "Full branded Claim ref exactly as returned by team_claim, including the 'claim:' prefix." },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
@@ -228,7 +233,10 @@ const teamClaim = defineTool({
 const teamView = defineTool({
   name: 'team_view',
   description: 'Discover authorized Team Channels, Tasks, and Members. It is not a substitute for team_thread reading.',
-  parameters: { channelRef: { type: 'string' }, limit: { type: 'number' }, cursor: { type: 'number' } },
+  parameters: {
+    channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
+    limit: { type: 'number' }, cursor: { type: 'number' },
+  },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
       channels: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { channelRef: { type: 'string', required: true }, name: { type: 'string', required: true } } } },

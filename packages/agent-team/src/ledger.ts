@@ -1362,7 +1362,8 @@ export class AgentTeamLedger {
   /** Derive the only legal durable result of one Thread read from a prior projection. */
   private prepareReadFrom(projection: Projection, memberId: AgentTeamMemberId, workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): PreparedRead {
     const task = projection.tasks.get(taskRef)
-    if (task === undefined || projection.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
+    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownTaskRefHint(taskRef)}`)
+    if (projection.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
     const thread = projection.threads.get(task.threadRef)
     if (thread === undefined) throw new Error(`unknown Thread ref '${task.threadRef}'`)
     if (memberId !== AGENT_TEAM_HUMAN_MEMBER_ID) {
@@ -1751,9 +1752,15 @@ export class AgentTeamLedger {
     return member
   }
 
+  /** Agents sometimes strip the branded prefix when echoing refs; point at the fix instead of a bare lookup failure. */
+  private unknownTaskRefHint(taskRef: AgentTeamTaskRef): string {
+    return taskRef.startsWith('task:') ? ''
+      : ` A Task ref must start with 'task:'; reuse the full ref exactly as returned by Team tools ('task:${taskRef}').`
+  }
+
   private requireTask(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): AgentTeamTask {
     const task = this.tasks.get(taskRef)
-    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'`)
+    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownTaskRefHint(taskRef)}`)
     if (this.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
     return task
   }

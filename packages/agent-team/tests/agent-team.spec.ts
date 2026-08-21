@@ -14,7 +14,7 @@ import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor } from '../src/ledger.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
-import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId } from '../src/types.ts'
+import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
 
 interface TeamHarness {
   readonly ctx: Context
@@ -406,5 +406,15 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(test.ctx.agentTeam.status()).toMatchObject({ channelCount: 0, sequence: 1 })
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
     expect(() => test.ctx.agentTeam.view({ workspaceId: beta, channelRef: channel.channel.channelRef })).toThrow(/does not belong to Workspace/)
+  })
+
+  it('explains a missing branded prefix when a Task ref lookup fails', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' }))
+    const bare = started.task.taskRef.replace(/^task:/, '') as AgentTeamTaskRef
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: bare })).rejects.toThrow(/unknown Task ref '.+' A Task ref must start with 'task:'/)
+    expect(() => test.ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: bare })).toThrow(/must start with 'task:'/)
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef })).resolves.toBeDefined()
   })
 })
