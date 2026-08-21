@@ -207,7 +207,7 @@ describe('Agent Team Member lifecycle', () => {
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
   })
 
-  it('creates, suspends, resumes, and removes a Member with a new rc.8 SQLite Session database', async () => {
+  it('creates, suspends, resumes, and removes a Member with a current DSH SQLite Session database', async () => {
     const { ctx, workspaceId } = await realHarness(new EmptyAdapter(), 'sqlite')
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('sqlite-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const added = await ctx.agentTeam.addMember({ requestId: requestId('sqlite-add'), workspaceId, handle: 'sqlite-builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })

@@ -121,7 +121,7 @@ dsh web
 
 真实安装验证必须使用已构建 package 的发布布局。直接 symlink 到源码可能绕过 profile 内的 peer fallback，导致与真实安装不同的结果；`scripts/team-ui.e2e.ts` 和 `scripts/team-ui.preview.ts` 已采用复制 package 的方式。
 
-本 bundle 的最低兼容版本是 DSH `0.1.0-rc.8`。DSH rc.8 的 SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
+本 bundle 的最低兼容版本是 DSH `0.1.1-rc.2`。当前 DSH SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
 ## 交付前核对
 

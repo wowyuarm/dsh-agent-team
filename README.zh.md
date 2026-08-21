@@ -53,4 +53,4 @@ npm pack --dry-run
 
 ## 已知限制与延后工作
 
-Bundle 是单 Host、显式 opt-in 的组合，不提供分布式共识、Team direct message、嵌套 Thread、Direction 语义去重，也不把 durable Inbox admission 解释为模型已经处理。它要求 DSH `0.1.0-rc.8`；从旧版 DSH SQLite Session 数据库升级时，直接删除旧数据库并重新开始，因为 DSH rc.8 会拒绝旧 Session schema。Team ledger 有意不提供迁移或兼容路径。`team-member` preset 会授予 `danger-full-access`，只应在可信 Workspace 中使用。
+Bundle 是单 Host、显式 opt-in 的组合，不提供分布式共识、Team direct message、嵌套 Thread、Direction 语义去重，也不把 durable Inbox admission 解释为模型已经处理。它要求 DSH `0.1.1-rc.2`；从旧版 DSH SQLite Session 数据库升级时，直接删除旧数据库并重新开始，因为当前 DSH Session schema 会拒绝旧格式。Team ledger 有意不提供迁移或兼容路径。`team-member` preset 会授予 `danger-full-access`，只应在可信 Workspace 中使用。

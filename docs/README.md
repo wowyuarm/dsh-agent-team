@@ -7,6 +7,7 @@
 | 文档 | 用途 | 什么时候读 |
 | --- | --- | --- |
 | [`development.md`](development.md) | 安装、命令、生成物、live/UI preview、browser replay 和发布检查 | 开始开发、运行验证、修改 package 或发布布局 |
+| [`dsh-release-compatibility.md`](dsh-release-compatibility.md) | DSH 新版本的评估、隔离认证、安装验证和发布门槛 | DSH 发版、更新 peerDependencies 或排查跨版本安装失败 |
 | [`architecture.md`](architecture.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
 | [`domain-model.md`](domain-model.md) | 稳定的 Agent Team 领域词汇 | 修改领域语义、类型命名或正式协作合同 |
 | [`team-collaboration.md`](team-collaboration.md) | 已实现的五工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |

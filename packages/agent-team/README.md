@@ -55,4 +55,4 @@ The Host ledger and Human status reads do not alter model requests or cache reus
 - **Single Host writer** — concurrent processes over one dshHome are unsupported; operation serialization is process-local.
 - **Permanent ledger** — M1 provides neither snapshots nor compaction, so storage grows with committed collaboration facts.
 - **No remote provider seam** — the package combines the capability definition and its only implementation until a real remote Consumer requires another Provider.
-- **DSH rc.8 SQLite only** — SQLite Session persistence uses the rc.8 schema. Delete old Session databases and create new Member sessions; this package provides no migration, compatibility read, or fallback.
+- **Current DSH SQLite only** — SQLite Session persistence uses the current DSH schema. Delete old Session databases and create new Member sessions; this package provides no migration, compatibility read, or fallback.

@@ -215,6 +215,9 @@
       "@deepseek-ai/dsh-credentials/types": [
         "../deepseek-harness/packages/credentials/credentials/src/types.ts"
       ],
+      "@deepseek-ai/dsh-authorization/types": [
+        "../deepseek-harness/packages/credentials/authorization/src/types.ts"
+      ],
       "@deepseek-ai/dsh-settings/types": [
         "../deepseek-harness/packages/settings/settings/src/types.ts"
       ],

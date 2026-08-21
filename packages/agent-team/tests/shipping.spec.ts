@@ -37,7 +37,7 @@ describe('Agent Team shipping contract', () => {
       exports: Record<string, { default?: string }>
       dsh: { client: { platform: string; inject: string[] } }
     }
-    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.0-rc.8 <0.2.0')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.1-rc.2 <0.2.0')
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
