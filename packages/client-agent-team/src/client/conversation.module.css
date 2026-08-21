@@ -71,11 +71,13 @@
 }
 
 .messageRow { display: flex; gap: 10px; padding: 10px 0; }
+.messageRow[data-grouped] { padding-top: 2px; }
+.messageRow[data-grouped] .messageBody > :first-child { margin-top: 0; }
 .messageIdentity {
   align-items: center;
-  background: var(--dsw-alias-fill-tertiary);
+  background: hsl(var(--team-avatar-hue, 212) 42% 46%);
   border-radius: 50%;
-  color: var(--dsw-alias-text-secondary);
+  color: #fff;
   display: flex;
   flex: 0 0 28px;
   font-size: 12px;
@@ -83,20 +85,29 @@
   height: 28px;
   justify-content: center;
 }
+.messageRow[data-human] .messageIdentity {
+  background: var(--dsw-alias-state-business-primary);
+}
+.messageRow[data-grouped] .messageIdentity { visibility: hidden; }
 .messageBody { min-width: 0; }
 .messageBody strong {
   color: var(--dsw-alias-text-primary);
+  display: block;
   font-size: 13px;
   line-height: 20px;
 }
-.messageBody p {
-  color: var(--dsw-alias-text-primary);
+/* Literal human text wraps the shared MessageText primitive: metrics only. */
+.messageText {
   font-size: 14px;
   line-height: 22px;
   margin: 4px 0;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
 }
+/* Compact timeline typography over the shared Markdown primitive. */
+.messageBody .messageMarkdown { font-size: 14px; line-height: 22px; }
+.messageBody .messageMarkdown p { margin: 4px 0; }
+.messageBody .messageMarkdown :where(ul, ol) { margin: 4px 0; padding-left: 22px; }
+.messageBody .messageMarkdown :where(h1, h2, h3, h4, h5, h6) { margin: 10px 0 4px; }
+.messageBody .messageMarkdown :where(pre, blockquote) { margin: 6px 0; }
 .emptyState,
 .loadingState {
   color: var(--dsw-alias-text-tertiary);

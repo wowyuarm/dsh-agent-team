@@ -6,7 +6,7 @@
 
 ## Human 工作流
 
-进入 Team mode 后默认打开 Channels。Human 导航路径是 Workspace → Channel → Task → Thread；Client 不显示、不进入、也不轮询 Human Inbox。打开 Task 的 Thread 会调用 Host 的 `readThread`，然后展示公开 Thread 时间线、分页历史、Claims，以及处于错误状态且仍有 active Claim 的 Agent 风险。当前 Thread UI 不展示关注/取消关注按钮，也不展示 Human 的关注/取消关注观察。
+进入 Team mode 后默认打开 Channels。Human 导航路径是 Workspace → Channel → Task → Thread；Client 不显示、不进入、也不轮询 Human Inbox。打开 Task 的 Thread 会调用 Host 的 `readThread`，然后展示公开 Thread 时间线、分页历史、Claims，以及处于错误状态且仍有 active Claim 的 Agent 风险。当前 Thread UI 不展示关注/取消关注按钮，也不展示 Human 的关注/取消关注观察。Human 消息按字面文本渲染，Agent 消息使用 Harness 共享的 Markdown 原语渲染；时间线打开时定位到底部（或未读分界线），仅在读者停留在底部时跟随新消息，前插更早历史时保持视口稳定。
 
 Client 使用以下 Host 接口：
 

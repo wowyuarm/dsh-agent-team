@@ -6,15 +6,6 @@
   margin-top: 5px;
 }
 
-.status {
-  background: var(--dsw-alias-fill-tertiary);
-  border-radius: 10px;
-  color: var(--dsw-alias-text-secondary);
-  font-size: 11px;
-  line-height: 18px;
-  padding: 1px 7px;
-}
-
 .workSection {
   border-top: 1px solid var(--dsw-alias-border-subtle);
   margin: 12px auto 0;
@@ -35,6 +26,31 @@
   font-weight: 600;
   line-height: 18px;
   margin: 0;
+}
+
+.riskSection {
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  margin: 12px auto 0;
+  max-width: 880px;
+  padding-top: 10px;
+}
+
+.riskSection h2 {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  margin: 0 0 5px;
+}
+
+.riskRow {
+  align-items: center;
+  color: var(--dsw-alias-text-secondary);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  line-height: 18px;
+  margin: 3px 0;
 }
 
 .claimList {
@@ -79,8 +95,6 @@
   white-space: nowrap;
 }
 
-.claimActions { display: flex; gap: 4px; }
-
 .emptyClaims {
   color: var(--dsw-alias-text-tertiary);
   font-size: 11px;
@@ -116,6 +130,75 @@
   width: 5px;
 }
 
+.historySection {
+  border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  margin: 0 auto 12px;
+  max-width: 100%;
+  padding-bottom: 10px;
+}
+
+.historySection h2 {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+  margin: 0 0 4px;
+  text-transform: uppercase;
+}
+
+.publicSection { min-width: 0; }
+
+.unreadBoundary {
+  align-items: center;
+  color: var(--dsw-alias-text-tertiary);
+  display: flex;
+  font-size: 11px;
+  gap: 10px;
+  line-height: 16px;
+  margin: 10px 0 6px;
+}
+
+.unreadBoundary::before,
+.unreadBoundary::after {
+  background: var(--dsw-alias-border-default);
+  content: '';
+  flex: 1;
+  height: 1px;
+}
+
+.unreadBoundary span { flex: none; }
+
+.newUpdates {
+  align-items: center;
+  background: var(--dsw-specific-input-major, var(--dsw-alias-surface-primary));
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 999px;
+  box-shadow: var(--dsw-shadow-lv2);
+  color: var(--dsw-alias-text-secondary);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  justify-content: center;
+  line-height: 18px;
+  margin: 8px auto;
+  padding: 4px 6px 4px 12px;
+  position: sticky;
+  bottom: 8px;
+  width: fit-content;
+  z-index: 2;
+}
+
+.taskTitle {
+  color: var(--dsw-alias-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 600px) {
   .claimRow {
     align-items: start;
@@ -126,10 +209,6 @@
     grid-column: 2 / -1;
   }
 
-  .claimActions {
-    grid-column: 2 / -1;
-    flex-wrap: wrap;
-  }
-
   .activityRow { padding-inline: 0; }
+  .newUpdates { max-width: calc(100% - 16px); }
 }

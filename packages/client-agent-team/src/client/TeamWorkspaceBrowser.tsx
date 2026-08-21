@@ -50,7 +50,14 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
       {workspaces.length === 0 && <p className={css.emptyState}>{t('empty')}</p>}
     </div>
     {selectedId !== undefined && <div className={css.workspaceSection}>
-      <div className={css.workspaceTabs} role="tablist" aria-label={t('workspaceSections')}>
+      <div className={css.workspaceTabs} role="tablist" aria-label={t('workspaceSections')} onKeyDown={event => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        const offset = event.key === 'ArrowRight' ? 1 : tabs.length - 1
+        const next = tabs[(tabs.findIndex(tab => tab.tab === currentTab.tab) + offset) % tabs.length]!
+        document.getElementById(`team-tab-${next.tab}`)?.focus()
+        selectWorkspaceTab(next.tab)
+      }}>
         {tabs.map(tab => <button key={tab.tab} id={`team-tab-${tab.tab}`} type="button" role="tab" aria-selected={navigationState.activeTab === tab.tab} aria-controls={tab.id} tabIndex={navigationState.activeTab === tab.tab ? 0 : -1} onClick={() => { selectWorkspaceTab(tab.tab) }}>
           <span>{tab.label}</span>
         </button>)}

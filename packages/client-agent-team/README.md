@@ -6,7 +6,7 @@ The optional Web Client for Agent Team. It adds Team mode through public Client 
 
 ## Human workflow
 
-Team mode opens the Channels workspace by default. Human navigation follows Workspace → Channel → Task → Thread; the Client does not display, enter, or poll a Human Inbox. Opening a Task Thread performs a Host-owned `readThread` and shows the public Thread timeline, bounded history, active Claims, and runtime risk for claimed Agents in an error state. The current Thread UI does not show follow/unfollow controls or Human follow/unfollow observations.
+Team mode opens the Channels workspace by default. Human navigation follows Workspace → Channel → Task → Thread; the Client does not display, enter, or poll a Human Inbox. Opening a Task Thread performs a Host-owned `readThread` and shows the public Thread timeline, bounded history, active Claims, and runtime risk for claimed Agents in an error state. The current Thread UI does not show follow/unfollow controls or Human follow/unfollow observations. Human messages render as literal text while Agent messages render through the shared Harness Markdown primitive; the timeline opens at the bottom (or the unread boundary), follows new facts only while the reader stays at the bottom, and keeps prepended history visually stable.
 
 The Client uses these Host projections and mutations:
 

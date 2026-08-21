@@ -12,12 +12,14 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronLeftOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutline14, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamWorkspaceTab } from './navigation.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
-import { formatActivity, formatClaimState, formatTaskStatus } from './team-formatters.ts'
+import { TeamMessage, isGroupedRun } from './TeamMessage.tsx'
+import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle } from './team-formatters.ts'
+import { useTimelineScroll } from './timeline-scroll.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
 
@@ -96,6 +98,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const sequenceRef = useRef(0)
   const readRequestIdRef = useRef<AgentTeamRequestId>(crypto.randomUUID() as AgentTeamRequestId)
   const mutationRequests = useRef(new Map<string, AgentTeamRequestId>())
+  const threadLastFact = currentFacts[currentFacts.length - 1]
+  const timeline = useTimelineScroll(`${currentFacts.length}:${olderFacts.length}:${threadLastFact === undefined ? '' : factKey(threadLastFact)}`)
 
   const updateProjection = (next: ReadProjection): void => {
     setProjection(next)
@@ -199,6 +203,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         return
       }
       updateProjection(read.value)
+      // Opened onto unread updates: land on the boundary instead of the floor.
+      if (read.value.facts.some(fact => fact.unread)) timeline.jumpToBoundary()
       if (history !== undefined && history.ok) {
         setCurrentFacts(current => {
           const merged = mergeFacts(current, history.value.facts)
@@ -254,6 +260,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const activeProjection = projection
   const task = activeProjection?.task
   const thread = activeProjection?.thread
+  const taskTitle = activeProjection === undefined ? undefined : formatTaskTitle(activeProjection.anchor.body)
   const taskClaims = activeProjection?.claims ?? []
   const effectiveChannelRef = task?.channelRef ?? channelRef
   const channelMemberIds = useMemo(() => new Set(channelView?.members.filter(item => item.channelRef === effectiveChannelRef).map(item => item.memberId) ?? []), [channelView, effectiveChannelRef])
@@ -270,18 +277,28 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     return status === undefined ? t('memberUnknown') : `@${status.member.handle}`
   }
 
-  const renderFact = (fact: AgentTeamThreadFact) => {
+  const messageSender = (fact: AgentTeamThreadFact): AgentTeamMemberId | undefined =>
+    fact.kind === 'message' ? fact.message.sender : undefined
+
+  const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
       const sender = memberName(fact.message.sender)
-      return <article className={css.messageRow} key={factKey(fact)}>
-        <div className={css.messageIdentity} aria-hidden="true">{sender.replace('@', '').slice(0, 1).toUpperCase()}</div>
-        <div className={css.messageBody}><strong>{sender}</strong><p>{fact.message.body}</p></div>
-      </article>
+      const senderStatus = members.find(candidate => candidate.member.memberId === fact.message.sender)
+      return <TeamMessage
+        key={factKey(fact)}
+        senderName={sender}
+        memberId={fact.message.sender}
+        human={fact.message.sender === channelView?.humanMemberId}
+        body={fact.message.body}
+        grouped={grouped}
+        {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
+      />
     }
     return <p className={threadCss.activityRow} key={factKey(fact)}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(fact.activity, { t, actorName: memberName, claims: taskClaims })}</span></p>
   }
 
   const refreshAfterFence = async (): Promise<void> => {
+    timeline.jumpToLatest()
     await readCurrent(true)
     await refreshSupplemental()
   }
@@ -363,7 +380,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setReplyRequestId(undefined)
         await refreshPassiveFacts()
       } else {
-        setError(`Agent Member(s) must already follow this Thread: ${result.value.memberIds.join(', ')}`)
+        setError(t('memberNotFollowing', { ids: result.value.memberIds.map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') }))
         setConfirmation(undefined)
         setStatusMessage(undefined)
         setReplyRequestId(undefined)
@@ -387,7 +404,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <h1>{task === undefined ? 'Task …' : `Task #${taskNumber ?? '…'}`}</h1>
-          <div className={threadCss.statusLine}>{task === undefined ? <p>{t('loadingThread')}</p> : <span className={threadCss.status}>{formatTaskStatus(task.status, t)}</span>}</div>
+          {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle}>{taskTitle}</p>}
+          <div className={threadCss.statusLine}>{task === undefined ? <p>{t('loadingThread')}</p> : <Pill>{formatTaskStatus(task.status, t)}</Pill>}</div>
         </div>
         {task !== undefined && thread !== undefined && <div className={css.headerActions}>
           {task.resolution === 'open' && task.status === 'in_review' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{t('acceptTask')}</Button>}
@@ -416,17 +434,20 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       </section>}
     </div>
 
-    <section className={css.timeline} aria-label={t('participants')}>
+    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('participants')}>
       <div className={css.timelineContent}>
         {loading && projection === undefined && error === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p>}
         {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
-        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{olderFacts.map(renderFact)}</section>}
+        {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{olderFacts.map((fact, index) => renderFact(fact, isGroupedRun(olderFacts, index, messageSender)))}</section>}
         {historyHasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
         {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection} aria-label={t('participants')}>
-          {currentFactsWithAnchor.map((fact, index) => <Fragment key={`${factKey(fact)}-wrap`}>{unreadBoundary === index && <p className={threadCss.unreadBoundary} role="separator"><span>{t('unreadBoundary')}</span></p>}{renderFact(fact)}</Fragment>)}
+          {currentFactsWithAnchor.map((fact, index) => <Fragment key={`${factKey(fact)}-wrap`}>{unreadBoundary === index && <p className={threadCss.unreadBoundary} role="separator" data-thread-boundary><span>{t('unreadBoundary')}</span></p>}{renderFact(fact, isGroupedRun(currentFactsWithAnchor, index, messageSender))}</Fragment>)}
         </section>}
-        {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status"><span>{t('readNewUpdates', { count: newFactsCount })}</span><Button size="sm" variant="outline" disabled={loading} onClick={() => { void readCurrent(true) }}>{t('readNewUpdates', { count: newFactsCount })}</Button></div>}
-        {remainingUnreadCount > 0 && <div className={css.timelineAction} role="status"><span>{t('remainingUnread', { count: remainingUnreadCount })}</span><Button size="sm" onClick={() => { void readCurrent(true) }} disabled={loading}>{t('continueReading')}</Button></div>}
+        {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
+          <span>{t('readNewUpdates', { count: newFactsCount })}</span>
+          <Button size="sm" variant="outline" disabled={loading} onClick={() => { timeline.jumpToLatest(); void readCurrent(true) }}>{t('markRead')}</Button>
+        </div>}
+        {remainingUnreadCount > 0 && <div className={css.timelineAction} role="status"><span>{t('remainingUnread', { count: remainingUnreadCount })}</span><Button size="sm" onClick={() => { timeline.jumpToBoundary(); void readCurrent(true) }} disabled={loading}>{t('continueReading')}</Button></div>}
       </div>
     </section>
 

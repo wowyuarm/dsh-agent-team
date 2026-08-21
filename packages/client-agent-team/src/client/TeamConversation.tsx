@@ -18,7 +18,7 @@ export function TeamConversation({ t, useWorkspaces, navigation, loadChannels, r
     ? { eyebrow: t('teamMode'), title: t('team'), body: t('empty') }
     : navigationState.activeTab === 'agents'
       ? { eyebrow: current.title, title: t('agents'), body: t('selectAgent') }
-      : { eyebrow: current.title, title: t('channels'), body: `${t('selectWorkspace')} · ${current.title}` }
+      : { eyebrow: current.title, title: t('channels'), body: t('selectChannelHint') }
   return <main className={css.welcomeSurface} data-team-conversation>
     <div className={css.welcome}>
       <span className={css.welcomeEyebrow}>{welcome.eyebrow}</span>

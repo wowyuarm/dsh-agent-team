@@ -192,7 +192,7 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
             频道
           </h1>
           <p>
-            选择工作区 · Alpha
+            从左侧选择一个频道开始协作
           </p>
         </div>
       </main>

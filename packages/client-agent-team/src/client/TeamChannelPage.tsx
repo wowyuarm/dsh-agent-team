@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { TeamMessage, isGroupedRun } from './TeamMessage.tsx'
 import { formatTaskStatus } from './team-formatters.ts'
+import { useTimelineScroll } from './timeline-scroll.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 
@@ -22,6 +24,23 @@ interface TeamChannelPageProps {
   readonly t: TeamConversationProps['t']
 }
 
+/**
+ * Merge the freshest top-level window over what the reader already has:
+ * a change-driven refresh must not discard older messages loaded earlier.
+ */
+function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTeamView {
+  const known = new Set(current.items.map(item => item.message.messageRef))
+  const items = [...fresh.items.filter(item => !known.has(item.message.messageRef)), ...current.items]
+    .sort((left, right) => left.message.sequence - right.message.sequence)
+  return {
+    ...fresh,
+    items,
+    cursor: Math.min(fresh.cursor, current.cursor),
+    // Older retained items may precede even a saturated fresh window.
+    hasMore: fresh.hasMore || current.cursor < fresh.cursor,
+  }
+}
+
 export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
@@ -30,6 +49,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const [statusMessage, setStatusMessage] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [managingMembers, setManagingMembers] = useState(false)
   const [membershipPending, setMembershipPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
@@ -39,9 +59,12 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const memberListRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(false)
   const refreshSequenceRef = useRef(0)
+  const channelLastItem = view?.items[view.items.length - 1]
+  const timeline = useTimelineScroll(`${view?.items.length ?? 0}:${channelLastItem?.message.messageRef ?? ''}`)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
   const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive')
+  const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
 
   const refresh = async (clearError = false) => {
     if (!mountedRef.current) return false
@@ -58,7 +81,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         loadMembers({ workspaceId }),
       ])
       if (!mountedRef.current || sequence !== refreshSequenceRef.current) return false
-      if (loaded.ok) setView(loaded.value); else setError(loaded.error.message)
+      if (loaded.ok) setView(current => current === undefined ? loaded.value : mergeChannelView(current, loaded.value)); else setError(loaded.error.message)
       if (loadedMembers.ok) setMembers(loadedMembers.value); else setError(loadedMembers.error.message)
       return loaded.ok && loadedMembers.ok
     } catch (cause) {
@@ -115,21 +138,17 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   }, [managingMembers])
 
   const loadOlder = async () => {
-    if (view === undefined || !view.hasMore) return
+    if (view === undefined || !view.hasMore || loadingOlder) return
+    setLoadingOlder(true)
     try {
       const result = await loadChannels({ workspaceId, channelRef, direction: 'before', topLevelOnly: true, includeActivities: false, cursor: view.cursor, limit: 20 })
       if (!mountedRef.current) return
       if (!result.ok) { setError(result.error.message); return }
-      const known = new Set(view.items.map(item => item.message.messageRef))
-      setView(current => current === undefined ? result.value : {
-        ...current,
-        items: [...result.value.items.filter(item => !known.has(item.message.messageRef)), ...current.items],
-        activities: [...result.value.activities, ...current.activities],
-        cursor: result.value.cursor,
-        hasMore: result.value.hasMore,
-      })
+      setView(current => current === undefined ? result.value : mergeChannelView(current, result.value))
     } catch (cause) {
       if (mountedRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (mountedRef.current) setLoadingOlder(false)
     }
   }
 
@@ -178,9 +197,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         setRecipients(new Set())
         setStatusMessage(undefined)
       } else if (result.value.kind === 'member_not_following') {
-        setError(`Agent Member(s) must already follow this Thread: ${result.value.memberIds.join(', ')}`)
+        setError(t('memberNotFollowing', { ids: result.value.memberIds.map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') }))
       } else {
-        setError(`Unable to send message: ${result.value.kind}`)
+        setError(t('sendFailedKind', { kind: result.value.kind }))
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
@@ -217,33 +236,36 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       </div>
     </Modal>
 
-    <section className={css.timeline} aria-label={t('channels')}>
+    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('channels')}>
       <div className={css.timelineContent}>
         {loading && channel === undefined && error === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
         {!loading && channel === undefined && error === undefined && <p className={css.emptyState}>{t('emptyChannels')}</p>}
         {!loading && channel === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void refresh(true) }}>{t('retry')}</Button></div>}
-        {view?.hasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
+        {view?.hasMore && <div className={css.timelineAction}><Button size="sm" disabled={loadingOlder} onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
         {channel !== undefined && view?.items.length === 0 && <div className={css.emptyState}>
           <strong>{t('emptyMessages')}</strong>
           <span>{t('emptyMessagesHint')}</span>
         </div>}
-        {view?.items.map(item => {
+        {view?.items.map((item, index) => {
           const senderStatus = members.find(member => member.member.memberId === item.message.sender)
           const human = item.message.sender === view.humanMemberId
           const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender
-          return <article className={css.messageRow} key={item.message.messageRef}>
-            <div className={css.messageIdentity} aria-hidden="true">{sender.slice(0, 1).toUpperCase()}</div>
-            <div className={css.messageBody}>
-              <strong title={senderStatus?.member.description}>{sender}</strong>
-              <p>{item.message.body}</p>
-              {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
-                <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
-                <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
-                <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
-                <span className={channelCss.taskArrow} aria-hidden="true">→</span>
-              </button>}
-            </div>
-          </article>
+          return <TeamMessage
+            key={item.message.messageRef}
+            senderName={sender}
+            memberId={item.message.sender}
+            human={human}
+            body={item.message.body}
+            grouped={isGroupedRun(view.items, index, messageSender)}
+            {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
+          >
+            {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
+              <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
+              <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
+              <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
+              <span className={channelCss.taskArrow} aria-hidden="true">→</span>
+            </button>}
+          </TeamMessage>
         })}
       </div>
     </section>

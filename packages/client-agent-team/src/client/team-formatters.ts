@@ -19,6 +19,19 @@ export function formatClaimState(state: AgentTeamClaim['state'], t: TeamConversa
   } as const)[state])
 }
 
+/** One-line title snippet derived from the Task's root Message body. */
+export function formatTaskTitle(body: string): string {
+  const firstLine = body.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine
+}
+
+/** Deterministic avatar hue for one Member identity; stable across sessions and themes. */
+export function memberHue(memberId: string): number {
+  let hash = 0
+  for (let index = 0; index < memberId.length; index += 1) hash = (hash * 31 + memberId.charCodeAt(index)) % 360
+  return hash
+}
+
 export function formatActivity(activity: AgentTeamActivity, options: {
   readonly t: TeamConversationProps['t']
   readonly actorName: (memberId: AgentTeamMemberId) => string

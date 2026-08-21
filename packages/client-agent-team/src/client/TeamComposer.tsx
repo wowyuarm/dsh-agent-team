@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import css from './composer.module.css'
@@ -53,6 +53,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const rootRef = useRef<HTMLFormElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
   const [mention, setMention] = useState<MentionMatch>()
   const [highlight, setHighlight] = useState(0)
@@ -60,6 +61,9 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
   const menuOpen = !disabled && mention !== undefined && candidates.length > 0
   const activeCandidate = candidates[highlight]
   const listId = 'team-mention-suggestions'
+  const menuMaxHeight = useAnchoredMaxHeight(menuRef, 320, menuOpen ? draft : null)
+
+  useDismissOnOutsidePointer(rootRef, menuOpen, open => { if (!open) setMention(undefined) })
 
   useLayoutEffect(() => {
     const input = inputRef.current
@@ -67,15 +71,6 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
     input.style.height = 'auto'
     input.style.height = `${Math.min(input.scrollHeight, 180)}px`
   }, [draft])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onPointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Node) || rootRef.current?.contains(event.target) !== true) setMention(undefined)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => { document.removeEventListener('pointerdown', onPointerDown) }
-  }, [menuOpen])
 
   useEffect(() => {
     if (mention === undefined || candidates.length === 0) {
@@ -142,6 +137,12 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
       setMention(undefined)
       return
     }
+    // Tab accepts the highlighted candidate; Shift+Tab keeps default focus reversal.
+    if (menuOpen && event.key === 'Tab' && !event.shiftKey) {
+      event.preventDefault()
+      if (activeCandidate !== undefined) selectMention(activeCandidate)
+      return
+    }
     if (event.key !== 'Enter' || event.shiftKey || composing || event.repeat) return
     if (menuOpen && activeCandidate !== undefined) {
       event.preventDefault()
@@ -159,7 +160,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
     <div className={css.card} data-team-composer>
       {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
       <div className={css.inputArea}>
-        {menuOpen && <div id={listId} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')}>
+        {menuOpen && <div id={listId} ref={menuRef} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')} style={{ maxHeight: menuMaxHeight }}>
           {candidates.map((status, index) => {
             const optionId = `${listId}-${status.member.memberId}`
             const selected = index === highlight
