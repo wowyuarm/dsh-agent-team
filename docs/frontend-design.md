@@ -1,0 +1,95 @@
+# Team Client 前端设计文档
+
+本文记录 `packages/client-agent-team/src/client/` 的长期 UI 设计体系：设计原则、布局骨架、排版、颜色与身份、组件合同、交互模式、可访问性基线和验证流程。它只沉淀跨工作项稳定的决策与合同；进行中的工作项、短期问题和未实现的计划记录在 `.scratch/active/`，不进入本文。实现以源码和测试为准，文档与代码冲突时先修正文档。
+
+## 设计原则
+
+1. **优先复用 Harness 公共原语**（`@deepseek-ai/dsh-client-ui-primitives`）：`MarkdownText`、`MessageText`、`Button`、`Pill`、`Modal`、`Tooltip`、`Input`、`StateDot`、图标，以及 `useDismissOnOutsidePointer`、`useAnchoredMaxHeight` 等 hook。Team 不重写这些能力；composer textarea 是唯一例外（`Input` 原语明确只做单行）。
+2. **只用 DSH alias token 取色**：`--dsw-alias-text-*`、`--dsw-alias-label-*`、`--dsw-alias-fill-*`、`--dsw-alias-border-*`、`--dsw-alias-state-error-primary`、`--dsw-shadow-lv2/lv3`、`--dsw-specific-input-major/menu` 等。Team 自有变量只允许派生值（见头像色相）。
+3. **聊天密度优先于 assistant 排版密度**：正文统一 14px 档；markdown 原语自带的标题/列表间距在本包内收紧。
+4. **渐进披露**：默认状态安静（细边框、无底色），hover/focus 才提升反馈；次要信息用 tertiary 文字色。
+5. **durable mutation 不做乐观更新**：提交失败保留输入并以 Host 报错为准；成功后从 Host 投影刷新（`mergeChannelView` 合并而非整体替换）。
+6. **键盘与读屏基线不妥协**：所有自定义复合控件都有 role、aria 状态和完整键盘路径。
+
+## 布局骨架
+
+- 对话面（channel/thread）：`display:grid; grid-template-rows: auto 1fr auto`——header / 可滚动时间线 / composer 三段，`height:100%`，内部滚动 `overscroll-behavior: contain`。
+- 内容列 `max-width: 880px` 居中；时间线左右 padding `clamp(18px, 3vw, 36px)`。
+- 断点 `@media (max-width: 600px)` 收紧 padding、header 纵排；验收必须覆盖 390×844 无横向溢出。
+- 侧栏由宿主 `sidebar` slot 决定宽窄（wide/rail 二态）；rail 模式下 Team 只渲染图标按钮列。
+- 欢迎态是独立居中 surface（eyebrow + h1 + 引导文案），不进入三段骨架。
+
+## 排版体系
+
+| 元素 | 规格 |
+| --- | --- |
+| 页头 h1 | 20px/28px, weight 600 |
+| 发送者名 | 13px/20px, primary, block 显示（每条消息独占一行） |
+| Human 正文 | 14px/22px（`.messageText` 包裹 `MessageText` 原语，pre-wrap 由原语负责） |
+| Agent 正文 | markdown 原语渲染；本包把容器压到 14px/22px、段落 margin 4px、列表缩进 22px、标题 margin 10px 0 4px、pre/blockquote margin 6px |
+| 任务/活动行 | 11–12px, tertiary, 活动行居中 |
+| 空/加载态 | 13px tertiary；加载点 8px 脉冲动画（reduced-motion 下关闭） |
+
+## 颜色与身份
+
+- **Agent 头像**：按 `memberId` 字符串哈希出稳定色相（`hash*31+charCode mod 360`），`hsl(var(--team-avatar-hue) 42% 46%)` 底 + 白色首字母；同一成员跨页面、跨会话颜色不变。
+- **Human 头像**：`--dsw-alias-state-business-primary` 强调底色，与所有 Agent 区分；DOM 上以 `[data-human]` 标记。
+- **presence 圆点**：available=done 绿、working=ongoing、error 红、unavailable 用灰色叉点（`TeamPresenceDot` 映射）。
+- 错误一律 `--dsw-alias-state-error-primary` 并配 `role="alert"`。
+
+## 组件合同
+
+### TeamMessage（消息行）
+
+- Props：`senderName`、`memberId`、`human`、`body`、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
+- 分组规则：`isGroupedRun(facts, index, senderOf)` —— 相邻两条同为消息且 sender 相同才折叠；活动行会打断 run。折叠行隐藏头像与名字（`visibility:hidden` 保持栅格对齐），padding 收紧为 `2px`。
+- 头像首字母取 senderName 去掉 `@` 后首个字符大写。
+
+### 时间线滚动（timeline-scroll）
+
+- 策略：读者停留在底部（距底 <48px 视为 pinned）时跟随新内容；不在底部时不打扰。
+- 前插更早历史时按 scrollHeight 差值补偿 scrollTop，视口内容不跳动。
+- 显式跳转：未读分界线跳转查询 `[data-thread-boundary]` 并留 12px 余量；"标记为已读"/"继续阅读" 分别触发 latest/boundary 跳转。
+- contentKey 必须随渲染事实变化（当前用 `长度:末位factKey` 组合串）。
+
+### Composer 与 @mention
+
+- textarea 自增高（上限 180px）；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。
+- mention 弹层向上展开，`role="listbox"`，textarea 以 `aria-controls/aria-activedescendant/aria-expanded` 关联；↑↓ 循环、Tab/Enter 接受候选、Escape 关闭；外点关闭复用 `useDismissOnOutsidePointer`；高度钳制复用 `useAnchoredMaxHeight`（cap 320px）。
+- 接受候选后光标落点精确到插入文本之后；删除提及文本会同步收缩 recipients。
+
+### Task 入口卡（channel 时间线内）
+
+- 语义：top-level 频道消息进入其 Task Thread 的唯一入口，展示 `Task #N`、任务状态与消息计数，点击触发 `selectThread`。
+- 形态合同：可聚焦按钮、quiet 默认态 + hover/focus 反馈、状态与计数用 tertiary 弱化、`aria-label` 带 `openTask` 文案；视觉规格见 `channel.module.css`。
+
+### 状态胶囊与弹层
+
+- Thread 状态用公共 `Pill`；频道成员数等元信息用 `.headerMeta` 行内分隔。
+- 所有弹层走公共 `Modal`：打开时焦点入内容区，关闭后焦点回到触发按钮（`queueMicrotask` 延迟聚焦模式）。
+
+## 数据刷新语义
+
+- channel 视图：change 事件触发 `refresh()` 时按 `messageRef` 去重合并新窗口与已加载历史（`mergeChannelView`），cursor 取更旧者，`hasMore = fresh.hasMore || current.cursor < fresh.cursor`。
+- thread 视图：被动事实合并进 currentFacts 并累计 `newFactsCount`；显式读取动作（标记已读/继续阅读）才推进 durable read pointer。
+- `loadOlder` 有并发保护（loadingOlder 状态禁用按钮）。
+
+## 文案与本地化
+
+- 全部用户可见文案经 locale key（`locales.ts` zh/en 同构，key 类型取自 zh）。禁止在组件里拼接英文句子。
+- 参数化 key 的约定：`{count}` 数量、`{ids}` 成员句柄列表、`{kind}` 内部种类、`{number}` 任务号、`{actor}`/`{direction}` 活动主体。
+- 错误信息展示原始 Host message（如 transport 错误），包装句用 locale key。
+
+## 可访问性基线
+
+- tablist 支持左右方向键移动选择（roving focus + `selectWorkspaceTab`）。
+- listbox/option 完整键盘闭环（见 composer 一节）。
+- 图标按钮均有 aria-label；装饰元素 `aria-hidden`。
+- 未读分界线 `role="separator"` 且携带 `[data-thread-boundary]` 供滚动定位。
+- 新增可见 UI 必须通过 `npm run test:browser` 的桌面 1440×960、窄屏 390×844 和键盘检查（见 `development.md`）。
+
+## 验证与演进流程
+
+- 影响可见 UI、Client bundle、slot 或 Remote activation 的改动：`npm run typecheck && npm test && npm run lint && npm run build && npm run test:browser`。
+- 截图写入 Git 忽略的 `artifacts/browser/`，仅供本次审查；少量能说明验收结论的代表图复制进 `.scratch/archive/YYYY-MM/<work>/validation/` 并附 README 说明。
+- 本文档描述的行为变化必须在同一次改动中同步更新；历史设计来由归档到 `.scratch/archive/`，正式文档只链接不转述。
