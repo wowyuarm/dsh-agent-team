@@ -1,15 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis'
-import AgentTeam, { markAgentTeamPreset } from '@deepseek-ai/dsh-agent-team'
+import AgentTeam, { markAgentTeamPreset } from '@wowyuarm/dsh-agent-team/host'
 import type {
   AgentTeamClaimRef,
   AgentTeamMemberId,
   AgentTeamRequestId,
   AgentTeamTaskRef,
-  AgentTeamThreadRef,
-} from '@deepseek-ai/dsh-agent-team/types'
+} from '@wowyuarm/dsh-agent-team/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-export const name = 'dsh-tool-agent-team'
+export const name = 'wowyuarm-agent-team-tools'
 export const inject = ['tools']
 
 function service(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>): AgentTeam {

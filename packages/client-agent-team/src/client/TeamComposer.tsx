@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'

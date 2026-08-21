@@ -4,7 +4,7 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamChannel,
   AgentTeamRequestId,
-} from '@deepseek-ai/dsh-agent-team/types'
+} from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'

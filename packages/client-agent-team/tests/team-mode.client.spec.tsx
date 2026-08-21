@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotTestRuntime, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
@@ -114,7 +114,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     viewItems = viewItems.map(item => ({ ...item, task, thread }))
     return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
-  const inbox = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({ ok: true as const, value: {
+  const inbox = vi.fn(async (_request: { workspaceId: string }) => ({ ok: true as const, value: {
     items: viewItems.filter(item => (item.task as { channelRef?: string }).channelRef !== undefined).map(item => ({
       channelRef: (item.task as { channelRef: string }).channelRef, task: item.task, thread: item.thread,
       unreadCount: 1, directCount: 1, newestSequence: (item.message as { sequence: number }).sequence,

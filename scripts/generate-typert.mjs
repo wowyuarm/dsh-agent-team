@@ -1,4 +1,4 @@
-import { cp, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -8,12 +8,20 @@ const { WorkspaceAnalyzer } = await import(pathToFileURL(join(harnessRoot, 'pack
 const { FaceModelEmitter } = await import(pathToFileURL(join(harnessRoot, 'packages/typert/generator/src/emitter.ts')).href)
 const { default: ts } = await import(pathToFileURL(join(harnessRoot, 'node_modules/typescript/lib/typescript.js')).href)
 const packageRoot = resolve(projectRoot, 'packages/agent-team')
-const tempPackage = await mkdtemp(join(harnessRoot, 'packages/.external-agent-team-'))
+const tempPackage = await mkdtemp(join(harnessRoot, 'packages/external-agent-team-'))
 const aggregate = join(tempPackage, 'tsconfig.host.json')
 
 try {
   await cp(join(packageRoot, 'src'), join(tempPackage, 'src'), { recursive: true })
-  await cp(join(packageRoot, 'package.json'), join(tempPackage, 'package.json'))
+  const manifest = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8'))
+  await writeFile(join(tempPackage, 'package.json'), JSON.stringify({
+    name: manifest.name,
+    type: manifest.type,
+    exports: {
+      '.': { types: './lib/types/index.d.ts', default: './lib/index.js' },
+      './types': { types: './lib/types/types.d.ts', default: './lib/types/types.js' },
+    },
+  }))
   await mkdir(join(tempPackage, 'node_modules'), { recursive: true })
   await symlink(join(packageRoot, 'node_modules/zod'), join(tempPackage, 'node_modules/zod'), 'file')
   await writeFile(join(tempPackage, 'tsconfig.json'), JSON.stringify({
@@ -45,11 +53,11 @@ try {
     hostConfig: aggregate,
     clientConfig: join(tempPackage, 'tsconfig.client-missing.json'),
     faces: ['host'],
-    packages: ['@deepseek-ai/dsh-agent-team'],
+    packages: ['@wowyuarm/dsh-agent-team'],
   }).analyze()
   const face = workspace.faces.find(candidate => candidate.face === 'host')
   if (face === undefined) throw new Error('Typert did not analyze the Agent Team Host face')
-  const artifact = new FaceModelEmitter(face).emit('@deepseek-ai/dsh-agent-team')
+  const artifact = new FaceModelEmitter(face).emit('@wowyuarm/dsh-agent-team')
   if (artifact.remote === undefined) throw new Error('Typert did not emit the Agent Team Remote contribution')
 
   const generatedRoot = `packages/${tempPackage.slice(tempPackage.lastIndexOf('/') + 1)}`

@@ -14,7 +14,7 @@ const home = join(temporary, 'home')
 const test = join(harness, 'apps/web/tests/__external-agent-team.e2e.ts')
 
 const quote = value => value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")
-const overlayText = `- insert:\n    - id: dsh-agent-team-scope\n      name: cordis:group\n      group: true\n      isolate:\n        agentPresets: true\n      config:\n        - id: dsh-agent-team-presets\n          name: '@deepseek-ai/dsh-agent-team/preset-roster'\n        - id: dsh-agent-team\n          name: '@deepseek-ai/dsh-agent-team'\n    - id: dsh-agent-team-invariant\n      name: '@deepseek-ai/dsh-agent-team/invariant'\n    - id: dsh-command-agent-team\n      name: '@deepseek-ai/dsh-command-agent-team'\n    - id: dsh-command-agent-team-invariant\n      name: '@deepseek-ai/dsh-command-agent-team/invariant'\n    - id: dsh-client-agent-team\n      name: '@deepseek-ai/dsh-client-agent-team'\n`
+const overlayText = `- insert:\n    - id: wowyuarm-agent-team-scope\n      name: cordis:group\n      group: true\n      isolate:\n        agentPresets: true\n      config:\n        - id: wowyuarm-agent-team-presets\n          name: '@wowyuarm/dsh-agent-team/preset-roster'\n        - id: wowyuarm-agent-team-host\n          name: '@wowyuarm/dsh-agent-team/host'\n    - id: wowyuarm-agent-team-client\n      name: '@wowyuarm/dsh-agent-team'\n    - id: wowyuarm-agent-team-invariant\n      name: '@wowyuarm/dsh-agent-team/invariant'\n`
 
 const run = (command, args, cwd) => new Promise((resolveRun, reject) => {
   const child = spawn(command, args, { cwd, stdio: 'inherit', env: process.env })

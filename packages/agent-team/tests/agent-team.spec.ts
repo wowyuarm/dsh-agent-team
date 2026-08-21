@@ -83,10 +83,6 @@ function committed<T extends { readonly kind: string }>(result: T): Extract<T, {
   return result as Extract<T, { readonly kind: 'committed' }>
 }
 
-async function readHuman(test: TeamHarness, taskRef: string) {
-  return test.ctx.agentTeam.readThread({ requestId: requestId(`read:${taskRef}:${crypto.randomUUID()}`), workspaceId: alpha, taskRef: taskRef as never })
-}
-
 function replayLedger(test: TeamHarness): AgentTeamLedger {
   return new AgentTeamLedger(test.facility.get('agent_team')!.table('operations') as unknown as KvTable<AgentTeamOperationId, AgentTeamOperation>)
 }

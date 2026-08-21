@@ -11,7 +11,6 @@ import type {
   AgentTeamChannelCreatedOperation,
   AgentTeamChannelMemberAddedOperation,
   AgentTeamChannelMemberRemovedOperation,
-  AgentTeamChannelMembership,
   AgentTeamChannelRef,
   AgentTeamClaim,
   AgentTeamClaimActivity,

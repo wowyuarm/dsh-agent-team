@@ -1,6 +1,4 @@
-/**
- * Real-composition proof for the opt-in Agent Team Host and Human command rows.
- */
+/** Real-composition proof for the opt-in Agent Team Host row. */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -12,16 +10,11 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import * as storageDomain from '@deepseek-ai/dsh-storage-domain'
-import CommandRuntime from '@deepseek-ai/dsh-commands'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import * as commandAgentTeam from '../../command-agent-team/src/index.ts'
 import AgentTeam from '../src/index.ts'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const roots: string[] = []
 const contexts: Context[] = []
-
-const agent = { ctx: new Context() } as Agent
 
 afterEach(async () => {
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
@@ -42,11 +35,7 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
     '  config:',
     '    backend: memory',
     '- id: agent-team',
-    "  name: '@deepseek-ai/dsh-agent-team'",
-    '- id: commands',
-    "  name: '@deepseek-ai/dsh-commands'",
-    '- id: command-agent-team',
-    "  name: '@deepseek-ai/dsh-command-agent-team'",
+    "  name: '@wowyuarm/dsh-agent-team/host'",
     '',
   ].join('\n'))
 
@@ -69,9 +58,7 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
     ['@deepseek-ai/dsh-storage', Storage],
     ['test-memory-storage', memoryPlugin],
     ['@deepseek-ai/dsh-storage-domain', storageDomain],
-    ['@deepseek-ai/dsh-agent-team', { default: AgentTeam }],
-    ['@deepseek-ai/dsh-commands', CommandRuntime],
-    ['@deepseek-ai/dsh-command-agent-team', commandAgentTeam],
+    ['@wowyuarm/dsh-agent-team/host', { default: AgentTeam }],
   ])
 
   const ctx = new Context()
@@ -109,7 +96,7 @@ async function load(pool: MemoryMediaPool): Promise<Context> {
     .filter(entry => entry.fiber === undefined && !entry.disabled)
     .map(entry => entry.options.name)
   expect(unloaded).toEqual([])
-  const missing = ['storage', 'storageDomain', 'agentTeam', 'commands']
+  const missing = ['storage', 'storageDomain', 'agentTeam']
     .filter(service => ctx.get(service) === undefined)
   if (missing.length > 0) throw new Error(`composition did not publish: ${missing.join(', ')}`)
   return ctx
@@ -125,13 +112,8 @@ describe('Agent Team real composition', () => {
       channelCount: 0,
       agentMemberCount: 0,
     }))
-    const commandResult = await first.commands.find(agent, 'team')?.handler({ rawInput: ' status ' } as never)
-    expect(commandResult?.kind).toBe('success')
-    expect(commandResult?.text).toContain('Ledger sequence: 1')
-
     await first.fiber.dispose()
     expect(first.get('agentTeam')).toBeUndefined()
-    expect(first.get('commands')).toBeUndefined()
 
     const second = await load(pool)
     expect(second.agentTeam.status()).toEqual(expect.objectContaining({ sequence: 1, operationCount: 1 }))

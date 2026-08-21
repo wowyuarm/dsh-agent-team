@@ -11,10 +11,9 @@
 | Agent Team 的领域对象、权限、ledger、Task/Claim/Thread Attention/Inbox 语义 | `docs/domain-model.md`、`docs/team-collaboration.md`、`packages/agent-team/src/` 与 tests；历史来由按 `.scratch/README.md` 查 archive | 只在需要确认被消费的 DSH service contract 时查 Harness | 本仓库实现；历史资料不定义当前行为 |
 | Host package 的具体行为 | `packages/agent-team/src/{index,ledger,spec,types}.ts` 及 `tests/` | `docs/architecture.md`、相关 `subsystems/*`，确认 Agent/Session/Workspace/Storage/Typert 的宿主能力 | 本仓库实现；Harness 只拥有底层能力事实 |
 | Model-facing tools 与 preset | `docs/team-collaboration.md`、`packages/tool-agent-team/src/index.ts`、`packages/agent-team/preset/team-member/agent.cordis.yml` | `docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md` | 本仓库工具语义；Harness 规定扩展接口 |
-| Human command | `packages/command-agent-team/src/index.ts` | `docs/subsystems/commands.md`、`docs/cookbook/extension-cookbook.md` | 本仓库命令；Harness 规定 `ctx.commands` |
 | Client plugin / Team mode / UI | `docs/architecture.md`、`docs/development.md`、`packages/client-agent-team/src/client/`；历史取舍见 `.scratch/archive/2026-08/ui-redesign/` | `docs/subsystems/client-modules.md`、`.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.md`、`packages/client/AGENTS.md`、对应 shipped UI package 源码 | 本仓库实现与 UI 验收规则；Harness 规定加载、slot、React 分层 |
 | Typed Remote | `docs/architecture.md`、`packages/agent-team/src/index.ts` 的 `@Remote`、`scripts/generate-typert.mjs` | `docs/subsystems/typert.md`、`packages/typert/{generator,loader,protocol,registry}`、`packages/api/remotes` | Harness 规定生成/装配，Host 与 Team 规定远程方法 |
-| 发布、profile、bundle 安装 | `README.md` / `README.zh.md`、`cordis.patch.yml`、四个 package manifests | `README.md`、`docs/cookbook/adding-a-package.md`、profile/bundle 文档和 `packages/bundle/*` | Harness 规定安装器与 bundle 机制；本仓库规定外部 bundle 布局 |
+| 发布、profile、bundle 安装 | `README.md` / `README.zh.md`、`cordis.patch.yml`、根 `package.json` | `README.md`、`docs/cookbook/adding-a-package.md`、profile/bundle 文档和 `packages/bundle/*` | Harness 规定安装器与 bundle 机制；本仓库规定单一外部 bundle 的布局 |
 | 实际 Web 验收 | `docs/development.md`、`scripts/run-browser-test.mjs`、`scripts/team-ui.e2e.ts`、`artifacts/browser/` | `apps/web` scaffold、`docs/testing.md`、`packages/client/*/tests` | 脚本产生本次审查材料；归档证据只保留里程碑代表图 |
 
 **遇到不确定的 Harness 行为时，先查上游文档，再读实现和测试。** 不要把 `.scratch/` 中的探索结论当作 Harness API；也不要为了适应 Harness 猜测而改写 Team 的领域语义。若现有公共接口不支持目标交互，记录为 Harness 限制并调整 Team 接入设计，或在本 bundle 内实现替代 plugin。
@@ -42,13 +41,6 @@
 - Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-presets/src`。
 
 工具 schema、canonical output、execute 与 presentation 是不同层。不要让 Host service 直接变成全局工具；不要把 `output`、`execute`、`timeoutMs` 等实现字段泄漏到 model request。工具只在显式 team preset scope 中存在，普通 Session 不应出现 Team tools 或 guidance。
-
-### 2.3 修改 `/team` 命令
-
-- 本仓库：`packages/command-agent-team/src/index.ts`、`tests/command-agent-team.spec.ts`。
-- Harness：`docs/subsystems/commands.md`；源码 `packages/interaction/commands/src`。
-
-命令是 interactive adapter，不绕过 `ctx.agentTeam` 的 authority；注册属于 plugin effect，fiber 销毁后命令应消失。
 
 ### 2.4 修改 Client package、browser bundle 或加载图
 
@@ -109,7 +101,7 @@ Team ledger 是唯一持久权威；projection、Inbox、Remote 和 UI 不能另
 ### 已核实的用户安装方式
 
 ```sh
-dsh plugin --profile team-demo add @deepseek-ai/dsh-agent-team-bundle
+dsh plugin --profile team-demo add @wowyuarm/dsh-agent-team
 dsh --profile team-demo
 ```
 
@@ -120,7 +112,7 @@ dsh plugin --profile team-demo add /absolute/path/to/dsh-agent-team
 dsh --profile team-demo
 ```
 
-`cordis.patch.yml` 以 `dsh.bundle.patch` 暴露 bundle；它在 `dsh-agent-team-scope` 的 `cordis:group` 中挂载 Host、command、client 和 invariant rows，并以 `isolate.agentPresets: true` 只给 Team preset 加入 `team-member`。普通 DSH preset roster 不被改写。
+`cordis.patch.yml` 以 `dsh.bundle.patch` 暴露 bundle；它在 `wowyuarm-agent-team-scope` 的 `cordis:group` 中挂载 Host、Client 和 invariant rows，并以 `isolate.agentPresets: true` 只给 Team preset 加入 `team-member`。普通 DSH preset roster 不被改写。
 
 ### 验证顺序
 

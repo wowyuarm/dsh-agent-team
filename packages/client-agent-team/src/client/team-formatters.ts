@@ -1,4 +1,4 @@
-import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId, AgentTeamTask } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId, AgentTeamTask } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
 
 export function formatTaskStatus(status: AgentTeamTask['status'], t: TeamConversationProps['t']): string {

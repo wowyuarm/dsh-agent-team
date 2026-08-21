@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentTeamActivity, AgentTeamClaim } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamActivity, AgentTeamClaim } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
 import { formatActivity, formatClaimState, formatTaskStatus } from '../src/client/team-formatters.ts'

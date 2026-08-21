@@ -27,14 +27,12 @@ afterEach(async () => {
 async function installLocalBundle(): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
   await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
-  const scope = `${HOME}/profiles/node_modules/@deepseek-ai`
+  const scope = `${HOME}/profiles/node_modules/@wowyuarm`
   await mkdir(scope, { recursive: true })
-  for (const name of ['agent-team', 'client-agent-team', 'command-agent-team', 'tool-agent-team']) {
-    await cp(`${TEAM_ROOT}/packages/${name}`, `${scope}/dsh-${name}`, {
-      recursive: true,
-      filter: source => !source.includes('/node_modules') && !source.includes('/src'),
-    })
-  }
+  await cp(TEAM_ROOT, `${scope}/dsh-agent-team`, {
+    recursive: true,
+    filter: source => !source.includes('/node_modules') && !source.includes('/src') && !source.includes('/artifacts'),
+  })
   await mkdir(UI01_SHOTS, { recursive: true })
   await mkdir(UI02_SHOTS, { recursive: true })
   await mkdir(UI03_SHOTS, { recursive: true })
@@ -54,7 +52,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const ordinaryComposer = page.locator('textarea:enabled[placeholder="描述你想要构建的内容"]')
   await expect.poll(() => ordinaryComposer.count()).toBe(1)
 
-  expect(scaffold.ctx.clientModules.graph().entries.some(entry => entry.id === '@deepseek-ai/dsh-client-agent-team')).toBe(true)
+  expect(scaffold.ctx.clientModules.graph().entries.some(entry => entry.id === '@wowyuarm/dsh-agent-team')).toBe(true)
   await page.getByRole('button', { name: '团队' }).click()
   const newSessionButtons = page.locator('button[aria-label="新建会话"]')
   const newSessionButton = page.locator('button[class*="newSession"][aria-label="新建会话"]')
@@ -112,7 +110,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('option', { name: /@builder/ }).click()
   await page.screenshot({ path: join(UI04_SHOTS, 'mention-menu-selected.png'), fullPage: true })
   await page.getByRole('button', { name: '发送' }).click()
-  await page.getByRole('alert').waitFor()
+  await page.getByRole('status').waitFor()
   await page.getByRole('button', { name: '发送' }).click()
   const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
   await committedMessage.waitFor()

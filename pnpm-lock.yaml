@@ -8,18 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@deepseek-ai/dsh-agent-team':
-        specifier: workspace:^
-        version: link:packages/agent-team
-      '@deepseek-ai/dsh-client-agent-team':
-        specifier: workspace:^
-        version: link:packages/client-agent-team
-      '@deepseek-ai/dsh-command-agent-team':
-        specifier: workspace:^
-        version: link:packages/command-agent-team
-      '@deepseek-ai/dsh-tool-agent-team':
-        specifier: workspace:^
-        version: link:packages/tool-agent-team
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@testing-library/dom':
         specifier: ^10.4.1
@@ -60,25 +51,6 @@ importers:
       vitest:
         specifier: ^4.1.8
         version: 4.1.10(@types/node@24.13.3)(jsdom@30.0.1)(vite@7.3.6(@types/node@24.13.3))
-
-  packages/agent-team:
-    dependencies:
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-
-  packages/client-agent-team:
-    devDependencies:
-      '@types/react':
-        specifier: ~18.3.1
-        version: 18.3.31
-      react:
-        specifier: ^18.2.0
-        version: 18.3.1
-
-  packages/command-agent-team: {}
-
-  packages/tool-agent-team: {}
 
 packages:
 

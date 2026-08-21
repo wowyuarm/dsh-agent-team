@@ -29,7 +29,7 @@ Keep production code self-explanatory through clear names, types, and structure.
 ## Architecture guardrails
 
 - `packages/agent-team` is the only Team authority. Its append-only operation ledger is the durable source of Team facts; projections, tools, commands, Remote, and UI do not maintain parallel authority.
-- `packages/tool-agent-team` provides the five model-facing Team tools only through the explicit `team-member` preset. `packages/command-agent-team` is a Human `/team` adapter, not a second authority.
+- `packages/tool-agent-team` provides the five model-facing Team tools only through the explicit `team-member` preset. The Web Client is the only Human Team control surface; do not restore a slash-command adapter.
 - Team is an external plugin. Do not modify `../deepseek-harness`, its agent loop, or shipped defaults for ordinary Team work. If a public Harness extension point is insufficient, record the limitation and decide whether to implement a Team-owned plugin or change the design.
 - Typed Remote declarations are the input; Typert artifacts are generated. Never hand-edit `packages/agent-team/lib/typert.*`.
 - The Client uses public Harness plugin and slot APIs. Mount the generated Remote, wait for `remote.agentTeam`, and use `ctx.slots.inject()` when a declaration may not exist yet; `dsh.client.inject` is not an activation-order guarantee.
@@ -65,6 +65,6 @@ git diff --check
 ## Further reading
 
 - Domain and Host behavior: `packages/agent-team/src/`, its tests, and `docs/architecture.md`.
-- Tools, preset, and command: `packages/tool-agent-team/`, `packages/agent-team/preset/`, `packages/command-agent-team/`, and the matching Harness subsystem docs.
+- Tools and preset: `packages/tool-agent-team/`, `packages/agent-team/preset/`, and the matching Harness subsystem docs.
 - Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, and `docs/harness-navigation.md`.
 - Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, `docs/harness-navigation.md`, and, when needed, the relevant `.scratch/archive/` work history; verify all behavior in code and tests.

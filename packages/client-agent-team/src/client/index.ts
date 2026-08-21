@@ -13,9 +13,9 @@ import type {
   AgentTeamReplyRequest,
   AgentTeamTaskRequest,
   AgentTeamViewRequest,
-} from '@deepseek-ai/dsh-agent-team/types'
-import agentTeamRemote from '@deepseek-ai/dsh-agent-team/remote'
-import type {} from '@deepseek-ai/dsh-agent-team/remote'
+} from '@wowyuarm/dsh-agent-team/types'
+import agentTeamRemote from '../../../agent-team/lib/typert.remote-client.js'
+import type {} from '../../../agent-team/lib/typert.remote-client.d.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'

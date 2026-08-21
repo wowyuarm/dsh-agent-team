@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-const name = '@deepseek-ai/dsh-agent-team/member-context'
+const name = '@wowyuarm/dsh-agent-team/member-context'
 const MAX_MEMORY_BYTES = 8 * 1024
 const BEGIN = '<team-member-private-memory>'
 const END = '</team-member-private-memory>'

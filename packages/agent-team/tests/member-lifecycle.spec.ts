@@ -13,15 +13,16 @@ import LlmRuntime, { CallId, createUserMessage, LlmAdapter } from '@deepseek-ai/
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import SqliteSessionPersistence from '@deepseek-ai/dsh-session-persistence-sqlite'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
-import { apply as applyAgentTeamTools } from '@deepseek-ai/dsh-tool-agent-team'
+import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
 import type { AgentTeamChannelRef, AgentTeamRequestId } from '../src/types.ts'
-import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 const originalDshHome = process.env.DSH_HOME
@@ -35,7 +36,7 @@ afterEach(async () => {
 
 class EmptyAdapter extends LlmAdapter {
   override resolveModel(provider: string, model: string) { return Promise.resolve({ provider, id: model, name: model }) }
-  async * stream(_options: GenerateOptions): AsyncIterable<StreamChunk> { return }
+  async * stream(_options: GenerateOptions): AsyncIterable<StreamChunk> { yield* [] }
 }
 
 class ScriptedAdapter extends EmptyAdapter {
@@ -104,7 +105,12 @@ function waitForIdle(ctx: Context, agent: NonNullable<ReturnType<Context['agents
   })
 }
 
-async function realHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<{
+type PersistenceBackend = 'jsonl' | 'sqlite'
+
+async function realHarness(
+  adapter: LlmAdapter = new EmptyAdapter(),
+  persistenceBackend: PersistenceBackend = 'jsonl',
+): Promise<{
   readonly ctx: Context
   readonly workspaceId: WorkspaceId
   readonly root: string
@@ -114,6 +120,7 @@ async function realHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<{
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
   const persistence = join(root, 'sessions')
+  const sqlite = join(root, 'sessions.sqlite')
   const presetRoot = join(root, 'presets')
   const presetDir = join(presetRoot, 'team-member')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
@@ -144,7 +151,8 @@ async function realHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<{
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
-  await ctx.plugin(JsonlSessionPersistence, { root: persistence })
+  if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
+  else await ctx.plugin(SqliteSessionPersistence, { path: sqlite, journalMode: 'delete' })
   await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
@@ -189,6 +197,21 @@ describe('Agent Team Member lifecycle', () => {
     expect(removed.member.state).toBe('inactive')
     expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
+  })
+
+  it('creates, suspends, resumes, and removes a Member with a new rc.8 SQLite Session database', async () => {
+    const { ctx, workspaceId } = await realHarness(new EmptyAdapter(), 'sqlite')
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('sqlite-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('sqlite-add'), workspaceId, handle: 'sqlite-builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    expect(added.status.availability).toBe('active')
+
+    await ctx.agentTeam.suspendMember({ requestId: requestId('sqlite-suspend'), memberId: added.status.member.memberId })
+    const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('sqlite-resume'), memberId: added.status.member.memberId })
+    expect(resumed.status.availability).toBe('active')
+    expect(resumed.status.member.sessionId).toBe(added.status.member.sessionId)
+
+    const removed = await ctx.agentTeam.removeMember({ requestId: requestId('sqlite-remove'), memberId: added.status.member.memberId })
+    expect(removed.member.state).toBe('inactive')
   })
 
   it('requires initial Channel authority and rejects an incomplete Team preset before publication', async () => {
@@ -283,7 +306,6 @@ describe('Agent Team Member lifecycle', () => {
     const released = await call('team_claim', { action: 'release', taskRef: started.task.taskRef, claimRef: secondClaim.claims[1].claimRef, baseRevision: secondClaim.revision })
     expect(released).toMatchObject({ kind: 'committed', claims: expect.arrayContaining([expect.objectContaining({ direction: 'follow-up', state: 'released' })]) })
 
-    const readAfterClaims = await call('team_thread', { action: 'read', taskRef: started.task.taskRef })
     const humanReadAfterClaims = await ctx.agentTeam.readThread({ requestId: requestId('protocol-human-read-after-claims'), workspaceId,
       taskRef: started.task.taskRef })
     const unreadAfterClaims = await ctx.agentTeam.reply({ requestId: requestId('protocol-history-unread'), workspaceId,
@@ -316,7 +338,6 @@ describe('Agent Team Member lifecycle', () => {
     await idle
 
     expect(adapter.requests).toHaveLength(3)
-    const afterSuccess = JSON.stringify(adapter.requests[1]!.messages)
     const afterRejection = JSON.stringify(adapter.requests[2]!.messages)
     expect(afterRejection).toContain(channel.channel.channelRef)
     expect(afterRejection).toContain('member_not_following')
@@ -463,6 +484,6 @@ describe('Agent Team Member lifecycle', () => {
   it('validates the final five-tool Team marker during unpublished setup', async () => {
     expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view'])
     const definition = markAgentTeamPreset({ name: 'team_message' })
-    expect(Reflect.get(definition, Symbol.for('@deepseek-ai/dsh-agent-team.preset'))).toBe(true)
+    expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
   })
 })

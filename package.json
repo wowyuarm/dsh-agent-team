@@ -1,38 +1,49 @@
 {
-  "name": "@deepseek-ai/dsh-agent-team-bundle",
-  "version": "0.1.0",
+  "name": "@wowyuarm/dsh-agent-team",
+  "version": "0.1.0-rc.8",
   "description": "Opt-in Agent Team collaboration bundle for DeepSeek Harness",
   "private": false,
   "type": "module",
   "files": [
     "cordis.patch.yml",
-    "packages/*/lib/**/*",
-    "packages/*/preset/**/*",
-    "packages/*/package.json",
+    "packages/agent-team/lib/**/*",
+    "packages/agent-team/preset/**/*",
+    "packages/tool-agent-team/lib/**/*",
+    "packages/client-agent-team/lib/**/*",
     "README.md",
     "README.zh.md"
   ],
   "scripts": {
     "generate:typert": "cd ../deepseek-harness && node --import tsx ../dsh-agent-team/scripts/generate-typert.mjs",
-    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/command-agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json",
-    "build": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/command-agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && cd packages/client-agent-team && ../../../deepseek-harness/node_modules/.bin/tsdown",
     "prepack": "npm run build",
     "test": "npm run generate:typert && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
     "preview": "node scripts/check-preview-credentials.mjs && npm run build && node scripts/run-preview.mjs",
     "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
-    "lint": "eslint ."
+    "lint": "corepack pnpm dlx oxlint@1.76.0 --disable-typescript-plugin packages scripts",
+    "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json",
+    "build": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && node scripts/build-client.mjs"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-agent-team": "workspace:^",
-    "@deepseek-ai/dsh-client-agent-team": "workspace:^",
-    "@deepseek-ai/dsh-command-agent-team": "workspace:^",
-    "@deepseek-ai/dsh-tool-agent-team": "workspace:^"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -48,5 +59,89 @@
     "vite": "^7.0.0",
     "vite-tsconfig-paths": "^5.0.0",
     "vitest": "^4.1.8"
+  },
+  "main": "packages/client-agent-team/lib/index.js",
+  "types": "packages/client-agent-team/lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./packages/client-agent-team/lib/types/index.d.ts",
+      "default": "./packages/client-agent-team/lib/index.js"
+    },
+    "./host": {
+      "types": "./packages/agent-team/lib/types/index.d.ts",
+      "default": "./packages/agent-team/lib/index.js"
+    },
+    "./invariant": {
+      "types": "./packages/agent-team/lib/types/invariant.d.ts",
+      "default": "./packages/agent-team/lib/invariant.js"
+    },
+    "./types": {
+      "types": "./packages/agent-team/lib/types/types.d.ts",
+      "default": "./packages/agent-team/lib/types.js"
+    },
+    "./typert": {
+      "types": "./packages/agent-team/lib/typert.host.d.ts",
+      "default": "./packages/agent-team/lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./packages/agent-team/lib/typert.remote-client.d.ts",
+      "default": "./packages/agent-team/lib/typert.remote-client.js"
+    },
+    "./preset-roster": {
+      "types": "./packages/agent-team/lib/types/preset-roster.d.ts",
+      "default": "./packages/agent-team/lib/preset-roster.js"
+    },
+    "./member-context": {
+      "types": "./packages/agent-team/lib/types/member-context.d.ts",
+      "default": "./packages/agent-team/lib/member-context.js"
+    },
+    "./tools": {
+      "types": "./packages/tool-agent-team/lib/types/index.d.ts",
+      "default": "./packages/tool-agent-team/lib/index.js"
+    },
+    "./client": {
+      "types": "./packages/client-agent-team/lib/types/client/index.d.ts",
+      "default": "./packages/client-agent-team/lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-agent-default-model": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-agent-tool-presentation": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-agent-presets": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-bash": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-pwsh": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-fs": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-fs-search": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-jobs": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-skill-filesystem": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-skill": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-todo": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tool-web": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-brand": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-sandbox-policy": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-scope": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-session-persistence": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-storage-domain": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-workspace": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-api-remotes": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-workspace": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.8 <0.2.0",
+    "react": "^18.2.0"
   }
 }

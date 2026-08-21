@@ -1,20 +1,10 @@
-// Regenerates the two resolution facades from the sibling deepseek-harness
-// checkout's tsconfig.base.json paths map:
-//   tsconfig.json        - runtime facade: @deepseek-ai/dsh-* -> harness src
-//                          (consumed by vite-tsconfig-paths for vitest)
-//   tsconfig.types.json  - typecheck facade: -> harness lib/types declarations
-//                          (consumed by per-package tsc -p; skipLibCheck keeps
-//                          the vendor's deliberately relaxed strictness out of
-//                          our gate while our own sources stay fully strict)
-// NEVER add include/files to either facade: a tsconfig without include is
-// treated by vite-tsconfig-paths as match-all.
-// Usage: node scripts/sync-paths.mjs
+// Regenerates the resolution facades from the sibling deepseek-harness checkout.
+// Harness imports resolve against its source or declarations; this external bundle's
+// public subpaths resolve to their maintained implementation directories.
 import { readFileSync, writeFileSync } from 'node:fs'
 
 const HARNESS = new URL('../../deepseek-harness/', import.meta.url)
 const raw = readFileSync(new URL('tsconfig.base.json', HARNESS), 'utf8')
-// Strip full-line // comments and line-leading /* */ blocks; paths values
-// themselves contain `//` and `/*` sequences a naive strip would eat.
 const cleaned = raw
   .split('\n')
   .filter(line => !/^\s*\/\//.test(line))
@@ -22,16 +12,21 @@ const cleaned = raw
   .replace(/^\s*\/\*[\s\S]*?\*\//gm, '')
 const base = JSON.parse(cleaned)
 
-// Own packages: exact keys always beat the harness wildcards below.
 const own = {
-  '@deepseek-ai/dsh-agent-team': ['./packages/agent-team/src/index.ts'],
-  '@deepseek-ai/dsh-agent-team/invariant': ['./packages/agent-team/src/invariant.ts'],
-  '@deepseek-ai/dsh-agent-team/types': ['./packages/agent-team/src/types.ts'],
-  '@deepseek-ai/dsh-command-agent-team': ['./packages/command-agent-team/src/index.ts'],
-  '@deepseek-ai/dsh-command-agent-team/invariant': ['./packages/command-agent-team/src/invariant.ts'],
-  '@deepseek-ai/dsh-tool-agent-team': ['./packages/tool-agent-team/src/index.ts'],
-  '@deepseek-ai/dsh-client-agent-team': ['./packages/client-agent-team/src/index.ts'],
-  '@deepseek-ai/dsh-client-agent-team/client': ['./packages/client-agent-team/src/client/index.ts'],
+  '@wowyuarm/dsh-agent-team/host': ['./packages/agent-team/src/index.ts'],
+  '@wowyuarm/dsh-agent-team/invariant': ['./packages/agent-team/src/invariant.ts'],
+  '@wowyuarm/dsh-agent-team/types': ['./packages/agent-team/src/types.ts'],
+  '@wowyuarm/dsh-agent-team/typert': ['./packages/agent-team/lib/typert.host.d.ts'],
+  '@wowyuarm/dsh-agent-team/remote': ['./packages/agent-team/lib/typert.remote-client.js'],
+  '@wowyuarm/dsh-agent-team/preset-roster': ['./packages/agent-team/src/preset-roster.ts'],
+  '@wowyuarm/dsh-agent-team/member-context': ['./packages/agent-team/src/member-context.ts'],
+  '@wowyuarm/dsh-agent-team/tools': ['./packages/tool-agent-team/src/index.ts'],
+  '@wowyuarm/dsh-agent-team/client': ['./packages/client-agent-team/src/client/index.ts'],
+}
+
+const ownTypes = {
+  ...own,
+  '@wowyuarm/dsh-agent-team/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
 }
 
 const harnessSrc = {
@@ -39,10 +34,10 @@ const harnessSrc = {
 }
 for (const [key, value] of Object.entries(base.compilerOptions.paths)) {
   harnessSrc[key] = (Array.isArray(value) ? value : [value])
-    .map(p => p.replace(/^\.\//, '../deepseek-harness/'))
+    .map(path => path.replace(/^\.\//, '../deepseek-harness/'))
 }
 
-const toTypes = p => p
+const toTypes = path => path
   .replace(/\/src\/(.+)\.ts$/, '/lib/types/$1.d.ts')
   .replace(/\/src\/(.+)$/, '/lib/types/$1')
   .replace(/\/src$/, '/lib/types')
@@ -52,50 +47,37 @@ const harnessTypes = Object.fromEntries(
 )
 
 const buildOwn = {
-  '@deepseek-ai/dsh-client-agent-team': ['./packages/client-agent-team/lib/types/index.d.ts'],
-  '@deepseek-ai/dsh-client-agent-team/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
-  '@deepseek-ai/dsh-agent-team': ['./packages/agent-team/lib/types/index.d.ts'],
-  '@deepseek-ai/dsh-agent-team/invariant': ['./packages/agent-team/lib/types/invariant.d.ts'],
-  '@deepseek-ai/dsh-agent-team/types': ['./packages/agent-team/lib/types/types.d.ts'],
+  '@wowyuarm/dsh-agent-team/host': ['./packages/agent-team/lib/types/index.d.ts'],
+  '@wowyuarm/dsh-agent-team/invariant': ['./packages/agent-team/lib/types/invariant.d.ts'],
+  '@wowyuarm/dsh-agent-team/types': ['./packages/agent-team/lib/types/types.d.ts'],
+  '@wowyuarm/dsh-agent-team/typert': ['./packages/agent-team/lib/typert.host.d.ts'],
+  '@wowyuarm/dsh-agent-team/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
+  '@wowyuarm/dsh-agent-team/preset-roster': ['./packages/agent-team/lib/types/preset-roster.d.ts'],
+  '@wowyuarm/dsh-agent-team/member-context': ['./packages/agent-team/lib/types/member-context.d.ts'],
+  '@wowyuarm/dsh-agent-team/tools': ['./packages/tool-agent-team/lib/types/index.d.ts'],
+  '@wowyuarm/dsh-agent-team/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
 }
 
 const shared = {
-  target: 'es2024',
-  module: 'esnext',
-  moduleResolution: 'bundler',
-  skipLibCheck: true,
-  esModuleInterop: true,
-  allowImportingTsExtensions: true,
-  rewriteRelativeImportExtensions: true,
-  verbatimModuleSyntax: false,
-  strict: true,
-  noUncheckedIndexedAccess: true,
-  exactOptionalPropertyTypes: true,
-  noImplicitOverride: true,
-  noFallthroughCasesInSwitch: true,
-  types: ['node'],
-  noEmit: true,
+  target: 'es2024', module: 'esnext', moduleResolution: 'bundler', skipLibCheck: true,
+  esModuleInterop: true, allowImportingTsExtensions: true, rewriteRelativeImportExtensions: true,
+  verbatimModuleSyntax: false, strict: true, noUncheckedIndexedAccess: true,
+  exactOptionalPropertyTypes: true, noImplicitOverride: true, noFallthroughCasesInSwitch: true,
+  types: ['node'], noEmit: true,
 }
 
 const header = text => `// GENERATED by scripts/sync-paths.mjs - edit that script, not this file.\n${text}`
 
 writeFileSync(new URL('../tsconfig.json', import.meta.url), `${JSON.stringify({
   compilerOptions: { ...shared, paths: { ...own, ...harnessSrc } },
-}, null, 2)}\n`.replace(/^/, header(
-  '// Runtime facade: every @deepseek-ai/dsh-* import resolves against the\n' +
-  '// sibling deepseek-harness checkout source. Consumed by vite-tsconfig-paths.\n')))
+}, null, 2)}\n`.replace(/^/, header('// Runtime facade for the external bundle and sibling Harness source.\n')))
 
 writeFileSync(new URL('../tsconfig.types.json', import.meta.url), `${JSON.stringify({
-  compilerOptions: { ...shared, paths: { ...own, ...harnessTypes } },
-}, null, 2)}\n`.replace(/^/, header(
-  '// Typecheck facade: @deepseek-ai/dsh-* resolves against the sibling\n' +
-  '// deepseek-harness checkout built declarations (lib/types); skipLibCheck\n' +
-  '// keeps the vendor strictness deltas out of this repo\'s gate. Own packages\n' +
-  '// still resolve to src and compile fully strict in-project.\n')))
+  compilerOptions: { ...shared, paths: { ...ownTypes, ...harnessTypes } },
+}, null, 2)}\n`.replace(/^/, header('// Typecheck facade for the external bundle and sibling Harness declarations.\n')))
 
 writeFileSync(new URL('../tsconfig.build-deps.json', import.meta.url), `${JSON.stringify({
   compilerOptions: { ...shared, paths: { ...buildOwn, ...harnessTypes } },
-}, null, 2)}\n`.replace(/^/, header(
-  '// Build facade: own cross-package imports resolve to previously built declarations.\n')))
+}, null, 2)}\n`.replace(/^/, header('// Build facade: own cross-surface imports resolve to emitted declarations.\n')))
 
-console.log(`wrote tsconfig.json (${Object.keys(harnessSrc).length} harness src mappings), tsconfig.types.json, and tsconfig.build-deps.json`)
+console.log(`wrote tsconfig.json (${Object.keys(harnessSrc).length} Harness mappings), tsconfig.types.json, and tsconfig.build-deps.json`)

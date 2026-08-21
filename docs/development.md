@@ -38,10 +38,10 @@ npm pack --dry-run
 这些命令的职责如下：
 
 - `npm run generate:typert`：从 `packages/agent-team/src/` 的 Host face 生成 Typert Host/Remote artifacts。
-- `npm run typecheck`：先生成 Typert，再检查四个 package。
+- `npm run typecheck`：先生成 Typert，再检查 Host、tools 和 Client 三个源码目录。
 - `npm test`：先生成 Typert，再运行 Vitest。
-- `npm run build`：先生成 Typert，构建四个 package，并用 Harness 的 `tsdown` 构建 Client bundle。
-- `npm run lint`：运行 ESLint。
+- `npm run build`：先生成 Typert，构建 Host、tools 和 Client 三个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle；最终发布物仍是一个根 npm 包。
+- `npm run lint`：运行 oxlint。
 - `npm pack --dry-run`：检查根 bundle 的发布内容。
 
 影响 browser bundle、Client module、slot、Remote activation、bundle manifest 或可见 UI 的改动，还要运行：
@@ -106,20 +106,22 @@ node scripts/sync-paths.mjs
 发布形态是根 bundle：
 
 ```sh
-dsh plugin --profile team-demo add @deepseek-ai/dsh-agent-team-bundle
-dsh --profile team-demo
+dsh plugin --profile web add @wowyuarm/dsh-agent-team
+dsh web
 ```
 
 本地目录安装：
 
 ```sh
-dsh plugin --profile team-demo add /absolute/path/to/dsh-agent-team
-dsh --profile team-demo
+dsh plugin --profile web add /absolute/path/to/dsh-agent-team
+dsh web
 ```
 
-`cordis.patch.yml` 是 bundle patch 的入口。它将 Host、command、Client 和 invariant rows 加入 opt-in profile，并在隔离的 `agentPresets` scope 中挂载 `team-member` roster。普通 Session 的 shipped/user preset roster 不应被 Team bundle 改写。
+`cordis.patch.yml` 是 bundle patch 的入口。它将 Host、Client 和 invariant rows 加入 opt-in profile，并在隔离的 `agentPresets` scope 中挂载 `team-member` roster。普通 Session 的 shipped/user preset roster 不应被 Team bundle 改写。
 
 真实安装验证必须使用已构建 package 的发布布局。直接 symlink 到源码可能绕过 profile 内的 peer fallback，导致与真实安装不同的结果；`scripts/team-ui.e2e.ts` 和 `scripts/team-ui.preview.ts` 已采用复制 package 的方式。
+
+本 bundle 的最低兼容版本是 DSH `0.1.0-rc.8`。DSH rc.8 的 SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
 ## 交付前核对
 

@@ -14,28 +14,29 @@ describe('Agent Team shipping contract', () => {
       readFile(resolve(root, 'packages/agent-team/preset/team-member/agent.cordis.yml'), 'utf8'),
       readFile(resolve(root, 'package.json'), 'utf8'),
     ])
-    expect(patch).toContain("name: '@deepseek-ai/dsh-agent-team/preset-roster'")
+    expect(patch).toContain('id: wowyuarm-agent-team-scope')
+    expect(patch).toContain("name: '@wowyuarm/dsh-agent-team/preset-roster'")
     expect(patch).toContain('agentPresets: true')
-    expect(patch).toContain("name: '@deepseek-ai/dsh-agent-team'")
-    expect(patch).toContain("name: '@deepseek-ai/dsh-command-agent-team'")
-    expect(patch).toContain("name: '@deepseek-ai/dsh-client-agent-team'")
-    expect(patch).toContain("name: '@deepseek-ai/dsh-agent-team/invariant'")
-    expect(patch).toContain("name: '@deepseek-ai/dsh-command-agent-team/invariant'")
+    expect(patch).toContain("name: '@wowyuarm/dsh-agent-team/host'")
+    expect(patch).toContain("name: '@wowyuarm/dsh-agent-team'")
+    expect(patch).toContain("name: '@wowyuarm/dsh-agent-team/invariant'")
     expect(patch).not.toContain('dsh-tool-agent-team')
 
-    expect(preset).toContain("name: '@deepseek-ai/dsh-tool-agent-team'")
+    expect(preset).toContain("name: '@wowyuarm/dsh-agent-team/tools'")
     expect(preset).toContain("name: '@deepseek-ai/dsh-agent-tool-presentation'")
     expect(preset).toContain('mode: native')
-    expect(preset).toContain("name: '@deepseek-ai/dsh-agent-team/member-context'")
+    expect(preset).toContain("name: '@wowyuarm/dsh-agent-team/member-context'")
     for (const capability of [
       '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
       '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-skill-filesystem',
       '@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-web',
     ]) expect(preset).toContain(`name: '${capability}'`)
-    const hostManifest = JSON.parse(await readFile(resolve(root, 'packages/agent-team/package.json'), 'utf8')) as {
+    const bundleManifest = JSON.parse(manifestText) as {
       peerDependencies: Record<string, string>
+      exports: Record<string, { default?: string }>
+      dsh: { client: { platform: string; inject: string[] } }
     }
-    expect(hostManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.0-rc.5 <0.2.0')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.0-rc.8 <0.2.0')
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
@@ -45,29 +46,22 @@ describe('Agent Team shipping contract', () => {
     ])
 
     const manifest = JSON.parse(manifestText) as {
+      name: string
       files: string[]
       dependencies: Record<string, string>
       dsh: { bundle: { patch: string } }
     }
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
-    expect(manifest.files).toContain('packages/*/preset/**/*')
-    expect(manifest.files).toContain('packages/*/lib/**/*')
-    expect(Object.values(manifest.dependencies)).toEqual([
-      'workspace:^', 'workspace:^', 'workspace:^', 'workspace:^',
-    ])
-
-    const clientManifest = JSON.parse(await readFile(resolve(root, 'packages/client-agent-team/package.json'), 'utf8')) as {
-      exports: Record<string, { default?: string }>
-      dsh: { client: { platform: string; immediately?: boolean } }
-      peerDependencies: Record<string, string>
-    }
-    expect(clientManifest.dsh.client).toEqual({
+    expect(manifest.files).toContain('packages/agent-team/preset/**/*')
+    expect(manifest.files).toContain('packages/agent-team/lib/**/*')
+    expect(manifest.files).toContain('packages/client-agent-team/lib/**/*')
+    expect(manifest.name).toBe('@wowyuarm/dsh-agent-team')
+    expect(manifest.dependencies).toEqual({ zod: '^4.4.3' })
+    expect(bundleManifest.dsh.client).toEqual({
       platform: 'web',
-      inject: expect.not.arrayContaining(['@deepseek-ai/dsh-agent-team']),
+      inject: expect.not.arrayContaining(['@wowyuarm/dsh-agent-team/host']),
     })
-    expect(clientManifest.exports['./client']?.default).toBe('./lib/client.js')
-    expect(Object.values(clientManifest.peerDependencies)).not.toContain('^0.1.0')
-    expect(clientManifest.peerDependencies['@deepseek-ai/dsh-agent-team']).toBe('>=0.1.0-rc.5 <0.2.0')
+    expect(bundleManifest.exports['./client']?.default).toBe('./packages/client-agent-team/lib/client.js')
 
     const ctx = new Context()
     await ctx.plugin(Loader)

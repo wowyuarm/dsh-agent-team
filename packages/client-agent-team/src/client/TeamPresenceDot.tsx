@@ -1,5 +1,5 @@
 import { StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AgentTeamClientMemberStatus } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import css from './presence.module.css'
 

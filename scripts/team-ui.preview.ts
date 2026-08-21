@@ -9,14 +9,12 @@ let scaffold: WebScaffold
 
 beforeAll(async () => {
   await rm(HOME, { recursive: true, force: true })
-  const scope = `${HOME}/profiles/node_modules/@deepseek-ai`
+  const scope = `${HOME}/profiles/node_modules/@wowyuarm`
   await mkdir(scope, { recursive: true })
-  for (const name of ['agent-team', 'client-agent-team', 'command-agent-team', 'tool-agent-team']) {
-    await cp(`${TEAM_ROOT}/packages/${name}`, `${scope}/dsh-${name}`, {
-      recursive: true,
-      filter: source => !source.includes('/node_modules') && !source.includes('/src'),
-    })
-  }
+  await cp(TEAM_ROOT, `${scope}/dsh-agent-team`, {
+    recursive: true,
+    filter: source => !source.includes('/node_modules') && !source.includes('/src') && !source.includes('/artifacts'),
+  })
   scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME })
   process.stdout.write(`AGENT_TEAM_PREVIEW_URL=${scaffold.baseUrl}\n`)
 })

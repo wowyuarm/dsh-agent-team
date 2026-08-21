@@ -59,10 +59,10 @@
     allowParallelInProgress: true
 
 - id: member-context
-  name: '@deepseek-ai/dsh-agent-team/member-context'
+  name: '@wowyuarm/dsh-agent-team/member-context'
 
 - id: team-tools
-  name: '@deepseek-ai/dsh-tool-agent-team'
+  name: '@wowyuarm/dsh-agent-team/tools'
 
 # The host owns the Web service and search provider; the Team preset exposes only the model-facing tool.
 - id: tool-web

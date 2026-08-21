@@ -1,19 +1,15 @@
 - insert:
-    - id: dsh-agent-team-scope
+    - id: wowyuarm-agent-team-scope
       name: cordis:group
       group: true
       isolate:
         agentPresets: true
       config:
-        - id: dsh-agent-team-presets
-          name: '@deepseek-ai/dsh-agent-team/preset-roster'
-        - id: dsh-agent-team
-          name: '@deepseek-ai/dsh-agent-team'
-    - id: dsh-command-agent-team
-      name: '@deepseek-ai/dsh-command-agent-team'
-    - id: dsh-client-agent-team
-      name: '@deepseek-ai/dsh-client-agent-team'
-    - id: dsh-agent-team-invariant
-      name: '@deepseek-ai/dsh-agent-team/invariant'
-    - id: dsh-command-agent-team-invariant
-      name: '@deepseek-ai/dsh-command-agent-team/invariant'
+        - id: wowyuarm-agent-team-presets
+          name: '@wowyuarm/dsh-agent-team/preset-roster'
+        - id: wowyuarm-agent-team-host
+          name: '@wowyuarm/dsh-agent-team/host'
+    - id: wowyuarm-agent-team-client
+      name: '@wowyuarm/dsh-agent-team'
+    - id: wowyuarm-agent-team-invariant
+      name: '@wowyuarm/dsh-agent-team/invariant'

@@ -3,7 +3,7 @@
  *
  * The Host owns the append-only collaboration ledger and all Member lifecycle
  * effects. Session history and browser state are projections, never Team facts.
- * @module @deepseek-ai/dsh-agent-team
+ * @module @wowyuarm/dsh-agent-team
  */
 
 import { randomUUID } from 'node:crypto'
@@ -23,7 +23,7 @@ import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-p
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
+import { AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -52,7 +52,6 @@ import type {
   AgentTeamRemoveMemberResult,
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
-  AgentTeamRequestId,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
   AgentTeamSetMemberStateRequest,
@@ -78,7 +77,7 @@ export type * from './types.ts'
 export { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './ledger.ts'
 
 /** Process-stable marker carried by the final Team message tool definition. */
-export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@deepseek-ai/dsh-agent-team.preset')
+export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
 
 /** Mark the preset's `team_message` definition as an Agent Team consumer. */
 export function markAgentTeamPreset<T extends object>(definition: T): T {
@@ -627,7 +626,7 @@ export default class AgentTeam extends TypertRemoteService {
     ]))
     if (this.pendingInboxHints.has(member.memberId)) return
     const existingHint = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message =>
-      message.source.kind === 'plugin' && message.source.plugin === '@deepseek-ai/dsh-agent-team')
+      message.source.kind === 'plugin' && message.source.plugin === '@wowyuarm/dsh-agent-team')
     if (existingHint !== undefined) {
       agent.inbox.remove(existingHint.id)
       this.pendingInboxHints.set(member.memberId, existingHint.id)
@@ -638,7 +637,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (this.notifiedInbox.get(member.memberId) === signature) return
     const hint = createUserMessage({
       content: [{ type: 'text', text: 'Team Inbox has unread work. Use team_inbox to triage it, then team_thread to read the relevant Thread.' }],
-      source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' },
+      source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' },
     })
     this.pendingInboxHints.set(member.memberId, hint.id)
     this.notifiedInbox.set(member.memberId, signature)

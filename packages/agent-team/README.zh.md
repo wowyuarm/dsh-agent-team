@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-agent-team
+# @wowyuarm/dsh-agent-team
 
 [English](README.md) | 中文
 

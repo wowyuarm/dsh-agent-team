@@ -11,16 +11,12 @@ packages/agent-team
         ├── packages/tool-agent-team
         │     model-facing team_inbox / team_thread / team_message / team_claim / team_view
         │
-        ├── packages/command-agent-team
-        │     Human /team adapter
-        │
         └── packages/client-agent-team
               typed Remote client + Team mode + browser presentation
 ```
 
 - `packages/agent-team` owns the Team capability. `src/index.ts` assembles the service and declares Remote methods; `ledger.ts` commits operations; `spec.ts` defines operation records; `types.ts` contains shared types; `invariant.ts` checks runtime relationships.
 - `packages/tool-agent-team` resolves the live Team service when tools execute. It does not create a second service or write projections directly.
-- `packages/command-agent-team` registers `/team` through `ctx.commands`. Its registration follows plugin lifetime.
 - `packages/client-agent-team` has a Node half (`src/index.ts`) and a browser half (`src/client/`). The browser half reads Host projections through typed Remote and renders them through public Client slots.
 
 ## Host authority
@@ -31,25 +27,25 @@ The Team is one collaboration domain per DSH home. Its append-only operation led
 - Projections, Inbox results, tools, commands, Remote responses, and UI derive from committed operations.
 - Client code must not interpret ledger records or create a parallel authority.
 - Agent lifecycle, JSON/SQLite replay, authorization, idempotency, and revision checks stay on the Host side. Durable unread changes may produce one coalesced, body-free Agent Inbox hint through the public Agent safe-boundary API; this notification is not a second authority and does not promise exactly-once model processing.
+- The bundle targets DSH `0.1.0-rc.8`. Its SQLite Session persistence uses the rc.8 schema; old SQLite Session databases are discarded and recreated. Do not add Team-owned migration, compatibility reads, or fallback storage paths.
 - Thread Attention is private Member x Thread state. Ordinary unread comes from current Attention; structured mentions create direct markers. The Host is the only Inbox authority. Session history may retain the generic wake hint, but never Thread bodies or a parallel unread projection.
 - Team-managed Agent sessions use the explicit Team preset and its trusted `danger-full-access` policy. This is an intentional product boundary for trusted workspaces.
 
 When changing a Host capability, read the package source/tests first, then the matching Harness capability contract. The navigation table in [`harness-navigation.md`](harness-navigation.md) maps Host changes to `deepseek-harness/docs/subsystems/` and source packages.
 
-## Tools, preset, and command
+## Tools and preset
 
 The explicit `team-member` preset is the only Team Member composition. It adds the full coding capability rows (shell, filesystem/search, web search, background jobs, skills, todo, and compaction), Team collaboration guidance/tools, Harness Workspace instruction discovery, and bounded private-memory reference context. Ordinary Sessions remain outside this isolated roster and do not receive Team prompt sections, tools, or Member memory.
 
 The five model-facing tools are defined in `packages/tool-agent-team/src/index.ts`. Their implemented collaboration contract is documented in [`team-collaboration.md`](team-collaboration.md); this architecture note does not duplicate that state machine. They are mounted by the `team-member` preset under `packages/agent-team/preset/team-member/`, inside the isolated scope in `cordis.patch.yml`. Do not add the tool package as a global row merely to make it available in a test; ordinary Sessions must remain Team-free.
 
-The command package is a Human adapter. It delegates to `ctx.agentTeam` and does not bypass Host authorization or ledger commit. A plugin unload must remove the command registration.
+The Web Client is the only Human control surface. It delegates every mutation to `ctx.agentTeam` through the typed Remote and does not bypass Host authorization or ledger commits. Do not add a slash-command adapter back as a second interface.
 
-For schema, canonical output, presentation, preset, or command changes, read the matching Harness docs before editing:
+For schema, canonical output, presentation, or preset changes, read the matching Harness docs before editing:
 
 - `../deepseek-harness/docs/subsystems/tools.md`
 - `../deepseek-harness/docs/cookbook/adding-a-tool.md`
 - `../deepseek-harness/docs/subsystems/permission-presets.md`
-- `../deepseek-harness/docs/subsystems/commands.md`
 
 ## Typed Remote
 

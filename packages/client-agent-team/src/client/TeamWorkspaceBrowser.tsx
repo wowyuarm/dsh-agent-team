@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { IconAgentPresetOutline16, IconChecklistOutline14, IconListPenOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { AgentTeamAddMemberRequest, AgentTeamInbox } from '@deepseek-ai/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest, AgentTeamInbox } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceRow } from './TeamWorkspaceRow.tsx'
 import { TeamAgentsPanel } from './TeamAgentsPanel.tsx'
@@ -12,7 +12,7 @@ const INBOX_PANEL_ID = 'team-sidebar-inbox'
 const CHANNELS_PANEL_ID = 'team-sidebar-channels'
 const AGENTS_PANEL_ID = 'team-sidebar-agents'
 
-export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, selectInbox, t, useWorkspaces, loadMembers, loadInbox, loadChanges, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, t, useWorkspaces, loadMembers, loadInbox, loadChanges, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId

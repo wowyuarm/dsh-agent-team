@@ -7,8 +7,8 @@ An opt-in Cordis bundle that adds a durable, single-host Agent Team to DeepSeek 
 The bundle is intended to be installed into a DSH profile:
 
 ```sh
-dsh plugin --profile team-demo add @deepseek-ai/dsh-agent-team-bundle
-dsh --profile team-demo
+dsh plugin --profile web add @wowyuarm/dsh-agent-team
+dsh web
 ```
 
 The bundle contributes `cordis.patch.yml`; it does not modify the Harness installation or enable itself in shipped defaults. It mounts a bundle-private, isolated AgentPresets roster containing `team-member`, so `dsh plugin add` needs no source patch, preset copy, or profile root configuration. Ordinary DSH Sessions keep using the profile's shipped/user preset roster.
@@ -16,15 +16,15 @@ The bundle contributes `cordis.patch.yml`; it does not modify the Harness instal
 For local development:
 
 ```sh
-dsh plugin --profile team-demo add /absolute/path/to/dsh-agent-team
-dsh --profile team-demo
+dsh plugin --profile web add /absolute/path/to/dsh-agent-team
+dsh web
 ```
 
 The profile must include the Harness packages that provide the injected services used by the selected composition. Published packages provide built artifacts. Git installs require a self-contained `prepare` script and an explicit pnpm build allowance.
 
 ## Composition
 
-The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Thread Inbox. The command package registers `/team`. The shipped opt-in `team-member` preset provides Team guidance and the membership-authorized `team_inbox`, `team_thread`, `team_message`, `team_claim`, and `team_view` tools, plus an isolated compaction service. The Host patch mounts both invariant companions. The implemented pull-based protocol is documented in [`docs/team-collaboration.md`](docs/team-collaboration.md).
+The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Thread Inbox. The Web Client is the Human control surface. The shipped opt-in `team-member` preset provides Team guidance and the membership-authorized `team_inbox`, `team_thread`, `team_message`, `team_claim`, and `team_view` tools, plus an isolated compaction service. The Host patch mounts its invariant companion. The implemented pull-based protocol is documented in [`docs/team-collaboration.md`](docs/team-collaboration.md).
 
 The bundle consumes the profile's existing Host providers instead of replacing them: `agents`, default model selection, `tools`, filesystem/shell, sandbox policy, Session store/persistence, Workspace registry, and storage remain singletons. Team-managed sessions persist `danger-full-access`; ordinary sessions keep the profile's normal policy. A conflicting preset tool registration fails inside unpublished setup and makes only that Member unavailable.
 
@@ -53,4 +53,4 @@ This repository targets the public DSH plugin and bundle interfaces. Installed u
 
 ## Known Limitations and Deferred Work
 
-M1 is complete. The bundle is single-host and opt-in. It does not provide distributed consensus, Team direct messages, nested Threads, automatic semantic deduplication of Directions, or model-processing acknowledgement beyond durable Inbox admission. The preset intentionally grants Team Members `danger-full-access`; select it only for trusted workspaces.
+The bundle is single-host and opt-in. It does not provide distributed consensus, Team direct messages, nested Threads, automatic semantic deduplication of Directions, or model-processing acknowledgement beyond durable Inbox admission. It requires DSH `0.1.0-rc.8`; upgrading an older DSH SQLite session database means deleting it and starting fresh because DSH rc.8 rejects the old Session schema. The Team ledger deliberately adds no migration or compatibility path. The preset intentionally grants Team Members `danger-full-access`; select it only for trusted workspaces.

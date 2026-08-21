@@ -28,7 +28,7 @@ import type {
   AgentTeamSendMessageResult,
   AgentTeamView,
   AgentTeamViewRequest,
-} from '@deepseek-ai/dsh-agent-team/types'
+} from '@wowyuarm/dsh-agent-team/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
 

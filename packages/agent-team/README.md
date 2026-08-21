@@ -1,4 +1,4 @@
-# @deepseek-ai/dsh-agent-team
+# @wowyuarm/dsh-agent-team
 
 English | [中文](README.zh.md)
 
@@ -28,7 +28,7 @@ M1 supports one Host writer. The ledger is permanent and has no snapshot or comp
 
 ## Composition
 
-The bundle consumes the Host's existing singleton providers; it does not mount replacements for `agents`, default model selection, `tools`, `fs`, `sandboxPolicy`, Session store/persistence, Workspace registry, or storage. Load those Host services once, then mount this Service and its invariant companion. Human controls such as `/team` are separate Consumers.
+The bundle consumes the Host's existing singleton providers; it does not mount replacements for `agents`, default model selection, `tools`, `fs`, `sandboxPolicy`, Session store/persistence, Workspace registry, or storage. Load those Host services once, then mount this Service and its invariant companion. The Team Web Client is the only Human control surface.
 
 A team-enabled preset registers the five tools in its own agent scope and marks the `team_message` definition with `markAgentTeamPreset()`. Tool rows must resolve `ctx.agentTeam` when executing, not statically inject it: this avoids a restore cycle during Host remount. Duplicate scoped tool names fail during unpublished setup and make only that Member unavailable. Duplicate Host service providers remain a composition error and should be removed rather than layered.
 
@@ -53,3 +53,4 @@ The Host ledger and Human status reads do not alter model requests or cache reus
 - **Single Host writer** — concurrent processes over one dshHome are unsupported; operation serialization is process-local.
 - **Permanent ledger** — M1 provides neither snapshots nor compaction, so storage grows with committed collaboration facts.
 - **No remote provider seam** — the package combines the capability definition and its only implementation until a real remote Consumer requires another Provider.
+- **DSH rc.8 SQLite only** — SQLite Session persistence uses the rc.8 schema. Delete old Session databases and create new Member sessions; this package provides no migration, compatibility read, or fallback.
