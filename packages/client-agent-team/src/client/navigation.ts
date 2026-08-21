@@ -3,7 +3,7 @@ import type { AgentTeamChannelRef, AgentTeamTaskRef, AgentTeamThreadRef } from '
 
 export type TeamMode = 'conversation' | 'team'
 
-export type TeamWorkspaceTab = 'inbox' | 'channels' | 'agents'
+export type TeamWorkspaceTab = 'channels' | 'agents'
 
 export interface TeamNavigationSnapshot {
   mode: TeamMode
@@ -18,16 +18,16 @@ export interface TeamNavigationSnapshot {
 const STORAGE_KEY = 'dsh.agent-team.navigation'
 
 function readSnapshot(): TeamNavigationSnapshot {
-  if (typeof localStorage === 'undefined') return { mode: 'conversation', activeTab: 'inbox' }
+  if (typeof localStorage === 'undefined') return { mode: 'conversation', activeTab: 'channels' }
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '') as Partial<TeamNavigationSnapshot>
     return {
       mode: parsed.mode === 'team' ? 'team' : 'conversation',
-      activeTab: 'inbox',
+      activeTab: 'channels',
       ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId as WorkspaceId } : {}),
     }
   } catch {
-    return { mode: 'conversation', activeTab: 'inbox' }
+    return { mode: 'conversation', activeTab: 'channels' }
   }
 }
 
@@ -47,7 +47,6 @@ export interface TeamNavigationActions {
   selectWorkspace: (workspaceId: WorkspaceId) => void
   selectWorkspaceTab: (tab: TeamWorkspaceTab) => void
   selectChannel: (channelRef: AgentTeamChannelRef) => void
-  selectInbox: () => void
   selectThread: (taskRef: AgentTeamTaskRef, threadRef: AgentTeamThreadRef, channelRef?: AgentTeamChannelRef, taskNumber?: number) => void
   backToWorkspace: () => void
 }
@@ -71,7 +70,6 @@ export class TeamNavigation {
       selectWorkspace: workspaceId => { this.setWorkspace(workspaceId) },
       selectWorkspaceTab: tab => { this.setTab(tab) },
       selectChannel: channelRef => { this.setChannel(channelRef) },
-      selectInbox: () => { this.setTab('inbox') },
       selectThread: (taskRef, threadRef, channelRef, taskNumber) => { this.setThread(taskRef, threadRef, channelRef, taskNumber) },
       backToWorkspace: () => { this.setThread(undefined) },
     }
@@ -90,7 +88,7 @@ export class TeamNavigation {
   private setWorkspace(workspaceId: WorkspaceId): void {
     if (this.snapshot.workspaceId === workspaceId) return
     const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
-    this.snapshot = { ...base, workspaceId, activeTab: 'inbox' }
+    this.snapshot = { ...base, workspaceId, activeTab: 'channels' }
     this.commit()
   }
 

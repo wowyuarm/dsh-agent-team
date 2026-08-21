@@ -16,8 +16,6 @@ import type {
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
   AgentTeamConfirmationRequired,
-  AgentTeamInbox,
-  AgentTeamInboxRequest,
   AgentTeamThreadHistory,
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadReadRequest,
@@ -43,7 +41,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & {
     navigation: TeamNavigationSource
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
-    loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
     loadChanges: (request: AgentTeamChangesRequest) => Promise<RemoteResult<AgentTeamChangesResult>>
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
@@ -57,7 +54,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
 export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & TeamNavigationActions & {
   navigation: TeamNavigationSource
   loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
-  loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   readThread: (request: AgentTeamThreadReadRequest) => Promise<RemoteResult<AgentTeamThreadReadResult>>
   loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => Promise<RemoteResult<AgentTeamThreadHistory>>
   loadChanges: (request: AgentTeamChangesRequest) => Promise<RemoteResult<AgentTeamChangesResult>>

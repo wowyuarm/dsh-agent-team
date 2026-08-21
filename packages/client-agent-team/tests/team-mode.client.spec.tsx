@@ -114,12 +114,6 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     viewItems = viewItems.map(item => ({ ...item, task, thread }))
     return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
-  const inbox = vi.fn(async (_request: { workspaceId: string }) => ({ ok: true as const, value: {
-    items: viewItems.filter(item => (item.task as { channelRef?: string }).channelRef !== undefined).map(item => ({
-      channelRef: (item.task as { channelRef: string }).channelRef, task: item.task, thread: item.thread,
-      unreadCount: 1, directCount: 1, newestSequence: (item.message as { sequence: number }).sequence,
-    })), totalUnreadCount: viewItems.length > 0 ? 1 : 0, totalDirectCount: viewItems.length > 0 ? 1 : 0,
-  } }))
   let nextRemainingUnreadCount = options?.remainingUnreadCount ?? 0
   const readThread = vi.fn(async ({ taskRef }: { taskRef: string }) => {
     const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
@@ -148,7 +142,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
@@ -167,7 +161,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, inbox, readThread, loadThreadHistory }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, readThread, loadThreadHistory }
 }
 
 describe('rendered Team mode composition', () => {
@@ -178,8 +172,8 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => expect(document.documentElement.dataset.agentTeamMode).toBe('team'))
     expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
-    expect(await b.view.findByRole('heading', { name: 'Inbox' })).toBeTruthy()
-    expect(b.view.getByText('Alpha')).toBeTruthy()
+    expect(await b.view.findByRole('heading', { name: '频道' })).toBeTruthy()
+    expect(b.view.getAllByText('Alpha')).toHaveLength(2)
     expect(b.view.queryByText('设置')).toBeNull()
     const membersTrigger = b.view.getByRole('button', { name: '成员' })
     const delayedMembers = Promise.withResolvers<Awaited<ReturnType<typeof b.members>>>()
@@ -331,9 +325,6 @@ describe('rendered Team mode composition', () => {
     expect(b.view.queryByText('任务消息')).toBeNull()
     expect(b.view.getByText('待处理')).toBeTruthy()
     expect(b.view.getByText('1 条消息')).toBeTruthy()
-    fireEvent.click(b.view.getByRole('tab', { name: 'Inbox' }))
-    await waitFor(() => expect(b.view.getByRole('button', { name: /1 条未读更新, 1 条直接请求/ })).toBeTruthy())
-    fireEvent.click(b.view.getByRole('tab', { name: '频道' }))
     b.publishAgentReply()
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
@@ -374,11 +365,11 @@ describe('rendered Team mode composition', () => {
 
   it('restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'stale' })
-    expect(await b.view.findByRole('heading', { name: 'Inbox' })).toBeTruthy()
+    expect(await b.view.findByRole('heading', { name: '频道' })).toBeTruthy()
     await vi.waitFor(() => expect(b.runtime.ctx.teamNavigation.getSnapshot().workspaceId).toBe('w1'))
 
     fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
-    await waitFor(() => { expect(b.view.queryByText('Alpha')).toBeNull() })
+    await waitFor(() => { expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy() })
     expect(b.view.getByRole('button', { name: '对话' })).toBeTruthy()
     expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy()
     expect(b.view.queryByRole('button', { name: '新建工作区' })).toBeNull()

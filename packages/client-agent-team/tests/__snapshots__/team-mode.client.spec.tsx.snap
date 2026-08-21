@@ -83,23 +83,9 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
               class="railWorkspace"
             >
               <button
-                aria-label="Inbox"
-                class="railButton"
-                data-active="true"
-                type="button"
-              >
-                <svg
-                  data-content="f869e73c"
-                  fill="none"
-                  height="16"
-                  viewBox="0 0 14 14"
-                  width="16"
-                  xmlns="http://www.w3.org/2000/svg"
-                />
-              </button>
-              <button
                 aria-label="频道"
                 class="railButton"
+                data-active="true"
                 type="button"
               >
                 <svg
@@ -190,31 +176,24 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
       style="display: contents;"
     >
       <main
-        class="surface"
-        data-team-inbox="true"
+        class="welcomeSurface"
+        data-team-conversation="true"
       >
-        <header
-          class="header"
+        <div
+          class="welcome"
         >
-          <div>
-            <h1>
-              Inbox
-            </h1>
-            <p>
-              没有待处理更新
-            </p>
-          </div>
-        </header>
-        <section
-          aria-label="Inbox"
-          class="list"
-        >
-          <p
-            class="state"
+          <span
+            class="welcomeEyebrow"
           >
-            没有待处理更新
+            Alpha
+          </span>
+          <h1>
+            频道
+          </h1>
+          <p>
+            选择工作区 · Alpha
           </p>
-        </section>
+        </div>
       </main>
     </div>
   </div>

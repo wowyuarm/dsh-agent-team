@@ -362,7 +362,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Human's body-free Workspace Inbox. */
+  /** Host-only Human Inbox projection; the Web Client does not consume it. */
   @Remote('inbox')
   inbox(request: AgentTeamInboxRequest): AgentTeamInbox {
     this.requireWorkspace(request.workspaceId)

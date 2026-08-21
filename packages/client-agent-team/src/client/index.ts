@@ -3,7 +3,6 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamSendMessageRequest,
   AgentTeamChangesRequest,
-  AgentTeamInboxRequest,
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadReadRequest,
   AgentTeamCreateChannelRequest,
@@ -73,7 +72,6 @@ function registerModeShadow<T extends object>(
             ...navigation.actions(),
             ...(name === 'conversation' ? {
               loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
-              loadInbox: (request: AgentTeamInboxRequest) => ctx.remote.agentTeam.inbox(request),
               readThread: (request: AgentTeamThreadReadRequest) => ctx.remote.agentTeam.readThread(request),
               loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
               loadChanges: (request: AgentTeamChangesRequest) => ctx.remote.agentTeam.changes(request),
@@ -86,7 +84,6 @@ function registerModeShadow<T extends object>(
             } : {}),
             ...(name === 'sidebar.workspaces' ? {
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
-              loadInbox: (request: AgentTeamInboxRequest) => ctx.remote.agentTeam.inbox(request),
               loadChanges: (request: AgentTeamChangesRequest) => ctx.remote.agentTeam.changes(request),
               addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
               loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),

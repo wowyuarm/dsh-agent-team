@@ -30,13 +30,13 @@ While Attention is active, Messages, Claim changes, and Task accept/close/reopen
 
 The first read in an Attention period returns the Task anchor, current Task state, current Claim snapshot, limited recent background, and the bounded unread batch. Background facts are orientation only and are marked as already read. `team_thread.history` is the only tool for paging older Thread facts.
 
-The Human Client opens the Workspace Inbox first. Inbox rows are Host projections ordered with direct requests first and show both the total unread count and direct-request count. Opening a row performs the durable Human Thread read. A bounded read that leaves unread facts exposes an explicit continue-reading action. The current Thread surface shows public revisioned facts, Claims, and runtime risk, but intentionally does not render follow/unfollow buttons or Human-only follow/unfollow observations. History paging and passive change polling do not acknowledge new work; the user must explicitly read the new batch.
+The Human Client opens the Channels workspace by default. Human navigation follows Workspace → Channel → Task → Thread; the Client does not display, enter, or poll a Human Inbox. Opening a Task Thread performs the durable Human Thread read. A bounded read that leaves unread facts exposes an explicit continue-reading action. The current Thread surface shows public revisioned facts, Claims, and runtime risk, but intentionally does not render follow/unfollow buttons or Human-only follow/unfollow observations. History paging and passive change polling do not acknowledge new work; the user must explicitly read the new batch.
 
 ## Structured mentions
 
 Recipients are selected with Member refs. Text such as `@name` has no mention semantics.
 
-An Agent may mention the Human Member without making the Human a follower. An Agent may mention another Agent only when that Agent already follows the Thread. Otherwise `team_message` returns `member_not_following`, commits no Message, and issues no confirmation token. Human invitation and its confirmation flow are Host-owned behavior; the Human Inbox and composer presentation are delivered separately.
+An Agent may mention the Human Member without making the Human a follower. An Agent may mention another Agent only when that Agent already follows the Thread. Otherwise `team_message` returns `member_not_following`, commits no Message, and issues no confirmation token. Human invitation and its confirmation flow are Host-owned behavior; the Human composer presentation is delivered separately. Agent Inbox delivery remains Host-owned and is consumed through `team_inbox`.
 
 ## Mutation fences
 
@@ -52,7 +52,7 @@ Human close releases active Claims, ends Attention, and stops ordinary delivery.
 
 ## Human Remote boundary
 
-The Human Client Remote surface exposes `inbox`, `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`. `threadObservations` is a non-mutating Human-only projection of follow/unfollow Attention transitions for one Thread, while `changeAttention` mutates that durable state. The current Thread UI does not call or render either Attention control/observation path; they remain available for later UI and Agent workflows. The Client stores only navigation mode and Workspace selection locally; unread state, Attention, revisions, and observations remain Host-owned.
+The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`; it does not call the Host's Human Inbox projection. `threadObservations` is a non-mutating Human-only projection of follow/unfollow Attention transitions for one Thread, while `changeAttention` mutates that durable state. The current Thread UI does not call or render either Attention control/observation path; they remain available for later UI and Agent workflows. The Client stores only navigation mode and Workspace selection locally; unread state, Attention, revisions, and observations remain Host-owned.
 
 ## Team Member context boundary
 
@@ -70,6 +70,6 @@ Pending hints are coalesced per Member. A consumed or ignored hint does not caus
 
 ## Assembled acceptance
 
-`npm run test:browser` uses the credential-free Harness Web scaffold to verify the public Client and Host chain. The representative trace begins with an existing Thread, requires Human's second-send confirmation to invite an unfollowed Agent, verifies the Agent's durable Inbox and explicit read/reply, then verifies Human Inbox and Thread state. A page reload reads the same facts from Host projections before the journey leaves Team mode and confirms the ordinary DSH conversation surface is restored.
+`npm run test:browser` uses the credential-free Harness Web scaffold to verify the public Client and Host chain. The representative trace begins with an existing Thread, requires Human's second-send confirmation to invite an unfollowed Agent, verifies the Agent's durable Inbox and explicit read/reply, then verifies the Human Channel and Thread state. A page reload reads the same facts from Host projections before the journey leaves Team mode and confirms the ordinary DSH conversation surface is restored.
 
 Browser storage remains limited to navigation and Workspace selection. The acceptance trace does not derive unread, Attention, or Thread facts from local storage or Member Session relay text. Agent safe-boundary wake and the body-free hint are covered separately by the real Agent-loop integration tests in `packages/agent-team/tests/member-lifecycle.spec.ts`; browser replay does not depend on live provider behavior.

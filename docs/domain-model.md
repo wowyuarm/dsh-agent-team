@@ -50,7 +50,7 @@ Claim 的自由文本工作方向。比较时执行 Unicode 规范化、首尾�
 
 ## Thread Inbox
 
-Team ledger 从 Thread Attention 与 direct mention 派生的成员级未读投影。普通 Message、Claim 变化和 Task resolution 变化只对当前 follower 形成 ordinary unread；structured mention 形成 direct unread。`team_inbox` 返回跨 Thread 摘要，`team_thread.read` 原子返回连续未读批次并推进 watermark，`team_thread.history` 只回看历史。Inbox 是 Host 权威，不是 Agent Session queue、浏览器状态或 per-message read 表。
+Team ledger 从 Thread Attention 与 direct mention 派生的成员级未读投影。普通 Message、Claim 变化和 Task resolution 变化只对当前 follower 形成 ordinary unread；structured mention 形成 direct unread。`team_inbox` 返回跨 Thread 摘要，`team_thread.read` 原子返回连续未读批次并推进 watermark，`team_thread.history` 只回看历史。Inbox 是 Host 权威，不是 Agent Session queue、浏览器状态或 per-message read 表。Human Web 不提供 Inbox 界面；它从 Channel 直接浏览和打开 Thread。
 
 ## Follow
 

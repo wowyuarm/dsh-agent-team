@@ -176,19 +176,18 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(reviewerReply.kind).toBe('committed')
 
   await page.getByRole('button', { name: '返回频道' }).click()
-  await page.getByRole('tab', { name: 'Inbox' }).click()
   await page.getByRole('button', { name: /Task #1/ }).waitFor()
   await page.reload()
-  await page.getByRole('heading', { name: 'Inbox' }).waitFor({ timeout: 20_000 })
+  await page.getByRole('tab', { name: '频道' }).click()
+  await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByRole('button', { name: /Task #1/ }).click()
   await page.getByText('reviewer 已读取邀请并回复 Human', { exact: true }).waitFor()
-  await expect.poll(() => scaffold!.ctx.agentTeam.inbox({ workspaceId: workspace.id }).totalUnreadCount).toBe(0)
 
   const replayedThread = scaffold.ctx.agentTeam.threadHistory({ workspaceId: workspace.id, taskRef: task.taskRef, limit: 100 })
   expect(JSON.stringify(replayedThread)).toContain('请 reviewer 加入这个已有 Thread 并回复 Human @reviewer')
   expect(JSON.stringify(replayedThread)).toContain('reviewer 已读取邀请并回复 Human')
 
-  await page.getByRole('tab', { name: '频道' }).click()
+  await page.getByRole('button', { name: '返回频道' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByRole('button', { name: /Task #1/ }).click()
   const agentRead = await scaffold.ctx.agentTeam.readThreadForAgent(agent, {
