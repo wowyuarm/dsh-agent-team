@@ -44,6 +44,7 @@ Keep production code self-explanatory through clear names, types, and structure.
 - Do not hand-edit generated `tsconfig*.json` path facades. Change `scripts/sync-paths.mjs` and regenerate.
 - Update the affected maintained document, package README, and tests when a non-trivial change alters a public contract or workflow. Do not update archived `.scratch/` material merely to make it agree with new code.
 - For visible UI changes, run the applicable component checks and `npm run test:browser`, inspect the new `artifacts/browser/` screenshots at desktop and 390×844, and verify keyboard/focus, dialog/menu accessibility, loading/error/empty states, and ordinary DSH restoration. Keep only a small, human-approved milestone set under `.scratch/archive/.../validation/`; routine screenshots stay ignored.
+- Write each commit message as one Conventional Commits subject line: `type: lowercase imperative summary` (`feat`, `fix`, `chore`, `refactor`, `test`, `perf`, `docs`), with no body. Match the existing `git log` style.
 - Do not commit credentials, temporary profiles, browser overlays, generated test files, browser artifacts, or build residue.
 
 ## Checks
