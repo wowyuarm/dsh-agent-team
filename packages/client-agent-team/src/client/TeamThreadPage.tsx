@@ -32,7 +32,7 @@ interface TeamThreadPageProps {
   readonly loadChannels: TeamConversationProps['loadChannels']
   readonly readThread: TeamConversationProps['readThread']
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
-  readonly loadChanges: TeamConversationProps['loadChanges']
+  readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
@@ -71,7 +71,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, channelRef, taskRef, threadRef, taskNumber, originTab, backToWorkspace,
     loadChannels, readThread, loadThreadHistory,
-    loadChanges, loadMembers, reply, changeTask, t,
+    subscribeChanges, loadMembers, reply, changeTask, t,
   } = props
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
@@ -168,7 +168,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   }
 
   useEffect(() => {
-    let active = true
     mountedRef.current = true
     setProjection(undefined)
     setChannelView(undefined)
@@ -183,12 +182,24 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setNewFactsCount(0)
     setError(undefined)
     setStatusMessage(undefined)
+    const sequence = sequenceRef.current + 1
+    sequenceRef.current = sequence
+    setLoading(true)
     void (async () => {
-      const read = await readCurrent()
-      if (!read || !active) return
-      try {
-        const history = await loadThreadHistory({ workspaceId, taskRef, limit: 20 })
-        if (!active || !history.ok) return
+      // One parallel round covers the whole first paint. The durable read no
+      // longer wakes any change scope, so no second wave follows it.
+      const [read, history] = await Promise.all([
+        readThread({ requestId: readRequestIdRef.current, workspaceId, taskRef }),
+        loadThreadHistory({ workspaceId, taskRef, limit: 20 }).catch(() => undefined),
+      ])
+      if (!mountedRef.current || sequence !== sequenceRef.current) return
+      if (!read.ok) {
+        setError(read.error.message)
+        setLoading(false)
+        return
+      }
+      updateProjection(read.value)
+      if (history !== undefined && history.ok) {
         setCurrentFacts(current => {
           const merged = mergeFacts(current, history.value.facts)
           currentFactsRef.current = merged
@@ -196,32 +207,27 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         })
         setHistoryCursor(history.value.cursor)
         setHistoryHasMore(history.value.hasMore)
-      } catch {
-        // The initial read remains usable when optional older history is unavailable.
       }
+      setError(undefined)
+      setLoading(false)
     })()
     void refreshSupplemental()
-    void (async () => {
-      let version = 0
-      while (active) {
-        try {
-          const changed = await loadChanges({ afterVersion: version })
-          if (!active) return
-          if (!changed.ok) { setError(changed.error.message); return }
-          if (changed.value.version > version) {
-            version = changed.value.version
-            await Promise.all([refreshSupplemental(), refreshPassiveFacts()])
-          }
-        } catch (cause) {
-          if (active) setError(cause instanceof Error ? cause.message : String(cause))
-          return
-        }
-      }
-    })()
+    const disposers = [
+      subscribeChanges({ kind: 'thread', threadRef }, update => {
+        if (!mountedRef.current) return
+        if (update.type === 'failed') { setError(update.message); return }
+        void refreshPassiveFacts()
+      }),
+      subscribeChanges({ kind: 'workspace', workspaceId }, update => {
+        if (!mountedRef.current) return
+        if (update.type === 'failed') { setError(update.message); return }
+        void refreshSupplemental()
+      }),
+    ]
     return () => {
-      active = false
       mountedRef.current = false
       sequenceRef.current += 1
+      for (const dispose of disposers) dispose()
     }
   }, [workspaceId, taskRef, threadRef])
 

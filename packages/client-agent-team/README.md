@@ -12,7 +12,7 @@ The Client uses these Host projections and mutations:
 
 - `readThread` acknowledges a Thread batch.
 - `threadHistory` pages older facts without marking them read.
-The Host Remote also exposes `threadObservations` and `changeAttention` for future UI and Agent workflows; the current Human Thread surface does not render these controls or observations. `changes` provides lightweight invalidation for Channel and Thread refresh.
+The Host Remote also exposes `threadObservations` and `changeAttention` for future UI and Agent workflows; the current Human Thread surface does not render these controls or observations. `changes` provides lightweight scoped invalidation: each request declares one `scope` (workspace, channel, or thread) and only matching events wake its long-poll; a Thread read commits durably but wakes nobody because it changes no shared projection. The client shares one abortable long-poll per scope through `TeamChangeStream`, so panels and pages never open parallel `changes` requests, and the poll is aborted when the last subscriber leaves. Opening a Task Thread issues one parallel round (`readThread`, bounded history, members, channel view) with no self-triggered second wave.
 
 Only Team mode and selected Workspace are persisted in browser storage. Attention, unread counts, revisions, observations, and Thread facts remain Host-owned. Durable mutations are refreshed from Host after commit or rejection.
 

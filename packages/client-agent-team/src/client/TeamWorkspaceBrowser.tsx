@@ -11,7 +11,7 @@ import css from './sidebar.module.css'
 const CHANNELS_PANEL_ID = 'team-sidebar-channels'
 const AGENTS_PANEL_ID = 'team-sidebar-agents'
 
-export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, t, useWorkspaces, loadMembers, loadChanges, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
+export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, selectWorkspaceTab, selectChannel, t, useWorkspaces, loadMembers, subscribeChanges, addMember, loadChannels, createChannel, joinChannel, removeChannelMember }: TeamSidebarProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const selected = navigationState.workspaceId
@@ -56,7 +56,7 @@ export function TeamWorkspaceBrowser({ wide, navigation, selectWorkspace, select
         </button>)}
       </div>
       <div id={panelId} className={css.panel} role="tabpanel" aria-labelledby={`team-tab-${currentTab.tab}`}>
-        {currentTab.tab === 'agents' && <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} loadChanges={loadChanges} loadChannels={loadChannels} addMember={addMember} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />}
+        {currentTab.tab === 'agents' && <TeamAgentsPanel workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} loadChannels={loadChannels} addMember={addMember} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />}
         {currentTab.tab === 'channels' && <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} createChannel={createChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />}
       </div>
     </div>}

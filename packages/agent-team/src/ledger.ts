@@ -8,6 +8,7 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamChannel,
+  AgentTeamChangeScope,
   AgentTeamChannelCreatedOperation,
   AgentTeamChannelMemberAddedOperation,
   AgentTeamChannelMemberRemovedOperation,
@@ -206,33 +207,44 @@ interface PreparedRead {
 
 interface Projection {
   readonly byRequest: Map<AgentTeamRequestId, AgentTeamOperation>
+  readonly byOperation: Map<AgentTeamOperationId, AgentTeamOperation>
   readonly ordered: AgentTeamOperation[]
   readonly channels: Map<AgentTeamChannelRef, AgentTeamChannel>
   readonly members: Map<AgentTeamMemberId, AgentTeamAgentMember>
   readonly memberships: Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>
   readonly claims: Map<AgentTeamClaimRef, AgentTeamClaim>
-  readonly activities: AgentTeamActivity[]
   readonly messages: AgentTeamMessage[]
   readonly tasks: Map<AgentTeamTaskRef, AgentTeamTask>
   readonly threads: Map<AgentTeamThreadRef, AgentTeamThread>
   readonly attention: Map<string, AgentTeamThreadAttention>
   readonly directMarkers: Map<string, AgentTeamDirectMarker>
+  /** Derived read indexes; rebuilt by replay, never a second durable authority. */
+  readonly orderedFacts: AgentTeamThreadFact[]
+  readonly factsByThread: Map<AgentTeamThreadRef, AgentTeamThreadFact[]>
+  readonly topLevelMessages: AgentTeamMessage[]
+  readonly messageCountByThread: Map<AgentTeamThreadRef, number>
+  readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
 }
 
 /** Replay and append logic behind the Agent Team service interface. */
 export class AgentTeamLedger {
   private readonly byRequest = new Map<AgentTeamRequestId, AgentTeamOperation>()
+  private readonly byOperation = new Map<AgentTeamOperationId, AgentTeamOperation>()
   private readonly ordered: AgentTeamOperation[] = []
   private readonly channels = new Map<AgentTeamChannelRef, AgentTeamChannel>()
   private readonly members = new Map<AgentTeamMemberId, AgentTeamAgentMember>()
   private readonly memberships = new Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>()
   private readonly claims = new Map<AgentTeamClaimRef, AgentTeamClaim>()
-  private readonly activities: AgentTeamActivity[] = []
   private readonly messages: AgentTeamMessage[] = []
   private readonly tasks = new Map<AgentTeamTaskRef, AgentTeamTask>()
   private readonly threads = new Map<AgentTeamThreadRef, AgentTeamThread>()
   private readonly attention = new Map<string, AgentTeamThreadAttention>()
   private readonly directMarkers = new Map<string, AgentTeamDirectMarker>()
+  private readonly orderedFacts: AgentTeamThreadFact[] = []
+  private readonly factsByThread = new Map<AgentTeamThreadRef, AgentTeamThreadFact[]>()
+  private readonly topLevelMessages: AgentTeamMessage[] = []
+  private readonly messageCountByThread = new Map<AgentTeamThreadRef, number>()
+  private readonly attentionByThread = new Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>()
   private readonly confirmations = new Map<AgentTeamConfirmationToken, Confirmation>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
@@ -534,7 +546,9 @@ export class AgentTeamLedger {
       } else {
         if (request.direction !== undefined) throw new Error(`${request.action} action does not accept direction`)
         const previous = request.claimRef === undefined ? undefined : this.claims.get(request.claimRef)
-        if (previous === undefined) throw new Error(`unknown Claim '${request.claimRef ?? ''}'`)
+        if (previous === undefined) {
+          throw new Error(`unknown Claim '${request.claimRef ?? ''}'${request.claimRef === undefined ? '' : this.unknownRefHint(request.claimRef, 'claim', 'Claim')}`)
+        }
         if (previous.taskRef !== task.taskRef || previous.owner !== actor.memberId) {
           throw new Error('Member can modify only its own Claim on this Task')
         }
@@ -860,7 +874,7 @@ export class AgentTeamLedger {
       const task = this.requireTask(request.workspaceId, message.taskRef)
       const thread = this.requireThread(message.threadRef)
       return Object.freeze({ message, task, thread, taskNumber: taskNumbers.get(task.taskRef) ?? 0,
-        messageCount: this.messages.filter(candidate => candidate.threadRef === thread.threadRef).length })
+        messageCount: this.messageCountByThread.get(thread.threadRef) ?? 0 })
     })
     const initialization = this.initialization()
     const nextCursor = selected.length === 0 ? cursor : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
@@ -892,6 +906,93 @@ export class AgentTeamLedger {
 
   hasCommitted(requestId: AgentTeamRequestId): boolean {
     return this.byRequest.has(requestId)
+  }
+
+  /** Return one stored committed operation by id. */
+  getOperation(operationId: AgentTeamOperationId): AgentTeamOperation | undefined {
+    return this.byOperation.get(operationId)
+  }
+
+  /** Scopes whose projections one committed operation invalidates; undefined wakes every waiter. */
+  changeScopesOf(operation: AgentTeamOperation): readonly AgentTeamChangeScope[] | undefined {
+    switch (operation.kind) {
+      case 'team/initialized':
+        return undefined
+      case 'team/channel-created':
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }]
+      case 'team/member-added':
+      case 'team/member-suspended':
+      case 'team/member-resumed':
+      case 'team/member-removed':
+        return [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
+      case 'team/channel-member-added':
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'channel', channelRef: operation.data.channelRef }]
+      case 'team/channel-member-removed': {
+        const channelByTask = new Map(operation.data.tasks.map(task => [task.taskRef, task.channelRef]))
+        const scopes: AgentTeamChangeScope[] = [
+          { kind: 'workspace', workspaceId: operation.data.workspaceId },
+          { kind: 'channel', channelRef: operation.data.channelRef },
+        ]
+        for (const activity of operation.data.activities) {
+          scopes.push({ kind: 'thread', threadRef: activity.threadRef })
+          const channelRef = channelByTask.get(activity.taskRef)
+          if (channelRef !== undefined && !scopes.some(scope => scope.kind === 'channel' && scope.channelRef === channelRef)) {
+            scopes.push({ kind: 'channel', channelRef })
+          }
+        }
+        return scopes
+      }
+      case 'team/message-sent':
+      case 'team/thread-replied':
+        return [{ kind: 'channel', channelRef: operation.data.message.channelRef }, { kind: 'thread', threadRef: operation.data.message.threadRef }]
+      case 'team/claim-created':
+      case 'team/claim-done':
+      case 'team/claim-released':
+      case 'team/task-changed':
+        return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
+      case 'team/thread-attention-changed':
+        return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
+      case 'team/thread-read':
+        // A read advances only the reader's private watermark; no projection
+        // visible to other participants changes, so nobody is woken.
+        return []
+    }
+  }
+
+  /** Members whose Inbox projection may have changed; the Host notifies only live ones. */
+  affectedMembersOf(operation: AgentTeamOperation): readonly AgentTeamMemberId[] {
+    const members = new Set<AgentTeamMemberId>()
+    const delta = this.attentionDelta(operation)
+    if (delta !== undefined) {
+      for (const attention of delta.attention.set) members.add(attention.memberId)
+      for (const key of delta.attention.removed) members.add(key.memberId)
+      for (const marker of delta.directMarkers.added) members.add(marker.memberId)
+      for (const marker of delta.directMarkers.removed) members.add(marker.memberId)
+    }
+    for (const threadRef of this.touchedThreadRefs(operation)) {
+      for (const follower of this.attentionByThread.get(threadRef) ?? []) members.add(follower)
+    }
+    if (operation.actor.kind === 'member') members.add(operation.actor.memberId)
+    return [...members]
+  }
+
+  private touchedThreadRefs(operation: AgentTeamOperation): readonly AgentTeamThreadRef[] {
+    switch (operation.kind) {
+      case 'team/message-sent':
+      case 'team/thread-replied':
+        return [operation.data.message.threadRef]
+      case 'team/claim-created':
+      case 'team/claim-done':
+      case 'team/claim-released':
+      case 'team/task-changed':
+      case 'team/thread-attention-changed':
+        return [operation.data.thread.threadRef]
+      case 'team/channel-member-removed':
+      case 'team/member-removed':
+        return operation.data.activities.map(activity => activity.threadRef)
+      default:
+        return []
+    }
   }
 
   private replay(): void {
@@ -1265,23 +1366,29 @@ export class AgentTeamLedger {
   private projection(): Projection {
     return {
       byRequest: this.byRequest,
+      byOperation: this.byOperation,
       ordered: this.ordered,
       channels: this.channels,
       members: this.members,
       memberships: this.memberships,
       claims: this.claims,
-      activities: this.activities,
       messages: this.messages,
       tasks: this.tasks,
       threads: this.threads,
       attention: this.attention,
       directMarkers: this.directMarkers,
+      orderedFacts: this.orderedFacts,
+      factsByThread: this.factsByThread,
+      topLevelMessages: this.topLevelMessages,
+      messageCountByThread: this.messageCountByThread,
+      attentionByThread: this.attentionByThread,
     }
   }
 
   private applyTo(target: Projection, operation: AgentTeamOperation): void {
     target.ordered.push(operation)
     target.byRequest.set(operation.requestId, operation)
+    target.byOperation.set(operation.operationId, operation)
     if (operation.kind === 'team/initialized') return
     if (operation.kind === 'team/channel-created') {
       target.channels.set(operation.data.channel.channelRef, operation.data.channel)
@@ -1304,7 +1411,7 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/channel-member-removed') {
       target.memberships.get(operation.data.channelRef)?.delete(operation.data.memberId)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      target.activities.push(...operation.data.activities)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
       for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -1314,14 +1421,16 @@ export class AgentTeamLedger {
       target.members.set(operation.data.member.memberId, operation.data.member)
       for (const membership of target.memberships.values()) membership.delete(operation.data.member.memberId)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      target.activities.push(...operation.data.activities)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
       for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
     if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
-      target.messages.push(operation.data.message)
+      const { message } = operation.data
+      target.messages.push(message)
+      this.appendMessageFact(target, message)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -1329,7 +1438,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
       target.claims.set(operation.data.claim.claimRef, operation.data.claim)
-      target.activities.push(operation.data.activity)
+      this.appendActivityFact(target, operation.data.activity)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -1337,7 +1446,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/task-changed') {
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      target.activities.push(operation.data.activity)
+      this.appendActivityFact(target, operation.data.activity)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -1348,9 +1457,43 @@ export class AgentTeamLedger {
     }
   }
 
-  private applyInboxDelta(target: Pick<Projection, 'attention' | 'directMarkers'>, delta: AgentTeamInboxDelta): void {
-    for (const key of delta.attention.removed) target.attention.delete(this.attentionKey(key.memberId, key.threadRef))
-    for (const attention of delta.attention.set) target.attention.set(this.attentionKey(attention.memberId, attention.threadRef), attention)
+  /** Facts arrive in ledger sequence order, so global and per-thread lists stay sorted by append only. */
+  private appendMessageFact(
+    target: Pick<Projection, 'orderedFacts' | 'factsByThread' | 'topLevelMessages' | 'messageCountByThread'>,
+    message: AgentTeamMessage,
+  ): void {
+    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'message', sequence: message.sequence, message })
+    target.orderedFacts.push(fact)
+    const facts = target.factsByThread.get(message.threadRef) ?? []
+    facts.push(fact)
+    target.factsByThread.set(message.threadRef, facts)
+    if (message.topLevel) target.topLevelMessages.push(message)
+    target.messageCountByThread.set(message.threadRef, (target.messageCountByThread.get(message.threadRef) ?? 0) + 1)
+  }
+
+  private appendActivityFact(target: Pick<Projection, 'orderedFacts' | 'factsByThread'>, activity: AgentTeamActivity): void {
+    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'activity', sequence: activity.sequence, activity })
+    target.orderedFacts.push(fact)
+    const facts = target.factsByThread.get(activity.threadRef) ?? []
+    facts.push(fact)
+    target.factsByThread.set(activity.threadRef, facts)
+  }
+
+  private applyInboxDelta(target: Projection, delta: AgentTeamInboxDelta): void {
+    for (const key of delta.attention.removed) {
+      target.attention.delete(this.attentionKey(key.memberId, key.threadRef))
+      const followers = target.attentionByThread.get(key.threadRef)
+      if (followers !== undefined) {
+        followers.delete(key.memberId)
+        if (followers.size === 0) target.attentionByThread.delete(key.threadRef)
+      }
+    }
+    for (const attention of delta.attention.set) {
+      target.attention.set(this.attentionKey(attention.memberId, attention.threadRef), attention)
+      const followers = target.attentionByThread.get(attention.threadRef) ?? new Set<AgentTeamMemberId>()
+      followers.add(attention.memberId)
+      target.attentionByThread.set(attention.threadRef, followers)
+    }
     for (const marker of delta.directMarkers.removed) target.directMarkers.delete(this.directMarkerKey(marker))
     for (const marker of delta.directMarkers.added) target.directMarkers.set(this.directMarkerKey(marker), marker)
   }
@@ -1362,7 +1505,7 @@ export class AgentTeamLedger {
   /** Derive the only legal durable result of one Thread read from a prior projection. */
   private prepareReadFrom(projection: Projection, memberId: AgentTeamMemberId, workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): PreparedRead {
     const task = projection.tasks.get(taskRef)
-    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownTaskRefHint(taskRef)}`)
+    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
     if (projection.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
     const thread = projection.threads.get(task.threadRef)
     if (thread === undefined) throw new Error(`unknown Thread ref '${task.threadRef}'`)
@@ -1398,10 +1541,14 @@ export class AgentTeamLedger {
     const consumed = this.directMarkersForFrom(projection, memberId, thread.threadRef)
       .filter(marker => consumedDirectMarkers.has(this.directMarkerKey(marker)))
     const inbox = this.inboxDelta(nextAttention, [], [], consumed)
+    // The hypothetical projection copies every map that its inbox delta can
+    // mutate, including the follower sets inside attentionByThread; the fact
+    // indexes are read-only here and stay shared.
     const nextProjection: Projection = {
       ...projection,
       attention: new Map(projection.attention),
       directMarkers: new Map(projection.directMarkers),
+      attentionByThread: new Map([...projection.attentionByThread].map(([threadRef, followers]) => [threadRef, new Set(followers)])),
     }
     this.applyInboxDelta(nextProjection, inbox)
     const remainingUnreadCount = this.unreadForFrom(nextProjection, memberId, thread.threadRef).length
@@ -1450,17 +1597,11 @@ export class AgentTeamLedger {
   }
 
   private threadFactsFrom(projection: Projection, threadRef: AgentTeamThreadRef): readonly AgentTeamThreadFact[] {
-    return Object.freeze([
-      ...projection.messages.filter(message => message.threadRef === threadRef).map(message => Object.freeze({ kind: 'message' as const, sequence: message.sequence, message })),
-      ...projection.activities.filter(activity => activity.threadRef === threadRef).map(activity => Object.freeze({ kind: 'activity' as const, sequence: activity.sequence, activity })),
-    ].sort((left, right) => left.sequence - right.sequence))
+    return projection.factsByThread.get(threadRef) ?? []
   }
 
   private publicFacts(): readonly AgentTeamThreadFact[] {
-    return Object.freeze([
-      ...this.messages.map(message => Object.freeze({ kind: 'message' as const, sequence: message.sequence, message })),
-      ...this.activities.map(activity => Object.freeze({ kind: 'activity' as const, sequence: activity.sequence, activity })),
-    ].sort((left, right) => left.sequence - right.sequence))
+    return this.orderedFacts
   }
 
   private messageInboxDelta(
@@ -1683,9 +1824,15 @@ export class AgentTeamLedger {
   }
 
   private taskNumbers(workspaceId: WorkspaceId, channelRef?: AgentTeamChannelRef): Map<AgentTeamTaskRef, number> {
-    return new Map(this.messages.filter(message => message.topLevel && this.channels.get(message.channelRef)?.workspaceId === workspaceId
-      && (channelRef === undefined || message.channelRef === channelRef)).sort((left, right) => left.sequence - right.sequence)
-      .map((message, index) => [message.taskRef, index + 1] as const))
+    const numbers = new Map<AgentTeamTaskRef, number>()
+    let next = 1
+    for (const message of this.topLevelMessages) {
+      if (this.channels.get(message.channelRef)?.workspaceId !== workspaceId) continue
+      if (channelRef !== undefined && message.channelRef !== channelRef) continue
+      numbers.set(message.taskRef, next)
+      next += 1
+    }
+    return numbers
   }
 
   private hasActiveClaim(memberId: AgentTeamMemberId, taskRef: AgentTeamTaskRef): boolean {
@@ -1753,27 +1900,27 @@ export class AgentTeamLedger {
   }
 
   /** Agents sometimes strip the branded prefix when echoing refs; point at the fix instead of a bare lookup failure. */
-  private unknownTaskRefHint(taskRef: AgentTeamTaskRef): string {
-    return taskRef.startsWith('task:') ? ''
-      : ` A Task ref must start with 'task:'; reuse the full ref exactly as returned by Team tools ('task:${taskRef}').`
+  private unknownRefHint(ref: string, prefix: string, label: string): string {
+    return ref.startsWith(`${prefix}:`) ? ''
+      : ` A ${label} ref must start with '${prefix}:'; reuse the full ref exactly as returned by Team tools ('${prefix}:${ref}').`
   }
 
   private requireTask(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): AgentTeamTask {
     const task = this.tasks.get(taskRef)
-    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownTaskRefHint(taskRef)}`)
+    if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
     if (this.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
     return task
   }
 
   private requireThread(threadRef: AgentTeamThreadRef): AgentTeamThread {
     const thread = this.threads.get(threadRef)
-    if (thread === undefined) throw new Error(`unknown Thread ref '${threadRef}'`)
+    if (thread === undefined) throw new Error(`unknown Thread ref '${threadRef}'${this.unknownRefHint(threadRef, 'thread', 'Thread')}`)
     return thread
   }
 
   private requireChannel(workspaceId: WorkspaceId, channelRef: AgentTeamChannelRef): AgentTeamChannel {
     const channel = this.channels.get(channelRef)
-    if (channel === undefined) throw new Error(`unknown Channel ref '${channelRef}'`)
+    if (channel === undefined) throw new Error(`unknown Channel ref '${channelRef}'${this.unknownRefHint(channelRef, 'channel', 'Channel')}`)
     if (channel.workspaceId !== workspaceId) throw new Error(`Channel '${channelRef}' does not belong to Workspace '${workspaceId}'`)
     return channel
   }
@@ -2066,8 +2213,9 @@ export class AgentTeamLedger {
   }
 
   private emptyProjection(): Projection {
-    return { byRequest: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
-      claims: new Map(), activities: [], messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map() }
+    return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
+      claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(),
+      orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], messageCountByThread: new Map(), attentionByThread: new Map() }
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

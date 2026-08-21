@@ -13,7 +13,7 @@ interface TeamChannelPageProps {
   readonly workspaceId: WorkspaceId
   readonly channelRef: AgentTeamChannelRef
   readonly loadChannels: TeamConversationProps['loadChannels']
-  readonly loadChanges: TeamConversationProps['loadChanges']
+  readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly sendMessage: TeamConversationProps['sendMessage']
   readonly joinChannel: TeamConversationProps['joinChannel']
@@ -22,7 +22,7 @@ interface TeamChannelPageProps {
   readonly t: TeamConversationProps['t']
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [draft, setDraft] = useState('')
@@ -68,8 +68,21 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
       if (mountedRef.current && sequence === refreshSequenceRef.current) setLoading(false)
     }
   }
+
+  // Presence and membership live in the workspace projection; they never need
+  // the Channel timeline refetch that a full refresh performs.
+  const refreshMembers = async () => {
+    if (!mountedRef.current) return
+    try {
+      const loaded = await loadMembers({ workspaceId })
+      if (!mountedRef.current) return
+      if (loaded.ok) setMembers(loaded.value); else setError(loaded.error.message)
+    } catch (cause) {
+      if (mountedRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   useEffect(() => {
-    let active = true
     mountedRef.current = true
     setView(undefined)
     setError(undefined)
@@ -77,27 +90,22 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, loadCha
     setRecipients(new Set())
     setManagingMembers(false)
     void refresh()
-    void (async () => {
-      let version = 0
-      while (active) {
-        try {
-          const changed = await loadChanges({ afterVersion: version })
-          if (!active) return
-          if (!changed.ok) { setError(changed.error.message); return }
-          if (changed.value.version > version) {
-            version = changed.value.version
-            await refresh()
-          }
-        } catch (cause) {
-          if (active) setError(cause instanceof Error ? cause.message : String(cause))
-          return
-        }
-      }
-    })()
+    const disposers = [
+      subscribeChanges({ kind: 'channel', channelRef }, update => {
+        if (!mountedRef.current) return
+        if (update.type === 'failed') { setError(update.message); return }
+        void refresh()
+      }),
+      subscribeChanges({ kind: 'workspace', workspaceId }, update => {
+        if (!mountedRef.current) return
+        if (update.type === 'failed') { setError(update.message); return }
+        void refreshMembers()
+      }),
+    ]
     return () => {
-      active = false
       mountedRef.current = false
       refreshSequenceRef.current += 1
+      for (const dispose of disposers) dispose()
     }
   }, [workspaceId, channelRef])
 

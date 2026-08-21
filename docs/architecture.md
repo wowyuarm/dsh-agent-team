@@ -27,9 +27,11 @@ The Team is one collaboration domain per DSH home. Its append-only operation led
 - Projections, Inbox results, tools, commands, Remote responses, and UI derive from committed operations.
 - Client code must not interpret ledger records or create a parallel authority.
 - Agent lifecycle, JSON/SQLite replay, authorization, idempotency, and revision checks stay on the Host side. Durable unread changes may produce one coalesced, body-free Agent Inbox hint through the public Agent safe-boundary API; this notification is not a second authority and does not promise exactly-once model processing.
+- Client invalidation is scoped and targeted. `changes()` waiters declare one scope (workspace/channel/thread) plus an abortable signal; a commit wakes only matching scopes, and a Thread read wakes nobody because it changes no shared projection. After each commit the Host recomputes Inbox hints only for the Members the operation can have affected. The Client shares one abortable long-poll per scope (`TeamChangeStream`) instead of per-page polling loops; these are transport optimizations and never a second authority over ledger facts.
 - The bundle targets DSH `0.1.0-rc.8`. Its SQLite Session persistence uses the rc.8 schema; old SQLite Session databases are discarded and recreated. Do not add Team-owned migration, compatibility reads, or fallback storage paths.
 - Thread Attention is private Member x Thread state. Ordinary unread comes from current Attention; structured mentions create direct markers. The Host is the only Inbox authority. Session history may retain the generic wake hint, but never Thread bodies or a parallel unread projection.
 - Team-managed Agent sessions use the explicit Team preset and its trusted `danger-full-access` policy. This is an intentional product boundary for trusted workspaces.
+- An untitled Member session is named with its handle through the session-title service when the Host activates it, so the ordinary Session list shows the Member identity. An explicit rename or any earlier title always wins, and the naming never fails activation.
 
 When changing a Host capability, read the package source/tests first, then the matching Harness capability contract. The navigation table in [`harness-navigation.md`](harness-navigation.md) maps Host changes to `deepseek-harness/docs/subsystems/` and source packages.
 
@@ -111,6 +113,8 @@ UI redesign 已完成。需要理解当时的取舍时，查 [`.scratch/archive/
 ## Workspace, Session, and storage reuse
 
 Team reads the existing Harness Workspace projection and does not create a second Workspace store or Session tree. The current Client does not call `ctx.workspaces.pickDirectory()` or `ctx.workspaces.create()`; users return to the ordinary Session UI when they need to create a Workspace.
+
+Member sessions appear in the ordinary Session list and stay readable there while the Host keeps the Member's Agent live. A cold Member session — a suspended Member, a failed activation, or a Host that has not finished restoring — cannot be resumed through the generic Session UI: that path resolves the session's recorded preset against the ambient shipped roster, which deliberately does not contain the bundle-private `team-member` preset, so the resume fails loud instead of rebuilding the history under the wrong composition. Resume such Members through the Team panel (or restart with a healthy bundle); do not add a Team fallback to the ambient roster.
 
 For Workspace, Session, storage, persistence, or Thread Inbox changes, read the relevant Team source/tests and then:
 

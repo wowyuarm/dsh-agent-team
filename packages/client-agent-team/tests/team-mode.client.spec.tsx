@@ -131,7 +131,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
   })
-  const changes = vi.fn(({ afterVersion }: { afterVersion: number }) => changeVersion > afterVersion
+  const changes = vi.fn((request: { afterVersion: number; scope?: unknown }, _signal?: AbortSignal) => changeVersion > request.afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
     : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
   const publishAgentReply = () => {
@@ -161,7 +161,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, readThread, loadThreadHistory }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, readThread, loadThreadHistory, changes }
 }
 
 describe('rendered Team mode composition', () => {
@@ -360,6 +360,49 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '返回频道' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
+    await b.runtime.dispose()
+  })
+
+  it('opens a Thread with one parallel request round and no self-triggered second wave', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
+    fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    fireEvent.change(messageInput, { target: { value: 'first task' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect(await b.view.findByText('first task')).toBeTruthy()
+
+    b.readThread.mockClear()
+    b.loadThreadHistory.mockClear()
+    b.members.mockClear()
+    b.viewChannels.mockClear()
+    b.changes.mockClear()
+    fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    expect(b.readThread).toHaveBeenCalledTimes(1)
+
+    // The durable read no longer wakes any scope, so the first round is the
+    // whole load: no second members/view/history wave may follow it.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(b.readThread).toHaveBeenCalledTimes(1)
+    expect(b.loadThreadHistory).toHaveBeenCalledTimes(1)
+    expect(b.members).toHaveBeenCalledTimes(1)
+    expect(b.viewChannels).toHaveBeenCalledTimes(1)
+
+    // The page waits on its own thread plus the workspace presence scope.
+    const scopedCalls = b.changes.mock.calls.filter(([request]) => request.scope !== undefined)
+    const scopes = scopedCalls.map(([request]) => request.scope as { kind: string; threadRef?: string })
+    expect(scopes.some(scope => scope.kind === 'thread' && scope.threadRef === 'thread:1')).toBe(true)
+    expect(scopes.some(scope => scope.kind === 'workspace')).toBe(true)
+    for (const [, signal] of scopedCalls) expect(signal).toBeInstanceOf(AbortSignal)
     await b.runtime.dispose()
   })
 

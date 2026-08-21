@@ -2,7 +2,6 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamSendMessageRequest,
-  AgentTeamChangesRequest,
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadReadRequest,
   AgentTeamCreateChannelRequest,
@@ -22,6 +21,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { TeamNavigation } from './navigation.ts'
+import { TeamChangeStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
 import { TeamFooterAction } from './TeamFooterAction.tsx'
 import { TeamSettings } from './TeamSettings.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
@@ -53,6 +53,7 @@ declare module '@deepseek-ai/cordis' {
 function registerModeShadow<T extends object>(
   ctx: ClientContext,
   navigation: TeamNavigation,
+  changes: TeamChangeStream,
   name: 'sidebar.workspaces' | 'conversation' | 'sidebar.settings',
   component: T,
   extraInject?: () => Record<string, unknown>,
@@ -74,7 +75,7 @@ function registerModeShadow<T extends object>(
               loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
               readThread: (request: AgentTeamThreadReadRequest) => ctx.remote.agentTeam.readThread(request),
               loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
-              loadChanges: (request: AgentTeamChangesRequest) => ctx.remote.agentTeam.changes(request),
+              subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
               sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
               joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
@@ -84,7 +85,7 @@ function registerModeShadow<T extends object>(
             } : {}),
             ...(name === 'sidebar.workspaces' ? {
               loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
-              loadChanges: (request: AgentTeamChangesRequest) => ctx.remote.agentTeam.changes(request),
+              subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
               addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
               loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
               createChannel: (request: AgentTeamCreateChannelRequest) => ctx.remote.agentTeam.createChannel(request),
@@ -118,6 +119,8 @@ function applyUi(ctx: ClientContext): void {
     void disposeNavigation()
   }, 'agent-team: navigation service')
 
+  const changes = new TeamChangeStream((request, signal) => ctx.remote.agentTeam.changes(request, signal))
+
   const loadMemberGroups = async () => {
     const workspaces = ctx.workspaces.list.getSnapshot().items
     const groups = await Promise.all(workspaces.map(async workspace => {
@@ -136,9 +139,9 @@ function applyUi(ctx: ClientContext): void {
     inject: () => ({ navigation, ...navigation.actions(), loadMemberGroups }),
   }, TeamFooterAction as never))
 
-  registerModeShadow(ctx, navigation, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
-  registerModeShadow(ctx, navigation, 'conversation', TeamConversation as never)
-  registerModeShadow(ctx, navigation, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
+  registerModeShadow(ctx, navigation, changes, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
+  registerModeShadow(ctx, navigation, changes, 'conversation', TeamConversation as never)
+  registerModeShadow(ctx, navigation, changes, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 
 export async function apply(ctx: ClientContext): Promise<void> {

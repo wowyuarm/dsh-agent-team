@@ -29,6 +29,7 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
+  AgentTeamChangeScope,
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
   AgentTeamClaimList,
@@ -78,6 +79,19 @@ export { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './
 
 /** Process-stable marker carried by the final Team message tool definition. */
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
+
+/** One parked long-poll, restricted to one change scope when it declares one. */
+interface ChangeWaiter {
+  readonly scope: AgentTeamChangeScope | undefined
+  wake(version: number): void
+}
+
+function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope): boolean {
+  if (left.kind === 'workspace' && right.kind === 'workspace') return left.workspaceId === right.workspaceId
+  if (left.kind === 'channel' && right.kind === 'channel') return left.channelRef === right.channelRef
+  if (left.kind === 'thread' && right.kind === 'thread') return left.threadRef === right.threadRef
+  return false
+}
 
 /** Mark the preset's `team_message` definition as an Agent Team consumer. */
 export function markAgentTeamPreset<T extends object>(definition: T): T {
@@ -131,7 +145,7 @@ export default class AgentTeam extends TypertRemoteService {
   private lifecycleTail: Promise<void> = Promise.resolve()
   private accepting = true
   private changeVersion = 0
-  private readonly changeWaiters = new Set<(version: number) => void>()
+  private readonly changeWaiters = new Set<ChangeWaiter>()
 
   constructor(ctx: Context) {
     super(ctx, 'agentTeam')
@@ -140,16 +154,17 @@ export default class AgentTeam extends TypertRemoteService {
   /** Open the durable ledger and restore every enabled Member independently. */
   protected async [Service.init](): Promise<void> {
     this.ctx.on('agent/error', ({ agent, error }) => {
-      if (this.memberForAgent(agent) === undefined) return
+      const member = this.memberForAgent(agent)
+      if (member === undefined) return
       this.runtimeErrors.set(agent.id, error instanceof Error ? error.message : String(error))
-      this.emitChanged()
+      this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
     })
     this.ctx.on('agent/status', ({ agent, status }) => {
       const member = this.memberForAgent(agent)
       if (status === 'running' && member !== undefined) {
         const recovered = this.runtimeErrors.delete(agent.id)
         if (recovered) this.notifiedInbox.delete(member.memberId)
-        this.emitChanged()
+        this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
         this.notifyMember(agent)
       }
     })
@@ -173,8 +188,11 @@ export default class AgentTeam extends TypertRemoteService {
     this.ledger = ledger
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
+    // One metadata listing serves every Member restore; per-member list calls
+    // would repeat the same I/O linearly during startup.
+    const persistedSessions = new Set((await this.ctx.sessionPersistence.list()).map(header => header.id))
     for (const member of ledger.listMembers()) {
-      if (member.state === 'enabled') await this.activateMember(member)
+      if (member.state === 'enabled') await this.activateMember(member, undefined, persistedSessions)
       else if (member.state === 'inactive') await this.cleanupRemovedMember(member)
     }
   }
@@ -203,15 +221,37 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Wait for a lightweight projection invalidation without exposing ledger records. */
   @Remote('changes')
-  async changes(request: AgentTeamChangesRequest): Promise<AgentTeamChangesResult> {
+  async changes(request: AgentTeamChangesRequest, signal?: AbortSignal): Promise<AgentTeamChangesResult> {
     if (!Number.isInteger(request.afterVersion) || request.afterVersion < 0) throw new Error('afterVersion must be a non-negative integer')
+    const scope = this.validateChangeScope(request.scope)
     if (this.changeVersion > request.afterVersion || !this.accepting) return Object.freeze({ version: this.changeVersion })
-    return new Promise(resolve => {
-      const waiter = (version: number): void => { clearTimeout(timeout); resolve(Object.freeze({ version })) }
+    return new Promise<AgentTeamChangesResult>((resolve, reject) => {
+      let settled = false
+      const waiter: ChangeWaiter = {
+        scope,
+        wake: version => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeout)
+          signal?.removeEventListener('abort', onAbort)
+          resolve(Object.freeze({ version }))
+        },
+      }
       const timeout = setTimeout(() => {
+        if (settled) return
+        settled = true
         this.changeWaiters.delete(waiter)
         resolve(Object.freeze({ version: this.changeVersion }))
       }, 25_000)
+      const onAbort = (): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        this.changeWaiters.delete(waiter)
+        reject(new Error('changes wait was aborted'))
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted === true) { onAbort(); return }
       this.changeWaiters.add(waiter)
     })
   }
@@ -510,14 +550,15 @@ export default class AgentTeam extends TypertRemoteService {
     if (this.requireLedger().getMember(actor.memberId)?.workspaceId !== workspaceId) throw new Error('Member cannot mutate another Workspace')
   }
 
-  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string): Promise<void> {
+  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>): Promise<void> {
     if (this.handles.has(member.memberId)) return
     let created: AgentHandle | undefined
     try {
       const workspace = this.requireWorkspace(member.workspaceId)
       const workspacePath = knownWorkspacePath ?? workspace.path
       await this.initializePrivateMemory(member.privateMemoryPath)
-      const persisted = (await this.ctx.sessionPersistence.list()).some(header => header.id === member.sessionId)
+      const persisted = knownSessions !== undefined ? knownSessions.has(member.sessionId)
+        : (await this.ctx.sessionPersistence.list()).some(header => header.id === member.sessionId)
       const setup = async (agentCtx: Context) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.validateMemberPreset(agentCtx)
@@ -546,9 +587,11 @@ export default class AgentTeam extends TypertRemoteService {
       await created?.dispose()
       this.diagnostics.set(member.memberId, error instanceof Error ? error.message : String(error))
     } finally {
-      this.emitChanged()
+      // Activation only changes this Workspace's presence projection.
+      this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
     }
   }
+
 
   private validateMemberPreset(agentCtx: Context): void {
     const scope = scopeOf(agentCtx)
@@ -608,8 +651,17 @@ export default class AgentTeam extends TypertRemoteService {
 
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
     this.ctx.emit('agent-team/committed', { receipt })
-    this.emitChanged()
-    for (const handle of this.handles.values()) this.notifyMember(handle.agent)
+    const operation = this.ledger?.getOperation(receipt.operationId)
+    if (operation === undefined) {
+      this.emitChanged()
+      return
+    }
+    const ledger = this.requireLedger()
+    this.emitChanged(ledger.changeScopesOf(operation))
+    for (const memberId of ledger.affectedMembersOf(operation)) {
+      const handle = this.handles.get(memberId)
+      if (handle !== undefined) this.notifyMember(handle.agent)
+    }
   }
 
   /** Wake only from durable unread state; the message contains no Team facts. */
@@ -654,10 +706,26 @@ export default class AgentTeam extends TypertRemoteService {
     this.pendingInboxHints.delete(memberId)
   }
 
-  private emitChanged(): void {
+  /**
+   * Wake waiters for one committed or lifecycle change. Undefined broadcasts
+   * to everyone; an empty scope list invalidates nobody because no shared
+   * projection changed; otherwise global and matching scoped waiters wake.
+   */
+  private emitChanged(scopes?: readonly AgentTeamChangeScope[]): void {
     this.changeVersion += 1
-    for (const waiter of this.changeWaiters) waiter(this.changeVersion)
-    this.changeWaiters.clear()
+    for (const waiter of this.changeWaiters) {
+      const waiterScope = waiter.scope
+      if (scopes !== undefined && (waiterScope === undefined ? scopes.length === 0 : !scopes.some(scope => sameChangeScope(scope, waiterScope)))) continue
+      this.changeWaiters.delete(waiter)
+      waiter.wake(this.changeVersion)
+    }
+  }
+
+  private validateChangeScope(scope: AgentTeamChangeScope | undefined): AgentTeamChangeScope | undefined {
+    if (scope === undefined) return undefined
+    const ref = scope.kind === 'workspace' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
+    if (typeof ref !== 'string' || ref.length === 0) throw new Error(`change scope of kind '${scope.kind}' requires a non-empty ref`)
+    return scope
   }
 
   private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {

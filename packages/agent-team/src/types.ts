@@ -827,9 +827,17 @@ export interface AgentTeamView {
   readonly hasMore: boolean
 }
 
+/** One projection slice a Client can wait on; events wake only matching waiters. */
+export type AgentTeamChangeScope =
+  | { readonly kind: 'workspace'; readonly workspaceId: WorkspaceId }
+  | { readonly kind: 'channel'; readonly channelRef: AgentTeamChannelRef }
+  | { readonly kind: 'thread'; readonly threadRef: AgentTeamThreadRef }
+
 /** Cursor for the lightweight Client invalidation stream. */
 export interface AgentTeamChangesRequest {
   readonly afterVersion: number
+  /** Restrict wake-ups to one projection scope; omit to observe every Team change. */
+  readonly scope?: AgentTeamChangeScope
 }
 
 export interface AgentTeamChangesResult {

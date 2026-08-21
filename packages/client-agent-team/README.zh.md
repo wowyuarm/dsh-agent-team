@@ -12,7 +12,7 @@ Client 使用以下 Host 接口：
 
 - `readThread`：确认一个 Thread 的未读批次。
 - `threadHistory`：读取更早事实，不改变已读状态。
-Host Remote 仍提供 `threadObservations` 和 `changeAttention`，供后续 UI 与 Agent 工作流使用；当前 Human Thread surface 不渲染这些控制或观察。`changes` 提供轻量变更通知，用于刷新 Channel 和 Thread 投影。
+Host Remote 仍提供 `threadObservations` 和 `changeAttention`，供后续 UI 与 Agent 工作流使用；当前 Human Thread surface 不渲染这些控制或观察。`changes` 提供轻量的范围化变更通知：每个请求声明一个 `scope`（workspace、channel 或 thread），只有匹配的事件会唤醒对应 long-poll；Thread 读取会持久化提交但不唤醒任何 scope，因为它不改变任何共享投影。Client 通过 `TeamChangeStream` 在每个 scope 上共享一条可取消的 long-poll，面板与页面不会为同一 scope 并行发起 `changes` 请求，最后一个订阅者离开时轮询即被取消。打开 Task Thread 只发出一轮并行请求（`readThread`、有界历史、成员、频道视图），不会出现自触发的第二波请求。
 
 浏览器只持久化 Team mode 和当前 Workspace。Attention、未读数量、revision、observations 和 Thread facts 始终由 Host 管理。持久化操作提交或拒绝后，Client 会重新读取 Host 投影。
 
