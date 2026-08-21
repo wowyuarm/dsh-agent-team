@@ -37,20 +37,28 @@ const teamInbox = defineTool({
       items: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true },
         status: { type: 'string', required: true }, revision: { type: 'number', required: true }, unreadCount: { type: 'number', required: true }, directCount: { type: 'number', required: true },
+        taskNumber: { type: 'number' },
       } } },
     } },
     render: (_args, value) => [{ type: 'text', text: value.items.length === 0 ? 'No unread Team work.'
-      : value.items.map(item => `${item.directCount > 0 ? 'Direct' : 'Unread'} Task ${item.taskRef}: ${item.unreadCount} update(s), revision ${item.revision}`).join('\n') }],
+      : value.items.map(item => `${item.taskRef}${item.taskNumber === undefined ? '' : ` (#${item.taskNumber})`} · ${item.directCount > 0 ? 'direct' : 'unread'}, ${item.unreadCount} update(s), revision ${item.revision}`).join('\n') }],
   },
   async execute(args, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('team_inbox requires an Agent session')
     const current = member(agent)
-    const inbox = service(agent).inboxForAgent(agent, { workspaceId: current.workspaceId, ...(args.limit === undefined ? {} : { limit: args.limit }) })
+    const host = service(agent)
+    const inbox = host.inboxForAgent(agent, { workspaceId: current.workspaceId, ...(args.limit === undefined ? {} : { limit: args.limit }) })
+    const taskNumbers = new Map(host.viewForAgent(agent, { workspaceId: current.workspaceId, topLevelOnly: true, includeActivities: false })
+      .taskNumbers.map(entry => [entry.taskRef, entry.taskNumber] as const))
     return {
       totalUnreadCount: inbox.totalUnreadCount, totalDirectCount: inbox.totalDirectCount,
-      items: inbox.items.map(item => ({ taskRef: item.task.taskRef, threadRef: item.thread.threadRef, channelRef: item.channelRef,
-        status: item.task.status, revision: item.thread.revision, unreadCount: item.unreadCount, directCount: item.directCount })),
+      items: inbox.items.map(item => {
+        const taskNumber = taskNumbers.get(item.task.taskRef)
+        return { taskRef: item.task.taskRef, threadRef: item.thread.threadRef, channelRef: item.channelRef,
+          status: item.task.status, revision: item.thread.revision, unreadCount: item.unreadCount, directCount: item.directCount,
+          ...(taskNumber === undefined ? {} : { taskNumber }) }
+      }),
     }
   },
 })
@@ -75,10 +83,14 @@ const teamThread = defineTool({
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
       } } },
       facts: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, activity: { type: 'string' }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
+        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, activity: { type: 'string' }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
       } } },
     } },
-    render: (_args, value) => [{ type: 'text', text: value.facts.map(fact => `${fact.sequence} ${fact.kind === 'message' ? fact.body : fact.activity}`).join('\n') || `Thread ${value.threadRef}: following=${value.following}` }],
+    render: (_args, value) => [{ type: 'text', text: value.facts.length === 0
+      ? `${value.threadRef} · revision ${value.revision}, following=${value.following}`
+      : [`revision ${value.revision}`, ...value.facts.map(fact => fact.kind === 'message'
+          ? `${fact.sequence} [${fact.sender ?? 'unknown sender'}] ${fact.body}`
+          : `${fact.sequence} ${fact.activity}`)].join('\n') }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -102,13 +114,13 @@ const teamThread = defineTool({
       const history = host.threadHistoryForAgent(agent, { ...base, ...(args.beforeSequence === undefined ? {} : { beforeSequence: args.beforeSequence }), ...(args.limit === undefined ? {} : { limit: args.limit }) })
       const status = host.attentionStatusForAgent(agent, base)
       return threadResult('history', history, status.attention, history.facts.map(fact => fact.kind === 'message'
-          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body }
+          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender }
           : { sequence: fact.sequence, kind: 'activity', activity: fact.activity.kind }), { cursor: history.cursor, hasMore: history.hasMore })
     }
     if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('read does not accept history arguments')
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
-        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, unread: entry.unread, direct: entry.direct }
+        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, unread: entry.unread, direct: entry.direct }
         : { sequence: entry.fact.sequence, kind: 'activity', activity: entry.fact.activity.kind, unread: entry.unread, direct: entry.direct }), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount })
   },
 })
@@ -117,7 +129,7 @@ function threadResult(
   kind: 'status' | 'follow' | 'unfollow' | 'read' | 'history',
   snapshot: Awaited<ReturnType<AgentTeam['readThreadForAgent']>> | ReturnType<AgentTeam['threadHistoryForAgent']>,
   attention: Awaited<ReturnType<AgentTeam['readThreadForAgent']>>['attention'],
-  facts: Array<{ sequence: number; kind: string; body?: string; activity?: string; unread?: boolean; direct?: boolean }>,
+  facts: Array<{ sequence: number; kind: string; body?: string; sender?: string; activity?: string; unread?: boolean; direct?: boolean }>,
   extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number } = {},
 ) {
   return {
@@ -162,7 +174,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     }
     const baseRevision = args.baseRevision
     if (args.taskRef === undefined || args.channelRef !== undefined || typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) {
-      throw new Error('reply requires taskRef and a positive baseRevision, and does not accept channelRef')
+      throw new Error("reply requires taskRef and a positive baseRevision, and does not accept channelRef; use the current Thread 'revision' returned by team_inbox or team_thread for this Task")
     }
     const result = await host.replyForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
       taskRef: args.taskRef as AgentTeamTaskRef, body: args.body, baseRevision,
@@ -199,7 +211,8 @@ const teamClaim = defineTool({
       unreadCount: { type: 'number' }, directCount: { type: 'number' },
       claims: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true } } } },
     } },
-    render: (_args, value) => [{ type: 'text', text: `${value.kind}: Task ${value.taskRef} (${value.status}), revision ${value.revision}` }],
+    render: (_args, value) => [{ type: 'text', text: [`${value.kind}: ${value.taskRef} · ${value.status}, revision ${value.revision}`,
+      ...value.claims.map(claim => `${claim.claimRef} · ${claim.state} — ${claim.owner}: ${claim.direction}`)].join('\n') }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -214,7 +227,7 @@ const teamClaim = defineTool({
         claims: listed.claims.map(claim => ({ claimRef: claim.claimRef, owner: claim.owner, direction: claim.direction, state: claim.state })) }
     }
     const baseRevision = args.baseRevision
-    if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error('claim mutation requires a positive baseRevision')
+    if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error("claim mutation requires a positive baseRevision; use the current Thread 'revision' returned by team_inbox or team_thread for this Task")
     if (args.action === 'claim' && (args.direction === undefined || args.claimRef !== undefined)) throw new Error('claim requires direction and does not accept claimRef')
     if ((args.action === 'done' || args.action === 'release') && (args.claimRef === undefined || args.direction !== undefined)) throw new Error(`${args.action} requires claimRef and does not accept direction`)
     const result = await host.changeClaimForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base, action: args.action,
@@ -246,7 +259,13 @@ const teamView = defineTool({
       tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number', required: true } } } },
       cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true },
     } },
-    render: (_args, value) => [{ type: 'text', text: value.tasks.map(task => `${task.taskRef}: ${task.status}`).join('\n') || 'No Team Tasks.' }],
+    render: (_args, value) => [{ type: 'text', text: [
+      ...value.channels.map(channel => `${channel.channelRef} · ${channel.name}`),
+      ...value.members.map(m => `${m.memberId} · ${m.handle} (${m.kind}, ${m.presence})${m.description === '' ? '' : ` — ${m.description}`}`),
+      ...(value.tasks.length > 0
+        ? value.tasks.map(task => `${task.taskRef} · ${task.status}`)
+        : ['No Team Tasks.']),
+    ].join('\n') }],
   },
   async execute(args, exec) {
     const agent = exec.agent
