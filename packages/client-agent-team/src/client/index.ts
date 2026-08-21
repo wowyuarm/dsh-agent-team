@@ -55,7 +55,7 @@ function registerModeShadow<T extends object>(
   navigation: TeamNavigation,
   name: 'sidebar.workspaces' | 'conversation' | 'sidebar.settings',
   component: T,
-  options: Record<string, unknown> = {},
+  extraInject?: () => Record<string, unknown>,
 ): void {
   ctx.slots.inject(name, () => {
     let dispose: (() => void) | undefined
@@ -66,9 +66,9 @@ function registerModeShadow<T extends object>(
           name,
           priority: -100,
           locale: NS,
-          ...options,
           inject: () => ({
             navigation,
+            ...extraInject?.(),
             ...navigation.actions(),
             ...(name === 'conversation' ? {
               loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
@@ -118,29 +118,27 @@ function applyUi(ctx: ClientContext): void {
     void disposeNavigation()
   }, 'agent-team: navigation service')
 
+  const loadMemberGroups = async () => {
+    const workspaces = ctx.workspaces.list.getSnapshot().items
+    const groups = await Promise.all(workspaces.map(async workspace => {
+      const result = await ctx.remote.agentTeam.members({ workspaceId: workspace.workspaceId })
+      if (!result.ok) throw new Error(result.error.message)
+      return { workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, members: result.value }
+    }))
+    return groups.filter(group => group.members.length > 0)
+  }
+
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
     id: 'agent-team',
     order: 100,
     locale: NS,
-    inject: () => ({
-      navigation,
-      ...navigation.actions(),
-      loadMemberGroups: async () => {
-        const workspaces = ctx.workspaces.list.getSnapshot().items
-        const groups = await Promise.all(workspaces.map(async workspace => {
-          const result = await ctx.remote.agentTeam.members({ workspaceId: workspace.workspaceId })
-          if (!result.ok) throw new Error(result.error.message)
-          return { workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, members: result.value }
-        }))
-        return groups.filter(group => group.members.length > 0)
-      },
-    }),
+    inject: () => ({ navigation, ...navigation.actions(), loadMemberGroups }),
   }, TeamFooterAction as never))
 
   registerModeShadow(ctx, navigation, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
   registerModeShadow(ctx, navigation, 'conversation', TeamConversation as never)
-  registerModeShadow(ctx, navigation, 'sidebar.settings', TeamSettings as never)
+  registerModeShadow(ctx, navigation, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 
 export async function apply(ctx: ClientContext): Promise<void> {

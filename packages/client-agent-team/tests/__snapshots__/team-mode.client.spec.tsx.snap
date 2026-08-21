@@ -128,21 +128,6 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                 class="footerStack railStack"
               >
                 <button
-                  aria-haspopup="dialog"
-                  aria-label="成员"
-                  class="footerAction rail"
-                  type="button"
-                >
-                  <svg
-                    data-content="4d654e17"
-                    fill="none"
-                    height="18"
-                    viewBox="0 0 16 16"
-                    width="18"
-                    xmlns="http://www.w3.org/2000/svg"
-                  />
-                </button>
-                <button
                   aria-label="对话"
                   class="footerAction rail"
                   data-team-action="leave"
@@ -166,7 +151,23 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
             <div
               data-slot="sidebar.settings"
               style="display: contents;"
-            />
+            >
+              <button
+                aria-haspopup="dialog"
+                aria-label="成员"
+                class="settingsAction rail"
+                type="button"
+              >
+                <svg
+                  data-content="4d654e17"
+                  fill="none"
+                  height="18"
+                  viewBox="0 0 16 16"
+                  width="18"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+              </button>
+            </div>
           </div>
         </div>
       </div>

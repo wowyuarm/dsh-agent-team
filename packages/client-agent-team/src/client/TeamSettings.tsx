@@ -1,6 +1,6 @@
 import type { TeamSettingsProps } from './slots.ts'
+import { TeamMembersAction } from './TeamMembersAction.tsx'
 
-/** Team mode deliberately has no Settings occupant. The null seat preserves the shell's layout contract. */
-export function TeamSettings(_props: TeamSettingsProps) {
-  return null
+export function TeamSettings({ wide, loadMemberGroups, t }: TeamSettingsProps) {
+  return <TeamMembersAction wide={wide} loadMemberGroups={loadMemberGroups} t={t} />
 }

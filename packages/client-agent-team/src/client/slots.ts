@@ -66,7 +66,7 @@ export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'
 }
 
 export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'team'> & {
-  navigation: TeamNavigationSource
+  loadMemberGroups: () => Promise<readonly TeamMemberGroup[]>
 }
 
 export interface TeamMemberGroup {

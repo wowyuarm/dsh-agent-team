@@ -1,11 +1,13 @@
 .footerStack {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex: none;
+  height: 42px;
+  margin: 8px 0 0;
   width: 100%;
 }
 
-.footerAction {
+.footerAction,
+.settingsAction {
   align-items: center;
   background: transparent;
   border: 0;
@@ -14,36 +16,52 @@
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
   display: flex;
-  flex: none;
   font-family: inherit;
   font-size: 14px;
   gap: 8px;
-  height: 34px;
+  height: 42px;
   line-height: 22px;
-  margin: 0 -4px;
   overflow: hidden;
-  padding: 6px 2px 6px 10px;
-  text-align: left;
-  width: calc(100% + 8px);
+  padding: 0 10px 0 8px;
+  width: calc(100% + 4px);
+}
+
+.footerAction {
+  margin: 0 -2px;
+}
+
+.settingsAction {
+  margin: 4px -2px;
 }
 
 .footerAction:hover,
-.footerAction:focus-visible {
+.footerAction:focus-visible,
+.settingsAction:hover,
+.settingsAction:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
   outline: none;
 }
 
-.footerAction.rail {
+.footerAction.rail,
+.settingsAction.rail {
   border-radius: 50%;
   height: 36px;
   justify-content: center;
-  margin: 0;
   padding: 0;
   width: 36px;
 }
 
+.footerAction.rail {
+  margin: 0;
+}
+
+.settingsAction.rail {
+  margin: 8px 0 10px;
+}
+
 .railStack {
   align-items: center;
-  gap: 8px;
+  height: 36px;
+  margin: 0;
+  width: 36px;
 }
