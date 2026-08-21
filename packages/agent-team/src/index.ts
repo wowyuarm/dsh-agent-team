@@ -582,6 +582,7 @@ export default class AgentTeam extends TypertRemoteService {
       await workspace.attachSession(member.sessionId)
       this.handles.set(member.memberId, created)
       this.diagnostics.delete(member.memberId)
+      this.nameMemberSession(member, created.agent)
       this.notifyMember(created.agent)
     } catch (error) {
       await created?.dispose()
@@ -592,6 +593,23 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+
+  /**
+   * Default an untitled Member Session to its handle so the ordinary Session
+   * list names it. An explicit rename or any earlier title always wins; the
+   * cosmetic default never fails Member activation.
+   */
+  private nameMemberSession(member: AgentTeamAgentMember, agent: Agent): void {
+    const sessionTitle = this.ctx.get('sessionTitle')
+    if (sessionTitle === undefined) return
+    try {
+      if (sessionTitle.get(agent.session) !== undefined) return
+      sessionTitle.rename(agent.session, member.handle)
+    } catch {
+      // The composition may carry no session-title service, or the rename may
+      // race its disposal; the Member works identically without the title.
+    }
+  }
 
   private validateMemberPreset(agentCtx: Context): void {
     const scope = scopeOf(agentCtx)
