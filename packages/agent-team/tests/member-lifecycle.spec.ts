@@ -20,6 +20,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
+import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
 import type { AgentTeamChannelRef, AgentTeamRequestId } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -125,7 +126,7 @@ async function realHarness(
   const presetDir = join(presetRoot, 'team-member')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
   process.env.DSH_HOME = join(root, 'dsh-home')
-  await writeFile(join(presetDir, 'agent.cordis.yml'), "- id: team-tools\n  name: 'test-team-tools'\n")
+  await writeFile(join(presetDir, 'agent.cordis.yml'), "- id: member-context\n  name: 'test-member-context'\n- id: team-tools\n  name: 'test-team-tools'\n")
 
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(root).href + '/'
@@ -134,13 +135,14 @@ async function realHarness(
   ctx.loader.internal = {
     version: 'v2',
     async import(specifier: string) {
-      if (specifier !== 'test-team-tools') throw new Error(`unexpected Loader import: ${specifier}`)
-      return {
+      if (specifier === 'test-member-context') return memberContext
+      if (specifier === 'test-team-tools') return {
         name: 'test-team-tools', inject: ['tools'], apply(scope: Context) {
           applyAgentTeamTools(scope)
           scope.tools.register(defineContentToolFixture({ name: 'ordinary_tool', description: 'ordinary', parameters: {}, execute: async () => [{ type: 'text', text: 'ok' }] }))
         },
       }
+      throw new Error(`unexpected Loader import: ${specifier}`)
     },
   } as unknown as NonNullable<typeof ctx.loader.internal>
   await ctx.plugin(LlmRuntime)
@@ -381,6 +383,31 @@ describe('Agent Team Member lifecycle', () => {
     const hints = agent.session.events.filter(event => event.type === 'user/message'
       && JSON.stringify(event.data).includes('Team Inbox has unread work'))
     expect(hints).toHaveLength(1)
+  })
+
+  it('wakes an idle Member after a confirmed top-level mention without injecting its body', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('top-level-wake-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('top-level-wake-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const pending = await ctx.agentTeam.sendMessage({ requestId: requestId('top-level-wake-pending'), workspaceId, channelRef: channel.channel.channelRef,
+      body: 'Please investigate the top-level wake path', recipients: [builder.status.member.memberId] })
+    expect(pending.kind).toBe('confirmation_required')
+    expect(adapter.requests).toHaveLength(0)
+    if (pending.kind !== 'confirmation_required') throw new Error('expected top-level mention confirmation')
+
+    adapter.enqueue(textResponse('I will inspect Team Inbox.'))
+    const committed = await ctx.agentTeam.sendMessage({ requestId: requestId('top-level-wake-confirmed'), workspaceId, channelRef: channel.channel.channelRef,
+      body: 'Please investigate the top-level wake path', recipients: [builder.status.member.memberId], confirmationToken: pending.confirmationToken })
+    if (committed.kind !== 'committed') throw new Error(`expected committed top-level mention, received ${committed.kind}`)
+    expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1,
+      items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: committed.task.taskRef }), directCount: 1 })] })
+    await agent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    const request = JSON.stringify(adapter.requests[0]!.messages)
+    expect(request).toContain('Team Inbox has unread work')
+    expect(request).not.toContain('Please investigate the top-level wake path')
   })
 
   it('wakes an idle Member from durable Inbox state without injecting Thread bodies', async () => {

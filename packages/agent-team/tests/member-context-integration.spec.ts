@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { agentEvents, type Agent, type PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { apply } from '../src/member-context.ts'
+import * as memberContext from '../src/member-context.ts'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
@@ -26,7 +27,22 @@ async function preStep(ctx: Context, agent: Agent): Promise<PreStepDecision> {
   }, async () => ({ kind: 'enter', messages: [] }))
 }
 
+async function mount(ctx: Context): Promise<void> {
+  const loader = Object.create(Loader.prototype) as Loader
+  const plugin = loader.unwrapExports(memberContext) as Parameters<Context['plugin']>[0]
+  await ctx.plugin(plugin)
+}
+
 describe('Team Member private memory composition', () => {
+  it('keeps its required Host service when loaded as a Cordis namespace plugin', () => {
+    expect('default' in memberContext).toBe(false)
+    const loader = Object.create(Loader.prototype) as Loader
+    const plugin = loader.unwrapExports(memberContext) as Record<string, unknown>
+    expect(plugin).toBe(memberContext)
+    expect(plugin.name).toBe('wowyuarm-agent-team-member-context')
+    expect(plugin.inject).toEqual(['agentTeam'])
+  })
+
   it('injects only the bound Member index and replaces changed or removed content', async () => {
     const root = await mkdtemp(join(tmpdir(), 'team-member-memory-'))
     roots.push(root)
@@ -35,7 +51,7 @@ describe('Team Member private memory composition', () => {
     const ctx = new Context()
     const agent = fakeAgent(ctx)
     ctx.provide('agentTeam', { memberForAgent: (subject: Agent) => subject === agent ? { privateMemoryPath: root } : undefined } as never)
-    apply(ctx)
+    await mount(ctx)
 
     const first = await preStep(ctx, agent)
     expect(first.kind === 'enter' && first.messages.at(-1)?.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining('own index') }))
@@ -54,7 +70,7 @@ describe('Team Member private memory composition', () => {
     const ctx = new Context()
     const agent = fakeAgent(ctx)
     ctx.provide('agentTeam', { memberForAgent: () => undefined } as never)
-    apply(ctx)
+    await mount(ctx)
     expect(await preStep(ctx, agent)).toEqual({ kind: 'enter', messages: [] })
     await ctx.fiber.dispose()
   })

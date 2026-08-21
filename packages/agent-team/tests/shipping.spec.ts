@@ -19,6 +19,7 @@ describe('Agent Team shipping contract', () => {
     expect(patch).toContain('agentPresets: true')
     expect(patch).toContain("name: '@wowyuarm/dsh-agent-team/host'")
     expect(patch).toContain("name: '@wowyuarm/dsh-agent-team'")
+    expect(patch).toContain("name: '@deepseek-ai/dsh-invariants'")
     expect(patch).toContain("name: '@wowyuarm/dsh-agent-team/invariant'")
     expect(patch).not.toContain('dsh-tool-agent-team')
 

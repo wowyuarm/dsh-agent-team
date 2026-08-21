@@ -3,7 +3,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-const name = '@wowyuarm/dsh-agent-team/member-context'
+export const name = 'wowyuarm-agent-team-member-context'
+export const inject = ['agentTeam']
 const MAX_MEMORY_BYTES = 8 * 1024
 const BEGIN = '<team-member-private-memory>'
 const END = '</team-member-private-memory>'
@@ -53,8 +54,6 @@ export function renderMemberMemory(raw: Buffer): string {
 function renderUnavailableMemory(reason: string): string {
   return `${BEGIN}\nThis is the complete replacement for this Team Member's private memory index; all earlier private-memory context is obsolete. ${reason}\n${END}`
 }
-
-export default { apply }
 
 function escape(value: string): string {
   return value.replaceAll(BEGIN, '[escaped begin marker]').replaceAll(END, '[escaped end marker]')

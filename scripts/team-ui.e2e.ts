@@ -146,6 +146,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const reviewer = statuses.find((status: { member: { handle: string } }) => status.member.handle === 'reviewer')!
   const agent = scaffold.ctx.agents.get(builder.member.sessionId)!
   const reviewerAgent = scaffold.ctx.agents.get(reviewer.member.sessionId)!
+  expect(scaffold.ctx.agentTeam.inboxForAgent(agent, { workspaceId: workspace.id })).toMatchObject({
+    totalUnreadCount: 1,
+    totalDirectCount: 1,
+    items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: task.taskRef }), directCount: 1 })],
+  })
 
   await page.getByRole('button', { name: /Task #1/ }).click()
   const invitationComposer = page.getByRole('textbox', { name: '消息内容' })
