@@ -415,6 +415,13 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const bare = started.task.taskRef.replace(/^task:/, '') as AgentTeamTaskRef
     await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: bare })).rejects.toThrow(/unknown Task ref '.+' A Task ref must start with 'task:'/)
     expect(() => test.ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: bare })).toThrow(/must start with 'task:'/)
+    expect(() => test.ctx.agentTeam.view({ workspaceId: alpha, channelRef: 'engineering' as never })).toThrow(/unknown Channel ref 'engineering' A Channel ref must start with 'channel:'/)
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha,
+      taskRef: started.task.taskRef, action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    await expect(ledger.changeClaim({ requestId: requestId('done'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'done', baseRevision: claimed.thread.revision, claimRef: 'abc' as never, actor })).rejects.toThrow(/unknown Claim 'abc' A Claim ref must start with 'claim:'/)
     await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef })).resolves.toBeDefined()
   })
 })
