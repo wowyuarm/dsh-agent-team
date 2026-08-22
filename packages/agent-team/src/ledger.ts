@@ -229,26 +229,16 @@ interface Projection {
   readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
 }
 
+function emptyProjection(): Projection {
+  return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
+    claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
+    orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], messageCountByThread: new Map(), attentionByThread: new Map() }
+}
+
 /** Replay and append logic behind the Agent Team service interface. */
 export class AgentTeamLedger {
-  private readonly byRequest = new Map<AgentTeamRequestId, AgentTeamOperation>()
-  private readonly byOperation = new Map<AgentTeamOperationId, AgentTeamOperation>()
-  private readonly ordered: AgentTeamOperation[] = []
-  private readonly channels = new Map<AgentTeamChannelRef, AgentTeamChannel>()
-  private readonly members = new Map<AgentTeamMemberId, AgentTeamAgentMember>()
-  private readonly memberships = new Map<AgentTeamChannelRef, Set<AgentTeamMemberId>>()
-  private readonly claims = new Map<AgentTeamClaimRef, AgentTeamClaim>()
-  private readonly messages: AgentTeamMessage[] = []
-  private readonly tasks = new Map<AgentTeamTaskRef, AgentTeamTask>()
-  private readonly threads = new Map<AgentTeamThreadRef, AgentTeamThread>()
-  private readonly attention = new Map<string, AgentTeamThreadAttention>()
-  private readonly directMarkers = new Map<string, AgentTeamDirectMarker>()
-  private readonly activityMarkers = new Map<string, AgentTeamActivityMarker>()
-  private readonly orderedFacts: AgentTeamThreadFact[] = []
-  private readonly factsByThread = new Map<AgentTeamThreadRef, AgentTeamThreadFact[]>()
-  private readonly topLevelMessages: AgentTeamMessage[] = []
-  private readonly messageCountByThread = new Map<AgentTeamThreadRef, number>()
-  private readonly attentionByThread = new Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>()
+  /** Live projection; record validation replays build independent Projection values instead. */
+  private readonly state: Projection = emptyProjection()
   private readonly confirmations = new Map<AgentTeamConfirmationToken, Confirmation>()
   private readonly createOperationId: () => AgentTeamOperationId
   private readonly createOccurredAt: () => string
@@ -271,12 +261,12 @@ export class AgentTeamLedger {
     humanMemberId: AGENT_TEAM_HUMAN_MEMBER_ID,
   }): Promise<AgentTeamLedgerResult<AgentTeamOperationReceipt>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameInitialization(existing, request)
         return this.resolved(this.receipt(existing))
       }
-      if (this.ordered.length !== 0) throw new Error('agent-team ledger has operations but no initialization request')
+      if (this.state.ordered.length !== 0) throw new Error('agent-team ledger has operations but no initialization request')
       const operation: AgentTeamInitializedOperation = Object.freeze({
         sequence: 1,
         operationId: this.createOperationId(),
@@ -295,7 +285,7 @@ export class AgentTeamLedger {
 
   createChannel(request: AgentTeamAuthorizedCreateChannelRequest): Promise<AgentTeamLedgerResult<AgentTeamCreateChannelResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameChannelCreation(existing, request, this.normalizeUnique(request.memberIds, 'initial Channel members'))
         return this.resolved(this.channelResult(existing))
@@ -323,7 +313,7 @@ export class AgentTeamLedger {
 
   addMember(request: AgentTeamAuthorizedAddMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameMemberAdd(existing, request)
         return this.resolved(this.memberResult(existing))
@@ -359,16 +349,16 @@ export class AgentTeamLedger {
   }
 
   getMember(memberId: AgentTeamMemberId): AgentTeamAgentMember | undefined {
-    return this.members.get(memberId)
+    return this.state.members.get(memberId)
   }
 
   listMembers(): readonly AgentTeamAgentMember[] {
-    return Object.freeze([...this.members.values()])
+    return Object.freeze([...this.state.members.values()])
   }
 
   joinChannel(request: AgentTeamAuthorizedJoinChannelRequest): Promise<AgentTeamLedgerResult<AgentTeamJoinChannelResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameChannelJoin(existing, request)
         return this.resolved(this.joinResult(existing))
@@ -393,7 +383,7 @@ export class AgentTeamLedger {
     request: AgentTeamAuthorizedRemoveChannelMemberRequest,
   ): Promise<AgentTeamLedgerResult<AgentTeamRemoveChannelMemberResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameChannelMemberRemoval(existing, request)
         return this.resolved(this.channelMemberRemovalResult(existing))
@@ -405,10 +395,10 @@ export class AgentTeamLedger {
         throw new Error(`Agent Member '${member.memberId}' is not a member of Channel '${channel.channelRef}'`)
       }
       const threadRefs = this.channelThreadRefs(channel.channelRef)
-      const releasedClaims = [...this.claims.values()]
+      const releasedClaims = [...this.state.claims.values()]
         .filter(claim => claim.owner === member.memberId && claim.state === 'active' && threadRefs.has(claim.threadRef))
         .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
-      const nextClaims = new Map(this.claims)
+      const nextClaims = new Map(this.state.claims)
       for (const claim of releasedClaims) nextClaims.set(claim.claimRef, claim)
       const sequence = this.nextSequence()
       const activities = this.releaseSummaries(releasedClaims, member.memberId, sequence)
@@ -429,7 +419,7 @@ export class AgentTeamLedger {
   sendMessage(request: AgentTeamAuthorizedSendMessageRequest): Promise<AgentTeamLedgerResult<AgentTeamSendMessageResult>> {
     return this.enqueue(async () => {
       const recipients = this.normalizeRecipients(request.actor, request.recipients)
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameMessage(existing, request, recipients)
         return this.resolved(this.messageResult(existing))
@@ -440,7 +430,7 @@ export class AgentTeamLedger {
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       this.assertMentionTargets(channel, recipients)
-      const unfollowedAgents = recipients.filter(memberId => this.members.has(memberId))
+      const unfollowedAgents = recipients.filter(memberId => this.state.members.has(memberId))
       if (unfollowedAgents.length > 0 && actor.kind === 'member') {
         return this.resolved(this.memberNotFollowing(request.workspaceId, channel.channelRef, unfollowedAgents))
       }
@@ -470,7 +460,7 @@ export class AgentTeamLedger {
   reply(request: AgentTeamAuthorizedReplyRequest): Promise<AgentTeamLedgerResult<AgentTeamReplyResult>> {
     return this.enqueue(async () => {
       const recipients = this.normalizeRecipients(request.actor, request.recipients)
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameReply(existing, request, recipients)
         return this.resolved(this.replyResult(existing))
@@ -486,7 +476,7 @@ export class AgentTeamLedger {
       if (unread.length > 0) return this.resolved(this.unreadRequired(task, thread, unread))
       if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
       if (task.resolution === 'closed') throw new Error(`Task '${task.taskRef}' is closed; reopen it before replying`)
-      const unfollowedAgents = recipients.filter(memberId => this.members.has(memberId) && !this.isFollowing(thread.threadRef, memberId))
+      const unfollowedAgents = recipients.filter(memberId => this.state.members.has(memberId) && !this.isFollowing(thread.threadRef, memberId))
       if (unfollowedAgents.length > 0 && actor.kind === 'member') {
         return this.resolved(this.memberNotFollowing(request.workspaceId, task.channelRef, unfollowedAgents, task, thread))
       }
@@ -519,7 +509,7 @@ export class AgentTeamLedger {
 
   changeClaim(request: AgentTeamAuthorizedClaimRequest): Promise<AgentTeamLedgerResult<AgentTeamClaimResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameClaim(existing, request)
         return this.resolved(this.claimResult(existing))
@@ -541,7 +531,7 @@ export class AgentTeamLedger {
         const direction = request.direction?.trim() ?? ''
         const normalizedDirection = this.normalizeDirection(direction)
         if (normalizedDirection === '') throw new Error('claim direction must not be empty')
-        if ([...this.claims.values()].some(candidate => candidate.taskRef === task.taskRef
+        if ([...this.state.claims.values()].some(candidate => candidate.taskRef === task.taskRef
           && candidate.state === 'active' && candidate.normalizedDirection === normalizedDirection)) {
           throw new Error(`Direction '${direction}' already has an active Claim`)
         }
@@ -551,7 +541,7 @@ export class AgentTeamLedger {
         activityKind = 'claim'
       } else {
         if (request.direction !== undefined) throw new Error(`${request.action} action does not accept direction`)
-        const previous = request.claimRef === undefined ? undefined : this.claims.get(request.claimRef)
+        const previous = request.claimRef === undefined ? undefined : this.state.claims.get(request.claimRef)
         if (previous === undefined) {
           throw new Error(`unknown Claim '${request.claimRef ?? ''}'${request.claimRef === undefined ? '' : this.unknownRefHint(request.claimRef, 'claim', 'Claim')}`)
         }
@@ -564,7 +554,7 @@ export class AgentTeamLedger {
         activityKind = request.action
       }
       const sequence = this.nextSequence()
-      const projected = new Map(this.claims).set(claim.claimRef, claim)
+      const projected = new Map(this.state.claims).set(claim.claimRef, claim)
       const nextTask: AgentTeamTask = Object.freeze({ ...task, status: this.deriveTaskStatus(task.taskRef, projected.values()) })
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
       const activity: AgentTeamClaimActivity = Object.freeze({
@@ -573,7 +563,7 @@ export class AgentTeamLedger {
       })
       const ownAttention = request.action === 'claim' && actor.kind === 'member' && !this.isFollowing(thread.threadRef, actor.memberId)
         ? [this.startAttention(actor.memberId, thread.threadRef, sequence)] : []
-      const inbox = this.publicActivityInboxDelta(activity, actor.memberId, ownAttention)
+      const inbox = this.inboxDelta(ownAttention)
       const operation: AgentTeamClaimChangedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind,
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
@@ -587,7 +577,7 @@ export class AgentTeamLedger {
 
   changeTask(request: AgentTeamAuthorizedTaskRequest): Promise<AgentTeamLedgerResult<AgentTeamTaskResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameTask(existing, request)
         return this.resolved(this.taskResult(existing))
@@ -603,9 +593,9 @@ export class AgentTeamLedger {
       if (request.action === 'accept' && task.status !== 'in_review') throw new Error(`Task '${task.taskRef}' must be in_review before acceptance`)
       if (request.action === 'reopen' && task.resolution === 'open') throw new Error(`Task '${task.taskRef}' is already open`)
       const sequence = this.nextSequence()
-      const claims = [...this.claims.values()].filter(claim => claim.taskRef === task.taskRef).map(claim =>
+      const claims = [...this.state.claims.values()].filter(claim => claim.taskRef === task.taskRef).map(claim =>
         request.action === 'close' && claim.state === 'active' ? Object.freeze({ ...claim, state: 'released' as const }) : claim)
-      const releasedClaims = claims.filter(claim => claim.state === 'released' && this.claims.get(claim.claimRef)?.state === 'active')
+      const releasedClaims = claims.filter(claim => claim.state === 'released' && this.state.claims.get(claim.claimRef)?.state === 'active')
       const resolution = request.action === 'reopen' ? 'open' as const : request.action === 'accept' ? 'accepted' as const : 'closed' as const
       const status = resolution === 'accepted' ? 'done' as const : resolution === 'closed' ? 'closed' as const
         : this.deriveTaskStatus(task.taskRef, claims)
@@ -618,7 +608,7 @@ export class AgentTeamLedger {
         ? this.closeThreadInbox(activity, thread.threadRef)
         : request.action === 'reopen'
           ? this.reopenThreadInbox(activity, thread.threadRef)
-          : this.publicActivityInboxDelta(activity, request.actor.memberId)
+          : this.inboxDelta()
       const operation: AgentTeamTaskChangedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/task-changed',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
@@ -632,7 +622,7 @@ export class AgentTeamLedger {
 
   removeMember(request: AgentTeamAuthorizedRemoveMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamRemoveMemberResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameRemoval(existing, request)
         return this.resolved(this.removalResult(existing))
@@ -641,15 +631,15 @@ export class AgentTeamLedger {
       const member = this.requireMember(request.memberId)
       if (member.state === 'inactive') throw new Error(`Agent Member '${member.memberId}' is already inactive`)
       const nextMember = Object.freeze({ ...member, state: 'inactive' as const })
-      const releasedClaims = [...this.claims.values()].filter(claim => claim.owner === member.memberId && claim.state === 'active')
+      const releasedClaims = [...this.state.claims.values()].filter(claim => claim.owner === member.memberId && claim.state === 'active')
         .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
-      const projectedClaims = new Map(this.claims)
+      const projectedClaims = new Map(this.state.claims)
       for (const claim of releasedClaims) projectedClaims.set(claim.claimRef, claim)
       const sequence = this.nextSequence()
       const activities = this.releaseSummaries(releasedClaims, member.memberId, sequence)
       const threads = this.threadsForActivities(activities)
       const tasks = this.tasksForClaims(releasedClaims, projectedClaims)
-      const threadRefs = new Set([...this.tasks.values()].map(task => task.threadRef))
+      const threadRefs = new Set([...this.state.tasks.values()].map(task => task.threadRef))
       const inbox = this.removeMemberThreadInbox(member.memberId, threadRefs)
       const operation: AgentTeamMemberRemovedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/member-removed',
@@ -666,7 +656,7 @@ export class AgentTeamLedger {
     request: AgentTeamAuthorizedThreadAttentionRequest,
   ): Promise<AgentTeamLedgerResult<AgentTeamThreadAttentionResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameAttention(existing, request)
         return this.resolved(this.attentionResult(existing))
@@ -721,8 +711,8 @@ export class AgentTeamLedger {
     const limit = request.limit ?? 50
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('inbox limit must be an integer between 1 and 100')
     const items: AgentTeamInboxItem[] = []
-    for (const task of this.tasks.values()) {
-      if (this.channels.get(task.channelRef)?.workspaceId !== request.workspaceId) continue
+    for (const task of this.state.tasks.values()) {
+      if (this.state.channels.get(task.channelRef)?.workspaceId !== request.workspaceId) continue
       if (authorized.kind === 'member' && !this.isChannelMember(task.channelRef, authorized.memberId)) continue
       const thread = this.requireThread(task.threadRef)
       const unread = this.unreadFor(authorized.memberId, thread.threadRef)
@@ -756,7 +746,7 @@ export class AgentTeamLedger {
 
   readThread(request: AgentTeamAuthorizedThreadReadRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadReadResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameThreadRead(existing, request)
         return this.resolved(this.threadReadResult(existing))
@@ -784,7 +774,7 @@ export class AgentTeamLedger {
     const threadRef = task.threadRef
     const current = new Map<AgentTeamMemberId, AgentTeamThreadAttention>()
     const observations: AgentTeamThreadAttentionObservation[] = []
-    for (const operation of this.ordered) {
+    for (const operation of this.state.ordered) {
       const delta = this.attentionDelta(operation)
       if (delta === undefined) continue
       for (const removed of delta.attention.removed) {
@@ -848,7 +838,7 @@ export class AgentTeamLedger {
   }
 
   getTask(taskRef: AgentTeamTaskRef): AgentTeamTask | undefined {
-    return this.tasks.get(taskRef)
+    return this.state.tasks.get(taskRef)
   }
 
   view(request: AgentTeamViewRequest, memberId?: AgentTeamMemberId): AgentTeamView {
@@ -872,20 +862,20 @@ export class AgentTeamLedger {
       if (request.channelRef !== undefined && task.channelRef !== request.channelRef) throw new Error(`Thread '${request.threadRef}' does not belong to Channel '${request.channelRef}'`)
       if (memberId !== undefined && !this.isChannelMember(task.channelRef, memberId)) throw new Error(`Agent Member '${memberId}' is not authorized for Channel '${task.channelRef}'`)
     }
-    const channels = [...this.channels.values()].filter(channel => channel.workspaceId === request.workspaceId
+    const channels = [...this.state.channels.values()].filter(channel => channel.workspaceId === request.workspaceId
       && (memberId === undefined || this.isChannelMember(channel.channelRef, memberId)))
     const channelRefs = new Set(channels.map(channel => channel.channelRef))
-    const allFacts = this.publicFacts().filter(fact => {
-      const task = fact.kind === 'message' ? this.tasks.get(fact.message.taskRef) : this.tasks.get(fact.activity.taskRef)
+    const allFacts = this.state.orderedFacts.filter(fact => {
+      const task = fact.kind === 'message' ? this.state.tasks.get(fact.message.taskRef) : this.state.tasks.get(fact.activity.taskRef)
       if (task === undefined || !channelRefs.has(task.channelRef)) return false
       if (request.channelRef !== undefined && task.channelRef !== request.channelRef) return false
       if (request.threadRef !== undefined && task.threadRef !== request.threadRef) return false
       if (request.topLevelOnly && (fact.kind !== 'message' || !fact.message.topLevel)) return false
       if (request.includeActivities === false && fact.kind === 'activity') return false
-      return direction === 'before' ? fact.sequence < (request.cursor ?? this.ordered.length + 1) : fact.sequence > cursor
+      return direction === 'before' ? fact.sequence < (request.cursor ?? this.state.ordered.length + 1) : fact.sequence > cursor
     })
     const selected = direction === 'before' ? allFacts.slice(-limit) : allFacts.slice(0, limit)
-    const visibleTasks = [...this.tasks.values()].filter(task => channelRefs.has(task.channelRef)
+    const visibleTasks = [...this.state.tasks.values()].filter(task => channelRefs.has(task.channelRef)
       && (request.channelRef === undefined || task.channelRef === request.channelRef)
       && (request.threadRef === undefined || task.threadRef === request.threadRef))
     const taskNumbers = this.taskNumbers(request.workspaceId, request.channelRef)
@@ -894,17 +884,17 @@ export class AgentTeamLedger {
       const task = this.requireTask(request.workspaceId, message.taskRef)
       const thread = this.requireThread(message.threadRef)
       return Object.freeze({ message, task, thread, taskNumber: taskNumbers.get(task.taskRef) ?? 0,
-        messageCount: this.messageCountByThread.get(thread.threadRef) ?? 0 })
+        messageCount: this.state.messageCountByThread.get(thread.threadRef) ?? 0 })
     })
     const initialization = this.initialization()
     const nextCursor = selected.length === 0 ? cursor : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
     return Object.freeze({
       humanMemberId: initialization.data.humanMemberId,
       channels: Object.freeze(channels),
-      members: Object.freeze([...this.memberships.entries()].filter(([channelRef]) => channelRefs.has(channelRef)).flatMap(([channelRef, ids]) =>
-        [...ids].filter(id => this.members.get(id)?.state !== 'inactive').sort().map(memberId => Object.freeze({ channelRef, memberId })))),
+      members: Object.freeze([...this.state.memberships.entries()].filter(([channelRef]) => channelRefs.has(channelRef)).flatMap(([channelRef, ids]) =>
+        [...ids].filter(id => this.state.members.get(id)?.state !== 'inactive').sort().map(memberId => Object.freeze({ channelRef, memberId })))),
       tasks: Object.freeze(visibleTasks),
-      threads: Object.freeze([...this.threads.values()].filter(thread => visibleTasks.some(task => task.taskRef === thread.taskRef))),
+      threads: Object.freeze([...this.state.threads.values()].filter(thread => visibleTasks.some(task => task.taskRef === thread.taskRef))),
       taskNumbers: Object.freeze(visibleTasks.map(task => Object.freeze({ taskRef: task.taskRef, taskNumber: taskNumbers.get(task.taskRef) ?? 0 }))),
       items: Object.freeze(items),
       claims: this.claimsForVisibleTasks(visibleTasks),
@@ -916,8 +906,8 @@ export class AgentTeamLedger {
 
   status(): AgentTeamStatus {
     const initialization = this.initialization()
-    return Object.freeze({ initialized: true, sequence: this.ordered.length, operationCount: this.ordered.length,
-      channelCount: this.channels.size, agentMemberCount: this.members.size, humanMemberId: initialization.data.humanMemberId })
+    return Object.freeze({ initialized: true, sequence: this.state.ordered.length, operationCount: this.state.ordered.length,
+      channelCount: this.state.channels.size, agentMemberCount: this.state.members.size, humanMemberId: initialization.data.humanMemberId })
   }
 
   validate(): void {
@@ -925,12 +915,12 @@ export class AgentTeamLedger {
   }
 
   hasCommitted(requestId: AgentTeamRequestId): boolean {
-    return this.byRequest.has(requestId)
+    return this.state.byRequest.has(requestId)
   }
 
   /** Return one stored committed operation by id. */
   getOperation(operationId: AgentTeamOperationId): AgentTeamOperation | undefined {
-    return this.byOperation.get(operationId)
+    return this.state.byOperation.get(operationId)
   }
 
   /** Scopes whose projections one committed operation invalidates; undefined wakes every waiter. */
@@ -992,7 +982,7 @@ export class AgentTeamLedger {
       for (const marker of delta.activityMarkers.removed) members.add(marker.memberId)
     }
     for (const threadRef of this.touchedThreadRefs(operation)) {
-      for (const follower of this.attentionByThread.get(threadRef) ?? []) members.add(follower)
+      for (const follower of this.state.attentionByThread.get(threadRef) ?? []) members.add(follower)
     }
     if (operation.actor.kind === 'member') members.add(operation.actor.memberId)
     return [...members]
@@ -1024,7 +1014,7 @@ export class AgentTeamLedger {
   }
 
   private validateRecords(records: readonly [AgentTeamOperationId, AgentTeamOperation][]): void {
-    const projection = this.emptyProjection()
+    const projection = emptyProjection()
     const operationIds = new Set<AgentTeamOperationId>()
     const requestIds = new Set<AgentTeamRequestId>()
     const refs = new Set<string>()
@@ -1403,30 +1393,7 @@ export class AgentTeamLedger {
   }
 
   private apply(operation: AgentTeamOperation): void {
-    this.applyTo(this.projection(), operation)
-  }
-
-  private projection(): Projection {
-    return {
-      byRequest: this.byRequest,
-      byOperation: this.byOperation,
-      ordered: this.ordered,
-      channels: this.channels,
-      members: this.members,
-      memberships: this.memberships,
-      claims: this.claims,
-      messages: this.messages,
-      tasks: this.tasks,
-      threads: this.threads,
-      attention: this.attention,
-      directMarkers: this.directMarkers,
-      activityMarkers: this.activityMarkers,
-      orderedFacts: this.orderedFacts,
-      factsByThread: this.factsByThread,
-      topLevelMessages: this.topLevelMessages,
-      messageCountByThread: this.messageCountByThread,
-      attentionByThread: this.attentionByThread,
-    }
+    this.applyTo(this.state, operation)
   }
 
   private applyTo(target: Projection, operation: AgentTeamOperation): void {
@@ -1545,7 +1512,7 @@ export class AgentTeamLedger {
   }
 
   private prepareRead(memberId: AgentTeamMemberId, workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): PreparedRead {
-    return this.prepareReadFrom(this.projection(), memberId, workspaceId, taskRef)
+    return this.prepareReadFrom(this.state, memberId, workspaceId, taskRef)
   }
 
   /** Derive the only legal durable result of one Thread read from a prior projection. */
@@ -1606,10 +1573,6 @@ export class AgentTeamLedger {
       consumedDirectMarkers: Object.freeze(consumed), inbox })
   }
 
-  private readFact(memberId: AgentTeamMemberId, fact: AgentTeamThreadFact, unread: boolean): AgentTeamThreadReadFact {
-    return this.readFactFrom(this.projection(), memberId, fact, unread)
-  }
-
   private readFactFrom(projection: Projection, memberId: AgentTeamMemberId, fact: AgentTeamThreadFact, unread: boolean): AgentTeamThreadReadFact {
     return Object.freeze({ fact, unread, direct: fact.kind === 'message'
       && projection.directMarkers.has(this.directMarkerKey({ memberId, threadRef: fact.message.threadRef,
@@ -1617,7 +1580,7 @@ export class AgentTeamLedger {
   }
 
   private unreadFor(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamThreadReadFact[] {
-    return this.unreadForFrom(this.projection(), memberId, threadRef)
+    return this.unreadForFrom(this.state, memberId, threadRef)
   }
 
   private unreadForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamThreadReadFact[] {
@@ -1645,15 +1608,11 @@ export class AgentTeamLedger {
   }
 
   private threadFacts(threadRef: AgentTeamThreadRef): readonly AgentTeamThreadFact[] {
-    return this.threadFactsFrom(this.projection(), threadRef)
+    return this.threadFactsFrom(this.state, threadRef)
   }
 
   private threadFactsFrom(projection: Projection, threadRef: AgentTeamThreadRef): readonly AgentTeamThreadFact[] {
     return projection.factsByThread.get(threadRef) ?? []
-  }
-
-  private publicFacts(): readonly AgentTeamThreadFact[] {
-    return this.orderedFacts
   }
 
   private messageInboxDelta(
@@ -1667,16 +1626,8 @@ export class AgentTeamLedger {
     return this.inboxDelta(attention, [], markers)
   }
 
-  private publicActivityInboxDelta(
-    _activity: AgentTeamActivity,
-    _actor: AgentTeamMemberId,
-    attention: readonly AgentTeamThreadAttention[] = [],
-  ): AgentTeamInboxDelta {
-    return this.inboxDelta(attention)
-  }
-
   private closeThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
-    return this.closeThreadInboxFrom(this.projection(), activity, threadRef)
+    return this.closeThreadInboxFrom(this.state, activity, threadRef)
   }
 
   private closeThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
@@ -1692,7 +1643,7 @@ export class AgentTeamLedger {
   }
 
   private reopenThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
-    return this.reopenThreadInboxFrom(this.projection(), activity, threadRef)
+    return this.reopenThreadInboxFrom(this.state, activity, threadRef)
   }
 
   private reopenThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
@@ -1704,10 +1655,10 @@ export class AgentTeamLedger {
   }
 
   private removeMemberThreadInbox(memberId: AgentTeamMemberId, threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
-    const removed = [...this.attention.values()].filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
+    const removed = [...this.state.attention.values()].filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
       .map(attention => Object.freeze({ memberId, threadRef: attention.threadRef }))
-    const markers = [...this.directMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
-    const activityMarkers = [...this.activityMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    const markers = [...this.state.directMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    const activityMarkers = [...this.state.activityMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
     return this.inboxDelta([], removed, [], markers, [], activityMarkers)
   }
 
@@ -1731,8 +1682,7 @@ export class AgentTeamLedger {
   }
 
   private followAttention(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): AgentTeamThreadAttention {
-    const tail = this.currentTail(threadRef)
-    return Object.freeze({ memberId, threadRef, startSequence: tail + 1, readThroughSequence: tail })
+    return this.followAttentionFrom(this.state, memberId, threadRef)
   }
 
   private followAttentionFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): AgentTeamThreadAttention {
@@ -1745,7 +1695,7 @@ export class AgentTeamLedger {
   }
 
   private attentionFor(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): AgentTeamThreadAttention | undefined {
-    return this.attentionForFrom(this.projection(), memberId, threadRef)
+    return this.attentionForFrom(this.state, memberId, threadRef)
   }
 
   private attentionForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): AgentTeamThreadAttention | undefined {
@@ -1761,7 +1711,7 @@ export class AgentTeamLedger {
   }
 
   private directMarkersFor(memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamDirectMarker[] {
-    return this.directMarkersForFrom(this.projection(), memberId, threadRef)
+    return this.directMarkersForFrom(this.state, memberId, threadRef)
   }
 
   private directMarkersForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamDirectMarker[] {
@@ -1789,9 +1739,9 @@ export class AgentTeamLedger {
     this.confirmations.set(confirmationToken, Object.freeze({ actor: actor.memberId, workspaceId, channelRef,
       ...(task === undefined ? {} : { taskRef: task.taskRef }), ...(thread === undefined ? {} : { threadRef: thread.threadRef }),
       body, recipients, attention: recipients.map(memberId => thread !== undefined && this.isFollowing(thread.threadRef, memberId)),
-      memberStates: recipients.map(memberId => this.members.get(memberId)?.state ?? 'enabled') }))
+      memberStates: recipients.map(memberId => this.state.members.get(memberId)?.state ?? 'enabled') }))
     return Object.freeze({ kind: 'confirmation_required', confirmationToken, workspaceId, channelRef,
-      recipients: Object.freeze(recipients.filter(memberId => this.members.has(memberId) && (thread === undefined || !this.isFollowing(thread.threadRef, memberId)))),
+      recipients: Object.freeze(recipients.filter(memberId => this.state.members.has(memberId) && (thread === undefined || !this.isFollowing(thread.threadRef, memberId)))),
       ...(task === undefined ? {} : { taskRef: task.taskRef }), ...(thread === undefined ? {} : { threadRef: thread.threadRef, revision: thread.revision }) })
   }
 
@@ -1808,7 +1758,7 @@ export class AgentTeamLedger {
     const confirmation = this.confirmations.get(token)
     this.confirmations.delete(token)
     const attention = recipients.map(memberId => thread !== undefined && this.isFollowing(thread.threadRef, memberId))
-    const states = recipients.map(memberId => this.members.get(memberId)?.state ?? 'enabled')
+    const states = recipients.map(memberId => this.state.members.get(memberId)?.state ?? 'enabled')
     if (confirmation === undefined || confirmation.actor !== actor.memberId || confirmation.workspaceId !== workspaceId
       || confirmation.channelRef !== channelRef || confirmation.taskRef !== task?.taskRef || confirmation.threadRef !== thread?.threadRef
       || confirmation.body !== body || !this.sameList(confirmation.recipients, recipients)
@@ -1869,7 +1819,7 @@ export class AgentTeamLedger {
   }
 
   private claimsForTask(taskRef: AgentTeamTaskRef): readonly AgentTeamClaim[] {
-    return this.claimsForTaskFrom(this.projection(), taskRef)
+    return this.claimsForTaskFrom(this.state, taskRef)
   }
 
   private claimsForTaskFrom(projection: Projection, taskRef: AgentTeamTaskRef): readonly AgentTeamClaim[] {
@@ -1878,18 +1828,18 @@ export class AgentTeamLedger {
 
   private claimsForVisibleTasks(tasks: readonly AgentTeamTask[]): readonly AgentTeamClaim[] {
     const refs = new Set(tasks.map(task => task.taskRef))
-    return Object.freeze([...this.claims.values()].filter(claim => refs.has(claim.taskRef)))
+    return Object.freeze([...this.state.claims.values()].filter(claim => refs.has(claim.taskRef)))
   }
 
   private tasksForClaims(claims: readonly AgentTeamClaim[], projected: ReadonlyMap<AgentTeamClaimRef, AgentTeamClaim>): readonly AgentTeamTask[] {
     return Object.freeze([...new Set(claims.map(claim => claim.taskRef))].map(taskRef => {
-      const task = this.tasks.get(taskRef)!
+      const task = this.state.tasks.get(taskRef)!
       return Object.freeze({ ...task, status: this.deriveResolvedTaskStatus(task, projected.values()) })
     }))
   }
 
   private threadAnchor(task: AgentTeamTask): AgentTeamMessage {
-    return this.threadAnchorFrom(this.projection(), task)
+    return this.threadAnchorFrom(this.state, task)
   }
 
   private threadAnchorFrom(projection: Projection, task: AgentTeamTask): AgentTeamMessage {
@@ -1905,8 +1855,8 @@ export class AgentTeamLedger {
   private taskNumbers(workspaceId: WorkspaceId, channelRef?: AgentTeamChannelRef): Map<AgentTeamTaskRef, number> {
     const numbers = new Map<AgentTeamTaskRef, number>()
     let next = 1
-    for (const message of this.topLevelMessages) {
-      if (this.channels.get(message.channelRef)?.workspaceId !== workspaceId) continue
+    for (const message of this.state.topLevelMessages) {
+      if (this.state.channels.get(message.channelRef)?.workspaceId !== workspaceId) continue
       if (channelRef !== undefined && message.channelRef !== channelRef) continue
       numbers.set(message.taskRef, next)
       next += 1
@@ -1915,7 +1865,7 @@ export class AgentTeamLedger {
   }
 
   private hasActiveClaim(memberId: AgentTeamMemberId, taskRef: AgentTeamTaskRef): boolean {
-    return this.hasActiveClaimFrom(this.projection(), memberId, taskRef)
+    return this.hasActiveClaimFrom(this.state, memberId, taskRef)
   }
 
   private hasActiveClaimFrom(projection: Projection, memberId: AgentTeamMemberId, taskRef: AgentTeamTaskRef): boolean {
@@ -1935,7 +1885,7 @@ export class AgentTeamLedger {
 
   private setMemberState(request: AgentTeamAuthorizedSetMemberStateRequest, state: 'enabled' | 'suspended'): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
     return this.enqueue(async () => {
-      const existing = this.byRequest.get(request.requestId)
+      const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
         this.assertSameMemberState(existing, request, state)
         return this.resolved(this.memberResult(existing))
@@ -1985,27 +1935,27 @@ export class AgentTeamLedger {
   }
 
   private requireTask(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): AgentTeamTask {
-    const task = this.tasks.get(taskRef)
+    const task = this.state.tasks.get(taskRef)
     if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
-    if (this.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
+    if (this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
     return task
   }
 
   private requireThread(threadRef: AgentTeamThreadRef): AgentTeamThread {
-    const thread = this.threads.get(threadRef)
+    const thread = this.state.threads.get(threadRef)
     if (thread === undefined) throw new Error(`unknown Thread ref '${threadRef}'${this.unknownRefHint(threadRef, 'thread', 'Thread')}`)
     return thread
   }
 
   private requireChannel(workspaceId: WorkspaceId, channelRef: AgentTeamChannelRef): AgentTeamChannel {
-    const channel = this.channels.get(channelRef)
+    const channel = this.state.channels.get(channelRef)
     if (channel === undefined) throw new Error(`unknown Channel ref '${channelRef}'${this.unknownRefHint(channelRef, 'channel', 'Channel')}`)
     if (channel.workspaceId !== workspaceId) throw new Error(`Channel '${channelRef}' does not belong to Workspace '${workspaceId}'`)
     return channel
   }
 
   private requireMember(memberId: AgentTeamMemberId): AgentTeamAgentMember {
-    const member = this.members.get(memberId)
+    const member = this.state.members.get(memberId)
     if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
     return member
   }
@@ -2015,7 +1965,7 @@ export class AgentTeamLedger {
   }
 
   private isChannelMember(channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): boolean {
-    return this.memberships.get(channelRef)?.has(memberId) === true
+    return this.state.memberships.get(channelRef)?.has(memberId) === true
   }
 
   private isChannelMemberFrom(projection: Projection, channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): boolean {
@@ -2023,7 +1973,7 @@ export class AgentTeamLedger {
   }
 
   private channelThreadRefs(channelRef: AgentTeamChannelRef): Set<AgentTeamThreadRef> {
-    return new Set([...this.tasks.values()].filter(task => task.channelRef === channelRef).map(task => task.threadRef))
+    return new Set([...this.state.tasks.values()].filter(task => task.channelRef === channelRef).map(task => task.threadRef))
   }
 
   private assertJoinableMember(workspaceId: WorkspaceId, memberId: AgentTeamMemberId): void {
@@ -2050,14 +2000,14 @@ export class AgentTeamLedger {
 
   private assertHandleAvailable(workspaceId: WorkspaceId, handle: string): void {
     const normalized = handle.normalize('NFKC').trim().toLowerCase()
-    if ([...this.members.values()].some(member => member.state !== 'inactive' && member.workspaceId === workspaceId
+    if ([...this.state.members.values()].some(member => member.state !== 'inactive' && member.workspaceId === workspaceId
       && member.handle.normalize('NFKC').trim().toLowerCase() === normalized)) {
       throw new Error(`Agent Member handle '${handle}' is already active in Workspace '${workspaceId}'`)
     }
   }
 
   private initialization(): AgentTeamInitializedOperation {
-    const operation = this.ordered[0]
+    const operation = this.state.ordered[0]
     if (operation === undefined) throw new Error('agent-team ledger is not initialized')
     this.assertInitializationRecord(operation)
     return operation
@@ -2272,12 +2222,12 @@ export class AgentTeamLedger {
 
   private operationBase(request: { readonly requestId: AgentTeamRequestId; readonly actor: AgentTeamHumanActor | AgentTeamMemberActor }, sequence: number) {
     return { sequence, operationId: this.createOperationId(), requestId: request.requestId, occurredAt: this.createOccurredAt(),
-      actor: Object.freeze({ ...request.actor }), previousOperationId: this.ordered.at(-1)?.operationId ?? null }
+      actor: Object.freeze({ ...request.actor }), previousOperationId: this.state.ordered.at(-1)?.operationId ?? null }
   }
 
   private nextSequence(): number {
-    if (this.ordered.length === 0) throw new Error('agent-team ledger is not initialized')
-    return this.ordered.length + 1
+    if (this.state.ordered.length === 0) throw new Error('agent-team ledger is not initialized')
+    return this.state.ordered.length + 1
   }
 
   private ref(kind: 'channel'): AgentTeamChannelRef
@@ -2318,12 +2268,6 @@ export class AgentTeamLedger {
         : { ...fact, fact: fact.fact }
     ))
     return { ...operation, data: { ...operation.data, anchor: stamp(operation.data.anchor), facts } }
-  }
-
-  private emptyProjection(): Projection {
-    return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
-      claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
-      orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], messageCountByThread: new Map(), attentionByThread: new Map() }
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
