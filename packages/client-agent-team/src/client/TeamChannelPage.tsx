@@ -284,7 +284,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                 <span className={channelCss.taskDot}>
                   {(() => {
                     const dot = taskStatusDot(item.task.status)
-                    return dot !== undefined ? <StateDot size={8} state={dot} /> : null
+                    return dot === 'ongoing' || dot === 'warning' || dot === 'done'
+                      ? <StateDot size={8} state={dot} />
+                      : <span className={channelCss.taskDotQuiet} data-variant={dot} />
                   })()}
                 </span>
                 <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>

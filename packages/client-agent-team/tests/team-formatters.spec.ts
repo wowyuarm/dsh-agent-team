@@ -70,11 +70,11 @@ describe('Team presentation formatters', () => {
     expect(splitMentions('@builder at line start', new Set<string>())).toEqual([{ text: '@builder at line start', mention: false }])
   })
 
-  it('gives only running, review-pending, and done tasks a state dot', () => {
-    expect(taskStatusDot('todo')).toBeUndefined()
+  it('maps every task status to a status dot variant', () => {
+    expect(taskStatusDot('todo')).toBe('todo')
     expect(taskStatusDot('in_progress')).toBe('ongoing')
     expect(taskStatusDot('in_review')).toBe('warning')
     expect(taskStatusDot('done')).toBe('done')
-    expect(taskStatusDot('closed')).toBeUndefined()
+    expect(taskStatusDot('closed')).toBe('closed')
   })
 })

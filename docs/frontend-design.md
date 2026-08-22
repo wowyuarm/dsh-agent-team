@@ -79,7 +79,7 @@
 ### Task 入口卡（channel 时间线内）
 
 - 语义：top-level 频道消息进入其 Task Thread 的唯一入口，展示 `Task #N`、任务状态与消息计数，点击触发 `selectThread`。
-- 形态合同：fit-content 紧凑胶囊（细边框 quiet 默认态），内容 `StateDot 座位` · `Task #N`(600) · 状态 · 计数 · chevron 图标；箭头位置由内容流构造保证一致，不使用全宽拉伸。状态点用 `taskStatusDot` 映射（in_progress=ongoing 蓝圈、in_review=warning 琥珀、done=done 绿；todo/closed 安静无点），8px 固定座位保证各卡 Task #N 同轴。hover/focus 渐进反馈：底色与边框提升、箭头右移 2px（120ms 过渡，reduced-motion 下关闭）；focus-visible 用主题色 outline。状态与计数用 tertiary 弱化，`aria-label` 带 `openTask` 文案。
+- 形态合同：fit-content 紧凑胶囊（细边框 quiet 默认态），内容 `状态点` · `Task #N`(600) · 状态 · 计数 · chevron 图标；箭头位置由内容流构造保证一致，不使用全宽拉伸。状态点用 `taskStatusDot` 映射，五个状态全有点、8px 固定座位保证各卡同轴：in_progress=ongoing 蓝圈、in_review=warning 琥珀、done=done 绿（复用 DSH `StateDot`，与 presence 同语言）；todo=空心圆环（未开始的空位）、closed=tertiary 灰实心点带 10% 光晕（镜像 StateDot 几何的 `.taskDotQuiet`）。hover/focus 渐进反馈：底色与边框提升、箭头右移 2px（120ms 过渡，reduced-motion 下关闭）；focus-visible 用主题色 outline。状态与计数用 tertiary 弱化，`aria-label` 带 `openTask` 文案。
 
 ### 状态胶囊与弹层
 
