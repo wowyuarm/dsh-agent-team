@@ -15,12 +15,7 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, t }: 
       return () => { delete document.documentElement.dataset.agentTeamMode }
     }
     delete document.documentElement.dataset.agentTeamMode
-  }, [inTeam])
-  const keyboardActivate = (event: React.KeyboardEvent<HTMLButtonElement>, action: () => void) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    action()
-  }
+    }, [inTeam])
 
   return (
     <>
@@ -32,7 +27,6 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, t }: 
             aria-label={label}
             data-team-action={inTeam ? 'leave' : 'enter'}
             onClick={inTeam ? leaveTeam : enterTeam}
-            onKeyDown={event => { keyboardActivate(event, inTeam ? leaveTeam : enterTeam) }}
           >
             {inTeam ? <IconChevronLeftOutline14 size={wide ? 16 : 18} /> : <IconAgentPresetOutline16 size={wide ? 16 : 18} />}
             {wide && <span>{label}</span>}

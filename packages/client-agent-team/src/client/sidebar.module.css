@@ -92,7 +92,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.workspaceMeta { display: none; }
 
 .emptyState {
   color: var(--dsw-alias-label-tertiary);

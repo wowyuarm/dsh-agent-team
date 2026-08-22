@@ -721,11 +721,6 @@ export type AgentTeamClaimResult =
   | AgentTeamUnreadRequired
   | AgentTeamStaleRevision
 
-export interface AgentTeamClaimListRequest {
-  readonly workspaceId: WorkspaceId
-  readonly taskRef: AgentTeamTaskRef
-}
-
 export interface AgentTeamClaimList {
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
@@ -820,11 +815,6 @@ export interface AgentTeamViewItem {
   readonly thread: AgentTeamThread
   readonly taskNumber: number
   readonly messageCount: number
-}
-
-/** Workspace-authorized bounded view request. */
-export interface AgentTeamAgentViewRequest extends AgentTeamViewRequest {
-  readonly memberId: AgentTeamMemberId
 }
 
 export interface AgentTeamViewRequest {

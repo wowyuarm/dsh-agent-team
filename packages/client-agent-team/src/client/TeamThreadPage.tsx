@@ -521,7 +521,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       members={channelMembers}
       recipients={recipients}
       draft={draft}
-      disabled={false}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}

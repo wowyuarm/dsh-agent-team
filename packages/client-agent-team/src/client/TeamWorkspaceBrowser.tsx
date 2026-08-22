@@ -69,5 +69,3 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
     </div>}
   </section>
 }
-
-export type TeamWorkspaceBrowserProps = TeamSidebarProps

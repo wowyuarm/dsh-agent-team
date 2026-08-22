@@ -291,7 +291,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       members={channelMembers}
       recipients={recipients}
       draft={draft}
-      disabled={false}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}

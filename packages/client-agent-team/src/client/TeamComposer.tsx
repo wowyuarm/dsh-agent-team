@@ -38,11 +38,10 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
-export function TeamComposer({ members, recipients, draft, disabled, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, t }: {
+export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
-  readonly disabled: boolean
   readonly pending: boolean
   readonly confirmation?: string
   readonly error?: string
@@ -58,7 +57,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
   const [mention, setMention] = useState<MentionMatch>()
   const [highlight, setHighlight] = useState(0)
   const candidates = mention === undefined ? [] : mentionCandidates(members, mention.query)
-  const menuOpen = !disabled && mention !== undefined && candidates.length > 0
+  const menuOpen = mention !== undefined && candidates.length > 0
   const activeCandidate = candidates[highlight]
   const listId = 'team-mention-suggestions'
   const menuMaxHeight = useAnchoredMaxHeight(menuRef, 320, menuOpen ? draft : null)
@@ -188,7 +187,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
           aria-activedescendant={menuOpen && activeCandidate !== undefined ? `${listId}-${activeCandidate.member.memberId}` : undefined}
           aria-expanded={menuOpen}
           value={draft}
-          disabled={disabled || pending}
+          disabled={pending}
           placeholder={t('messagePlaceholder')}
           rows={1}
           onChange={onChange}
@@ -204,7 +203,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
           type="submit"
           className={css.sendButton}
           aria-label={pending ? t('sendingMessage') : t('sendMessage')}
-          disabled={disabled || pending || draft.trim() === ''}
+          disabled={pending || draft.trim() === ''}
         >
           <IconSendOutline16 size={16} />
         </button>
