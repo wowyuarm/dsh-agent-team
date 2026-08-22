@@ -290,6 +290,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         memberId={fact.message.sender}
         human={fact.message.sender === channelView?.humanMemberId}
         body={fact.message.body}
+        occurredAt={fact.message.occurredAt}
         grouped={grouped}
         {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
       />

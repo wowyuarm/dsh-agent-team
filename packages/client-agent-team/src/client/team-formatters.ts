@@ -32,6 +32,23 @@ export function memberHue(memberId: string): number {
   return hash
 }
 
+const pad = (value: number): string => String(value).padStart(2, '0')
+
+/**
+ * Wall-clock label for one Message instant: time within the current day,
+ * month-day time within the year, full date otherwise.
+ */
+export function formatMessageTime(occurredAt: string, now = new Date()): string {
+  const at = new Date(occurredAt)
+  if (Number.isNaN(at.getTime())) return ''
+  const time = `${pad(at.getHours())}:${pad(at.getMinutes())}`
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate()
+  if (sameDay) return time
+  const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+  if (at.getFullYear() === now.getFullYear()) return `${date.slice(5)} ${time}`
+  return `${date} ${time}`
+}
+
 export function formatActivity(activity: AgentTeamActivity, options: {
   readonly t: TeamConversationProps['t']
   readonly actorName: (memberId: AgentTeamMemberId) => string

@@ -24,11 +24,14 @@
 | 元素 | 规格 |
 | --- | --- |
 | 页头 h1 | 20px/28px, weight 600 |
-| 发送者名 | 13px/20px, primary, block 显示（每条消息独占一行） |
+| 发送者名 | 13px/20px, weight 600, primary；右侧同行跟随时间元信息 |
+| 消息时间 | 11px/20px, tertiary；当天 HH:mm，同年 MM-DD HH:mm，跨年完整日期（`formatMessageTime`，本地时区） |
 | Human 正文 | 14px/22px（`.messageText` 包裹 `MessageText` 原语，pre-wrap 由原语负责） |
-| Agent 正文 | markdown 原语渲染；本包把容器压到 14px/22px、段落 margin 4px、列表缩进 22px、标题 margin 10px 0 4px、pre/blockquote margin 6px |
+| Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）；段落 margin 4px、列表缩进 22px、标题 margin 10px 0 4px、pre/blockquote margin 6px |
 | 任务/活动行 | 11–12px, tertiary, 活动行居中 |
 | 空/加载态 | 13px tertiary；加载点 8px 脉冲动画（reduced-motion 下关闭） |
+
+消息时间来自 Host 投影：`AgentTeamMessage.occurredAt` 与包裹它的 ledger 操作同源（旧账本在回放时归一化）。分组 run 只在 run 头部渲染名字与时间。
 
 ## 颜色与身份
 
@@ -41,7 +44,7 @@
 
 ### TeamMessage（消息行）
 
-- Props：`senderName`、`memberId`、`human`、`body`、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
+- Props：`senderName`、`memberId`、`human`、`body`、可选 `occurredAt`（名字行时间元信息）、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
 - 分组规则：`isGroupedRun(facts, index, senderOf)` —— 相邻两条同为消息且 sender 相同才折叠；活动行会打断 run。折叠行隐藏头像与名字（`visibility:hidden` 保持栅格对齐），padding 收紧为 `2px`。
 - 头像首字母取 senderName 去掉 `@` 后首个字符大写。
 
@@ -61,7 +64,7 @@
 ### Task 入口卡（channel 时间线内）
 
 - 语义：top-level 频道消息进入其 Task Thread 的唯一入口，展示 `Task #N`、任务状态与消息计数，点击触发 `selectThread`。
-- 形态合同：可聚焦按钮、quiet 默认态 + hover/focus 反馈、状态与计数用 tertiary 弱化、`aria-label` 带 `openTask` 文案；视觉规格见 `channel.module.css`。
+- 形态合同：fit-content 紧凑胶囊（细边框 quiet 默认态），内容 `Task #N`(600) · 状态 · 计数 · chevron 图标；箭头位置由内容流构造保证一致，不使用全宽拉伸。hover/focus 渐进反馈：底色与边框提升、箭头右移 2px（120ms 过渡，reduced-motion 下关闭）；focus-visible 用主题色 outline。状态与计数用 tertiary 弱化，`aria-label` 带 `openTask` 文案。
 
 ### 状态胶囊与弹层
 

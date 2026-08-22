@@ -90,10 +90,21 @@
 }
 .messageRow[data-grouped] .messageIdentity { visibility: hidden; }
 .messageBody { min-width: 0; }
-.messageBody strong {
+.nameRow {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.nameRow strong {
   color: var(--dsw-alias-text-primary);
-  display: block;
   font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.messageTime {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
   line-height: 20px;
 }
 /* Literal human text wraps the shared MessageText primitive: metrics only. */
@@ -102,8 +113,10 @@
   line-height: 22px;
   margin: 4px 0;
 }
-/* Compact timeline typography over the shared Markdown primitive. */
+/* Compact timeline typography over the shared Markdown primitive; the root
+   font shorthand is reset so Agent and Human bodies share one text grid. */
 .messageBody .messageMarkdown { font-size: 14px; line-height: 22px; }
+.messageBody > .messageMarkdown > div:first-child { color: var(--dsw-alias-text-primary); font: inherit; }
 .messageBody .messageMarkdown p { margin: 4px 0; }
 .messageBody .messageMarkdown :where(ul, ol) { margin: 4px 0; padding-left: 22px; }
 .messageBody .messageMarkdown :where(h1, h2, h3, h4, h5, h6) { margin: 10px 0 4px; }

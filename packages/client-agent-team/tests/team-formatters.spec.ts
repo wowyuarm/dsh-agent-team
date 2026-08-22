@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatTaskStatus } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -43,5 +43,15 @@ describe('Team presentation formatters', () => {
       expect(rendered).not.toContain('member:')
       expect(rendered).not.toContain('claim:')
     }
+  })
+
+  it('renders message time as clock time today, date+time within the year, full date otherwise', () => {
+    const now = new Date('2026-08-21T12:00:00')
+    const at = new Date('2026-08-21T03:05:00.000Z')
+    const clock = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+    expect(formatMessageTime('2026-08-21T03:05:00.000Z', now)).toBe(clock)
+    expect(formatMessageTime('2026-02-01T08:30:00', now)).toBe('02-01 08:30')
+    expect(formatMessageTime('2025-12-31T23:59:00', now)).toBe('2025-12-31 23:59')
+    expect(formatMessageTime('not-a-date', now)).toBe('')
   })
 })

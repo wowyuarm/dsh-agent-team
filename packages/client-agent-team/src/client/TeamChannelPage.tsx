@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronRightOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -256,6 +256,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
             memberId={item.message.sender}
             human={human}
             body={item.message.body}
+            occurredAt={item.message.occurredAt}
             grouped={isGroupedRun(view.items, index, messageSender)}
             {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
           >
@@ -263,7 +264,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
               <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
               <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
               <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
-              <span className={channelCss.taskArrow} aria-hidden="true">→</span>
+              <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
             </button>}
           </TeamMessage>
         })}

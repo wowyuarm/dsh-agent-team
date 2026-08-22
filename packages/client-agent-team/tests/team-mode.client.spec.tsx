@@ -92,7 +92,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const sendMessage = vi.fn(async (request: AgentTeamSendMessageRequest) => {
     const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
     const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
-    const message = { messageRef: 'message:1', channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, topLevel: true, sequence: 2 }
+    const message = { messageRef: 'message:1', channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, topLevel: true, sequence: 2, occurredAt: '2026-08-21T10:00:00.000Z' }
     viewItems = [{ message, task, thread, taskNumber: 1, messageCount: 1 }]
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
   })
