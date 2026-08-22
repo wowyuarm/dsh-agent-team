@@ -5,7 +5,6 @@ import type {
   AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
   AgentTeamCreateChannelRequest,
-  AgentTeamJoinChannelRequest,
   AgentTeamMemberId,
   AgentTeamRequestId,
   AgentTeamView,
@@ -16,6 +15,7 @@ import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
+import { useChannelMembership } from './team-membership.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -277,33 +277,11 @@ function ChannelMembershipDialog({ channel, members, joinedIds, joinChannel, rem
   readonly onClose: () => void
   readonly t: TeamSidebarProps['t']
 }) {
-  const [pending, setPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
-  const [errors, setErrors] = useState<ReadonlyMap<AgentTeamMemberId, string>>(new Map())
-  // Idempotency mirrors the Channel page manager: one stable request per direction+member until it commits.
-  const requestIds = useRef(new Map<string, AgentTeamRequestId>())
-
-  const changeMembership = async (memberId: AgentTeamMemberId, joined: boolean): Promise<void> => {
-    if (pending.has(memberId)) return
-    setPending(current => new Set(current).add(memberId))
-    setErrors(current => { const next = new Map(current); next.delete(memberId); return next })
-    const key = `${joined ? 'remove' : 'join'}:${memberId}:${channel.channelRef}`
-    const requestId = requestIds.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
-    requestIds.current.set(key, requestId)
-    const request: AgentTeamJoinChannelRequest = { requestId, workspaceId: channel.workspaceId, channelRef: channel.channelRef, memberId }
-    try {
-      const result = joined ? await removeChannelMember(request) : await joinChannel(request)
-      if (result.ok) {
-        requestIds.current.delete(key)
-        await onCommitted()
-      } else {
-        setErrors(current => new Map(current).set(memberId, result.error.message))
-      }
-    } catch (cause) {
-      setErrors(current => new Map(current).set(memberId, cause instanceof Error ? cause.message : String(cause)))
-    } finally {
-      setPending(current => { const next = new Set(current); next.delete(memberId); return next })
-    }
-  }
+  const membership = useChannelMembership(
+    { joinChannel, removeChannelMember },
+    change => change.memberId,
+    async () => { await onCommitted() },
+  )
 
   return (
     <Modal open onClose={onClose} title={t('editChannel')} description={`# ${channel.name}`} closeLabel={t('close')} contentClassName={createCss.dialogContent!}>
@@ -311,13 +289,13 @@ function ChannelMembershipDialog({ channel, members, joinedIds, joinChannel, rem
       <div className={css.editMemberList}>
         {members.map(status => {
           const joined = joinedIds.has(status.member.memberId)
-          const rowPending = pending.has(status.member.memberId)
+          const rowPending = membership.pending.has(status.member.memberId)
           const disabled = rowPending || (!joined && status.presence === 'unavailable')
-          const rowError = errors.get(status.member.memberId)
+          const rowError = membership.errors.get(status.member.memberId)
           return <div className={css.editMemberRow} key={status.member.memberId}>
             <TeamPresenceDot status={status} t={t} />
             <span className={css.editMemberCopy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
-            <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
+            <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void membership.change({ workspaceId: channel.workspaceId, channelRef: channel.channelRef, memberId: status.member.memberId, joined }) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
             {rowError !== undefined && <p className={css.rowError} role="alert">{rowError}</p>}
           </div>
         })}

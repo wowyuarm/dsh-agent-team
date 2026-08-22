@@ -7,6 +7,7 @@ import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { formatTaskStatus, taskStatusDot } from './team-formatters.ts'
+import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { chunkRunsWithDays } from './team-separators.ts'
 import channelCss from './channel.module.css'
@@ -55,9 +56,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [managingMembers, setManagingMembers] = useState(false)
-  const [membershipPending, setMembershipPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
-  const [membershipErrors, setMembershipErrors] = useState<ReadonlyMap<AgentTeamMemberId, string>>(new Map())
-  const membershipRequests = useRef(new Map<string, AgentTeamSendMessageRequest['requestId']>())
   const manageTriggerRef = useRef<HTMLSpanElement>(null)
   const memberListRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(false)
@@ -163,28 +161,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     queueMicrotask(() => { manageTriggerRef.current?.querySelector('button')?.focus() })
   }
 
-  const changeMembership = async (memberId: AgentTeamMemberId, joined: boolean) => {
-    if (membershipPending.has(memberId)) return
-    setMembershipPending(current => new Set(current).add(memberId))
-    setMembershipErrors(current => { const next = new Map(current); next.delete(memberId); return next })
-    const key = `${joined ? 'remove' : 'join'}:${memberId}`
-    const requestId = membershipRequests.current.get(key) ?? crypto.randomUUID() as AgentTeamSendMessageRequest['requestId']
-    membershipRequests.current.set(key, requestId)
-    const request = { requestId, workspaceId, channelRef, memberId }
-    try {
-      const result = joined ? await removeChannelMember(request) : await joinChannel(request)
-      if (result.ok) {
-        membershipRequests.current.delete(key)
-        await refresh()
-      } else {
-        setMembershipErrors(current => new Map(current).set(memberId, result.error.message))
-      }
-    } catch (cause) {
-      setMembershipErrors(current => new Map(current).set(memberId, cause instanceof Error ? cause.message : String(cause)))
-    } finally {
-      setMembershipPending(current => { const next = new Set(current); next.delete(memberId); return next })
-    }
-  }
+  const membership = useChannelMembership(
+    { joinChannel, removeChannelMember },
+    change => change.memberId,
+    async () => { await refresh() },
+  )
 
   // Retained across transport failures so a replayed send dedupes on the Host;
   // definitive outcomes (committed or rejected) start the next send fresh.
@@ -243,13 +224,13 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       <div ref={memberListRef} className={channelCss.memberList}>
         {members.filter(status => status.member.state !== 'inactive').map(status => {
           const joined = channelMemberIds.has(status.member.memberId)
-          const rowPending = membershipPending.has(status.member.memberId)
+          const rowPending = membership.pending.has(status.member.memberId)
           const disabled = rowPending || (!joined && status.presence === 'unavailable')
-          const rowError = membershipErrors.get(status.member.memberId)
+          const rowError = membership.errors.get(status.member.memberId)
           return <div className={channelCss.memberRow} key={status.member.memberId}>
             <TeamPresenceDot status={status} t={t} />
             <span className={channelCss.memberCopy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
-            <Button className={channelCss.memberAction} size="sm" disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
+            <Button className={channelCss.memberAction} size="sm" disabled={disabled} onClick={() => { void membership.change({ workspaceId, channelRef, memberId: status.member.memberId, joined }) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
             {rowError !== undefined && <p className={channelCss.memberError} role="alert">{rowError}</p>}
           </div>
         })}

@@ -4,7 +4,6 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamChannel,
   AgentTeamChannelMembership,
-  AgentTeamJoinChannelRequest,
   AgentTeamRequestId,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -13,6 +12,7 @@ import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
+import { useChannelMembership } from './team-membership.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -250,9 +250,6 @@ function AgentMembershipDialog({ status, channels, loadChannels, joinChannel, re
   // state never flips a committed fact backwards.
   const [memberships, setMemberships] = useState<readonly AgentTeamChannelMembership[]>()
   const [loadError, setLoadError] = useState<string>()
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
-  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(new Map())
-  const requestIds = useRef(new Map<string, AgentTeamRequestId>())
   const mounted = useRef(true)
   useEffect(() => {
     mounted.current = true
@@ -268,33 +265,18 @@ function AgentMembershipDialog({ status, channels, loadChannels, joinChannel, re
     return () => { mounted.current = false }
   }, [loadChannels, status.member.workspaceId])
 
-  const changeMembership = async (channelRef: AgentTeamChannel['channelRef'], joined: boolean): Promise<void> => {
-    if (pending.has(channelRef)) return
-    setPending(current => new Set(current).add(channelRef))
-    setErrors(current => { const next = new Map(current); next.delete(channelRef); return next })
-    const key = `${joined ? 'remove' : 'join'}:${memberId}:${channelRef}`
-    const requestId = requestIds.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
-    requestIds.current.set(key, requestId)
-    const request: AgentTeamJoinChannelRequest = { requestId, workspaceId: status.member.workspaceId, channelRef, memberId }
-    try {
-      const result = joined ? await removeChannelMember(request) : await joinChannel(request)
-      if (result.ok) {
-        requestIds.current.delete(key)
-        setMemberships(current => {
-          const base = current ?? []
-          return joined
-            ? base.filter(item => !(item.channelRef === channelRef && item.memberId === memberId))
-            : [...base, { channelRef, memberId }]
-        })
-      } else {
-        setErrors(current => new Map(current).set(channelRef, result.error.message))
-      }
-    } catch (cause) {
-      setErrors(current => new Map(current).set(channelRef, cause instanceof Error ? cause.message : String(cause)))
-    } finally {
-      setPending(current => { const next = new Set(current); next.delete(channelRef); return next })
-    }
-  }
+  const membership = useChannelMembership(
+    { joinChannel, removeChannelMember },
+    change => change.channelRef,
+    change => {
+      setMemberships(current => {
+        const base = current ?? []
+        return change.joined
+          ? base.filter(item => !(item.channelRef === change.channelRef && item.memberId === change.memberId))
+          : [...base, { channelRef: change.channelRef, memberId: change.memberId }]
+      })
+    },
+  )
 
   // A successful join appends the durable fact; removal filters it out above.
   const joinedChannels = new Set((memberships ?? []).filter(item => item.memberId === memberId).map(item => item.channelRef))
@@ -305,12 +287,12 @@ function AgentMembershipDialog({ status, channels, loadChannels, joinChannel, re
       <div className={css.editMemberList}>
         {channels.map(channel => {
           const joined = joinedChannels.has(channel.channelRef)
-          const rowPending = pending.has(channel.channelRef)
+          const rowPending = membership.pending.has(channel.channelRef)
           const disabled = rowPending || (!joined && status.presence === 'unavailable')
-          const rowError = errors.get(channel.channelRef)
+          const rowError = membership.errors.get(channel.channelRef)
           return <div className={`${css.editMemberRow} ${css.editMemberRowChannels}`} key={channel.channelRef}>
             <strong className={css.editChannelName}># {channel.name}</strong>
-            <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void changeMembership(channel.channelRef, joined) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
+            <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void membership.change({ workspaceId: status.member.workspaceId, channelRef: channel.channelRef, memberId, joined }) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
             {rowError !== undefined && <p className={css.rowError} role="alert">{rowError}</p>}
           </div>
         })}
