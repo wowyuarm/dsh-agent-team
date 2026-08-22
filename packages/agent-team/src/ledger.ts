@@ -441,19 +441,20 @@ export class AgentTeamLedger {
         return this.resolved(this.memberNotFollowing(request.workspaceId, channel.channelRef, unfollowedAgents))
       }
       const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
       const taskRef = this.ref('task')
       const threadRef = this.ref('thread')
       const task: AgentTeamTask = Object.freeze({ taskRef, channelRef: channel.channelRef, threadRef, status: 'todo', resolution: 'open' })
       const thread: AgentTeamThread = Object.freeze({ threadRef, taskRef, revision: sequence })
       const message: AgentTeamMessage = Object.freeze({
         messageRef: this.ref('message'), channelRef: channel.channelRef, threadRef, taskRef,
-        sender: request.actor.memberId, body, topLevel: true, sequence,
+        sender: request.actor.memberId, body, topLevel: true, sequence, occurredAt: base.occurredAt,
       })
       const started = [this.startAttention(request.actor.memberId, threadRef, sequence),
         ...unfollowedAgents.map(memberId => this.startAttention(memberId, threadRef, sequence))]
       const inbox = this.messageInboxDelta(message, request.actor.memberId, recipients, started)
       const operation: AgentTeamMessageSentOperation = Object.freeze({
-        ...this.operationBase(request, sequence), kind: 'team/message-sent',
+        ...base, kind: 'team/message-sent',
         data: Object.freeze({ workspaceId: request.workspaceId, mentions: recipients, message, task, thread, inbox }),
       })
       await this.table.put(operation.operationId, operation)
@@ -493,15 +494,16 @@ export class AgentTeamLedger {
           task, thread, body, recipients)
       }
       const sequence = this.nextSequence()
+      const base = this.operationBase(request, sequence)
       const message: AgentTeamMessage = Object.freeze({
         messageRef: this.ref('message'), channelRef: task.channelRef, threadRef: task.threadRef,
-        taskRef: task.taskRef, sender: request.actor.memberId, body, topLevel: false, sequence,
+        taskRef: task.taskRef, sender: request.actor.memberId, body, topLevel: false, sequence, occurredAt: base.occurredAt,
       })
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
       const started = unfollowedAgents.map(memberId => this.startAttention(memberId, thread.threadRef, sequence))
       const inbox = this.messageInboxDelta(message, request.actor.memberId, recipients, started)
       const operation: AgentTeamThreadRepliedOperation = Object.freeze({
-        ...this.operationBase(request, sequence), kind: 'team/thread-replied',
+        ...base, kind: 'team/thread-replied',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
           mentions: recipients, message, task, thread: nextThread, inbox }),
       })
@@ -1428,7 +1430,10 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
-      const { message } = operation.data
+      // Ledgers written before occurredAt existed store bare messages; the wrapping operation carries the same instant.
+      const stored = operation.data.message
+      const message = typeof stored.occurredAt === 'string' ? stored
+        : Object.freeze({ ...stored, occurredAt: operation.occurredAt })
       target.messages.push(message)
       this.appendMessageFact(target, message)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)

@@ -116,6 +116,8 @@ export interface AgentTeamMessage {
   readonly body: string
   readonly topLevel: boolean
   readonly sequence: number
+  /** Wall-clock instant of the wrapping ledger operation; pre-occurredAt ledgers normalize on replay. */
+  readonly occurredAt: string
 }
 
 /** Task created by one top-level Channel Message. */

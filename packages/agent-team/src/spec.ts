@@ -68,6 +68,7 @@ const messageSchema = z.object({
   body: z.string().min(1),
   topLevel: z.boolean(),
   sequence: z.number().int().positive(),
+  occurredAt: z.string().datetime(),
 }).strict()
 
 const taskSchema = z.object({
