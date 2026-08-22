@@ -22,6 +22,7 @@
 - D2 Human 消息 mention 分段渲染 + mention chip 样式
 - D3 messageRun 包装（连续同 sender 消息+task chip 为一块）+ hover 面（仅边框、无底色无阴影——用户反馈后从"边框+底色"收敛，避免与 task button hover 叠层；padding+负margin 外扩）
 - 验证：typecheck / vitest（快照更新）/ lint / build / test:browser 双尺寸截图
+- D4 任务卡状态 StateDot：`taskStatusDot` 映射（in_progress=ongoing、in_review=warning、done=done；todo/closed 安静无点），8px 固定座位置于 Task #N 前，各卡左对齐；复用 DSH `StateDot` 原语（与 TeamPresenceDot 同语言）。用户反馈：点移到 Task #N 之前。
 
 ## 退出标准
 

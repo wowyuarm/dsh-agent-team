@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, splitMentions } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, splitMentions, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -68,5 +68,13 @@ describe('Team presentation formatters', () => {
     ])
     expect(splitMentions('plain text', handles)).toEqual([{ text: 'plain text', mention: false }])
     expect(splitMentions('@builder at line start', new Set<string>())).toEqual([{ text: '@builder at line start', mention: false }])
+  })
+
+  it('gives only running, review-pending, and done tasks a state dot', () => {
+    expect(taskStatusDot('todo')).toBeUndefined()
+    expect(taskStatusDot('in_progress')).toBe('ongoing')
+    expect(taskStatusDot('in_review')).toBe('warning')
+    expect(taskStatusDot('done')).toBe('done')
+    expect(taskStatusDot('closed')).toBeUndefined()
   })
 })

@@ -19,6 +19,15 @@ export function formatClaimState(state: AgentTeamClaim['state'], t: TeamConversa
   } as const)[state])
 }
 
+/**
+ * StateDot variant for a Task status, or undefined when the status is quiet
+ * by default (todo = not started, closed = archived): only running, review-
+ * pending, and finished tasks earn a visual signal.
+ */
+export function taskStatusDot(status: AgentTeamTask['status']): 'ongoing' | 'warning' | 'done' | undefined {
+  return ({ todo: undefined, in_progress: 'ongoing', in_review: 'warning', done: 'done', closed: undefined } as const)[status]
+}
+
 /** One-line title snippet derived from the Task's root Message body. */
 export function formatTaskTitle(body: string): string {
   const firstLine = body.split('\n', 1)[0]?.trim() ?? ''

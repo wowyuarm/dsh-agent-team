@@ -56,6 +56,16 @@
   line-height: 18px;
 }
 
+/* Status label carries an optional StateDot (running/review-pending/done). */
+.taskDot {
+  align-items: center;
+  display: inline-flex;
+  /* Reserved seat keeps every Task #N on one vertical axis, even for the
+     quiet todo/closed statuses that render no dot. */
+  flex: none;
+  width: 8px;
+}
+
 /* The chevron rides inside a fixed-size seat so every card's arrow sits at
    the same offset from its content; hover nudges it forward. */
 .taskArrow {

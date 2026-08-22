@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
-import { formatTaskStatus } from './team-formatters.ts'
+import { formatTaskStatus, taskStatusDot } from './team-formatters.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
@@ -281,6 +281,12 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
               {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
             >
               {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
+                <span className={channelCss.taskDot}>
+                  {(() => {
+                    const dot = taskStatusDot(item.task.status)
+                    return dot !== undefined ? <StateDot size={8} state={dot} /> : null
+                  })()}
+                </span>
                 <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
                 <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
                 <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
