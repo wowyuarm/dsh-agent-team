@@ -29,8 +29,8 @@
 | 页头 h1 | 20px/28px, weight 600 |
 | 发送者名 | 13px/20px, weight 600, primary；右侧同行跟随时间元信息 |
 | 消息时间 | 11px/20px, tertiary；当天 HH:mm，同年 MM-DD HH:mm，跨年完整日期（`formatMessageTime`，本地时区） |
-| Human 正文 | 14px/22px（`.messageText` 包裹 `MessageText` 原语，pre-wrap 由原语负责） |
-| Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）；段落 margin 4px、列表缩进 22px、标题 margin 10px 0 4px、pre/blockquote margin 6px |
+| Human 正文 | 14px/22px（`.messageText` 容器统一 pre-wrap/break-word；无 mention 时直接渲染 `MessageText` 原语） |
+| Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）。标题用聊天刻度（h1 17px、h2 16px、h3–h6 15px，margin 12px 0 4px），页面 h1 保持最高层级；段落/列表 margin 6px、`li + li` 间距 2px、strong 600；pre 8px 外边距 + 10px 12px 内边距、13px；表格 cell 纵向 padding 5px |
 | 任务/活动行 | 11–12px, tertiary, 活动行居中 |
 | 空/加载态 | 13px tertiary；加载点 8px 脉冲动画（reduced-motion 下关闭） |
 
@@ -47,9 +47,20 @@
 
 ### TeamMessage（消息行）
 
-- Props：`senderName`、`memberId`、`human`、`body`、可选 `occurredAt`（名字行时间元信息）、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
-- 分组规则：`isGroupedRun(facts, index, senderOf)` —— 相邻两条同为消息且 sender 相同才折叠；活动行会打断 run。折叠行隐藏头像与名字（`visibility:hidden` 保持栅格对齐），padding 收紧为 `2px`。
+- Props：`senderName`、`memberId`、`human`、`body`、可选 `occurredAt`（名字行时间元信息）、可选 `mentionHandles`（Human 正文中的 mention chip 集合）、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
+- 分组规则：相邻两条同为消息且 sender 相同才折叠；活动行会打断 run。折叠行隐藏头像与名字（`visibility:hidden` 保持栅格对齐），padding 收紧为 `2px`。
 - 头像首字母取 senderName 去掉 `@` 后首个字符大写。
+
+### 消息块（messageRun）
+
+- 一个 run = 一次发言：同一 sender 连续的消息 + 其 Task 入口卡包进一个 `.messageRun` 块；活动行与未读边界打断 run。
+- hover 面合同：静止完全隐形（透明边框占位防抖动）；hover 浮现细边框 + 极淡底色，圆角 10px；用等量 padding/负 margin 向文字列两侧外扩 10px（窄屏 6px），文字永不位移。120ms 过渡，reduced-motion 下关闭。
+- 不做常驻卡片边框——消息边界感只在指针交互时出现，避免"给内容加笼子"的刻意感。
+
+### Mention 强调
+
+- 仅 Human 字面正文渲染 mention chip：`splitMentions(text, handles)` 按 Channel 已知 handle 分段（大小写不敏感；前置为词字符的不算，如邮箱），chip 为主题色浅底 + 极淡阴影 + 圆角。
+- Agent markdown 内 @handle 保持原样：markdown 原语无文本节点挂点，源级替换有破坏语法风险——已知限制，待原语提供钩子后再补。
 
 ### 时间线滚动（timeline-scroll）
 

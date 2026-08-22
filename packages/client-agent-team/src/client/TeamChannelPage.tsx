@@ -5,7 +5,7 @@ import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal } fr
 import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
-import { TeamMessage, isGroupedRun } from './TeamMessage.tsx'
+import { TeamMessage } from './TeamMessage.tsx'
 import { formatTaskStatus } from './team-formatters.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import channelCss from './channel.module.css'
@@ -68,6 +68,17 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   // Presence counts ride the header meta line; error and unavailable do not count as online.
   const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
+  /** One run = one same-sender reply turn, including its Task entry chip. */
+  const chunkRuns = (items: readonly AgentTeamViewItem[]): AgentTeamViewItem[][] => {
+    const runs: AgentTeamViewItem[][] = []
+    for (const item of items) {
+      const last = runs[runs.length - 1]
+      if (last !== undefined && messageSender(last[last.length - 1]!) === messageSender(item)) last.push(item)
+      else runs.push([item])
+    }
+    return runs
+  }
+  const mentionHandles = new Set(members.map(status => status.member.handle.replace(/^@/, '').toLowerCase()))
 
   const refresh = async (clearError = false) => {
     if (!mountedRef.current) return false
@@ -253,28 +264,31 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
             <span>{t('emptyMessagesHint')}</span>
           </div>
         </div>}
-        {view?.items.map((item, index) => {
-          const senderStatus = members.find(member => member.member.memberId === item.message.sender)
-          const human = item.message.sender === view.humanMemberId
-          const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender
-          return <TeamMessage
-            key={item.message.messageRef}
-            senderName={sender}
-            memberId={item.message.sender}
-            human={human}
-            body={item.message.body}
-            occurredAt={item.message.occurredAt}
-            grouped={isGroupedRun(view.items, index, messageSender)}
-            {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
-          >
-            {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
-              <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
-              <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
-              <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
-              <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
-            </button>}
-          </TeamMessage>
-        })}
+        {(view?.items.length ?? 0) > 0 && chunkRuns(view!.items).map(run => <div className={css.messageRun} key={`run-${run[0]!.message.messageRef}`}>
+          {run.map((item, index) => {
+            const senderStatus = members.find(member => member.member.memberId === item.message.sender)
+            const human = item.message.sender === view!.humanMemberId
+            const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender
+            return <TeamMessage
+              key={item.message.messageRef}
+              senderName={sender}
+              memberId={item.message.sender}
+              human={human}
+              body={item.message.body}
+              occurredAt={item.message.occurredAt}
+              {...(human ? { mentionHandles } : {})}
+              grouped={index > 0}
+              {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
+            >
+              {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
+                <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
+                <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
+                <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
+                <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
+              </button>}
+            </TeamMessage>
+          })}
+        </div>)}
       </div>
     </section>
 

@@ -32,6 +32,34 @@ export function memberHue(memberId: string): number {
   return hash
 }
 
+export interface MentionSegment {
+  readonly text: string
+  readonly mention: boolean
+}
+
+/**
+ * Split literal text into plain and @handle segments; only handles known to
+ * the current Channel become chips, and a word character before '@' (email
+ * addresses) never counts. Whitespace lives in the plain segments, so the
+ * consumer container's pre-wrap keeps the original layout.
+ */
+export function splitMentions(text: string, handles: ReadonlySet<string>): MentionSegment[] {
+  if (handles.size === 0) return [{ text, mention: false }]
+  const segments: MentionSegment[] = []
+  const pattern = /(^|[^A-Za-z0-9_])@([A-Za-z0-9_-]+)/g
+  let cursor = 0
+  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+    const handle = match[2]!.toLowerCase()
+    if (!handles.has(handle)) continue
+    const start = match.index + (match[1]?.length ?? 0)
+    if (start > cursor) segments.push({ text: text.slice(cursor, start), mention: false })
+    segments.push({ text: text.slice(start, match.index + match[0].length), mention: true })
+    cursor = match.index + match[0].length
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), mention: false })
+  return segments
+}
+
 const pad = (value: number): string => String(value).padStart(2, '0')
 
 /**

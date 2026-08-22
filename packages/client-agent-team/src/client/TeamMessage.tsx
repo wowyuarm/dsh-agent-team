@@ -1,7 +1,7 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { Fragment, type CSSProperties, type ReactNode } from 'react'
 import { MarkdownText, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { formatMessageTime, memberHue } from './team-formatters.ts'
+import { formatMessageTime, memberHue, splitMentions } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -11,6 +11,8 @@ export interface TeamMessageProps {
   readonly human: boolean
   readonly body: string
   readonly occurredAt?: string
+  /** Lowercased handles that render as mention chips in Human literal bodies. */
+  readonly mentionHandles?: ReadonlySet<string>
   readonly senderTitle?: string
   /** Continuation of one same-sender run: suppress repeated identity chrome. */
   readonly grouped?: boolean
@@ -18,7 +20,7 @@ export interface TeamMessageProps {
 }
 
 /** One chat message row with identity chrome and sender-appropriate rendering. */
-export function TeamMessage({ senderName, memberId, human, body, occurredAt, senderTitle, grouped, children }: TeamMessageProps) {
+export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionHandles, senderTitle, grouped, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
@@ -31,7 +33,13 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, sen
           </div>
         )}
         {human
-          ? <div className={css.messageText}><MessageText text={body} /></div>
+          ? <div className={css.messageText}>
+              {mentionHandles === undefined
+                ? <MessageText text={body} />
+                : splitMentions(body, mentionHandles).map((segment, index) => segment.mention
+                  ? <span key={index} className={css.mention}>{segment.text}</span>
+                  : <Fragment key={index}>{segment.text}</Fragment>)}
+            </div>
           : <div className={css.messageMarkdown}><MarkdownText text={body} /></div>}
         {children}
       </div>
@@ -39,10 +47,3 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, sen
   )
 }
 
-/** One run-continuation flag: this entry directly follows the same sender's message.
- *  A undefined sender (non-message fact) breaks the run. */
-export function isGroupedRun<F, S>(facts: readonly F[], index: number, senderOf: (fact: F) => S | undefined): boolean {
-  if (index <= 0) return false
-  const sender = senderOf(facts[index]!)
-  return sender !== undefined && sender === senderOf(facts[index - 1]!)
-}

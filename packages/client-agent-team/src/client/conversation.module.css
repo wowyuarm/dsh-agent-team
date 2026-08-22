@@ -119,20 +119,31 @@
   font-size: 11px;
   line-height: 20px;
 }
-/* Literal human text wraps the shared MessageText primitive: metrics only. */
+/* Literal human text: the shared MessageText primitive, or segmented mention
+   spans — both need the same pre-wrap metrics from this container. */
 .messageText {
   font-size: 14px;
   line-height: 22px;
-  margin: 4px 0;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* Compact timeline typography over the shared Markdown primitive; the root
-   font shorthand is reset so Agent and Human bodies share one text grid. */
+   font shorthand is reset so Agent and Human bodies share one text grid.
+   Heading sizes are chat-tuned: the page h1 stays the loudest element. */
 .messageBody .messageMarkdown { font-size: 14px; line-height: 22px; }
 .messageBody > .messageMarkdown > div:first-child { color: var(--dsw-alias-text-primary); font: inherit; }
-.messageBody .messageMarkdown p { margin: 4px 0; }
-.messageBody .messageMarkdown :where(ul, ol) { margin: 4px 0; padding-left: 22px; }
-.messageBody .messageMarkdown :where(h1, h2, h3, h4, h5, h6) { margin: 10px 0 4px; }
-.messageBody .messageMarkdown :where(pre, blockquote) { margin: 6px 0; }
+.messageBody .messageMarkdown p { margin: 6px 0; }
+.messageBody .messageMarkdown :where(ul, ol) { margin: 6px 0; padding-left: 22px; }
+.messageBody .messageMarkdown li + li { margin-top: 2px; }
+.messageBody .messageMarkdown strong { font-weight: 600; }
+.messageBody .messageMarkdown :where(h1, h2, h3, h4, h5, h6) { margin: 12px 0 4px; }
+.messageBody .messageMarkdown :where(h1) { font-size: 17px; line-height: 26px; }
+.messageBody .messageMarkdown :where(h2) { font-size: 16px; line-height: 24px; }
+.messageBody .messageMarkdown :where(h3, h4, h5, h6) { font-size: 15px; line-height: 22px; }
+.messageBody .messageMarkdown pre { margin: 8px 0; padding: 10px 12px; font-size: 13px; }
+.messageBody .messageMarkdown blockquote { margin: 6px 0; }
+.messageBody .messageMarkdown :where(th, td) { padding-block: 5px; }
 .emptyState,
 .loadingState {
   color: var(--dsw-alias-text-tertiary);
@@ -222,4 +233,39 @@
 
 @media (prefers-reduced-motion: reduce) {
   .loadingMark { animation: none; }
+}
+
+/* One run = one same-sender reply turn (message + task chip). The hover
+   surface is invisible at rest and bleeds 10px past the text column via
+   matched padding/negative margins, so text never shifts inside it. The
+   transparent border is reserved space: the hairline on hover adds no shift. */
+.messageRun {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  margin: -3px -10px;
+  padding: 3px 10px;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.messageRun:hover {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 60%, transparent);
+  border-color: var(--dsw-alias-border-subtle);
+}
+
+/* Mention chip for @Member references in Human literal messages; Agent
+   markdown keeps plain @text (no safe hook without source rewriting). */
+.mention {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);
+  border-radius: 5px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  color: var(--dsw-alias-state-business-primary);
+  font-weight: 500;
+  padding: 0 4px;
+}
+
+@media (max-width: 600px) {
+  .messageRun { margin: -3px -6px; padding: 3px 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .messageRun { transition: none; }
 }
