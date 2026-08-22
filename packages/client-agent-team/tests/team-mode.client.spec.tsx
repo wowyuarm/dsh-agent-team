@@ -430,4 +430,54 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByText('设置')).toBeTruthy()
     await b.runtime.dispose()
   })
+
+  it('counts only facts newer than the shown timeline as new updates on change wakes', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
+    fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    fireEvent.change(messageInput, { target: { value: 'first task' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect(await b.view.findByText('first task')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+
+    const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
+      sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
+    const historyWith = (facts: unknown[]) => b.loadThreadHistory.mockImplementation(async () => ({ ok: true as const, value: {
+      task: { taskRef: 'task:1', channelRef: 'channel:1', status: 'todo', resolution: 'open' },
+      thread: { threadRef: 'thread:1', revision: 2 }, anchor, claims: [], facts, cursor: 0, hasMore: false,
+    } } as never))
+    const backfillFact = { kind: 'message', sequence: 1, message: { messageRef: 'message:old-1', channelRef: 'channel:1', threadRef: 'thread:1',
+      taskRef: 'task:1', sender: 'member:human', body: 'old backfill', topLevel: false, sequence: 1, occurredAt: '' } }
+
+    // The change stream swallows one wake inside its initial silent probe;
+    // flush that probe so later wakes reach the listener.
+    b.publishAgentReply()
+    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
+
+    // Backfill from the wider passive window is already-read material, not news.
+    historyWith([backfillFact])
+    b.publishAgentReply()
+    await waitFor(() => expect(b.loadThreadHistory).toHaveBeenLastCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
+
+    // A fact newer than everything shown is genuinely new and countable.
+    historyWith([{ ...backfillFact, sequence: 9, message: { ...backfillFact.message, messageRef: 'message:new-9', body: 'genuinely new', sequence: 9 } }])
+    b.publishAgentReply()
+    expect(await b.view.findByText('读取 1 条新更新')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '标记为已读' }))
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
+    expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
+    await b.runtime.dispose()
+  })
 })

@@ -158,8 +158,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       const result = await loadThreadHistory({ workspaceId, taskRef, limit: 100 })
       if (!mountedRef.current || !result.ok) return
       const incoming = result.value.facts
-      const known = new Set(currentFactsRef.current.map(fact => factKey(fact)))
-      const additions = incoming.filter(fact => !known.has(factKey(fact)))
+      const shown = currentFactsRef.current
+      if (shown.length === 0) return
+      const known = new Set(shown.map(fact => factKey(fact)))
+      // Facts older than everything already rendered are backfill of the
+      // wider history window this fetch uses, not new updates; counting
+      // them would re-flag already-read messages after every change wake.
+      const newestShown = shown.reduce((maximum, fact) => Math.max(maximum, fact.sequence), 0)
+      const additions = incoming.filter(fact => !known.has(factKey(fact)) && fact.sequence > newestShown)
       setCurrentFacts(current => {
         const merged = mergeFacts(current, incoming)
         currentFactsRef.current = merged
