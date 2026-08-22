@@ -4,6 +4,7 @@ import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamActivity,
+  AgentTeamActivityMarker,
   AgentTeamActivityRef,
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
@@ -219,6 +220,7 @@ interface Projection {
   readonly threads: Map<AgentTeamThreadRef, AgentTeamThread>
   readonly attention: Map<string, AgentTeamThreadAttention>
   readonly directMarkers: Map<string, AgentTeamDirectMarker>
+  readonly activityMarkers: Map<string, AgentTeamActivityMarker>
   /** Derived read indexes; rebuilt by replay, never a second durable authority. */
   readonly orderedFacts: AgentTeamThreadFact[]
   readonly factsByThread: Map<AgentTeamThreadRef, AgentTeamThreadFact[]>
@@ -241,6 +243,7 @@ export class AgentTeamLedger {
   private readonly threads = new Map<AgentTeamThreadRef, AgentTeamThread>()
   private readonly attention = new Map<string, AgentTeamThreadAttention>()
   private readonly directMarkers = new Map<string, AgentTeamDirectMarker>()
+  private readonly activityMarkers = new Map<string, AgentTeamActivityMarker>()
   private readonly orderedFacts: AgentTeamThreadFact[] = []
   private readonly factsByThread = new Map<AgentTeamThreadRef, AgentTeamThreadFact[]>()
   private readonly topLevelMessages: AgentTeamMessage[] = []
@@ -612,8 +615,10 @@ export class AgentTeamLedger {
         taskRef: task.taskRef, threadRef: task.threadRef, actor: request.actor.memberId, sequence,
         ...(releasedClaims.length === 0 ? {} : { releasedClaimRefs: Object.freeze(releasedClaims.map(claim => claim.claimRef)) }) })
       const inbox = request.action === 'close'
-        ? this.removeThreadInbox(thread.threadRef)
-        : this.publicActivityInboxDelta(activity, request.actor.memberId)
+        ? this.closeThreadInbox(activity, thread.threadRef)
+        : request.action === 'reopen'
+          ? this.reopenThreadInbox(activity, thread.threadRef)
+          : this.publicActivityInboxDelta(activity, request.actor.memberId)
       const operation: AgentTeamTaskChangedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/task-changed',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
@@ -735,6 +740,18 @@ export class AgentTeamLedger {
     return Object.freeze({ items: Object.freeze(selected),
       totalUnreadCount: items.reduce((sum, item) => sum + item.unreadCount, 0),
       totalDirectCount: items.reduce((sum, item) => sum + item.directCount, 0) })
+  }
+
+  /** Model-visible notification material derived from the recipient's current durable unread state. */
+  notificationFacts(memberId: AgentTeamMemberId, request: AgentTeamInboxRequest): readonly {
+    readonly item: AgentTeamInboxItem
+    readonly facts: readonly AgentTeamThreadReadFact[]
+  }[] {
+    const member = this.requireMember(memberId)
+    if (member.workspaceId !== request.workspaceId) throw new Error('Member cannot inspect another Workspace')
+    const inbox = this.inbox({ kind: 'member', memberId, handle: member.handle }, request)
+    return Object.freeze(inbox.items.map(item => Object.freeze({ item,
+      facts: this.unreadFor(memberId, item.thread.threadRef) })))
   }
 
   readThread(request: AgentTeamAuthorizedThreadReadRequest): Promise<AgentTeamLedgerResult<AgentTeamThreadReadResult>> {
@@ -971,6 +988,8 @@ export class AgentTeamLedger {
       for (const key of delta.attention.removed) members.add(key.memberId)
       for (const marker of delta.directMarkers.added) members.add(marker.memberId)
       for (const marker of delta.directMarkers.removed) members.add(marker.memberId)
+      for (const marker of delta.activityMarkers.added) members.add(marker.memberId)
+      for (const marker of delta.activityMarkers.removed) members.add(marker.memberId)
     }
     for (const threadRef of this.touchedThreadRefs(operation)) {
       for (const follower of this.attentionByThread.get(threadRef) ?? []) members.add(follower)
@@ -1216,10 +1235,12 @@ export class AgentTeamLedger {
       }
       this.addRef(refs, activity.activityRef)
       const expectedInbox = activity.kind === 'close'
-        ? this.removeThreadInboxFrom(projection, thread.threadRef)
-        : this.inboxDelta()
+        ? this.closeThreadInboxFrom(projection, activity, thread.threadRef)
+        : activity.kind === 'reopen'
+          ? this.reopenThreadInboxFrom(projection, activity, thread.threadRef)
+          : this.inboxDelta()
       if (!isDeepStrictEqual(operation.data.inbox, expectedInbox)) throw new Error('invalid Task inbox projection')
-      this.validateInboxDelta(operation.data.inbox, projection, refs)
+      this.validateInboxDelta(operation.data.inbox, projection, refs, [], [], [activity])
       return
     }
   }
@@ -1230,6 +1251,7 @@ export class AgentTeamLedger {
     _refs: Set<string>,
     additionalThreadRefs: readonly AgentTeamThreadRef[] = [],
     additionalMessages: readonly AgentTeamMessage[] = [],
+    additionalActivities: readonly AgentTeamActivity[] = [],
   ): void {
     const attentionKeys = new Set<string>()
     const knownThreadRefs = new Set([...projection.threads.keys(), ...additionalThreadRefs])
@@ -1265,6 +1287,22 @@ export class AgentTeamLedger {
         || message.sequence !== marker.sequence || !this.validMentionTarget(projection, message.channelRef, marker.memberId)) {
         throw new Error('invalid direct marker removal')
       }
+    }
+    const activityMarkerKeys = new Set<string>()
+    const activities = [...projection.orderedFacts.filter(fact => fact.kind === 'activity').map(fact => fact.activity), ...additionalActivities]
+    for (const marker of delta.activityMarkers.added) {
+      const key = this.activityMarkerKey(marker)
+      const activity = activities.find(candidate => candidate.activityRef === marker.activityRef)
+      if (activityMarkerKeys.has(key) || projection.activityMarkers.has(key) || activity === undefined
+        || activity.threadRef !== marker.threadRef || activity.sequence !== marker.sequence) throw new Error('invalid activity marker addition')
+      activityMarkerKeys.add(key)
+    }
+    for (const marker of delta.activityMarkers.removed) {
+      const key = this.activityMarkerKey(marker)
+      if (activityMarkerKeys.has(key) || !isDeepStrictEqual(projection.activityMarkers.get(key), marker)) {
+        throw new Error('invalid activity marker removal')
+      }
+      activityMarkerKeys.add(key)
     }
   }
 
@@ -1321,7 +1359,9 @@ export class AgentTeamLedger {
       .map(attention => ({ memberId: attention.memberId, threadRef: attention.threadRef }))
     const expectedMarkers = [...projection.directMarkers.values()]
       .filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
-    const expectedInbox = this.inboxDelta([], expectedAttention, [], expectedMarkers)
+    const expectedActivityMarkers = [...projection.activityMarkers.values()]
+      .filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    const expectedInbox = this.inboxDelta([], expectedAttention, [], expectedMarkers, [], expectedActivityMarkers)
     if (!isDeepStrictEqual(data.inbox, expectedInbox)) throw new Error('invalid Member inbox cleanup')
     this.validateInboxDelta(data.inbox, projection, refs)
   }
@@ -1380,6 +1420,7 @@ export class AgentTeamLedger {
       threads: this.threads,
       attention: this.attention,
       directMarkers: this.directMarkers,
+      activityMarkers: this.activityMarkers,
       orderedFacts: this.orderedFacts,
       factsByThread: this.factsByThread,
       topLevelMessages: this.topLevelMessages,
@@ -1499,6 +1540,8 @@ export class AgentTeamLedger {
     }
     for (const marker of delta.directMarkers.removed) target.directMarkers.delete(this.directMarkerKey(marker))
     for (const marker of delta.directMarkers.added) target.directMarkers.set(this.directMarkerKey(marker), marker)
+    for (const marker of delta.activityMarkers.removed) target.activityMarkers.delete(this.activityMarkerKey(marker))
+    for (const marker of delta.activityMarkers.added) target.activityMarkers.set(this.activityMarkerKey(marker), marker)
   }
 
   private prepareRead(memberId: AgentTeamMemberId, workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): PreparedRead {
@@ -1543,7 +1586,9 @@ export class AgentTeamLedger {
       ? [this.directMarkerKey({ memberId, threadRef: thread.threadRef, messageRef: item.fact.message.messageRef })] : []))
     const consumed = this.directMarkersForFrom(projection, memberId, thread.threadRef)
       .filter(marker => consumedDirectMarkers.has(this.directMarkerKey(marker)))
-    const inbox = this.inboxDelta(nextAttention, [], [], consumed)
+    const activityMarkers = this.activityMarkersForFrom(projection, memberId, thread.threadRef)
+      .filter(marker => unreadFacts.some(item => item.fact.kind === 'activity' && item.fact.activity.activityRef === marker.activityRef))
+    const inbox = this.inboxDelta(nextAttention, [], [], consumed, [], activityMarkers)
     // The hypothetical projection copies every map that its inbox delta can
     // mutate, including the follower sets inside attentionByThread; the fact
     // indexes are read-only here and stay shared.
@@ -1551,6 +1596,7 @@ export class AgentTeamLedger {
       ...projection,
       attention: new Map(projection.attention),
       directMarkers: new Map(projection.directMarkers),
+      activityMarkers: new Map(projection.activityMarkers),
       attentionByThread: new Map([...projection.attentionByThread].map(([threadRef, followers]) => [threadRef, new Set(followers)])),
     }
     this.applyInboxDelta(nextProjection, inbox)
@@ -1579,13 +1625,16 @@ export class AgentTeamLedger {
     const facts = this.threadFactsFrom(projection, threadRef)
     const direct = this.directMarkersForFrom(projection, memberId, threadRef)
     const directKeys = new Set(direct.map(marker => this.directMarkerKey(marker)))
+    const activityKeys = new Set(this.activityMarkersForFrom(projection, memberId, threadRef).map(marker => this.activityMarkerKey(marker)))
     const result: AgentTeamThreadReadFact[] = []
     for (const fact of facts) {
       const marker = fact.kind === 'message' && directKeys.has(this.directMarkerKey({ memberId, threadRef,
         messageRef: fact.message.messageRef, sequence: fact.sequence }))
+      const activityMarker = fact.kind === 'activity' && activityKeys.has(this.activityMarkerKey({ memberId, threadRef,
+        activityRef: fact.activity.activityRef, sequence: fact.sequence }))
       const ordinary = attention !== undefined && fact.sequence >= attention.startSequence
         && fact.sequence > attention.readThroughSequence && this.visibleToFollower(fact, memberId)
-      if (marker || ordinary) result.push(this.readFactFrom(projection, memberId, fact, true))
+      if (marker || activityMarker || ordinary) result.push(this.readFactFrom(projection, memberId, fact, true))
     }
     return Object.freeze(result)
   }
@@ -1626,21 +1675,40 @@ export class AgentTeamLedger {
     return this.inboxDelta(attention)
   }
 
-  private removeThreadInbox(threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
-    return this.removeThreadInboxFrom(this.projection(), threadRef)
+  private closeThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+    return this.closeThreadInboxFrom(this.projection(), activity, threadRef)
   }
 
-  private removeThreadInboxFrom(projection: Projection, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+  private closeThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+    const recipients = [...projection.attention.values()]
+      .filter(attention => attention.threadRef === threadRef && attention.memberId !== activity.actor)
+      .map(attention => attention.memberId)
     const removed = [...projection.attention.values()].filter(attention => attention.threadRef === threadRef)
       .map(attention => Object.freeze({ memberId: attention.memberId, threadRef: attention.threadRef }))
-    return this.inboxDelta([], removed, [], [...projection.directMarkers.values()].filter(marker => marker.threadRef === threadRef))
+    const activityMarkers = recipients.map(memberId => Object.freeze({ memberId, threadRef,
+      activityRef: activity.activityRef, sequence: activity.sequence }))
+    return this.inboxDelta([], removed, [], [...projection.directMarkers.values()].filter(marker => marker.threadRef === threadRef),
+      activityMarkers, [...projection.activityMarkers.values()].filter(marker => marker.threadRef === threadRef))
+  }
+
+  private reopenThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+    return this.reopenThreadInboxFrom(this.projection(), activity, threadRef)
+  }
+
+  private reopenThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+    const recipients = new Set([...projection.activityMarkers.values()]
+      .filter(marker => marker.threadRef === threadRef).map(marker => marker.memberId))
+    const markers = [...recipients].map(memberId => Object.freeze({ memberId, threadRef,
+      activityRef: activity.activityRef, sequence: activity.sequence }))
+    return this.inboxDelta([], [], [], [], markers)
   }
 
   private removeMemberThreadInbox(memberId: AgentTeamMemberId, threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
     const removed = [...this.attention.values()].filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
       .map(attention => Object.freeze({ memberId, threadRef: attention.threadRef }))
     const markers = [...this.directMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
-    return this.inboxDelta([], removed, [], markers)
+    const activityMarkers = [...this.activityMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    return this.inboxDelta([], removed, [], markers, [], activityMarkers)
   }
 
   private inboxDelta(
@@ -1648,10 +1716,13 @@ export class AgentTeamLedger {
     removed: readonly AgentTeamThreadAttentionKey[] = [],
     addedMarkers: readonly AgentTeamDirectMarker[] = [],
     removedMarkers: readonly AgentTeamDirectMarker[] = [],
+    addedActivityMarkers: readonly AgentTeamActivityMarker[] = [],
+    removedActivityMarkers: readonly AgentTeamActivityMarker[] = [],
   ): AgentTeamInboxDelta {
     return Object.freeze({
       attention: Object.freeze({ set: Object.freeze(set), removed: Object.freeze(removed) }),
       directMarkers: Object.freeze({ added: Object.freeze(addedMarkers), removed: Object.freeze(removedMarkers) }),
+      activityMarkers: Object.freeze({ added: Object.freeze(addedActivityMarkers), removed: Object.freeze(removedActivityMarkers) }),
     })
   }
 
@@ -1695,6 +1766,11 @@ export class AgentTeamLedger {
 
   private directMarkersForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamDirectMarker[] {
     return Object.freeze([...projection.directMarkers.values()].filter(marker => marker.memberId === memberId && marker.threadRef === threadRef)
+      .sort((left, right) => left.sequence - right.sequence))
+  }
+
+  private activityMarkersForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamActivityMarker[] {
+    return Object.freeze([...projection.activityMarkers.values()].filter(marker => marker.memberId === memberId && marker.threadRef === threadRef)
       .sort((left, right) => left.sequence - right.sequence))
   }
 
@@ -2110,6 +2186,10 @@ export class AgentTeamLedger {
     return `${marker.memberId}\u0000${marker.threadRef}\u0000${marker.messageRef}`
   }
 
+  private activityMarkerKey(marker: Pick<AgentTeamActivityMarker, 'memberId' | 'threadRef' | 'activityRef'> & Partial<Pick<AgentTeamActivityMarker, 'sequence'>>): string {
+    return `${marker.memberId}\u0000${marker.threadRef}\u0000${marker.activityRef}`
+  }
+
   private addMembership(target: Pick<Projection, 'memberships'>, channelRef: AgentTeamChannelRef, memberId: AgentTeamMemberId): void {
     const members = target.memberships.get(channelRef) ?? new Set<AgentTeamMemberId>()
     members.add(memberId)
@@ -2242,7 +2322,7 @@ export class AgentTeamLedger {
 
   private emptyProjection(): Projection {
     return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
-      claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(),
+      claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
       orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], messageCountByThread: new Map(), attentionByThread: new Map() }
   }
 

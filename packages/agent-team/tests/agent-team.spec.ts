@@ -39,8 +39,9 @@ async function harness(pool = new MemoryMediaPool(), workspaceIds = [alpha]): Pr
   ctx.storage.mount('domain', facility)
   ctx.provide('storageDomain', facility)
   ctx.provide('workspaceRegistry', {
-    get: (id: WorkspaceId) => workspaceIds.includes(id) ? { id, path: process.cwd(), attachSession: async () => {}, archiveSession: async () => {} } : undefined,
+    get: (id: WorkspaceId) => workspaceIds.includes(id) ? { id, path: process.cwd(), attachSession: async () => {} } : undefined,
     list: () => workspaceIds.map(id => ({ id, path: process.cwd() })),
+    archiveSession: async () => {},
   })
   ctx.provide('agents', { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') } })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
@@ -303,11 +304,76 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       action: 'close', baseRevision: humanRead.thread.revision, actor: agentTeamHumanActor() })).value)
     expect(closed).toMatchObject({ task: { resolution: 'closed', status: 'closed' }, claims: [expect.objectContaining({ claimRef: claim.claim.claimRef, state: 'released' })] })
     expect(ledger.attentionStatus(actor, { workspaceId: alpha, taskRef: started.task.taskRef }).attention).toBeUndefined()
+    expect(ledger.inbox(actor, { workspaceId: alpha })).toMatchObject({ totalUnreadCount: 1, items: [
+      expect.objectContaining({ task: expect.objectContaining({ taskRef: started.task.taskRef }), unreadCount: 1 }),
+    ] })
+    const terminalRead = (await ledger.readThread({ requestId: requestId('terminal-read'), workspaceId: alpha,
+      taskRef: started.task.taskRef, actor })).value
+    expect(terminalRead.facts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ unread: true, fact: expect.objectContaining({ kind: 'activity', activity: expect.objectContaining({ kind: 'close' }) }) }),
+    ]))
+    expect(ledger.inbox(actor, { workspaceId: alpha }).totalUnreadCount).toBe(0)
     const reopened = committed((await ledger.changeTask({ requestId: requestId('reopen'), workspaceId: alpha, taskRef: started.task.taskRef,
       action: 'reopen', baseRevision: closed.thread.revision, actor: agentTeamHumanActor() })).value)
     expect(reopened.task).toMatchObject({ resolution: 'open', status: 'todo' })
     expect(ledger.attentionStatus(actor, { workspaceId: alpha, taskRef: started.task.taskRef }).attention).toBeUndefined()
     ledger.validate()
+  })
+
+  it('retains a later reopen update for Members that have not read the close', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('reopen-channel'), workspaceId: alpha,
+      name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('reopen-start'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Task' }))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    await ledger.changeAttention({ requestId: requestId('reopen-follow'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'follow', actor })
+    const humanRead = (await ledger.readThread({ requestId: requestId('reopen-human-read'), workspaceId: alpha,
+      taskRef: started.task.taskRef, actor: agentTeamHumanActor() })).value
+    const closed = committed((await ledger.changeTask({ requestId: requestId('reopen-close'), workspaceId: alpha,
+      taskRef: started.task.taskRef, action: 'close', baseRevision: humanRead.thread.revision, actor: agentTeamHumanActor() })).value)
+    committed((await ledger.changeTask({ requestId: requestId('reopen-again'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'reopen', baseRevision: closed.thread.revision, actor: agentTeamHumanActor() })).value)
+
+    expect(ledger.inbox(actor, { workspaceId: alpha })).toMatchObject({ totalUnreadCount: 2, items: [
+      expect.objectContaining({ task: expect.objectContaining({ resolution: 'open' }), unreadCount: 2 }),
+    ] })
+    const read = (await ledger.readThread({ requestId: requestId('reopen-member-read'), workspaceId: alpha,
+      taskRef: started.task.taskRef, actor })).value
+    expect(read.facts.filter(fact => fact.unread).map(fact => fact.fact.kind === 'activity' ? fact.fact.activity.kind : 'message'))
+      .toEqual(['close', 'reopen'])
+    expect(ledger.inbox(actor, { workspaceId: alpha }).totalUnreadCount).toBe(0)
+  })
+
+  it.each(['channel', 'team'] as const)('replays terminal Activity marker cleanup after %s removal', async (scope) => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId(`cleanup-${scope}-channel`), workspaceId: alpha,
+      name: `cleanup-${scope}`, description: 'Cleanup replay' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId(`cleanup-${scope}-start`), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Task' }))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    await ledger.changeAttention({ requestId: requestId(`cleanup-${scope}-follow`), workspaceId: alpha,
+      taskRef: started.task.taskRef, action: 'follow', actor })
+    const humanRead = (await ledger.readThread({ requestId: requestId(`cleanup-${scope}-human-read`), workspaceId: alpha,
+      taskRef: started.task.taskRef, actor: agentTeamHumanActor() })).value
+    committed((await ledger.changeTask({ requestId: requestId(`cleanup-${scope}-close`), workspaceId: alpha,
+      taskRef: started.task.taskRef, action: 'close', baseRevision: humanRead.thread.revision, actor: agentTeamHumanActor() })).value)
+    expect(ledger.inbox(actor, { workspaceId: alpha }).totalUnreadCount).toBe(1)
+
+    if (scope === 'channel') {
+      await ledger.removeChannelMember({ requestId: requestId('cleanup-channel-remove'), workspaceId: alpha,
+        channelRef: channel.channel.channelRef, memberId: member.memberId, actor: agentTeamHumanActor() })
+    } else {
+      await ledger.removeMember({ requestId: requestId('cleanup-team-remove'),
+        memberId: member.memberId, actor: agentTeamHumanActor() })
+    }
+    ledger.validate()
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const replayed = await harness(storedPool(records))
+    expect(() => replayLedger(replayed).validate()).not.toThrow()
   })
 
   it('rejects a structurally valid Thread read with a forged watermark during replay', async () => {

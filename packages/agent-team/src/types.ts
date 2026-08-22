@@ -165,6 +165,14 @@ export interface AgentTeamDirectMarker {
   readonly sequence: number
 }
 
+/** Sparse marker retaining a relevant Task or Claim Activity after Attention ends. */
+export interface AgentTeamActivityMarker {
+  readonly memberId: AgentTeamMemberId
+  readonly threadRef: AgentTeamThreadRef
+  readonly activityRef: AgentTeamActivityRef
+  readonly sequence: number
+}
+
 /** Durable changes to private Member inbox state carried by one operation. */
 export interface AgentTeamInboxDelta {
   readonly attention: {
@@ -176,6 +184,10 @@ export interface AgentTeamInboxDelta {
   readonly directMarkers: {
     readonly added: readonly AgentTeamDirectMarker[]
     readonly removed: readonly AgentTeamDirectMarker[]
+  }
+  readonly activityMarkers: {
+    readonly added: readonly AgentTeamActivityMarker[]
+    readonly removed: readonly AgentTeamActivityMarker[]
   }
 }
 

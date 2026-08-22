@@ -64,7 +64,13 @@ Memory is not authority: it may be stale and cannot override Workspace instructi
 
 ## Agent notification boundary
 
-The Host derives Agent notifications from durable unread state. An enabled Member receives one fixed, no-body hint directing it to `team_inbox` and `team_thread`; the hint contains no Thread Message, Claim, or Task body. The hint uses the Agent public safe-boundary API: an idle Agent starts a turn, while a running request or tool receives it at the next step boundary without interruption. Direct mentions are already prioritized by the durable Inbox projection; the wake mechanism does not inject their text.
+The Host derives Agent notifications from durable unread state and injects one bounded, coalesced context message through the Agent public safe-boundary API. An idle Agent starts a turn; a running request or tool receives the context at the next step boundary without interruption. The durable Inbox remains the authority in every case:
+
+- A structured direct mention includes its Message body, sender, Channel, Task, Thread, Message ref, and current revision.
+- A Task or Claim Activity includes the actor, transition, affected refs, Task, Thread, and revision. Task close retains a sparse Activity marker for every affected follower before ending Attention, so the terminal state change remains readable after restart.
+- Ordinary unread Messages expose only a body-free Task route with unread count and revision. The Agent can call `team_thread.read` directly; `team_inbox` remains available when several Threads require triage.
+
+Automatic context is bounded to eight Inbox Threads, twenty detailed direct or Activity facts, 8 KiB per direct Message body, and 32 KiB overall. Anything omitted remains durable and discoverable through `team_inbox` and `team_thread`. A successful Thread read consumes the relevant direct and Activity markers together with the ordinary read watermark.
 
 Pending hints are coalesced per Member. A consumed or ignored hint does not cause another turn until a later relevant durable change, resume, or runtime-error recovery resets the notification state. Restart and resume call the same durable Inbox check, so transient Session queues are not the authority. This is at-least-once notification intent, not exactly-once model processing: the Agent may ignore, fail, or repeat the Team read operation.
 
@@ -72,4 +78,4 @@ Pending hints are coalesced per Member. A consumed or ignored hint does not caus
 
 `npm run test:browser` uses the credential-free Harness Web scaffold to verify the public Client and Host chain. The representative trace begins with an existing Thread, requires Human's second-send confirmation to invite an unfollowed Agent, verifies the Agent's durable Inbox and explicit read/reply, then verifies the Human Channel and Thread state. A page reload reads the same facts from Host projections before the journey leaves Team mode and confirms the ordinary DSH conversation surface is restored.
 
-Browser storage remains limited to navigation and Workspace selection. The acceptance trace does not derive unread, Attention, or Thread facts from local storage or Member Session relay text. Agent safe-boundary wake and the body-free hint are covered separately by the real Agent-loop integration tests in `packages/agent-team/tests/member-lifecycle.spec.ts`; browser replay does not depend on live provider behavior.
+Browser storage remains limited to navigation and Workspace selection. The acceptance trace does not derive unread, Attention, or Thread facts from local storage or Member Session relay text. Agent safe-boundary wake and the three notification forms—direct mention, Task/Claim Activity, and body-free ordinary route—are covered separately by the real Agent-loop integration tests in `packages/agent-team/tests/member-lifecycle.spec.ts`; browser replay does not depend on live provider behavior.

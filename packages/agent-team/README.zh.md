@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-一个 dshHome 内唯一 Agent Team 的 Host capability。`ctx.agentTeam` 拥有 append-only operation ledger、重建当前协作 projection，并作为同一 capability 内 Member Agent 的 lifecycle owner。Thread Attention 和 Member Inbox 是 Host 的持久 projection。未读状态变化时，本包通过 Agent 的公开安全边界 API 发送一次合并的无正文提示；不会中断正在执行的请求，也不运行 Session delivery worker。[Agent Team 架构 Agent Note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md)记录持久化和包拓扑决策。
+一个 dshHome 内唯一 Agent Team 的 Host capability。`ctx.agentTeam` 拥有 append-only operation ledger、重建当前协作 projection，并作为同一 capability 内 Member Agent 的 lifecycle owner。Thread Attention 和 Member Inbox 是 Host 的持久 projection。未读状态变化时，本包通过 Agent 的公开安全边界 API 发送一次有界、合并的 context 通知；不会中断正在执行的请求，也不运行 Session delivery worker。[Agent Team 架构 Agent Note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md)记录持久化和包拓扑决策。
 
 ## Service 约定
 
@@ -18,9 +18,9 @@ Service 使用 `ctx.storageDomain`、`ctx.workspaceRegistry`、`ctx.agents`、`c
 
 创建 Member 时，先提交稳定的 Member/session/Workspace/preset/private-memory 身份，再执行 unpublished Agent setup。Setup 挂载指定 preset，并在发布前检查带 marker 的 `team_message` 和全部五个 Team tools。失败只把该 Member 标为 unavailable。Suspend 等待所属 `AgentHandle` 完全停止；resume 和 Host remount 恢复同一个持久 session。
 
-每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。没有标题的 Member session 会通过 session-title service 以 handle 命名，普通 Session 列表因此直接显示 Member 身份；显式重命名或任何既有标题始终优先。隔离的 `team-member` preset 还提供 coding 工具、面向模型的 Web 搜索、Workspace instruction discovery 和 Team protocol guidance。共享的 Web service 与 provider 仍由 Host 持有；preset 只挂载面向模型的 Web tool。小写 `memory.md` 是有界的 8 KiB 参考索引，只有该 Member 的内容变化时才注入；`notes/` 只通过 filesystem tools 按需读取。超预算索引只产生维护警告，不静默截断。普通 session 和 fork 不获得 Team 身份或私有记忆上下文。
+每个 Team 管理的 session 都会持久写入 `danger-full-access`。项目 cwd 仍是 Workspace 路径，私有记忆位于 `$DSH_HOME/agent-team/members/<memberId>/`。没有标题的 Member session 会通过 session-title service 以 handle 命名，普通 Session 列表因此直接显示 Member 身份；显式重命名或任何既有标题始终优先。隔离的 `team-member` preset 还提供 coding 工具、面向模型的 Web 搜索、Workspace instruction discovery 和 Team protocol guidance。共享的 Web service 与 provider 仍由 Host 持有；preset 只挂载面向模型的 Web tool。小写 `memory.md` 是有界的 8 KiB 参考索引，只有该 Member 的内容变化时才注入；`notes/` 只通过 filesystem tools 按需读取。超预算索引只产生维护警告，不静默截断。普通 session 和 fork 不获得 Team 身份或私有记忆上下文。Host 启动时会清理重放 ledger 不再引用的 `member:` 形态私有记忆目录——这些是 ledger 被丢弃后的遗留（版本提升的 medium 在 open 时被拒绝并以空状态重启）。清理失败会使启动失败；非 `member:` 形态的条目保持原样。
 
-把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。创建 Task、创建 Claim、显式 follow 或 Human 确认邀请会开始 Thread Attention。普通未读从 Attention 派生，structured mention 形成持久 direct marker。`team_inbox` 和 Thread read 是 Host projection，不是 Session inbox 内容。启用的 Member 只会收到固定的 `team_inbox` 检查提示，不携带 Thread 正文；待处理提示会合并，忽略提示不会形成循环，resume/runtime error recovery 会从持久未读状态重新判断是否提示。
+把 Member 加入 Channel 只授予之后的 read/send/claim authority，不向 Member session 注入历史 Message。创建 Task、创建 Claim、显式 follow 或 Human 确认邀请会开始 Thread Attention。普通未读从 Attention 派生，structured mention 形成持久 direct marker；终止 Task 的状态变化会为受影响关注者保留稀疏 Activity marker，即使 Attention 已结束仍可读取。`team_inbox` 和 Thread read 是 Host projection，不是 Session inbox 内容。Direct mention context 包含消息正文和来源，Task/Claim 变化包含简短状态事实，普通未读只包含无正文的 Task 路由；提示会合并，忽略提示不会形成循环，resume/runtime error recovery 会从持久未读状态重新判断是否提示。
 
 Member reply 必须携带准确的当前 Thread revision，并在一个 operation 内更新 Message 和 Thread facts。未读工作必须先 read；revision 过期时拒绝写入。Closed Task 拒绝 reply 和新的 Attention；reopen 恢复 Task，但不恢复之前的 Attention。结构化 mention 指向 unfollowed Agent 时，Human 必须先取得 process-local one-use confirmation token，首次调用不提交 operation。claim/done/release 和 Task change 是有序的 host-authored Activity。Active Claim 只排斥相同的 normalized Direction；不同 Direction 可以并行。Task status 从 Claims 派生，Human accept/close 是覆盖事实。Close 原子释放 active Claims 并清除 Thread Attention。Member remove 原子标记 inactive、释放 owned active Claims、清除该成员的 Attention 和 direct markers，再归档 session。Message 与 Activity facts 共用一个有界 sequence cursor。
 
@@ -40,7 +40,7 @@ Team-enabled preset 在自身 Agent scope 注册五个工具，并用 `markAgent
 
 #### What the model sees
 
-启用的 Member 在持久未读工作出现后，可能收到一次固定、无正文的 Inbox 提示：`Team Inbox has unread work. Use team_inbox to triage it, then team_thread to read the relevant Thread.` 提示通过 Agent 的安全 step 边界排队，正在执行的模型请求和工具不会被中断。模型必须使用 Team tools 读取事实；Thread 正文不会被注入。面向模型的 Agent Team Consumer 仍负责工具和协作协议。
+启用的 Member 在持久未读工作出现后，可能收到一次有界、合并的 context 通知。Structured direct mention 包含消息正文和来源；Task/Claim Activity 包含简短状态变化；普通未读只包含 Task ref、数量和 revision。通知通过 Agent 的安全 step 边界排队，正在执行的模型请求和工具不会被中断。常见路径可以直接调用 `team_thread.read`；只有需要跨 Thread 分流时才调用 `team_inbox`。
 
 #### Token effect
 

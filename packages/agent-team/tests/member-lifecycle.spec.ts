@@ -1,4 +1,5 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -384,6 +385,8 @@ describe('Agent Team Member lifecycle', () => {
     expect(adapter.requests).toHaveLength(2)
     const safeBoundaryRequest = JSON.stringify(adapter.requests[1]!.messages)
     expect(safeBoundaryRequest).toContain('Team Inbox has unread work')
+    expect(safeBoundaryRequest).toContain(started.task.taskRef)
+    expect(safeBoundaryRequest).toContain('2 unread updates')
     expect(safeBoundaryRequest).not.toContain('First hidden update')
     expect(safeBoundaryRequest).not.toContain('Second hidden update')
     const hints = agent.session.events.filter(event => event.type === 'user/message'
@@ -391,7 +394,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(hints).toHaveLength(1)
   })
 
-  it('wakes an idle Member after a top-level mention without injecting its body', async () => {
+  it('wakes an idle Member with a direct mention body and source', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('top-level-wake-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -402,15 +405,88 @@ describe('Agent Team Member lifecycle', () => {
     expect(committed.kind).toBe('committed')
     expect(adapter.requests).toHaveLength(0)
 
-    adapter.enqueue(textResponse('I will inspect Team Inbox.'))
+    adapter.enqueue(textResponse('I will inspect the mentioned Task.'))
     if (committed.kind !== 'committed') throw new Error(`expected committed top-level mention, received ${committed.kind}`)
     expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1,
       items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: committed.task.taskRef }), directCount: 1 })] })
     await agent.whenIdle()
     expect(adapter.requests).toHaveLength(1)
     const request = JSON.stringify(adapter.requests[0]!.messages)
-    expect(request).toContain('Team Inbox has unread work')
-    expect(request).not.toContain('Please investigate the top-level wake path')
+    expect(request).toContain('Direct Team mention')
+    expect(request).toContain('Please investigate the top-level wake path')
+    expect(request).toContain('human')
+    expect(request).toContain(committed.task.taskRef)
+  })
+
+  it('bounds automatic direct context while retaining omitted Messages in durable Inbox', async () => {
+    const adapter = new GatedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('bounded-channel'), workspaceId,
+      name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('bounded-builder'), workspaceId, handle: 'builder',
+      description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue current project work.' }], source: { kind: 'user' } }))
+    await adapter.started.promise
+
+    const started = []
+    for (let index = 1; index <= 5; index++) {
+      const body = `${`x${index}`.repeat(4_500)}\nDIRECT-END-${index}`
+      const result = await ctx.agentTeam.sendMessage({ requestId: requestId(`bounded-direct-${index}`), workspaceId,
+        channelRef: channel.channel.channelRef, body, recipients: [builder.status.member.memberId] })
+      if (result.kind !== 'committed') throw new Error(`expected committed direct Message, received ${result.kind}`)
+      started.push(result)
+    }
+    expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId })).toMatchObject({ totalUnreadCount: 5, totalDirectCount: 5 })
+
+    adapter.enqueue(textResponse('I will inspect the routed Team work.'))
+    adapter.release.resolve()
+    await agent.whenIdle()
+    const request = JSON.stringify(adapter.requests[1]!.messages)
+    expect(request).toContain('More unread work remains in team_inbox')
+    expect(request).not.toContain('DIRECT-END-5')
+
+    const omitted = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('bounded-read-omitted'), workspaceId,
+      taskRef: started[4]!.task.taskRef })
+    expect(omitted.facts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ direct: true, fact: expect.objectContaining({ kind: 'message', message: expect.objectContaining({ body: expect.stringContaining('DIRECT-END-5') }) }) }),
+    ]))
+  })
+
+  it('wakes an affected Member with a Task close and released Claim summary', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('task-update-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('task-update-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('task-update-start'), workspaceId,
+      channelRef: channel.channel.channelRef, body: 'Prepare a close notification test' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('task-update-follow'), workspaceId,
+      taskRef: started.task.taskRef, action: 'follow' })
+    const initialRead = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('task-update-agent-read'), workspaceId,
+      taskRef: started.task.taskRef })
+    const claim = await ctx.agentTeam.changeClaimForAgent(agent, { requestId: requestId('task-update-claim'), workspaceId,
+      taskRef: started.task.taskRef, action: 'claim', direction: 'browser verification', baseRevision: initialRead.thread.revision })
+    expect(claim).toMatchObject({ kind: 'committed', claim: { state: 'active' } })
+    if (claim.kind !== 'committed') throw new Error(`expected committed Claim, received ${claim.kind}`)
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('task-update-human-read'), workspaceId,
+      taskRef: started.task.taskRef })
+
+    adapter.enqueue(textResponse('I will stop work on the closed Task.'))
+    const closed = await ctx.agentTeam.changeTask({ requestId: requestId('task-update-close'), workspaceId,
+      taskRef: started.task.taskRef, action: 'close', baseRevision: humanRead.thread.revision })
+    expect(closed).toMatchObject({ kind: 'committed', task: { resolution: 'closed' }, claims: [
+      expect.objectContaining({ claimRef: claim.claim.claimRef, state: 'released' }),
+    ] })
+    await agent.whenIdle()
+
+    expect(adapter.requests).toHaveLength(1)
+    const request = JSON.stringify(adapter.requests[0]!.messages)
+    expect(request).toContain('Team Task update')
+    expect(request).toContain(`human close Task ${started.task.taskRef}`)
+    expect(request).toContain(claim.claim.claimRef)
+    expect(request).toContain('Released Claims')
   })
 
   it('wakes an idle Member from durable Inbox state without injecting Thread bodies', async () => {
@@ -509,6 +585,25 @@ describe('Agent Team Member lifecycle', () => {
     const lastRequest = JSON.stringify(adapter.requests.at(-1)!.messages)
     expect(lastRequest).toContain('Team Inbox has unread work')
     expect(lastRequest).not.toContain('Unread across Host remount')
+  })
+
+  it('prunes orphan private-memory directories from earlier ledgers at Host startup', async () => {
+    const { ctx, workspaceId, root, teamFiber } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('orphan-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('orphan-builder'), workspaceId, handle: 'builder', description: 'Keeps its memory', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const membersRoot = join(root, 'dsh-home', 'agent-team', 'members')
+    const orphan = join(membersRoot, `member:${randomUUID()}`)
+    const foreign = join(membersRoot, 'not-a-member-directory')
+    await Promise.all([mkdir(orphan, { recursive: true }), mkdir(foreign, { recursive: true })])
+    await writeFile(join(orphan, 'memory.md'), '# Left over from a discarded ledger\n', 'utf8')
+
+    await teamFiber.dispose()
+    await ctx.plugin(AgentTeam)
+
+    await expect(access(orphan)).rejects.toThrow()
+    expect(await readFile(join(added.status.member.privateMemoryPath, 'memory.md'), 'utf8')).toContain('# Member memory')
+    await expect(access(foreign)).resolves.toBeUndefined()
+    expect(ctx.agents.get(added.status.member.sessionId)).toBeDefined()
   })
 
   it('validates the final five-tool Team marker during unpublished setup', async () => {

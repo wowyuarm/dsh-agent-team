@@ -124,6 +124,13 @@ const directMarkerSchema = z.object({
   sequence: z.number().int().positive(),
 }).strict()
 
+const activityMarkerSchema = z.object({
+  memberId: memberIdSchema,
+  threadRef: threadRefSchema,
+  activityRef: activityRefSchema,
+  sequence: z.number().int().positive(),
+}).strict()
+
 const inboxDeltaSchema = z.object({
   attention: z.object({
     set: z.array(attentionSchema),
@@ -133,6 +140,10 @@ const inboxDeltaSchema = z.object({
     added: z.array(directMarkerSchema),
     removed: z.array(directMarkerSchema),
   }).strict(),
+  activityMarkers: z.object({
+    added: z.array(activityMarkerSchema),
+    removed: z.array(activityMarkerSchema),
+  }).strict().default({ added: [], removed: [] }),
 }).strict()
 
 const claimSchema = z.object({

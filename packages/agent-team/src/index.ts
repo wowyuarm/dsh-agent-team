@@ -7,12 +7,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { MessageId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -23,7 +22,7 @@ import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-p
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -32,6 +31,7 @@ import type {
   AgentTeamChangeScope,
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
+  AgentTeamActivity,
   AgentTeamClaimList,
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
@@ -141,7 +141,6 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
   private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
-  private readonly pendingInboxHints = new Map<AgentTeamMemberId, MessageId>()
   private lifecycleTail: Promise<void> = Promise.resolve()
   private accepting = true
   private changeVersion = 0
@@ -168,12 +167,6 @@ export default class AgentTeam extends TypertRemoteService {
         this.notifyMember(agent)
       }
     })
-    const clearPendingHint = (agent: Agent, messageId: MessageId): void => {
-      const member = this.memberForAgent(agent)
-      if (member !== undefined && this.pendingInboxHints.get(member.memberId) === messageId) this.pendingInboxHints.delete(member.memberId)
-    }
-    this.ctx.on('agent/inbox/claimed', ({ agent, message }) => clearPendingHint(agent, message.id))
-    this.ctx.on('agent/inbox/discarded', ({ agent, message }) => clearPendingHint(agent, message.id))
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
       this.accepting = false
@@ -188,6 +181,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.ledger = ledger
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
+    await this.cleanupOrphanMembers(ledger)
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
     const persistedSessions = new Set((await this.ctx.sessionPersistence.list()).map(header => header.id))
@@ -640,6 +634,27 @@ export default class AgentTeam extends TypertRemoteService {
     if (failures.length > 0) throw new AggregateError(failures, `failed to clean up removed Member '${member.memberId}'`)
   }
 
+  /**
+   * Delete private-memory directories no ledger Member references. Ledger
+   * resets (schema version bumps discard the medium) leave earlier directories
+   * behind; only `member:`-shaped directories are candidates, and every Member
+   * known to the replayed ledger protects its own directory.
+   */
+  private async cleanupOrphanMembers(ledger: AgentTeamLedger): Promise<void> {
+    const known = new Set(ledger.listMembers().map(member => member.memberId))
+    const root = dshHomePath('agent-team', 'members')
+    const entries = await readdir(root, { withFileTypes: true }).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    })
+    const orphanPaths = entries
+      .filter(entry => entry.isDirectory() && entry.name.startsWith('member:') && !known.has(entry.name as AgentTeamMemberId))
+      .map(entry => join(root, entry.name))
+    const results = await Promise.allSettled(orphanPaths.map(path => rm(path, { recursive: true, force: true })))
+    const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length > 0) throw new AggregateError(failures, 'failed to clean up orphan Member private memory')
+  }
+
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
     if (member.state === 'inactive') return Object.freeze({ member, availability: 'inactive', presence: 'unavailable' })
     if (member.state === 'suspended') return Object.freeze({ member, availability: 'suspended', presence: 'unavailable' })
@@ -682,34 +697,26 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /** Wake only from durable unread state; the message contains no Team facts. */
+  /** Wake from durable unread state with bounded facts for direct and state-changing work. */
   private notifyMember(agent: Agent): void {
     const member = this.memberForAgent(agent)
     if (member === undefined || member.state !== 'enabled') return
-    const inbox = this.inboxForAgent(agent, { workspaceId: member.workspaceId })
-    if (inbox.totalUnreadCount === 0) {
+    const notifications = this.requireLedger().notificationFacts(member.memberId, { workspaceId: member.workspaceId })
+    if (notifications.length === 0) {
       this.notifiedInbox.delete(member.memberId)
       return
     }
-    const signature = JSON.stringify(inbox.items.map(item => [
+    const signature = JSON.stringify(notifications.map(({ item }) => [
       item.thread.threadRef, item.thread.revision, item.unreadCount, item.directCount, item.newestSequence,
     ]))
-    if (this.pendingInboxHints.has(member.memberId)) return
+    if (this.notifiedInbox.get(member.memberId) === signature) return
     const existingHint = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message =>
       message.source.kind === 'plugin' && message.source.plugin === '@wowyuarm/dsh-agent-team')
-    if (existingHint !== undefined) {
-      agent.inbox.remove(existingHint.id)
-      this.pendingInboxHints.set(member.memberId, existingHint.id)
-      this.notifiedInbox.set(member.memberId, signature)
-      agent.steer(existingHint)
-      return
-    }
-    if (this.notifiedInbox.get(member.memberId) === signature) return
+    if (existingHint !== undefined) agent.inbox.remove(existingHint.id)
     const hint = createUserMessage({
-      content: [{ type: 'text', text: 'Team Inbox has unread work. Use team_inbox to triage it, then team_thread to read the relevant Thread.' }],
+      content: [{ type: 'text', text: this.notificationText(notifications) }],
       source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' },
     })
-    this.pendingInboxHints.set(member.memberId, hint.id)
     this.notifiedInbox.set(member.memberId, signature)
     try {
       agent.steer(hint)
@@ -719,9 +726,68 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+  private notificationText(notifications: ReturnType<AgentTeamLedger['notificationFacts']>): string {
+    const maxCharacters = 32 * 1024
+    const sections: string[] = ['Team Inbox has unread work.']
+    let characterCount = sections[0]!.length
+    let detailedFactCount = 0
+    let omitted = notifications.length > 8
+    const append = (section: string): boolean => {
+      if (characterCount + section.length + 2 > maxCharacters) {
+        omitted = true
+        return false
+      }
+      sections.push(section)
+      characterCount += section.length + 2
+      return true
+    }
+    for (const { item, facts } of notifications.slice(0, 8)) {
+      for (const { fact, direct } of facts) {
+        if (detailedFactCount >= 20) {
+          omitted = true
+          break
+        }
+        if (direct && fact.kind === 'message') {
+          const sender = fact.message.sender === AGENT_TEAM_HUMAN_MEMBER_ID
+            ? 'human' : this.requireLedger().getMember(fact.message.sender)?.handle ?? fact.message.sender
+          const detail = ['Direct Team mention', `From: ${sender}`, `Channel: ${item.channelRef}`,
+            `Task: ${item.task.taskRef}`, `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
+            `Revision: ${item.thread.revision}`, `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
+          if (append(detail)) detailedFactCount += 1
+        } else if (fact.kind === 'activity') {
+          const detail = `${this.activityNotification(fact.activity)}\nThread: ${item.thread.threadRef}\nRevision: ${item.thread.revision}`
+          if (append(detail)) detailedFactCount += 1
+        }
+      }
+      const ordinaryCount = facts.filter(entry => entry.fact.kind === 'message' && !entry.direct).length
+      if (ordinaryCount > 0) append(`Task ${item.task.taskRef}: ${ordinaryCount} unread update${ordinaryCount === 1 ? '' : 's'}; revision ${item.thread.revision}.`)
+    }
+    if (omitted) sections.push('More unread work remains in team_inbox; the automatic context is bounded.')
+    sections.push('Use team_thread read with the relevant taskRef before acting or replying. Use team_inbox only when you need to triage the remaining Threads.')
+    return sections.join('\n\n')
+  }
+
+  private boundedNotificationBody(body: string): string {
+    const limit = 8 * 1024
+    return body.length <= limit ? body : `${body.slice(0, limit)}\n[Message body truncated; use team_thread read for the full Message.]`
+  }
+
+  private activityNotification(activity: AgentTeamActivity): string {
+    const actor = activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID
+      ? 'human' : this.requireLedger().getMember(activity.actor)?.handle ?? activity.actor
+    if (activity.kind === 'claim' || activity.kind === 'done' || activity.kind === 'release') {
+      return `Team Task update\n${actor} ${activity.kind} Claim ${activity.claimRef} on Task ${activity.taskRef}.`
+    }
+    if (activity.kind === 'claims_released') {
+      return `Team Task update\n${actor}'s Claims ${activity.claimRefs.join(', ')} were released on Task ${activity.taskRef}.`
+    }
+    const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
+      ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''
+    return `Team Task update\n${actor} ${activity.kind} Task ${activity.taskRef}.${released}`
+  }
+
   private clearMemberNotificationState(memberId: AgentTeamMemberId): void {
     this.notifiedInbox.delete(memberId)
-    this.pendingInboxHints.delete(memberId)
   }
 
   /**
