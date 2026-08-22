@@ -50,7 +50,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     selectedChannelRef?: AgentTeamChannelRef
-    selectChannel: (channelRef: AgentTeamChannelRef) => void
   }
 
 export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & TeamNavigationActions & {

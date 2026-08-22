@@ -448,7 +448,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <div className={threadCss.titleLine}>
-            <h1>{task === undefined ? 'Task …' : `Task #${taskNumber ?? '…'}`}</h1>
+            <h1>{task === undefined ? t('taskPending') : t('taskLabel', { number: taskNumber ?? '…' })}</h1>
             {task !== undefined && <Pill>{formatTaskStatus(task.status, t)}</Pill>}
           </div>
           {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle}>{taskTitle}</p>}

@@ -58,6 +58,14 @@ function registerModeShadow<T extends object>(
   component: T,
   extraInject?: () => Record<string, unknown>,
 ): void {
+  // Remote bindings shared by every Team slot; surface-specific entries extend it below.
+  const sharedRemotes = {
+    loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
+    subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
+    loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
+    joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
+    removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
+  }
   ctx.slots.inject(name, () => {
     let dispose: (() => void) | undefined
     const reconcile = (): void => {
@@ -71,26 +79,17 @@ function registerModeShadow<T extends object>(
             navigation,
             ...extraInject?.(),
             ...navigation.actions(),
+            ...sharedRemotes,
             ...(name === 'conversation' ? {
-              loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
               readThread: (request: AgentTeamThreadReadRequest) => ctx.remote.agentTeam.readThread(request),
               loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
-              subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
-              loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
               sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
-              joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
-              removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
               reply: (request: AgentTeamReplyRequest) => ctx.remote.agentTeam.reply(request),
               changeTask: (request: AgentTeamTaskRequest) => ctx.remote.agentTeam.changeTask(request),
             } : {}),
             ...(name === 'sidebar.workspaces' ? {
-              loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
-              subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
               addMember: (request: AgentTeamAddMemberRequest) => ctx.remote.agentTeam.addMember(request),
-              loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
               createChannel: (request: AgentTeamCreateChannelRequest) => ctx.remote.agentTeam.createChannel(request),
-              joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
-              removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
             } : {}),
           }),
         } as never, component as never)

@@ -93,7 +93,6 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         setChannelRefs([])
         setFormOpen(false)
         if (result.value.status.presence === 'unavailable') {
-          setRetryRequest(request)
           setError(result.value.status.diagnostic ?? t('statusUnavailable'))
         } else {
           setRetryRequest(undefined)

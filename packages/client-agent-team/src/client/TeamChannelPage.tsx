@@ -276,7 +276,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                       : <span className={channelCss.taskDotQuiet} data-variant={dot} />
                   })()}
                 </span>
-                <span className={channelCss.taskNumber}>{`Task #${item.taskNumber}`}</span>
+                <span className={channelCss.taskNumber}>{t('taskLabel', { number: item.taskNumber })}</span>
                 <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
                 <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
                 <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
