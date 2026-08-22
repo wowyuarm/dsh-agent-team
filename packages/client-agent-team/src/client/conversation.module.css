@@ -240,16 +240,25 @@
    matched padding/negative margins, so text never shifts inside it. The
    transparent border is reserved space: the hairline on hover adds no shift.
    Hover is border-only — no fill or shadow — so it never stacks with the
-   Task entry chip's own hover state. */
+   Task entry chip's own hover state. Runs keep a 2px vertical gap so
+   adjacent hover borders never touch. */
 .messageRun {
   border: 1px solid transparent;
   border-radius: 10px;
-  margin: -3px -10px;
+  margin: 2px -10px;
   padding: 3px 10px;
   transition: border-color 120ms ease;
 }
 .messageRun:hover {
   border-color: var(--dsw-alias-border-default);
+}
+
+/* Inside one run, consecutive messages that carry their own Task entry chip
+   get a hairline separator; plain same-sender continuations stay seamless. */
+.messageRow[data-grouped]:has(.messageBody > button) {
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  margin-top: 3px;
+  padding-top: 7px;
 }
 
 /* Mention chip for @Member references in Human literal messages; Agent
@@ -264,7 +273,7 @@
 }
 
 @media (max-width: 600px) {
-  .messageRun { margin: -3px -6px; padding: 3px 6px; }
+  .messageRun { margin: 2px -6px; padding: 3px 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

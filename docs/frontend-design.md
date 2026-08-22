@@ -54,7 +54,8 @@
 ### 消息块（messageRun）
 
 - 一个 run = 一次发言：同一 sender 连续的消息 + 其 Task 入口卡包进一个 `.messageRun` 块；活动行与未读边界打断 run。
-- hover 面合同：静止完全隐形（透明边框占位防抖动）；hover 只浮现一条细边框（border-default），无底色无阴影——避免与块内 Task 入口卡自身的 hover 底色叠层；圆角 10px；用等量 padding/负 margin 向文字列两侧外扩 10px（窄屏 6px），文字永不位移。120ms 过渡，reduced-motion 下关闭。
+- 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button)`），上方画一条 border-subtle 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
+- hover 面合同：静止完全隐形（透明边框占位防抖动）；hover 只浮现一条细边框（border-default），无底色无阴影——避免与块内 Task 入口卡自身的 hover 底色叠层；圆角 10px；水平用等量 padding/负 margin 向文字列两侧外扩 10px（窄屏 6px），文字永不位移；垂直方向块间保留 2px 空隙（`margin: 2px` + `padding: 3px`），相邻块的 hover 边框互不接触，同时让消息间距稍大。120ms 过渡，reduced-motion 下关闭。
 - 不做常驻卡片边框——消息边界感只在指针交互时出现，避免"给内容加笼子"的刻意感。
 
 ### Mention 强调
