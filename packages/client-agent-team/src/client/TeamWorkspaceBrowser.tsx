@@ -15,6 +15,10 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
   const selected = navigationState.workspaceId
   const selectedExists = selected !== undefined && workspaces.some(workspace => workspace.workspaceId === selected)
   const selectedId = selectedExists ? selected : workspaces[0]?.workspaceId
+  // Exactly one sidebar row carries aria-current='page': the open Channel while
+  // one is set, otherwise the browsed Workspace's overview. The selected row
+  // keeps its quiet folder tint (data-selected) in both cases.
+  const overviewIsCurrent = navigationState.channelRef === undefined
   const [creatingAgents, setCreatingAgents] = useState<readonly AgentTeamAddMemberRequest[]>([])
   // Rail icons request expansion and name the section to reveal once wide.
   const [pendingSection, setPendingSection] = useState<SidebarSection>()
@@ -52,7 +56,7 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
   return <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
     <div className={css.workspaceHeader}>{t('workspaces')}</div>
     <div className={css.workspaceList}>
-      {workspaces.map(workspace => <TeamWorkspaceRow key={workspace.workspaceId} workspaceId={workspace.workspaceId} title={workspace.title} path={workspace.path} selected={workspace.workspaceId === selectedId} onSelect={selectWorkspace} />)}
+      {workspaces.map(workspace => <TeamWorkspaceRow key={workspace.workspaceId} workspaceId={workspace.workspaceId} title={workspace.title} path={workspace.path} selected={workspace.workspaceId === selectedId} current={workspace.workspaceId === selectedId && overviewIsCurrent} onSelect={selectWorkspace} />)}
       {workspaces.length === 0 && <p className={css.emptyState}>{t('empty')}</p>}
     </div>
     {selectedId !== undefined && <div className={css.workspaceSection}>

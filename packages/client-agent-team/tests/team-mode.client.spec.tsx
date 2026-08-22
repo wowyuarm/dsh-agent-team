@@ -353,6 +353,11 @@ describe('rendered Team mode composition', () => {
     const backendChannel = await b.view.findByRole('button', { name: '# backend' })
     fireEvent.click(backendChannel)
     expect(backendChannel.closest('article')?.getAttribute('aria-current')).toBe('page')
+    // Location moves to the leaf: the Channel row is the composition's only
+    // aria-current='page', and the browsed Workspace row yields it.
+    const currentPage = b.view.container.querySelector('[aria-current="page"]')
+    expect(currentPage).toBe(backendChannel.closest('article'))
+    expect(b.view.container.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     const channelPage = b.view.container.querySelector('[data-team-channel]') as HTMLElement
     const manageMembers = within(channelPage).getByRole('button', { name: '管理成员' })

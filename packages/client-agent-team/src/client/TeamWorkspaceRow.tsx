@@ -2,11 +2,13 @@ import { IconFolderClose16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import css from './sidebar.module.css'
 
-export function TeamWorkspaceRow({ workspaceId, title, path, selected, onSelect }: {
+export function TeamWorkspaceRow({ workspaceId, title, path, selected, current, onSelect }: {
   workspaceId: WorkspaceId
   title: string
   path: string
   selected: boolean
+  /** The Team center shows this Workspace's overview (no Channel is open). */
+  current: boolean
   onSelect: (workspaceId: WorkspaceId) => void
 }) {
   return (
@@ -14,7 +16,7 @@ export function TeamWorkspaceRow({ workspaceId, title, path, selected, onSelect 
       type="button"
       className={css.workspaceRow}
       data-selected={selected || undefined}
-      aria-current={selected ? 'page' : undefined}
+      aria-current={current ? 'page' : undefined}
       onClick={() => { onSelect(workspaceId) }}
       title={`${title} · ${path}`}
     >

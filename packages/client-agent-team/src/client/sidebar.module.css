@@ -60,9 +60,13 @@
   text-align: left;
   width: 100%;
 }
+/* Location reads like the harness session tree: the leaf that is the current
+   page carries the fill (aria-current='page' — the open Channel row, or this
+   Workspace row while its overview is up); the browsed Workspace row otherwise
+   stays quiet and only its folder icon tints (data-selected). */
 .workspaceRow:hover,
 .workspaceRow:focus-visible,
-.workspaceRow[data-selected] {
+.workspaceRow[aria-current='page'] {
   background: var(--dsw-alias-interactive-bg-hover);
   outline: none;
 }

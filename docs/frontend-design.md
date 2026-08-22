@@ -95,6 +95,7 @@
 
 - 骨架：工作区列表 + 「频道」「Agents」两个常驻可折叠分区，同处一个滚动容器；分区头是原生 button 折叠头（`TeamSidebarSection`，`aria-expanded`），右侧只放新增按钮。刻意保持安静：折叠头无 hover 底色，仅 chevron 变色反馈；不展示分区计数。
 - 行形态：频道行保留 `#` 标识；Agent 行复用头像语言并叠加 presence 角标。行内元数据（成员计数、presence 文字）已移除，保持列表简洁。
+- 定位高亮单一化（对齐宿主会话树「父静叶亮」的惯例）：任一时刻侧栏只有一行携带 `aria-current='page'` 与 hover 底色——打开频道/Thread 时是频道行，否则是所选工作区的概览行；被浏览的工作区行其余时候保持安静，仅以 `data-selected` 让文件夹图标换成 open 形态并着 business 色（镜像宿主 `folderActive`），不再与叶子行同时点亮。
 - 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。M1 菜单只含「编辑」入口，指向成员管理对话框（频道成员增删 / Agent 加入退出频道，走既有 join/remove Remote，幂等 request 按 方向+成员+频道 键复用）；改名/说明等字段待 Host update 操作就绪后再点亮。
 - 窄屏 rail 保留两个图标按钮，点击请求展开侧栏并聚焦对应分区头部。
 
