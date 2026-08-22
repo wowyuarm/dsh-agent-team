@@ -232,6 +232,21 @@ export interface AgentTeamThreadReadFact {
   readonly direct: boolean
 }
 
+/** Stored form of a Message inside durable operations; pre-occurredAt ledgers omit it and normalize on load. */
+export type AgentTeamStoredMessage = Omit<AgentTeamMessage, 'occurredAt'> & { readonly occurredAt?: string | undefined }
+
+/** Stored form of one Thread timeline fact; mirrors AgentTeamThreadFact with stored messages. */
+export type AgentTeamStoredThreadFact =
+  | { readonly kind: 'message'; readonly sequence: number; readonly message: AgentTeamStoredMessage }
+  | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity }
+
+/** Stored form of one durable Thread read fact. */
+export interface AgentTeamStoredThreadReadFact {
+  readonly fact: AgentTeamStoredThreadFact
+  readonly unread: boolean
+  readonly direct: boolean
+}
+
 /** The first durable operation in every Agent Team ledger. */
 export interface AgentTeamInitializedOperation extends AgentTeamOperationBase {
   readonly previousOperationId: null
@@ -393,8 +408,8 @@ export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly claims: readonly AgentTeamClaim[]
-    readonly anchor: AgentTeamMessage
-    readonly facts: readonly AgentTeamThreadReadFact[]
+    readonly anchor: AgentTeamStoredMessage
+    readonly facts: readonly AgentTeamStoredThreadReadFact[]
     readonly readThroughSequence: number
     /** Number of unread facts left after this bounded read. */
     readonly remainingUnreadCount: number

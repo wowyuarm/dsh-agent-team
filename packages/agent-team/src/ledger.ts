@@ -58,6 +58,7 @@ import type {
   AgentTeamSetMemberStateRequest,
   AgentTeamStaleRevision,
   AgentTeamStatus,
+  AgentTeamStoredMessage,
   AgentTeamTask,
   AgentTeamTaskActivity,
   AgentTeamTaskChangedOperation,
@@ -2171,8 +2172,10 @@ export class AgentTeamLedger {
   }
 
   private threadReadResult(operation: AgentTeamThreadReadOperation): AgentTeamThreadReadResult {
+    // Loaded records are normalized by sortedRecords(); fresh writes always carry instants.
+    const { anchor, facts } = operation.data as unknown as { anchor: AgentTeamMessage; facts: readonly AgentTeamThreadReadFact[] }
     return Object.freeze({ receipt: this.receipt(operation), task: operation.data.task, thread: operation.data.thread,
-      claims: operation.data.claims, anchor: operation.data.anchor, facts: operation.data.facts,
+      claims: operation.data.claims, anchor, facts,
       readThroughSequence: operation.data.readThroughSequence, remainingUnreadCount: operation.data.remainingUnreadCount,
       ...(operation.data.attention === undefined ? {} : { attention: operation.data.attention }),
       consumedDirectMarkers: operation.data.inbox.directMarkers.removed })
@@ -2211,7 +2214,30 @@ export class AgentTeamLedger {
   private resolved<T>(value: T): AgentTeamLedgerResult<T> { return Object.freeze({ value, committed: false }) }
 
   private sortedRecords(): Array<[AgentTeamOperationId, AgentTeamOperation]> {
-    return [...this.table.entries()].sort((left, right) => left[1].sequence - right[1].sequence)
+    const records = [...this.table.entries()].sort((left, right) => left[1].sequence - right[1].sequence)
+    const occurrences = new Map<AgentTeamMessageRef, string>()
+    for (const [, operation] of records) {
+      if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
+        occurrences.set(operation.data.message.messageRef, operation.data.message.occurredAt ?? operation.occurredAt)
+      }
+    }
+    return records.map(([id, operation]) => [id, this.normalizeOperation(operation, occurrences)])
+  }
+
+  /** Ledgers written before message occurredAt existed store bare messages; Thread reads resolve instants from the originating operations. */
+  private normalizeOperation(operation: AgentTeamOperation, occurrences: Map<AgentTeamMessageRef, string>): AgentTeamOperation {
+    if (operation.kind !== 'team/thread-read') return operation
+    const stamp = (message: AgentTeamStoredMessage): AgentTeamMessage => (
+      message.occurredAt === undefined
+        ? { ...message, occurredAt: occurrences.get(message.messageRef) ?? operation.occurredAt }
+        : { ...message, occurredAt: message.occurredAt }
+    )
+    const facts = operation.data.facts.map((fact): AgentTeamThreadReadFact => (
+      fact.fact.kind === 'message'
+        ? { ...fact, fact: { kind: 'message', sequence: fact.fact.sequence, message: stamp(fact.fact.message) } }
+        : { ...fact, fact: fact.fact }
+    ))
+    return { ...operation, data: { ...operation.data, anchor: stamp(operation.data.anchor), facts } }
   }
 
   private emptyProjection(): Projection {

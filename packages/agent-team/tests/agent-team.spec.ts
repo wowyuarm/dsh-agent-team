@@ -386,6 +386,39 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     second.ctx.agentTeam.validateLedger()
   })
 
+  it('normalizes bare pre-occurredAt messages with the wrapping operation instant during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Legacy' }))
+    const ledger = replayLedger(test)
+    await ledger.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef, actor: agentTeamHumanActor() })
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind === 'team/message-sent') {
+        const { occurredAt: _dropped, ...message } = typed.data.message
+        return [id, { ...typed, data: { ...typed.data, message } }] as [string, unknown]
+      }
+      if (typed.kind === 'team/thread-read') {
+        const { occurredAt: _anchorDropped, ...anchor } = typed.data.anchor
+        const facts = typed.data.facts.map(fact => fact.fact.kind === 'message'
+          ? (() => {
+            const { occurredAt: _factDropped, ...message } = fact.fact.message
+            return { ...fact, fact: { kind: 'message' as const, sequence: fact.fact.sequence, message } }
+          })()
+          : fact)
+        return [id, { ...typed, data: { ...typed.data, anchor, facts } }] as [string, unknown]
+      }
+      return [id, typed] as [string, unknown]
+    })
+    const storedMessage = records.map(([, operation]) => operation as AgentTeamOperation)
+      .find(operation => operation.kind === 'team/message-sent')!
+    const revived = await harness(storedPool(records))
+    const view = revived.ctx.agentTeam.view({ workspaceId: alpha, threadRef: started.thread.threadRef })
+    expect(view.items.map(item => item.message.body)).toEqual(['Legacy'])
+    expect(view.items[0]!.message.occurredAt).toBe(storedMessage.occurredAt)
+    expect(() => replayLedger(revived).validate()).not.toThrow()
+  })
+
   it('fails loud on malformed durable records and an invariant catches projection divergence', async () => {
     await expect(harness(storedPool([['operation:bad', { sequence: 'one' }]]))).rejects.toThrow(/does not match its schema/)
     const test = await harness()

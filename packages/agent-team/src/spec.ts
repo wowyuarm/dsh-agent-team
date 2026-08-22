@@ -12,7 +12,6 @@ import type {
   AgentTeamOperationId,
   AgentTeamRequestId,
   AgentTeamTaskRef,
-  AgentTeamThreadReadFact,
   AgentTeamThreadRef,
 } from './types.ts'
 
@@ -81,22 +80,13 @@ function stampMessage(occurredAt: string, message: StoredMessage): Omit<StoredMe
   return stored === undefined ? { ...message, occurredAt } : { ...message, occurredAt: stored }
 }
 
-/** Stamp every bare stored message inside one operation with the operation's occurrence instant. */
+/** Stamp every bare stored message that carries its instant inside the same operation; Thread reads resolve cross-operation instants in the ledger. */
 function stampOperationMessages(operation: z.output<typeof storedAgentTeamOperationSchema>): AgentTeamOperation {
   if (operation.kind === 'team/message-sent') {
     return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } }
   }
   if (operation.kind === 'team/thread-replied') {
     return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } }
-  }
-  if (operation.kind === 'team/thread-read') {
-    const facts = operation.data.facts.map((fact): AgentTeamThreadReadFact => {
-      if (fact.fact.kind === 'message') {
-        return { ...fact, fact: { kind: 'message', sequence: fact.fact.sequence, message: stampMessage(operation.occurredAt, fact.fact.message) } }
-      }
-      return { ...fact, fact: fact.fact }
-    })
-    return { ...operation, data: { ...operation.data, anchor: stampMessage(operation.occurredAt, operation.data.anchor), facts } }
   }
   return operation
 }
