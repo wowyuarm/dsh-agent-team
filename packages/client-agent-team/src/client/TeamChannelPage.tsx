@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronRightOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -21,6 +21,7 @@ interface TeamChannelPageProps {
   readonly joinChannel: TeamConversationProps['joinChannel']
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
   readonly selectThread: TeamConversationProps['selectThread']
+  readonly backToChannels: TeamConversationProps['backToChannels']
   readonly t: TeamConversationProps['t']
 }
 
@@ -41,7 +42,7 @@ function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTe
   }
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, backToChannels, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [draft, setDraft] = useState('')
@@ -64,6 +65,8 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const channel = view?.channels.find(item => item.channelRef === channelRef)
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
   const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive')
+  // Presence counts ride the header meta line; error and unavailable do not count as online.
+  const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
 
   const refresh = async (clearError = false) => {
@@ -207,12 +210,14 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
 
   return <main className={css.surface} data-team-channel={channelRef}>
     <div className={css.surfaceHeader}>
+      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutline14 />} onClick={backToChannels}>{t('backToChannels')}</Button></div>
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <h1>{channel === undefined ? '# …' : `# ${channel.name}`}</h1>
           {channel !== undefined && <p>{channel.description}</p>}
           {channel !== undefined && <div className={channelCss.headerMeta}>
             <span>{t('memberCount', { count: channelMembers.length })}</span>
+            <span>{t('onlineCount', { count: onlineCount })}</span>
           </div>}
         </div>
         {channel !== undefined && <span ref={manageTriggerRef}><Button size="sm" variant="outline" aria-haspopup="dialog" onClick={() => { setManagingMembers(true) }}>{t('manageMembers')}</Button></span>}
@@ -236,15 +241,17 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       </div>
     </Modal>
 
-    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('channels')}>
+    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('timelineLabel')}>
       <div className={css.timelineContent}>
-        {loading && channel === undefined && error === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p>}
-        {!loading && channel === undefined && error === undefined && <p className={css.emptyState}>{t('emptyChannels')}</p>}
+        {loading && channel === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingChannels')}</p></div>}
+        {!loading && channel === undefined && error === undefined && <div className={css.emptySurface}><p className={css.emptyState}>{t('emptyChannels')}</p></div>}
         {!loading && channel === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void refresh(true) }}>{t('retry')}</Button></div>}
         {view?.hasMore && <div className={css.timelineAction}><Button size="sm" disabled={loadingOlder} onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
-        {channel !== undefined && view?.items.length === 0 && <div className={css.emptyState}>
-          <strong>{t('emptyMessages')}</strong>
-          <span>{t('emptyMessagesHint')}</span>
+        {channel !== undefined && view?.items.length === 0 && <div className={css.emptySurface}>
+          <div className={css.emptyState}>
+            <strong>{t('emptyMessages')}</strong>
+            <span>{t('emptyMessagesHint')}</span>
+          </div>
         </div>}
         {view?.items.map((item, index) => {
           const senderStatus = members.find(member => member.member.memberId === item.message.sender)

@@ -213,6 +213,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   })
   if (agentClaim.kind !== 'committed') throw new Error(`Agent Claim was rejected: ${agentClaim.kind}`)
 
+  await page.getByRole('button', { name: /Claims · 1/ }).click()
   await page.getByText('实现验收功能', { exact: true }).waitFor()
   await page.getByText(/认领了「实现验收功能」/).waitFor()
   await page.screenshot({ path: join(UI05_SHOTS, 'active-thread.png'), fullPage: true })
@@ -258,10 +259,9 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI05_SHOTS, 'accepted-thread.png'), fullPage: true })
   await page.getByRole('button', { name: '重新打开' }).click()
   await page.getByRole('button', { name: '关闭任务' }).click()
-  const closedComposer = page.getByRole('textbox', { name: '消息内容' })
-  await closedComposer.waitFor()
-  await expect.poll(() => closedComposer.isDisabled()).toBe(true)
-  await expect.poll(() => page.getByRole('button', { name: '发送' }).isDisabled()).toBe(true)
+  // The closed Thread swaps the composer for the explanatory notice with its reopen action.
+  await page.getByText('任务已关闭，重新打开后可继续讨论').waitFor()
+  await expect.poll(() => page.getByRole('textbox', { name: '消息内容' }).count()).toBe(0)
   await page.screenshot({ path: join(UI05_SHOTS, 'closed-thread.png'), fullPage: true })
 
   await page.setViewportSize({ width: 390, height: 844 })

@@ -18,6 +18,9 @@
 - 断点 `@media (max-width: 600px)` 收紧 padding、header 纵排；验收必须覆盖 390×844 无横向溢出。
 - 侧栏由宿主 `sidebar` slot 决定宽窄（wide/rail 二态）；rail 模式下 Team 只渲染图标按钮列。
 - 欢迎态是独立居中 surface（eyebrow + h1 + 引导文案），不进入三段骨架。
+- Thread 头部信息层级：`Task #N` 与状态 Pill 同一行（`.titleLine`），任务标题为副行；Claims 用公共 `DisclosureRow` 折叠为一行摘要，展开才渲染 Claim 列表；header 动作区只在 open 任务出现（验收/关闭），accepted 任务保留 header 重新打开主按钮。
+- 关闭任务是终态：composer 槽位换成解释性提示条（`.closedBar/.closedNotice`，文案 + 唯一的重新打开动作），不再渲染禁用的输入框。
+- 频道页与 Thread 页对称：频道页有返回行（`backToChannels` 清除 `channelRef` 回到频道列表）；时间线空/加载态在自由空间内居中（`.emptySurface` + `margin:auto`）。
 
 ## 排版体系
 
@@ -68,7 +71,8 @@
 
 ### 状态胶囊与弹层
 
-- Thread 状态用公共 `Pill`；频道成员数等元信息用 `.headerMeta` 行内分隔。
+- Thread 状态用公共 `Pill`（与 `Task #N` 同行）；频道成员数与在线数等元信息用 `.headerMeta` 行内分隔（`memberCount` + `onlineCount`，error/unavailable 不计为在线）。
+- Claims 折叠用公共 `DisclosureRow`（`expandOnRowClick`，标题 `Claims · N`），键盘闭环由原语保证；Claim 行缩进对齐标题文字。
 - 所有弹层走公共 `Modal`：打开时焦点入内容区，关闭后焦点回到触发按钮（`queueMicrotask` 延迟聚焦模式）。
 
 ## 数据刷新语义
@@ -88,6 +92,7 @@
 - tablist 支持左右方向键移动选择（roving focus + `selectWorkspaceTab`）。
 - listbox/option 完整键盘闭环（见 composer 一节）。
 - 图标按钮均有 aria-label；装饰元素 `aria-hidden`。
+- 消息时间线区域使用专用 `timelineLabel`（"消息时间线"），不误用频道/参与者标签；Thread 内部事实分组段不带重复的区域标签。
 - 未读分界线 `role="separator"` 且携带 `[data-thread-boundary]` 供滚动定位。
 - 新增可见 UI 必须通过 `npm run test:browser` 的桌面 1440×960、窄屏 390×844 和键盘检查（见 `development.md`）。
 

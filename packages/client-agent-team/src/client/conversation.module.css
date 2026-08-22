@@ -10,7 +10,7 @@
 .surfaceHeader {
   border-bottom: 1px solid var(--dsw-alias-border-subtle);
   min-width: 0;
-  padding: 18px clamp(18px, 3vw, 36px) 14px;
+  padding: 14px clamp(18px, 3vw, 36px) 12px;
 }
 
 .headerRow {
@@ -60,9 +60,21 @@
   scrollbar-gutter: stable;
 }
 .timelineContent {
+  display: flex;
+  flex-direction: column;
   margin: 0 auto;
   max-width: 880px;
+  min-height: 100%;
   min-width: 0;
+}
+/* Empty and loading states ride the free timeline space instead of the top edge. */
+.emptySurface {
+  margin: auto;
+  padding: 32px 0;
+}
+.emptySurface .emptyState {
+  justify-items: center;
+  text-align: center;
 }
 .timelineAction {
   display: flex;

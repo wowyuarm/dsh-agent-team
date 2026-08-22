@@ -12,7 +12,7 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronLeftOutline14, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamWorkspaceTab } from './navigation.ts'
 import { TeamComposer } from './TeamComposer.tsx'
@@ -87,6 +87,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const [newFactsCount, setNewFactsCount] = useState(0)
   const [draft, setDraft] = useState('')
   const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
+  const [claimsOpen, setClaimsOpen] = useState(false)
   const [replyRequestId, setReplyRequestId] = useState<AgentTeamRequestId>()
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
@@ -404,14 +405,19 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutline14 />} onClick={backToWorkspace}>{backLabel}</Button></div>
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
-          <h1>{task === undefined ? 'Task …' : `Task #${taskNumber ?? '…'}`}</h1>
+          <div className={threadCss.titleLine}>
+            <h1>{task === undefined ? 'Task …' : `Task #${taskNumber ?? '…'}`}</h1>
+            {task !== undefined && <Pill>{formatTaskStatus(task.status, t)}</Pill>}
+          </div>
           {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle}>{taskTitle}</p>}
-          <div className={threadCss.statusLine}>{task === undefined ? <p>{t('loadingThread')}</p> : <Pill>{formatTaskStatus(task.status, t)}</Pill>}</div>
         </div>
-        {task !== undefined && thread !== undefined && <div className={css.headerActions}>
-          {task.resolution === 'open' && task.status === 'in_review' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{t('acceptTask')}</Button>}
-          {task.resolution === 'open' && <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>}
-          {task.resolution !== 'open' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
+        {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
+            closed Thread lives only in the composer-slot closed notice. */}
+        {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <div className={css.headerActions}>
+          {task.status === 'in_review' && task.resolution === 'open' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{t('acceptTask')}</Button>}
+          {task.resolution === 'open'
+            ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
+            : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
         </div>}
       </header>
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
@@ -419,29 +425,37 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {risks.map(({ claim, status }) => <p className={threadCss.riskRow} key={claim.claimRef}><TeamPresenceDot status={status} t={t} /><span>{t('runtimeRiskDetail', { member: status.member.handle, diagnostic: status.diagnostic ?? t('statusError') })} · {claim.direction}</span></p>)}
       </section>}
       {task !== undefined && thread !== undefined && <section className={threadCss.workSection} aria-label={t('claims')}>
-        <div className={threadCss.workHeading}><h2>{t('claims')}</h2><span className={threadCss.claimState}>{taskClaims.length}</span></div>
-        <div className={threadCss.claimList}>
-          {taskClaims.length === 0 && <p className={threadCss.emptyClaims}>{t('noClaims')}</p>}
-          {taskClaims.map(claim => {
-            const ownerStatus = members.find(status => status.member.memberId === claim.owner)
-            return <article className={threadCss.claimRow} key={claim.claimRef}>
-              {ownerStatus === undefined ? <span /> : <TeamPresenceDot status={ownerStatus} t={t} />}
-              <strong className={threadCss.claimOwner}>{memberName(claim.owner)}</strong>
-              <span className={threadCss.claimDirection}>{claim.direction}</span>
-              <small className={threadCss.claimState}>{formatClaimState(claim.state, t)}</small>
-            </article>
-          })}
-        </div>
+        <DisclosureRow
+          expandOnRowClick
+          expandable
+          open={claimsOpen}
+          onToggle={() => { setClaimsOpen(current => !current) }}
+          icon={<IconChecklistOutline14 size={14} />}
+          title={`${t('claims')} · ${taskClaims.length}`}
+        >
+          <div className={threadCss.claimList}>
+            {taskClaims.length === 0 && <p className={threadCss.emptyClaims}>{t('noClaims')}</p>}
+            {taskClaims.map(claim => {
+              const ownerStatus = members.find(status => status.member.memberId === claim.owner)
+              return <article className={threadCss.claimRow} key={claim.claimRef}>
+                {ownerStatus === undefined ? <span /> : <TeamPresenceDot status={ownerStatus} t={t} />}
+                <strong className={threadCss.claimOwner}>{memberName(claim.owner)}</strong>
+                <span className={threadCss.claimDirection}>{claim.direction}</span>
+                <small className={threadCss.claimState}>{formatClaimState(claim.state, t)}</small>
+              </article>
+            })}
+          </div>
+        </DisclosureRow>
       </section>}
     </div>
 
-    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('participants')}>
+    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('timelineLabel')}>
       <div className={css.timelineContent}>
-        {loading && projection === undefined && error === undefined && <p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p>}
+        {loading && projection === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p></div>}
         {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
         {olderFacts.length > 0 && <section className={threadCss.historySection} aria-label={t('olderHistory')}><h2>{t('olderHistory')}</h2>{olderFacts.map((fact, index) => renderFact(fact, isGroupedRun(olderFacts, index, messageSender)))}</section>}
         {historyHasMore && <div className={css.timelineAction}><Button size="sm" onClick={() => { void loadOlder() }}>{t('loadOlder')}</Button></div>}
-        {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection} aria-label={t('participants')}>
+        {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection}>
           {currentFactsWithAnchor.map((fact, index) => <Fragment key={`${factKey(fact)}-wrap`}>{unreadBoundary === index && <p className={threadCss.unreadBoundary} role="separator" data-thread-boundary><span>{t('unreadBoundary')}</span></p>}{renderFact(fact, isGroupedRun(currentFactsWithAnchor, index, messageSender))}</Fragment>)}
         </section>}
         {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
@@ -452,11 +466,20 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       </div>
     </section>
 
-    {projection !== undefined && task !== undefined && thread !== undefined ? <TeamComposer
+    {projection !== undefined && task !== undefined && thread !== undefined ? (
+      task.resolution === 'closed'
+        ? <div className={threadCss.closedBar} data-team-closed>
+            {error !== undefined && <p className={css.error} role="alert">{error}</p>}
+            <div className={threadCss.closedNotice}>
+              <span>{t('taskClosedNotice')}</span>
+              <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>
+            </div>
+          </div>
+        : <TeamComposer
       members={channelMembers}
       recipients={recipients}
       draft={draft}
-      disabled={task.resolution === 'closed'}
+      disabled={false}
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}
@@ -464,6 +487,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       onRecipientsChange={next => { setRecipients(next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
       onSubmit={() => { void sendReply() }}
       t={t}
-    /> : <div />}
+    />
+    ) : <div />}
   </main>
 }

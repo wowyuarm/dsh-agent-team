@@ -1,31 +1,17 @@
-.statusLine {
+/* Task identity and its state pill share one baseline row. */
+.titleLine {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 5px;
+  gap: 10px;
 }
+.titleLine h1 { margin: 0; }
 
 .workSection {
   border-top: 1px solid var(--dsw-alias-border-subtle);
   margin: 12px auto 0;
   max-width: 880px;
-  padding-top: 10px;
-}
-
-.workHeading {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-
-.workHeading h2 {
-  color: var(--dsw-alias-text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  margin: 0;
+  padding-top: 8px;
 }
 
 .riskSection {
@@ -56,6 +42,7 @@
 .claimList {
   display: grid;
   gap: 4px;
+  padding: 4px 0 2px 22px;
 }
 
 .claimRow {
@@ -197,6 +184,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The closed-task bar replaces the composer slot; the notice explains why input
+   is unavailable and carries the one recovery action. */
+.closedBar {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+}
+.closedNotice {
+  align-items: center;
+  color: var(--dsw-alias-text-tertiary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 12px;
+  justify-content: center;
+  line-height: 20px;
+  padding: 10px 16px 14px;
 }
 
 @media (max-width: 600px) {

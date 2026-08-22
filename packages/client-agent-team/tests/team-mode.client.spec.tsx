@@ -329,6 +329,7 @@ describe('rendered Team mode composition', () => {
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: /Claims/ }))
     expect(b.view.getByText('Implement API')).toBeTruthy()
     expect(b.view.queryByRole('button', { name: '关注 Thread' })).toBeNull()
     expect(b.view.queryByRole('button', { name: '取消关注' })).toBeNull()
@@ -350,10 +351,10 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByText('human thread reply')).toBeTruthy()
     expect(b.reply.mock.calls[0]![0].requestId).toBe(b.reply.mock.calls[1]![0].requestId)
     fireEvent.click(b.view.getByRole('button', { name: '关闭任务' }))
+    // The closed Thread swaps the composer for an explanatory notice with the reopen action.
     expect(await b.view.findByRole('button', { name: '重新打开' })).toBeTruthy()
-    const closedComposer = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
-    expect(closedComposer.disabled).toBe(true)
-    expect((b.view.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(b.view.getByText('任务已关闭，重新打开后可继续讨论')).toBeTruthy()
+    expect(b.view.queryByRole('textbox', { name: '消息内容' })).toBeNull()
     expect(b.reply).toHaveBeenCalledTimes(2)
     fireEvent.click(b.view.getByRole('button', { name: '重新打开' }))
     await waitFor(() => expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).disabled).toBe(false))

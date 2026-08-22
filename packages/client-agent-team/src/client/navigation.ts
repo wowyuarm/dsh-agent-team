@@ -49,6 +49,8 @@ export interface TeamNavigationActions {
   selectChannel: (channelRef: AgentTeamChannelRef) => void
   selectThread: (taskRef: AgentTeamTaskRef, threadRef: AgentTeamThreadRef, channelRef?: AgentTeamChannelRef, taskNumber?: number) => void
   backToWorkspace: () => void
+  /** Leave the selected Channel for the workspace Channel list; keeps mode and Workspace. */
+  backToChannels: () => void
 }
 
 /** Root-scoped Team mode state. Slot lifetimes subscribe to this source. */
@@ -72,6 +74,7 @@ export class TeamNavigation {
       selectChannel: channelRef => { this.setChannel(channelRef) },
       selectThread: (taskRef, threadRef, channelRef, taskNumber) => { this.setThread(taskRef, threadRef, channelRef, taskNumber) },
       backToWorkspace: () => { this.setThread(undefined) },
+      backToChannels: () => { this.clearChannel() },
     }
   }
 
@@ -96,6 +99,13 @@ export class TeamNavigation {
     if (this.snapshot.channelRef === channelRef && this.snapshot.threadRef === undefined) return
     const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
     this.snapshot = { ...base, channelRef, activeTab: 'channels' }
+    this.commit()
+  }
+
+  private clearChannel(): void {
+    const { channelRef: _channelRef, ...base } = this.snapshot
+    if (this.snapshot.channelRef === undefined) return
+    this.snapshot = base
     this.commit()
   }
 
