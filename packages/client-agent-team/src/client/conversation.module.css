@@ -238,17 +238,18 @@
 /* One run = one same-sender reply turn (message + task chip). The hover
    surface is invisible at rest and bleeds 10px past the text column via
    matched padding/negative margins, so text never shifts inside it. The
-   transparent border is reserved space: the hairline on hover adds no shift. */
+   transparent border is reserved space: the hairline on hover adds no shift.
+   Hover is border-only — no fill or shadow — so it never stacks with the
+   Task entry chip's own hover state. */
 .messageRun {
   border: 1px solid transparent;
   border-radius: 10px;
   margin: -3px -10px;
   padding: 3px 10px;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: border-color 120ms ease;
 }
 .messageRun:hover {
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 60%, transparent);
-  border-color: var(--dsw-alias-border-subtle);
+  border-color: var(--dsw-alias-border-default);
 }
 
 /* Mention chip for @Member references in Human literal messages; Agent

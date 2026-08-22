@@ -20,7 +20,7 @@
 
 - D1 消息内标题降级 + 间距放宽（conversation.module.css）
 - D2 Human 消息 mention 分段渲染 + mention chip 样式
-- D3 messageRun 包装（连续同 sender 消息+task chip 为一块）+ hover 面（边框+底色，padding+负margin 外扩）
+- D3 messageRun 包装（连续同 sender 消息+task chip 为一块）+ hover 面（仅边框、无底色无阴影——用户反馈后从"边框+底色"收敛，避免与 task button hover 叠层；padding+负margin 外扩）
 - 验证：typecheck / vitest（快照更新）/ lint / build / test:browser 双尺寸截图
 
 ## 退出标准
