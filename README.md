@@ -1,56 +1,91 @@
 # DeepSeek Harness Agent Team
 
-An opt-in Cordis bundle that adds a durable, single-host Agent Team to DeepSeek Harness.
+An opt-in Agent Team for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It gives one DSH home durable Workspaces, Channels, Threads, Tasks, and managed Agent members through the Web UI.
 
-## Install
+## Quick start
 
-The bundle is intended to be installed into a DSH profile:
+### 1. Check DSH
+
+This release is certified against DSH `0.1.1-rc.2`. If `dsh` is not installed yet, start DSH with the official package:
+
+```sh
+npx @deepseek-ai/dsh web
+```
+
+Stop it, then install Agent Team into the `web` profile:
 
 ```sh
 dsh plugin --profile web add @wowyuarm/dsh-agent-team
+```
+
+### 2. Start the Web UI
+
+```sh
 dsh web
 ```
 
-The bundle contributes `cordis.patch.yml`; it does not modify the Harness installation or enable itself in shipped defaults. It mounts a bundle-private, isolated AgentPresets roster containing `team-member`, so `dsh plugin add` needs no source patch, preset copy, or profile root configuration. Ordinary DSH Sessions keep using the profile's shipped/user preset roster.
+Agent Team is opt-in. Installing it adds the bundle to the `web` profile; it does not modify the Harness installation or shipped defaults.
 
-For local development:
+### 3. Verify and try it
+
+Before starting the UI, you can inspect the composed profile:
+
+```sh
+dsh --profile web --dump-config
+```
+
+The output should include Team rows such as `wowyuarm-agent-team-scope` and `wowyuarm-agent-team-client`. In the browser, enter **Team mode** from the DSH navigation. The first useful path is:
+
+```text
+Team mode
+└── select a Workspace
+    ├── Channels -> New Channel -> send the first message
+    └── Agents   -> Add Agent -> choose its initial Channels
+```
+
+Create an Agent only in a trusted Workspace. The Team Member preset intentionally grants managed Agent Sessions `danger-full-access`.
+
+## What it adds
+
+- A durable single-host Team with Channels, Messages, Tasks, Threads, Claims, and Agent membership.
+- A Web Client for Human control: create Channels and Agents, manage membership, send Messages, open Threads, and handle Tasks.
+- An isolated `team-member` preset with five model-facing tools: `team_inbox`, `team_thread`, `team_message`, `team_claim`, and `team_view`.
+- A pull-based collaboration protocol. Agent Inbox admission is durable, but it does not claim that the model has already processed the update.
+
+The Team is one collaboration domain per DSH home. Its append-only operation ledger is the authority; UI, Remote responses, tools, Inbox, and other projections derive from committed operations. Ordinary DSH Sessions keep the profile's normal preset roster and do not receive Team tools or guidance.
+
+## Install from a local checkout
+
+For development, install the local bundle into the same profile:
 
 ```sh
 dsh plugin --profile web add /absolute/path/to/dsh-agent-team
 dsh web
 ```
 
-The profile must include the Harness packages that provide the injected services used by the selected composition. Published packages provide built artifacts. Git installs require a self-contained `prepare` script and an explicit pnpm build allowance.
+Published packages include built artifacts. A local checkout needs the adjacent Harness repository only for development checks, not for end-user installation.
 
-## Composition
+## Compatibility and limits
 
-The Host package provides the `agentTeam` Service, operation ledger, team-managed Agent lifecycle, Channel membership, and durable Thread Inbox. The Web Client is the Human control surface. The shipped opt-in `team-member` preset provides Team guidance and the membership-authorized `team_inbox`, `team_thread`, `team_message`, `team_claim`, and `team_view` tools, plus an isolated compaction service. The Host patch mounts its invariant companion. The implemented pull-based protocol is documented in [`docs/team-collaboration.md`](docs/team-collaboration.md).
-
-The bundle consumes the profile's existing Host providers instead of replacing them: `agents`, default model selection, `tools`, filesystem/shell, sandbox policy, Session store/persistence, Workspace registry, and storage remain singletons. Team-managed sessions persist `danger-full-access`; ordinary sessions keep the profile's normal policy. A conflicting preset tool registration fails inside unpublished setup and makes only that Member unavailable.
-
-The Team is one collaboration domain per DSH home. Its operation ledger is the durable authority; Channel, Message, Task, Thread, Claim, Thread Attention, and Inbox projections are derived from committed operations.
+- This release is certified against DSH `0.1.1-rc.2`.
+- The bundle is single-host. It does not provide distributed consensus, Team direct messages, nested Threads, or semantic Direction deduplication.
+- The current DSH SQLite Session schema rejects databases from older DSH versions. Delete the old Session database and start fresh when upgrading across that boundary; this bundle does not migrate it.
+- Team-managed Agent Sessions use `danger-full-access`. Use them only in trusted Workspaces.
 
 ## Development
 
-Current engineering guidance is in [`docs/`](docs/README.md); active work and historical design evidence are organized under [`.scratch/`](.scratch/README.md). Build and test with:
+Read [`docs/README.md`](docs/README.md) for the maintained documentation index. The usual checks are:
 
 ```sh
 corepack pnpm install
 npm run typecheck
 npm test
 npm run build
+npm run lint
 npm run test:browser
-npm run preview:ui
-DEEPSEEK_API_KEY=... npm run preview
 npm pack --dry-run
 ```
 
-`test:browser` uses the adjacent `../deepseek-harness` checkout's official Web scaffold and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It installs the built packages into an isolated temporary profile and runs the credential-free, deterministic assembled journey, including the existing-Thread invitation, Agent read/reply, Human Inbox, reload, and ordinary DSH restoration. It writes this run's review screenshots to ignored `artifacts/browser/` and removes all temporary Harness files.
+`npm run test:browser` uses the adjacent `../deepseek-harness` checkout, an isolated temporary profile, and `/usr/bin/google-chrome` (override with `CHROME_PATH`). It does not need provider credentials. For manual checks, `npm run preview:ui` loads Team fixtures without model streaming; `DEEPSEEK_API_KEY=... npm run preview` starts the real provider preview. Both preview commands clean up their temporary state on `Ctrl+C`.
 
-`npm run preview` is the live interactive mode. It requires `DEEPSEEK_API_KEY` before build, mounts the real provider in an isolated temporary profile, prints a local URL, and cleans up on `Ctrl+C`; it never silently falls back to replay. `npm run preview:ui` loads isolated Team fixture state with model streaming disabled, for presentation inspection without an accidental provider call.
-
-This repository targets the public DSH plugin and bundle interfaces. Installed users do not need a sibling Harness checkout or Harness source changes; the checkout relationship above is only a development test seam.
-
-## Known Limitations and Deferred Work
-
-The bundle is single-host and opt-in. It does not provide distributed consensus, Team direct messages, nested Threads, automatic semantic deduplication of Directions, or model-processing acknowledgement beyond durable Inbox admission. It requires DSH `0.1.1-rc.2`; upgrading an older DSH SQLite session database means deleting it and starting fresh because the current DSH Session schema rejects the old format. The Team ledger deliberately adds no migration or compatibility path. The preset intentionally grants Team Members `danger-full-access`; select it only for trusted workspaces.
+Architecture and the collaboration contract are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/team-collaboration.md`](docs/team-collaboration.md).
