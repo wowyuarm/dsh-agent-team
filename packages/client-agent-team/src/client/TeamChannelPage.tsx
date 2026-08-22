@@ -8,8 +8,10 @@ import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { formatTaskStatus, taskStatusDot } from './team-formatters.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
+import { chunkRunsWithDays } from './team-separators.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
+import threadCss from './thread.module.css'
 
 interface TeamChannelPageProps {
   readonly workspaceId: WorkspaceId
@@ -68,16 +70,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   // Presence counts ride the header meta line; error and unavailable do not count as online.
   const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
-  /** One run = one same-sender reply turn, including its Task entry chip. */
-  const chunkRuns = (items: readonly AgentTeamViewItem[]): AgentTeamViewItem[][] => {
-    const runs: AgentTeamViewItem[][] = []
-    for (const item of items) {
-      const last = runs[runs.length - 1]
-      if (last !== undefined && messageSender(last[last.length - 1]!) === messageSender(item)) last.push(item)
-      else runs.push([item])
-    }
-    return runs
-  }
   const mentionHandles = new Set(members.map(status => status.member.handle.replace(/^@/, '').toLowerCase()))
 
   const refresh = async (clearError = false) => {
@@ -194,26 +186,38 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     }
   }
 
+  // Retained across transport failures so a replayed send dedupes on the Host;
+  // definitive outcomes (committed or rejected) start the next send fresh.
+  const pendingSendId = useRef<AgentTeamSendMessageRequest['requestId']>()
+
   const send = async () => {
     if (pending || draft.trim() === '') return
     const recipientIds = [...recipients].sort()
+    const requestId = pendingSendId.current ?? crypto.randomUUID() as AgentTeamSendMessageRequest['requestId']
+    pendingSendId.current = requestId
     const request: AgentTeamSendMessageRequest = {
-      requestId: crypto.randomUUID() as AgentTeamSendMessageRequest['requestId'], workspaceId,
+      requestId, workspaceId,
       channelRef, body: draft.trim(), recipients: recipientIds,
     }
     setPending(true); setError(undefined); setStatusMessage(undefined)
     try {
       const result = await sendMessage(request)
-      if (!result.ok) setError(result.error.message)
-      else if (result.value.kind === 'committed') {
+      if (!result.ok) {
+        pendingSendId.current = undefined
+        setError(result.error.message)
+      } else if (result.value.kind === 'committed') {
+        pendingSendId.current = undefined
         await refresh()
         setDraft('')
         setRecipients(new Set())
         setStatusMessage(undefined)
-      } else if (result.value.kind === 'member_not_following') {
-        setError(t('memberNotFollowing', { ids: result.value.memberIds.map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') }))
+      } else if (result.value.kind === 'confirmation_required') {
+        // Same-requestId resend continues the pending operation.
+        setStatusMessage(t('mentionConfirmation'))
       } else {
-        setError(t('sendFailedKind', { kind: result.value.kind }))
+        // Rejections are final for this draft; editing it must mint a new operation.
+        pendingSendId.current = undefined
+        setError(t('memberNotFollowing', { ids: result.value.memberIds.map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') }))
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
@@ -264,8 +268,10 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
             <span>{t('emptyMessagesHint')}</span>
           </div>
         </div>}
-        {(view?.items.length ?? 0) > 0 && chunkRuns(view!.items).map(run => <div className={css.messageRun} key={`run-${run[0]!.message.messageRef}`}>
-          {run.map((item, index) => {
+        {(view?.items.length ?? 0) > 0 && chunkRunsWithDays(view!.items, messageSender, item => item.message.occurredAt).map((block, blockIndex) => block.kind === 'day'
+          ? <p className={threadCss.daySeparator} key={`day-${blockIndex}-${block.label}`}><span>{block.label}</span></p>
+          : <div className={css.messageRun} key={`run-${block.items[0]!.message.messageRef}`}>
+          {block.items.map((item, index) => {
             const senderStatus = members.find(member => member.member.memberId === item.message.sender)
             const human = item.message.sender === view!.humanMemberId
             const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender

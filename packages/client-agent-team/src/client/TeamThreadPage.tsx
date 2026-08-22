@@ -18,6 +18,7 @@ import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle } from './team-formatters.ts'
+import { daySeparatorLabel, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -305,15 +306,25 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     return <p className={threadCss.activityRow} key={factKey(fact)}><span className={threadCss.activityMark} aria-hidden="true" /><span className={threadCss.activityText}>{formatActivity(fact.activity, { t, actorName: memberName, claims: taskClaims })}</span></p>
   }
 
-  /** One run = one same-sender reply turn; activities and the unread boundary break runs. */
+  /** One run = one same-sender reply turn; activities, the unread boundary, and day changes break runs. */
   const renderFactBlocks = (facts: readonly AgentTeamThreadFact[], boundaryIndex: number | undefined): ReactNode[] => {
     const nodes: ReactNode[] = []
     let run: AgentTeamThreadFact[] = []
+    let lastDay: string | undefined
     const flushRun = () => {
       if (run.length > 0) nodes.push(<div className={css.messageRun} key={`run-${factKey(run[0]!)}`}>{run.map((entry, entryIndex) => renderFact(entry, entryIndex > 0))}</div>)
       run = []
     }
     facts.forEach((fact, index) => {
+      const occurredAt = fact.kind === 'message' ? fact.message.occurredAt : undefined
+      if (occurredAt !== undefined) {
+        const day = timelineDayKey(occurredAt)
+        if (lastDay !== undefined && day !== lastDay) {
+          flushRun()
+          nodes.push(<p className={threadCss.daySeparator} key={`day-${index}`}><span>{daySeparatorLabel(occurredAt)}</span></p>)
+        }
+        lastDay = day
+      }
       const sender = messageSender(fact)
       if (sender !== undefined && run.length > 0 && sender === messageSender(run[run.length - 1]!)) {
         run.push(fact)

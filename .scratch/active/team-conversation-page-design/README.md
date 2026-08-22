@@ -29,6 +29,7 @@
 - [x] `npm run typecheck && npm test && npm run lint && npm run build && npm run test:browser` 全绿（2026-08-21）
 - [x] 1440×960 与 390×844 截图人工过目：thread 减负、关闭态提示条、频道返回行/在线数、空态居中均生效
 - [x] `docs/frontend-design.md` 已同步（布局骨架、状态胶囊与弹层、可访问性基线）
+- [x] P0 四项（频道订阅/发送幂等/收件人提示/日期分隔）在 feat/team-page-p0 分支实现并全链路验证
 - [ ] 用户过目实际效果并确认方向；确认后本目录归档
 
 ## 正式文档出口

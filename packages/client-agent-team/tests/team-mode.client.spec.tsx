@@ -27,7 +27,12 @@ function Frame({ renderSlot }: FrameProps) {
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
 function BaselineConversation() { return <div data-baseline-conversation>普通对话</div> }
-async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number }) {
+interface SeededMessage {
+  readonly body: string
+  readonly occurredAt: string
+}
+
+async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[] }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -65,7 +70,13 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     ? [{ channelRef: 'channel:engineering', workspaceId: 'w1', name: 'engineering', description: 'Engineering work', createdAtSequence: 1 }]
     : []
   let memberships: Array<Record<string, unknown>> = []
-  let viewItems: Array<Record<string, unknown>> = []
+  let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
+    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
+    task: { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: 'thread:1', status: 'todo', resolution: 'open' },
+    thread: { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 },
+    taskNumber: 1,
+    messageCount: 1,
+  }))
   let viewClaims: Array<Record<string, unknown>> = []
   let viewActivities: Array<Record<string, unknown>> = []
   const viewChannels = vi.fn(async (request: { threadRef?: string; topLevelOnly?: boolean }) => ({ ok: true, value: {
@@ -142,6 +153,12 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
+  /** Simulates an externally driven channel/membership commit reaching every workspace waiter. */
+  const seedChannel = (channel: Record<string, unknown>) => { channels = [...channels, channel] }
+  const publishChannelUpdate = () => {
+    changeVersion += 1
+    for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
+  }
   runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
@@ -161,7 +178,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
 
 describe('rendered Team mode composition', () => {
@@ -523,4 +540,33 @@ describe('rendered Team mode composition', () => {
     expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
     await b.runtime.dispose()
   })
+  it('refreshes the sidebar Channel list from one workspace change', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    await b.view.findByText('还没有频道')
+    expect(b.view.queryByRole('button', { name: '# gamma' })).toBeNull()
+    b.seedChannel({ channelRef: 'channel:gamma', workspaceId: 'w1', name: 'gamma', description: 'Gamma work', createdAtSequence: 2 })
+    // The stream's initial probe samples silently, so the first external bump
+    // only arms the parked poll; the second one is what wakes the listener.
+    b.publishChannelUpdate()
+    await vi.waitFor(() => expect(b.changes.mock.calls.length).toBeGreaterThanOrEqual(2))
+    b.publishChannelUpdate()
+    await b.view.findByRole('button', { name: '# gamma' })
+    expect(b.view.queryByText('还没有频道')).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('anchors timeline days when messages span dates', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true, seededMessages: [
+      { body: 'day one status', occurredAt: '2026-08-19T09:00:00.000Z' },
+      { body: 'day two follow-up', occurredAt: '2026-08-21T04:00:00.000Z' },
+    ] })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByText('day two follow-up')).toBeTruthy()
+    // Exactly one quiet anchor for the crossed boundary; the first message of
+    // the timeline opens its day without a leading marker.
+    const dayAnchors = Array.from(b.view.container.querySelectorAll('p span')).filter(node => /^\d{2}-\d{2}$/.test(node.textContent ?? ''))
+    expect(dayAnchors.map(node => node.textContent)).toEqual(['08-21'])
+    await b.runtime.dispose()
+  })
+
 })

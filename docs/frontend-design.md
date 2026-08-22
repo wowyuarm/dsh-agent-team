@@ -21,6 +21,8 @@
 - Thread 头部信息层级：`Task #N` 与状态 Pill 同一行（`.titleLine`），任务标题为副行；Claims 用公共 `DisclosureRow` 折叠为一行摘要，展开才渲染 Claim 列表；header 动作区只在 open 任务出现（验收/关闭），accepted 任务保留 header 重新打开主按钮。
 - 关闭任务是终态：composer 槽位换成解释性提示条（`.closedBar/.closedNotice`，文案 + 唯一的重新打开动作），不再渲染禁用的输入框。
 - 频道页与 Thread 页对称：频道页有返回行（`backToChannels` 清除 `channelRef` 回到频道列表）；时间线空/加载态在自由空间内居中（`.emptySurface` + `margin:auto`）。
+- 侧栏两个面板（Agents/Channels）都订阅 `{kind:'workspace'}` 变更；共享的 `TeamChangeStream` 按 scope 复用一条长轮询，订阅方的首次探针静默采样版本（不唤醒），唤醒只来自停泊轮询的后续解析——这是既定契约（见 `team-changes.client.spec.ts`）。
+- 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。`committed` 与确定性拒绝（如 `member_not_following`）后换新 id；`confirmation_required` 保留同 id 续发同一操作；传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。
 
 ## 排版体系
 
@@ -54,6 +56,7 @@
 ### 消息块（messageRun）
 
 - 一个 run = 一次发言：同一 sender 连续的消息 + 其 Task 入口卡包进一个 `.messageRun` 块；活动行与未读边界打断 run。
+- 日界同样打断 run：跨天的相邻消息之间插入居中的日期锚（`.daySeparator`，`MM-DD`，跨年用完整 `YYYY-MM-DD`，与消息时间的数字风格一致）。活动没有自己的时钟 instant，继承前一条消息的日界、不触发锚；时间线的第一条消息不带头部锚。分块逻辑统一在 `team-separators.ts` 的 `chunkRunsWithDays`（单一权威实现）。
 - 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button)`），上方画一条 border-subtle 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
 - hover 面合同：静止完全隐形（透明边框占位防抖动）；hover 只浮现一条细边框（border-default），无底色无阴影——避免与块内 Task 入口卡自身的 hover 底色叠层；圆角 10px；水平用等量 padding/负 margin 向文字列两侧外扩 10px（窄屏 6px），文字永不位移；垂直方向块间保留 2px 空隙（`margin: 2px` + `padding: 3px`），相邻块的 hover 边框互不接触，同时让消息间距稍大。120ms 过渡，reduced-motion 下关闭。
 - 不做常驻卡片边框——消息边界感只在指针交互时出现，避免"给内容加笼子"的刻意感。
@@ -75,6 +78,7 @@
 - textarea 自增高（上限 180px）；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。
 - mention 弹层向上展开，`role="listbox"`，textarea 以 `aria-controls/aria-activedescendant/aria-expanded` 关联；↑↓ 循环、Tab/Enter 接受候选、Escape 关闭；外点关闭复用 `useDismissOnOutsidePointer`；高度钳制复用 `useAnchoredMaxHeight`（cap 320px）。
 - 接受候选后光标落点精确到插入文本之后；删除提及文本会同步收缩 recipients。
+- 收件人显式化：recipients 非空时草稿与工具栏之间渲染 quiet 提示行（`.notifyRow`，`composerNotify` 文案 + `{ids}` 句柄列表），发送前即可看到"将通知谁"；空集合不占位。
 
 ### Task 入口卡（channel 时间线内）
 

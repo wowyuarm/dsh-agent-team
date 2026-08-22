@@ -23,6 +23,8 @@ interface TeamChannelsPanelProps {
   readonly workspaceId: WorkspaceId
   readonly loadMembers: TeamSidebarProps['loadMembers']
   readonly loadChannels: TeamSidebarProps['loadChannels']
+  /** Membership and channel facts change outside this panel; the workspace scope keeps the list fresh. */
+  readonly subscribeChanges: TeamSidebarProps['subscribeChanges']
   readonly createChannel: TeamSidebarProps['createChannel']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
@@ -33,7 +35,7 @@ interface TeamChannelsPanelProps {
 }
 
 export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
-  const { workspaceId, loadMembers, loadChannels, createChannel, creatingAgents, selectedChannelRef, selectChannel, t } = props
+  const { workspaceId, loadMembers, loadChannels, subscribeChanges, createChannel, creatingAgents, selectedChannelRef, selectChannel, t } = props
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
@@ -70,6 +72,13 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   }, [loadChannels, loadMembers, workspaceId])
 
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => subscribeChanges({ kind: 'workspace', workspaceId }, update => {
+    if (update.type === 'failed') {
+      setError(update.message)
+      return
+    }
+    void refresh()
+  }), [subscribeChanges, refresh, workspaceId])
   const creatingKey = creatingAgents.map(request => request.requestId).join(',')
   useEffect(() => {
     if (previousCreatingKey.current === creatingKey) return

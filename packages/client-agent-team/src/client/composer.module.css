@@ -156,6 +156,16 @@
   padding: 0 16px;
 }
 
+/* Quiet "who gets notified" line; sits between the draft and the send action. */
+.notifyRow {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-text-tertiary));
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 0 16px;
+}
+
 .error {
   align-self: stretch;
   color: var(--dsw-alias-state-error-primary);

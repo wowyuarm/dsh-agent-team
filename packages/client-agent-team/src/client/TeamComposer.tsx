@@ -198,6 +198,7 @@ export function TeamComposer({ members, recipients, draft, disabled, pending, co
           onCompositionEnd={() => { setTimeout(() => { composingRef.current = false }, 10) }}
         />
       </div>
+      {recipients.size > 0 && <p className={css.notifyRow} data-team-notify>{t('composerNotify', { ids: [...recipients].sort().map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') })}</p>}
       <div className={css.toolbar}>
         <button
           type="submit"

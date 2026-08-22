@@ -156,6 +156,28 @@
 
 .unreadBoundary span { flex: none; }
 
+/* Calendar-day anchor between rendered facts; quieter than the unread line. */
+.daySeparator {
+  align-items: center;
+  color: var(--dsw-alias-text-tertiary);
+  display: flex;
+  font-size: 11px;
+  gap: 10px;
+  letter-spacing: 0.02em;
+  line-height: 16px;
+  margin: 12px 0 4px;
+}
+
+.daySeparator::before,
+.daySeparator::after {
+  background: var(--dsw-alias-border-subtle);
+  content: '';
+  flex: 1;
+  height: 1px;
+}
+
+.daySeparator span { flex: none; }
+
 .newUpdates {
   align-items: center;
   background: var(--dsw-specific-input-major, var(--dsw-alias-surface-primary));

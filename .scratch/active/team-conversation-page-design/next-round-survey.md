@@ -70,3 +70,14 @@
 ## 建议组合
 
 下一轮若由本工作项继续：P0 全部四项 + P1.7（都是小步快跑）；G1/C2 待用户单独拍板；P2 三项先不做。与 round3 合流顺序：日期分隔线排在 round3 之后。
+
+## 执行记录（2026-08-22）
+
+P0 四项已在 `feat/team-page-p0` worktree 分支完成并全链路验证（typecheck/lint/build/83 单测/浏览器 E2E 全绿）：
+
+- ①侧栏频道订阅：`TeamChannelsPanel` 补 `{kind:'workspace'}` 订阅（与 AgentsPanel 对齐）。实现中确认 `TeamChangeStream` 按 scope 复用单条长轮询且首次探针静默采样——订阅后共享轮询常驻，线程页加入既有轮询不再产生新调用，属预期语义（对应 spec 断言改为"覆盖即可"，注释说明）。
+- ②发送幂等：Channel `send()` 与 reply 同款 requestId 策略——committed/确定性拒绝换新 id、`confirmation_required` 同 id 续发、传输异常保留 id（Host ledger 按 requestId 去重返回原结果）。顺带修复：channel 页此前把 `confirmation_required` 当通用错误渲染，现按 mention 确认文案处理。
+- ③收件人提示行：composer 卡内 `.notifyRow`（`composerNotify` key），recipients 非空时显示将通知的句柄。
+- ④日期分隔线：新增 `team-separators.ts` 单一权威实现 `chunkRunsWithDays`（run 分块 + 日界打断 + 活动继承日界），channel/thread 两页接入，`.daySeparator` 样式放 thread.module.css；首条消息不带头部锚。测试含跨天打断、活动继承、跨年标签与种子消息集成用例。
+
+遗留：分支合并回主分支被并行会话在主树的未提交重构阻塞（其改动覆盖 TeamChannelsPanel/TeamThreadPage 等同名文件）；待其落地后 rebase 再合并。
