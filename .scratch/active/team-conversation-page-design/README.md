@@ -22,9 +22,7 @@
 
 ## 后续候选（未做，留待用户挑选）
 
-- C2 Agents tab 主区死胡同（Agent 详情视图，新功能）
-- G1 刷新恢复 channel/thread 深链（行为变化）
-- B2 日期分隔线（round2 的 occurredAt 已合入，数据条件已具备）
+完整调研见 [next-round-survey.md](next-round-survey.md)（P0：日期分隔线、收件人显式化、channel 发送幂等对齐、侧栏频道订阅；P1：深链恢复、Agents 主区视图、成员弹层搜索；P2：未读徽标/Attention/键盘导航/草稿暂存，含 Host 契约阻塞点）。round3（run hover/mention chip/排版刻度）由另一会话认领中。
 
 ## 结束核对清单
 
