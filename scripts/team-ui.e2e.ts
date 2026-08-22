@@ -76,13 +76,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => newSessionButton.isVisible()).toBe(false)
   await expect.poll(() => brandButton.count()).toBe(1)
   await expect.poll(() => brandButton.isVisible()).toBe(true)
-  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '新建频道' }).click()
   const initialChannelDialog = page.getByRole('dialog', { name: '新建频道' })
   await initialChannelDialog.getByLabel('名称').fill('engineering')
   await initialChannelDialog.getByLabel('说明').fill('Agent membership')
   await initialChannelDialog.getByRole('button', { name: '创建频道' }).click()
-  await page.getByRole('tab', { name: 'Agents' }).click()
 
   for (const [name, description] of [['builder', '实现功能'], ['reviewer', '检查结果']] as const) {
     await page.getByRole('button', { name: '添加 Agent' }).click()
@@ -97,7 +95,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.getByLabel('可用').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(2)
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-agents.png'), fullPage: true })
 
-  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '新建频道' }).click()
   const channelDialog = page.getByRole('dialog', { name: '新建频道' })
   await channelDialog.getByLabel('名称').fill('delivery')
@@ -115,6 +112,38 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI03_SHOTS, 'channel-create-modal-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   await channelDialog.getByRole('button', { name: '创建频道' }).click()
+  await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByText('还没有消息', { exact: true }).waitFor()
+  await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
+
+  // Sidebar row menus: the ⋯ entry opens the M1 editors (membership only).
+  await page.getByRole('button', { name: '# engineering' }).hover()
+  await page.getByRole('button', { name: 'engineering 的操作' }).click()
+  await page.getByRole('menuitem', { name: '编辑频道' }).click()
+  const channelEditor = page.getByRole('dialog', { name: '编辑频道' })
+  await channelEditor.waitFor()
+  expect(await channelEditor.getByText('@builder').count()).toBe(1)
+  await page.screenshot({ path: join(UI04_SHOTS, 'channel-edit-modal.png'), fullPage: true })
+  await channelEditor.getByRole('button', { name: '关闭', exact: true }).click()
+  // Collapsed sections hide their rows until expanded again.
+  const channelsToggle = page.getByRole('button', { name: '频道', exact: true })
+  await channelsToggle.click()
+  await expect.poll(() => page.getByRole('button', { name: '# engineering' }).count()).toBe(0)
+  await channelsToggle.click()
+  await page.getByRole('button', { name: '# engineering' }).waitFor()
+
+  const builderRow = page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).first()
+  await builderRow.hover()
+  await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
+  await page.getByRole('menuitem', { name: '编辑 Agent' }).click()
+  const agentEditor = page.getByRole('dialog', { name: '编辑 Agent' })
+  await agentEditor.waitFor()
+  // builder joined engineering at provision time and delivery as an initial
+  // member, so exactly those two Channel rows offer Remove once loaded.
+  await expect.poll(() => agentEditor.getByRole('button', { name: '移除' }).count()).toBe(2)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-edit-modal.png'), fullPage: true })
+  await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
+
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByText('还没有消息', { exact: true }).waitFor()
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
@@ -192,7 +221,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '返回频道' }).click()
   await page.getByRole('button', { name: /Task #1/ }).waitFor()
   await page.reload()
-  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByRole('button', { name: /Task #1/ }).click()
   await page.getByText('reviewer 已读取邀请并回复 Human', { exact: true }).waitFor()
@@ -283,8 +311,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '关闭', exact: true }).click()
 
   await page.reload()
-  await page.getByRole('tab', { name: '频道' }).waitFor({ timeout: 20_000 })
-  await page.getByRole('tab', { name: '频道' }).click()
   await page.getByRole('button', { name: '# delivery' }).waitFor({ timeout: 20_000 })
   await expect.poll(() => page.evaluate(() => localStorage.getItem('dsh.agent-team.navigation'))).toContain('"mode":"team"')
   await page.getByRole('button', { name: '# delivery' }).click()

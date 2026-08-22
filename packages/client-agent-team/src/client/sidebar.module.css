@@ -43,8 +43,6 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-height: 0;
-  overflow: auto;
   padding-bottom: 2px;
 }
 
@@ -115,57 +113,65 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* One scroll container carries both sections; headers stay in flow. */
 .workspaceSection {
   display: flex;
   flex: 1;
   flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
   min-height: 0;
-  padding-top: 2px;
+  overflow-y: auto;
 }
 
-.workspaceTabs {
-  display: grid;
-  gap: 2px;
-  grid-template-columns: 1fr 1fr;
-  padding: 0 4px 4px;
+.section { display: flex; flex-direction: column; }
+.sectionHeader {
+  align-items: center;
+  display: flex;
+  min-height: 26px;
+  padding-right: 2px;
 }
-.workspaceTabs button {
+/* Quiet disclosure: the row itself never lights up; only the chevron
+   responds to pointer and keyboard focus. */
+.sectionToggle {
+  align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 6px;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
+  display: inline-flex;
   font-size: 12px;
+  gap: 4px;
   line-height: 18px;
-  min-height: 28px;
-  padding: 0 8px;
+  min-height: 24px;
+  min-width: 0;
+  padding: 0 6px;
 }
-.workspaceTabs button:hover,
-.workspaceTabs button:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-  outline: none;
-}
-.workspaceTabs button[aria-selected='true'] {
-  background: var(--dsw-alias-interactive-bg-hover);
+.sectionToggle:focus-visible { outline: none; }
+.sectionToggle:hover .sectionChevron,
+.sectionToggle:focus-visible .sectionChevron {
   color: var(--dsw-alias-label-primary);
-  font-weight: 600;
+}
+.sectionChevron {
+  color: var(--dsw-alias-label-tertiary);
+  flex: 0 0 auto;
+  transition: transform 120ms ease, color 120ms ease;
+}
+.sectionToggle[aria-expanded='false'] .sectionChevron { transform: rotate(-90deg); }
+.sectionTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sectionActions {
+  align-items: center;
+  display: inline-flex;
+  margin-left: auto;
 }
 
 .panel {
   display: flex;
-  flex: 1;
   flex-direction: column;
-  min-height: 0;
-}
-.panelToolbar {
-  align-items: center;
-  color: var(--dsw-alias-label-tertiary);
-  display: flex;
-  font-size: 12px;
-  line-height: 18px;
-  min-height: 28px;
-  justify-content: space-between;
-  padding: 0 4px 2px 8px;
 }
 
 .iconButton {
@@ -176,10 +182,10 @@
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   display: inline-flex;
-  height: 28px;
+  height: 24px;
   justify-content: center;
   padding: 0;
-  width: 28px;
+  width: 24px;
 }
 .iconButton:hover,
 .iconButton:focus-visible {
@@ -210,24 +216,17 @@
 .agentList {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-height: 0;
-  overflow: auto;
-  padding: 0 4px;
+  gap: 1px;
+  padding: 0 4px 4px;
 }
 
 .channelRow {
+  align-items: center;
   border-radius: 8px;
   color: var(--dsw-alias-label-primary);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 34px;
+  display: flex;
+  min-height: 30px;
   position: relative;
-}
-.channelRow:hover,
-.channelRow:focus-within,
-.channelRow[aria-current='page'] {
-  background: var(--dsw-alias-interactive-bg-hover);
 }
 .channelSelect {
   align-items: center;
@@ -236,11 +235,10 @@
   box-sizing: border-box;
   color: inherit;
   cursor: pointer;
-  display: grid;
-  min-height: 34px;
-  gap: 0 6px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex: 1;
   min-width: 0;
+  min-height: 30px;
   padding: 3px 4px 3px 8px;
   text-align: left;
 }
@@ -248,38 +246,60 @@
 .channelName {
   font-size: 13px;
   font-weight: 400;
-  grid-column: 1;
-  grid-row: 1;
   line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.channelCount {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  grid-column: 2;
-  grid-row: 1;
-  line-height: 16px;
-  white-space: nowrap;
-}
+
 .agentRow {
   align-items: center;
   border-radius: 8px;
   box-sizing: border-box;
   color: var(--dsw-alias-label-primary);
   display: grid;
-  gap: 0 6px;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  min-height: 34px;
-  padding: 1px 8px;
+  gap: 0 8px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-height: 38px;
+  padding: 3px 4px 3px 8px;
 }
-.agentRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.agentAvatar {
+  align-items: center;
+  background: hsl(var(--team-avatar-hue, 212) 42% 46%);
+  border-radius: 50%;
+  color: #fff;
+  cursor: default;
+  display: inline-flex;
+  flex: 0 0 24px;
+  font-size: 11px;
+  font-weight: 600;
+  height: 24px;
+  justify-content: center;
+  position: relative;
+  width: 24px;
+}
+/* Presence badge rides the avatar's bottom-right edge; the ring matches the
+   sidebar fill so the dot reads as one glyph instead of a floating dot. */
+.agentAvatarBadge {
+  align-items: center;
+  background: var(--dsw-specific-sidebar-fill);
+  border-radius: 50%;
+  bottom: -3px;
+  box-shadow: 0 0 0 1px var(--dsw-specific-sidebar-fill);
+  display: inline-flex;
+  height: 12px;
+  justify-content: center;
+  line-height: 0;
+  padding: 1px;
+  position: absolute;
+  right: -3px;
+  width: 12px;
+}
 .agentCopy { display: flex; flex-direction: column; min-width: 0; }
 .agentCopy strong {
   font-size: 13px;
   font-weight: 400;
-  line-height: 18px;
+  line-height: 17px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -287,29 +307,64 @@
 .agentCopy small {
   color: var(--dsw-alias-label-tertiary);
   font-size: 10px;
-  line-height: 14px;
+  line-height: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.presenceText {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-.presenceTarget {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 14px;
-  justify-content: center;
-}
+
 .unavailableDot {
   background: var(--dsw-alias-text-disabled);
   border-radius: 50%;
   display: inline-block;
   height: 7px;
   width: 7px;
+}
+
+/* Trailing row actions surface on hover only and replace the trailing meta
+   cell, mirroring the harness session rows (time → ellipsis). */
+.rowMenu {
+  align-items: center;
+  display: none;
+  flex: none;
+  padding-right: 4px;
+}
+.channelRow:hover .rowMenu,
+.channelRow:focus-within .rowMenu,
+.channelRow[data-menu-open] .rowMenu,
+.agentRow:hover .rowMenu,
+.agentRow:focus-within .rowMenu,
+.agentRow[data-menu-open] .rowMenu {
+  display: inline-flex;
+}
+/* An open row menu pins the hover fill while the portal list is up. */
+.channelRow[data-menu-open],
+.agentRow[data-menu-open],
+.channelRow:hover,
+.agentRow:hover,
+.channelRow:focus-within,
+.agentRow:focus-within,
+.channelRow[aria-current='page'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rowMenuButton {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  padding: 0;
+  width: 20px;
+}
+.rowMenuButton:hover,
+.rowMenuButton:focus-visible {
+  color: var(--dsw-alias-label-primary);
+  outline: none;
 }
 
 .retryError {
@@ -320,4 +375,64 @@
   gap: 8px;
   justify-content: space-between;
   padding: 8px;
+}
+
+.editDescription {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0 0 10px;
+}
+.editMemberList { display: grid; gap: 3px; }
+/* Member rows mirror the Channel page manager: status slot, copy, action. */
+.editMemberRow {
+  align-items: center;
+  border-radius: 6px;
+  display: grid;
+  gap: 0 8px;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  min-height: 40px;
+  padding: 3px 6px;
+}
+/* Channel-scoped rows carry no status slot: name first, action last. */
+.editMemberRowChannels {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.editMemberRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.editMemberCopy {
+  display: grid;
+  min-width: 0;
+}
+.editMemberCopy strong {
+  color: var(--dsw-alias-text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editMemberCopy small {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editChannelName {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editMemberRow button { min-width: 60px; }
+.rowError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  grid-column: 1 / -1;
+  line-height: 16px;
+  margin: 2px 0;
 }

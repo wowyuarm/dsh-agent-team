@@ -38,9 +38,9 @@
 
 ## 颜色与身份
 
-- **Agent 头像**：按 `memberId` 字符串哈希出稳定色相（`hash*31+charCode mod 360`），`hsl(var(--team-avatar-hue) 42% 46%)` 底 + 白色首字母；同一成员跨页面、跨会话颜色不变。
+- **Agent 头像**：按 `memberId` 字符串哈希出稳定色相（`hash*31+charCode mod 360`），`hsl(var(--team-avatar-hue) 42% 46%)` 底 + 白色首字母；同一成员跨页面、跨会话颜色不变。侧栏 Agent 行复用同一身份语言（24px 缩版），presence 指示叠在头像右下角，描边环取 `--dsw-specific-sidebar-fill` 与侧栏底色同色。
 - **Human 头像**：`--dsw-alias-state-business-primary` 强调底色，与所有 Agent 区分；DOM 上以 `[data-human]` 标记。
-- **presence 圆点**：available=done 绿、working=ongoing、error 红、unavailable 用灰色叉点（`TeamPresenceDot` 映射）。
+- **presence 圆点**：available=done 绿、working=ongoing、error 红、unavailable 用灰色叉点（`TeamPresenceDot` 的 `presenceDotState` 映射，头像角标与独立圆点共用）。
 - 错误一律 `--dsw-alias-state-error-primary` 并配 `role="alert"`。
 
 ## 组件合同
@@ -87,6 +87,13 @@
 - Claims 折叠用公共 `DisclosureRow`（`expandOnRowClick`，标题 `Claims · N`），键盘闭环由原语保证；Claim 行缩进对齐标题文字。
 - 所有弹层走公共 `Modal`：打开时焦点入内容区，关闭后焦点回到触发按钮（`queueMicrotask` 延迟聚焦模式）。
 
+### 侧栏工作区浏览器
+
+- 骨架：工作区列表 + 「频道」「Agents」两个常驻可折叠分区，同处一个滚动容器；分区头是原生 button 折叠头（`TeamSidebarSection`，`aria-expanded`），右侧只放新增按钮。刻意保持安静：折叠头无 hover 底色，仅 chevron 变色反馈；不展示分区计数。
+- 行形态：频道行保留 `#` 标识；Agent 行复用头像语言并叠加 presence 角标。行内元数据（成员计数、presence 文字）已移除，保持列表简洁。
+- 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。M1 菜单只含「编辑」入口，指向成员管理对话框（频道成员增删 / Agent 加入退出频道，走既有 join/remove Remote，幂等 request 按 方向+成员+频道 键复用）；改名/说明等字段待 Host update 操作就绪后再点亮。
+- 窄屏 rail 保留两个图标按钮，点击请求展开侧栏并聚焦对应分区头部。
+
 ## 数据刷新语义
 
 - channel 视图：change 事件触发 `refresh()` 时按 `messageRef` 去重合并新窗口与已加载历史（`mergeChannelView`），cursor 取更旧者，`hasMore = fresh.hasMore || current.cursor < fresh.cursor`。
@@ -101,7 +108,8 @@
 
 ## 可访问性基线
 
-- tablist 支持左右方向键移动选择（roving focus + `selectWorkspaceTab`）。
+- 侧栏分区折叠头是原生 button（`aria-expanded`），键盘 Enter/Space 由原生行为保证。
+- 行内 ⋯ 菜单按钮带 `aria-label`（`{name} 的操作`）与 `aria-expanded/haspopup`；菜单项由公共 `Menu` 提供完整键盘与外点关闭路径。
 - listbox/option 完整键盘闭环（见 composer 一节）。
 - 图标按钮均有 aria-label；装饰元素 `aria-hidden`。
 - 消息时间线区域使用专用 `timelineLabel`（"消息时间线"），不误用频道/参与者标签；Thread 内部事实分组段不带重复的区域标签。

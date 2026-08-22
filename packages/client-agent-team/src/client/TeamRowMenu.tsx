@@ -1,0 +1,52 @@
+import { useState } from 'react'
+import { IconEllipsisOutline16, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
+import css from './sidebar.module.css'
+
+/**
+ * Row-level overflow menu shared by sidebar Channel and Agent rows, mirroring
+ * the harness session-row pattern: a portal list anchored to a bare ellipsis
+ * icon button, with the owning row pinned to its hover fill while open.
+ */
+export function TeamRowMenu({ label, items, onSelect, onOpenChange }: {
+  /** Localized action label for the trigger, e.g. "{name} 的操作". */
+  readonly label: string
+  readonly items: readonly MenuItem[]
+  readonly onSelect: (id: string) => void
+  /** Lets the row pin its hover styling while the portal list is up. */
+  readonly onOpenChange?: (open: boolean) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const toggle = (): void => {
+    setOpen(current => {
+      onOpenChange?.(!current)
+      return !current
+    })
+  }
+  const close = (): void => {
+    setOpen(false)
+    onOpenChange?.(false)
+  }
+  return (
+    <Menu
+      open={open}
+      onClose={close}
+      items={items}
+      onSelect={(id) => { close(); onSelect(id) }}
+      portal
+      closeOnPointerLeave
+      anchor={(
+        <button
+          type="button"
+          className={css.rowMenuButton}
+          aria-label={label}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={(event) => { event.stopPropagation(); toggle() }}
+        >
+          <IconEllipsisOutline16 />
+        </button>
+      )}
+    />
+  )
+}

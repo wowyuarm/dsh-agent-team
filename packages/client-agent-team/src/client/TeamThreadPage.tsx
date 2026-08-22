@@ -14,7 +14,6 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
-import type { TeamWorkspaceTab } from './navigation.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
@@ -29,7 +28,6 @@ interface TeamThreadPageProps {
   readonly taskRef: AgentTeamTaskRef
   readonly threadRef: AgentTeamThreadRef
   readonly taskNumber?: number
-  readonly originTab: TeamWorkspaceTab
   readonly backToWorkspace: TeamConversationProps['backToWorkspace']
   readonly loadChannels: TeamConversationProps['loadChannels']
   readonly readThread: TeamConversationProps['readThread']
@@ -71,7 +69,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, channelRef, taskRef, threadRef, taskNumber, originTab, backToWorkspace,
+    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace,
     loadChannels, readThread, loadThreadHistory,
     subscribeChanges, loadMembers, reply, changeTask, t,
   } = props
@@ -429,7 +427,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     const status = members.find(candidate => candidate.member.memberId === claim.owner)
     return status?.presence === 'error' ? [{ claim, status }] : []
   })
-  const backLabel = originTab === 'channels' ? t('backToChannel') : t('backToWorkspace')
+  // Threads are always entered through a Channel page, so a Channel origin
+  // returns to its timeline; a Thread restored without one returns further.
+  const backLabel = channelRef === undefined ? t('backToWorkspace') : t('backToChannel')
 
   return <main className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>

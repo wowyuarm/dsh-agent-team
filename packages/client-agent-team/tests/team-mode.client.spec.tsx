@@ -81,11 +81,11 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     memberships = (request.memberIds ?? []).map(memberId => ({ channelRef: channel.channelRef, memberId }))
     return { ok: true, value: { receipt: {}, channel, memberIds: request.memberIds ?? [] } }
   })
-  const joinChannel = vi.fn(async (request: { channelRef: string; memberId: string }) => {
+  const joinChannel = vi.fn(async (request: { requestId: string; channelRef: string; memberId: string }) => {
     memberships = [...memberships, { channelRef: request.channelRef, memberId: request.memberId }]
     return { ok: true, value: {} }
   })
-  const removeChannelMember = vi.fn(async (request: { channelRef: string; memberId: string }) => {
+  const removeChannelMember = vi.fn(async (request: { requestId: string; channelRef: string; memberId: string }) => {
     memberships = memberships.filter(item => item.channelRef !== request.channelRef || item.memberId !== request.memberId)
     return { ok: true, value: {} }
   })
@@ -208,12 +208,7 @@ describe('rendered Team mode composition', () => {
   it('loads Workspace Agents and creates a durable Member without optimistic rows', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    const agentsTab = await b.view.findByRole('tab', { name: 'Agents' })
-    fireEvent.click(agentsTab)
-    expect(await b.view.findByRole('heading', { name: 'Agents' })).toBeTruthy()
-    expect(b.view.getByText('从左侧选择一个 Agent 查看状态')).toBeTruthy()
-    expect(agentsTab.getAttribute('aria-controls')).toBe('team-sidebar-agents')
-    expect(b.view.getByRole('tabpanel', { name: 'Agents' }).id).toBe('team-sidebar-agents')
+    expect(await b.view.findByText('从左侧选择一个频道开始协作')).toBeTruthy()
 
     expect(await b.view.findByText('builder')).toBeTruthy()
     expect(b.view.getByRole('img', { name: '可用' })).toBeTruthy()
@@ -253,7 +248,6 @@ describe('rendered Team mode composition', () => {
   it('creates a Channel atomically with selected available Members and manages committed membership', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
     expect(await b.view.findByText('还没有频道')).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
@@ -281,16 +275,65 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
+  it('edits Channel membership from the sidebar row menu with idempotent retries', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    expect(await b.view.findByText('# engineering')).toBeTruthy()
+
+    fireEvent.click(b.view.getByRole('button', { name: 'engineering 的操作' }))
+    fireEvent.click(await b.view.findByRole('menuitem', { name: '编辑频道' }))
+    const editor = b.view.getByRole('dialog', { name: '编辑频道' })
+    expect(within(editor).getByText('@builder')).toBeTruthy()
+    // The fixture starts with an empty membership: builder's row offers Add.
+    const builderRow = within(editor).getByText('@builder').closest('div') as HTMLElement
+    expect(within(builderRow).getByRole('button', { name: '添加' })).toBeTruthy()
+    // Offline members cannot join from here; their row stays disabled.
+    const offlineRow = within(editor).getByText('@offline').closest('div') as HTMLElement
+    expect((within(offlineRow).getByRole('button', { name: '添加' }) as HTMLButtonElement).disabled).toBe(true)
+
+    b.joinChannel.mockResolvedValueOnce({ ok: false, error: { message: 'membership failed' } } as never)
+    fireEvent.click(within(builderRow).getByRole('button', { name: '添加' }))
+    expect(within(builderRow).getByRole('button', { name: '更新中…' })).toBeTruthy()
+    expect((await within(builderRow).findByRole('alert')).textContent).toContain('membership failed')
+    fireEvent.click(within(builderRow).getByRole('button', { name: '添加' }))
+    await waitFor(() => { expect(b.joinChannel).toHaveBeenCalledTimes(2) })
+    // The retry reuses the committed direction's request id until success.
+    expect(b.joinChannel.mock.calls[0]![0].requestId).toBe(b.joinChannel.mock.calls[1]![0].requestId)
+    await waitFor(() => { expect(within(builderRow).getByRole('button', { name: '移除' })).toBeTruthy() })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(b.view.queryByRole('dialog', { name: '编辑频道' })).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('edits an Agent Channel membership from the sidebar row menu', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await b.view.findByRole('menuitem', { name: '编辑 Agent' }))
+    const editor = b.view.getByRole('dialog', { name: '编辑 Agent' })
+    // No membership yet: every Channel row offers Add and the offline Agent stays blocked.
+    expect(within(editor).getByRole('button', { name: '添加' })).toBeTruthy()
+    fireEvent.click(within(editor).getByRole('button', { name: '添加' }))
+    await waitFor(() => { expect(b.joinChannel).toHaveBeenCalledWith(expect.objectContaining({
+      channelRef: 'channel:engineering', memberId: 'member:builder', workspaceId: 'w1',
+    })) })
+    await waitFor(() => { expect(within(editor).getByRole('button', { name: '移除' })).toBeTruthy() })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(b.view.queryByRole('dialog', { name: '编辑 Agent' })).toBeNull()
+    await b.runtime.dispose()
+  })
+
   it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
     const b = await runtimeWithTeam({ remainingUnreadCount: 1 })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
     fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
-    const backendChannel = await b.view.findByRole('button', { name: /backend/ })
+    const backendChannel = await b.view.findByRole('button', { name: '# backend' })
     fireEvent.click(backendChannel)
     expect(backendChannel.closest('article')?.getAttribute('aria-current')).toBe('page')
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
@@ -372,13 +415,12 @@ describe('rendered Team mode composition', () => {
   it('opens a Thread with one parallel request round and no self-triggered second wave', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
-    fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
     fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
-    fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
     fireEvent.change(messageInput, { target: { value: 'first task' } })
@@ -403,11 +445,13 @@ describe('rendered Team mode composition', () => {
     expect(b.members).toHaveBeenCalledTimes(1)
     expect(b.viewChannels).toHaveBeenCalledTimes(1)
 
-    // The page waits on its own thread plus the workspace presence scope.
+    // The page waits on its own thread scope. The workspace presence scope
+    // rides the shared poll the always-mounted sidebar Agents section holds:
+    // opening a Thread must not open a second workspace long-poll.
     const scopedCalls = b.changes.mock.calls.filter(([request]) => request.scope !== undefined)
     const scopes = scopedCalls.map(([request]) => request.scope as { kind: string; threadRef?: string })
     expect(scopes.some(scope => scope.kind === 'thread' && scope.threadRef === 'thread:1')).toBe(true)
-    expect(scopes.some(scope => scope.kind === 'workspace')).toBe(true)
+    expect(scopes.some(scope => scope.kind === 'workspace')).toBe(false)
     for (const [, signal] of scopedCalls) expect(signal).toBeInstanceOf(AbortSignal)
     await b.runtime.dispose()
   })
@@ -434,13 +478,12 @@ describe('rendered Team mode composition', () => {
   it('counts only facts newer than the shown timeline as new updates on change wakes', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    fireEvent.click(await b.view.findByRole('tab', { name: '频道' }))
-    fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
     fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
-    fireEvent.click(await b.view.findByRole('button', { name: /backend/ }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
     fireEvent.change(messageInput, { target: { value: 'first task' } })

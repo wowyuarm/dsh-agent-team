@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
-  AgentTeamClientMemberStatus,
+  AgentTeamChannel,
   AgentTeamChannelRef,
+  AgentTeamClientMemberStatus,
   AgentTeamCreateChannelRequest,
+  AgentTeamJoinChannelRequest,
   AgentTeamMemberId,
   AgentTeamRequestId,
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { TeamRowMenu } from './TeamRowMenu.tsx'
+import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -124,14 +128,6 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
 
   return (
     <div className={css.panel}>
-      <div className={css.panelToolbar}>
-        <span>{t('channels')}</span>
-        <Tooltip label={t('addChannel')} delayMs={500}>
-          <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addChannel')} onClick={() => { setError(undefined); setFormOpen(true) }}>
-            <IconPlusOutline16 size={14} />
-          </button>
-        </Tooltip>
-      </div>
       <Modal
         open={formOpen}
         onClose={closeForm}
@@ -176,22 +172,147 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
           {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
       </Modal>
-      {loading && view === undefined && <p className={css.emptyState}>{t('loadingChannels')}</p>}
-      {!loading && (view?.channels.length ?? 0) === 0 && <p className={css.emptyState}>{t('emptyChannels')}</p>}
-      <div className={css.channelList}>
-        {view?.channels.map(channel => {
-          const joined = membership.get(channel.channelRef) ?? new Set<AgentTeamMemberId>()
-          return (
-            <article className={css.channelRow} key={channel.channelRef} aria-current={selectedChannelRef === channel.channelRef ? 'page' : undefined}>
-              <button type="button" className={css.channelSelect} aria-label={`# ${channel.name}`} onClick={() => { selectChannel(channel.channelRef) }}>
-                <strong className={css.channelName}># {channel.name}</strong>
-                <small className={css.channelCount}>{joined.size}</small>
-              </button>
-            </article>
-          )
-        })}
-      </div>
+      <TeamSidebarSection
+        title={t('channels')}
+        actions={(
+          <Tooltip label={t('addChannel')} delayMs={500}>
+            <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addChannel')} onClick={() => { setError(undefined); setFormOpen(true) }}>
+              <IconPlusOutline16 size={14} />
+            </button>
+          </Tooltip>
+        )}
+      >
+        {loading && view === undefined && <p className={css.emptyState}>{t('loadingChannels')}</p>}
+        {!loading && (view?.channels.length ?? 0) === 0 && <p className={css.emptyState}>{t('emptyChannels')}</p>}
+        <div className={css.channelList}>
+          {view?.channels.map(channel => {
+            const joined = membership.get(channel.channelRef) ?? new Set<AgentTeamMemberId>()
+            return (
+              <ChannelRow
+                key={channel.channelRef}
+                channel={channel}
+                members={members}
+                joinedIds={joined}
+                selected={selectedChannelRef === channel.channelRef}
+                joinChannel={props.joinChannel}
+                removeChannelMember={props.removeChannelMember}
+                onCommitted={() => { void refresh() }}
+                selectChannel={selectChannel}
+                t={t}
+              />
+            )
+          })}
+        </div>
+      </TeamSidebarSection>
       {!formOpen && error !== undefined && <p className={css.error} role="alert">{error}</p>}
     </div>
+  )
+}
+
+/**
+ * One sidebar Channel row: the select button keeps the `#` identity while the
+ * row menu carries the entry point; M1 editing covers membership only.
+ */
+function ChannelRow({ channel, members, joinedIds, selected, joinChannel, removeChannelMember, onCommitted, selectChannel, t }: {
+  readonly channel: AgentTeamChannel
+  readonly members: readonly AgentTeamClientMemberStatus[]
+  readonly joinedIds: ReadonlySet<AgentTeamMemberId>
+  readonly selected: boolean
+  readonly joinChannel: TeamSidebarProps['joinChannel']
+  readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
+  readonly onCommitted: () => Promise<void> | void
+  readonly selectChannel: TeamSidebarProps['selectChannel']
+  readonly t: TeamSidebarProps['t']
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  return (
+    <>
+      <article className={css.channelRow} data-menu-open={menuOpen || undefined} aria-current={selected ? 'page' : undefined}>
+        <button type="button" className={css.channelSelect} aria-label={`# ${channel.name}`} onClick={() => { selectChannel(channel.channelRef) }}>
+          <strong className={css.channelName}># {channel.name}</strong>
+        </button>
+        <span className={css.rowMenu}>
+          <TeamRowMenu
+            label={t('actionsChannel', { name: channel.name })}
+            items={[{ id: 'edit', label: t('editChannel'), icon: <IconEditOutline16 /> }]}
+            onSelect={() => { setEditing(true) }}
+            onOpenChange={setMenuOpen}
+          />
+        </span>
+      </article>
+      {editing && (
+        <ChannelMembershipDialog
+          channel={channel}
+          members={members}
+          joinedIds={joinedIds}
+          joinChannel={joinChannel}
+          removeChannelMember={removeChannelMember}
+          onCommitted={onCommitted}
+          onClose={() => { setEditing(false) }}
+          t={t}
+        />
+      )}
+    </>
+  )
+}
+
+/** M1 Channel editor: name and description stay read-only facts; membership commits through the Host. */
+function ChannelMembershipDialog({ channel, members, joinedIds, joinChannel, removeChannelMember, onCommitted, onClose, t }: {
+  readonly channel: AgentTeamChannel
+  readonly members: readonly AgentTeamClientMemberStatus[]
+  readonly joinedIds: ReadonlySet<AgentTeamMemberId>
+  readonly joinChannel: TeamSidebarProps['joinChannel']
+  readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
+  readonly onCommitted: () => Promise<void> | void
+  readonly onClose: () => void
+  readonly t: TeamSidebarProps['t']
+}) {
+  const [pending, setPending] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
+  const [errors, setErrors] = useState<ReadonlyMap<AgentTeamMemberId, string>>(new Map())
+  // Idempotency mirrors the Channel page manager: one stable request per direction+member until it commits.
+  const requestIds = useRef(new Map<string, AgentTeamRequestId>())
+
+  const changeMembership = async (memberId: AgentTeamMemberId, joined: boolean): Promise<void> => {
+    if (pending.has(memberId)) return
+    setPending(current => new Set(current).add(memberId))
+    setErrors(current => { const next = new Map(current); next.delete(memberId); return next })
+    const key = `${joined ? 'remove' : 'join'}:${memberId}:${channel.channelRef}`
+    const requestId = requestIds.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
+    requestIds.current.set(key, requestId)
+    const request: AgentTeamJoinChannelRequest = { requestId, workspaceId: channel.workspaceId, channelRef: channel.channelRef, memberId }
+    try {
+      const result = joined ? await removeChannelMember(request) : await joinChannel(request)
+      if (result.ok) {
+        requestIds.current.delete(key)
+        await onCommitted()
+      } else {
+        setErrors(current => new Map(current).set(memberId, result.error.message))
+      }
+    } catch (cause) {
+      setErrors(current => new Map(current).set(memberId, cause instanceof Error ? cause.message : String(cause)))
+    } finally {
+      setPending(current => { const next = new Set(current); next.delete(memberId); return next })
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={t('editChannel')} description={`# ${channel.name}`} closeLabel={t('close')} contentClassName={createCss.dialogContent!}>
+      <p className={css.editDescription}>{channel.description}</p>
+      <div className={css.editMemberList}>
+        {members.map(status => {
+          const joined = joinedIds.has(status.member.memberId)
+          const rowPending = pending.has(status.member.memberId)
+          const disabled = rowPending || (!joined && status.presence === 'unavailable')
+          const rowError = errors.get(status.member.memberId)
+          return <div className={css.editMemberRow} key={status.member.memberId}>
+            <TeamPresenceDot status={status} t={t} />
+            <span className={css.editMemberCopy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
+            <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void changeMembership(status.member.memberId, joined) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
+            {rowError !== undefined && <p className={css.rowError} role="alert">{rowError}</p>}
+          </div>
+        })}
+      </div>
+    </Modal>
   )
 }

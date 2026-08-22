@@ -27,7 +27,7 @@ describe('TeamNavigation', () => {
     navigation.actions().enterTeam()
     navigation.actions().leaveTeam()
 
-    expect(navigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one', activeTab: 'channels' })
+    expect(navigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
     expect(changes).toEqual(['conversation', 'team', 'conversation'])
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
       mode: 'conversation', workspaceId: 'workspace:one',
@@ -35,19 +35,18 @@ describe('TeamNavigation', () => {
     off()
   })
 
-  it('rehydrates Team mode without restoring the removed Inbox tab', () => {
+  it('rehydrates Team mode while ignoring stale persisted fields', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: 'team', workspaceId: 'workspace:old', activeTab: 'inbox' }))
     const navigation = new TeamNavigation()
-    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:old', activeTab: 'channels' })
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:old' })
 
     navigation.actions().selectWorkspace('workspace:existing' as never)
-    navigation.actions().selectWorkspaceTab('agents')
-    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:existing', activeTab: 'agents' })
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:existing' })
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:existing' })
   })
 
   it('ignores malformed persisted state', () => {
     localStorage.setItem(STORAGE_KEY, '{broken')
-    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation', activeTab: 'channels' })
+    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation' })
   })
 })
