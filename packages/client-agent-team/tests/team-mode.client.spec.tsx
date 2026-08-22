@@ -10,6 +10,7 @@ import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { apply as applySidebar, inject as injectSidebar } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { apply, inject } from '../src/client/index.ts'
 
+
 usePinnedBrowserLanguages('zh-CN')
 afterEach(cleanup)
 beforeEach(() => { localStorage.clear() })
@@ -50,12 +51,14 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     presence,
     ...(diagnostic === undefined ? {} : { diagnostic }),
   })
-  const members = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({ ok: true, value: workspaceId === 'w1' ? [
+  let memberRows = [
     status('member:builder', 'w1', 'builder', 'available'),
     status('member:worker', 'w1', 'worker', 'working'),
     status('member:failed', 'w1', 'failed', 'error', 'model failed'),
     status('member:offline', 'w1', 'offline', 'unavailable', 'preset missing'),
-  ] : [status('member:builder-beta', 'w2', 'builder', 'available')] }))
+    status('member:builder-beta', 'w2', 'builder', 'available'),
+  ]
+  const members = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({ ok: true, value: memberRows.filter(entry => entry.member.workspaceId === workspaceId) }))
   const addMember = vi.fn(async (request: AgentTeamAddMemberRequest) => ({ ok: true, value: {
     receipt: {},
     status: {
@@ -100,6 +103,25 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     memberships = memberships.filter(item => item.channelRef !== request.channelRef || item.memberId !== request.memberId)
     return { ok: true, value: {} }
   })
+  const updateChannel = vi.fn(async (request: { requestId: string; workspaceId: string; channelRef: string; name: string; description: string }) => {
+    channels = channels.map(channel => channel.channelRef === request.channelRef
+      ? { ...channel, name: request.name, description: request.description } : channel)
+    return { ok: true as const, value: { receipt: {}, channel: channels.find(channel => channel.channelRef === request.channelRef) } }
+  })
+  const updateMember = vi.fn(async (request: { requestId: string; memberId: string; handle: string; description: string; model?: { provider: string; model: string } }) => {
+    memberRows = memberRows.map(entry => entry.member.memberId === request.memberId
+      ? { ...entry, member: { ...entry.member, handle: request.handle, description: request.description, ...(request.model === undefined ? {} : { model: request.model }) } }
+      : entry)
+    const status = memberRows.find(entry => entry.member.memberId === request.memberId)
+    return { ok: true as const, value: { receipt: {}, ...(status === undefined ? {} : { status }) } }
+  })
+  const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
+    groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+    ] }],
+    failures: [],
+  } } }))
   const sendMessage = vi.fn(async (request: AgentTeamSendMessageRequest) => {
     const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
     const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
@@ -159,8 +181,9 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, updateChannel, updateMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
+  runtime.provide('connection', { api: { llm: { models: loadModels } } })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [
@@ -178,7 +201,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, updateMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
 
 describe('rendered Team mode composition', () => {
@@ -322,8 +345,76 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
-  it('edits an Agent Channel membership from the sidebar row menu', async () => {
+  it('renames Channel display facts from the editor and refreshes the row', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    expect(await b.view.findByText('# engineering')).toBeTruthy()
+
+    fireEvent.click(b.view.getByRole('button', { name: 'engineering 的操作' }))
+    fireEvent.click(await b.view.findByRole('menuitem', { name: '编辑频道' }))
+    const editor = b.view.getByRole('dialog', { name: '编辑频道' })
+    // Save stays disabled until something actually changes.
+    expect(((within(editor).getByRole('button', { name: '保存' }) as HTMLButtonElement)).disabled).toBe(true)
+    fireEvent.change(within(editor).getByLabelText('名称'), { target: { value: 'platform' } })
+    fireEvent.change(within(editor).getByLabelText('说明'), { target: { value: 'Infrastructure work' } })
+    fireEvent.click(within(editor).getByRole('button', { name: '保存' }))
+    await waitFor(() => { expect(b.updateChannel).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'w1', channelRef: 'channel:engineering', name: 'platform', description: 'Infrastructure work',
+    })) })
+    // The committed rename rides the projection refresh, not an optimistic row edit.
+    expect(await b.view.findByText('# platform')).toBeTruthy()
+    expect(b.view.queryByText('# engineering')).toBeNull()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await b.runtime.dispose()
+  })
+
+  it('edits Agent identity and pins a Member model through the editor', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await b.view.findByRole('menuitem', { name: '编辑 Agent' }))
+    const editor = b.view.getByRole('dialog', { name: '编辑 Agent' })
+    // The Host catalog arrives session-independently; the picker rides the
+    // shared Menu primitive with the default entry leading each open.
+    const modelTrigger = await within(editor).findByRole('button', { name: '模型' })
+    await waitFor(() => { expect(modelTrigger.textContent).toContain('跟随全局默认') })
+    fireEvent.click(modelTrigger)
+    const modelMenu = within(document.body).getByRole('menu')
+    expect(within(modelMenu).getByText('DeepSeek')).toBeTruthy()
+    fireEvent.click(within(modelMenu).getByRole('menuitem', { name: 'DeepSeek Reasoner' }))
+    await waitFor(() => { expect(modelTrigger.textContent).toContain('DeepSeek Reasoner') })
+    fireEvent.change(within(editor).getByLabelText('名称'), { target: { value: 'architect' } })
+    fireEvent.change(within(editor).getByLabelText('说明'), { target: { value: 'System design owner' } })
+    fireEvent.click(within(editor).getByRole('button', { name: '保存' }))
+    await waitFor(() => { expect(b.updateMember).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: 'member:builder', handle: 'architect', description: 'System design owner',
+      model: { provider: 'deepseek-official', model: 'deepseek-reasoner' },
+    })) })
+    // The renamed handle reaches the roster through the refreshed projection.
+    expect(await b.view.findByText('architect')).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await b.runtime.dispose()
+  })
+
+  it('opens the Member Session page from the Agent card and leaves Team mode', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
+    await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    await b.view.findByText('builder')
+    expect(document.documentElement.dataset.agentTeamMode).toBe('team')
+
+    fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
+    await waitFor(() => {
+      expect(b.runtime.sessions.calls.some(call => call.method === 'open' && call.args[0] === 'session:member:builder')).toBe(true)
+    })
+    // Leaving to the ordinary shell is part of the same jump: the Team shadow
+    // must deregister so the opened Session is actually visible.
+    await waitFor(() => { expect(document.documentElement.dataset.agentTeamMode).toBeUndefined() })
+    await b.runtime.dispose()
+  })
+
+  it('edits an Agent Channel membership from the sidebar row menu', async () => {    const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await b.view.findByText('builder')
 
@@ -536,6 +627,12 @@ describe('rendered Team mode composition', () => {
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
 
+    // A reader scrolled away from the tail keeps the explicit new-updates action.
+    const timelineSection = document.querySelector('section[aria-label="消息时间线"]') as HTMLElement
+    Object.defineProperty(timelineSection, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(timelineSection, 'clientHeight', { configurable: true, value: 120 })
+    fireEvent.scroll(timelineSection)
+
     // A fact newer than everything shown is genuinely new and countable.
     historyWith([{ ...backfillFact, sequence: 9, message: { ...backfillFact.message, messageRef: 'message:new-9', body: 'genuinely new', sequence: 9 } }])
     b.publishAgentReply()
@@ -543,6 +640,50 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '标记为已读' }))
     await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
     expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('acknowledges arrivals a bottom-pinned reader is watching instead of prompting a manual read', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    fireEvent.change(messageInput, { target: { value: 'first task' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect(await b.view.findByText('first task')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    expect(b.readThread).toHaveBeenCalledTimes(1)
+
+    const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
+      sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
+    const watchedFact = { kind: 'message', sequence: 9, message: { messageRef: 'message:new-9', channelRef: 'channel:1', threadRef: 'thread:1',
+      taskRef: 'task:1', sender: 'member:builder', body: 'watched live', topLevel: false, sequence: 9, occurredAt: '' } }
+    b.loadThreadHistory.mockImplementation(async () => ({ ok: true as const, value: {
+      task: { taskRef: 'task:1', channelRef: 'channel:1', status: 'todo', resolution: 'open' },
+      thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts: [watchedFact], cursor: 0, hasMore: false,
+    } } as never))
+
+    // The change stream swallows one wake inside its initial silent probe;
+    // flush that probe so later wakes reach the listener.
+    b.publishChannelUpdate()
+    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
+
+    // jsdom never scrolls the reader away from the bottom, so the arriving
+    // fact renders in front of them and must be acknowledged durably rather
+    // than counted into the explicit new-updates prompt.
+    b.publishChannelUpdate()
+    await waitFor(() => expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull())
+    expect(await b.view.findByText('watched live')).toBeTruthy()
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
+    expect(b.view.queryByRole('button', { name: '标记为已读' })).toBeNull()
     await b.runtime.dispose()
   })
   it('refreshes the sidebar Channel list from one workspace change', async () => {

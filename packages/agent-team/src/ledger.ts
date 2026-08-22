@@ -14,6 +14,7 @@ import type {
   AgentTeamChannelMemberAddedOperation,
   AgentTeamChannelMemberRemovedOperation,
   AgentTeamChannelRef,
+  AgentTeamChannelUpdatedOperation,
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimsReleasedActivity,
@@ -41,6 +42,7 @@ import type {
   AgentTeamMemberRemovedOperation,
   AgentTeamMemberResumedOperation,
   AgentTeamMemberSuspendedOperation,
+  AgentTeamMemberUpdatedOperation,
   AgentTeamMessage,
   AgentTeamMessageRef,
   AgentTeamMessageSentOperation,
@@ -86,6 +88,9 @@ import type {
   AgentTeamThreadRef,
   AgentTeamThreadRepliedOperation,
   AgentTeamUnreadRequired,
+  AgentTeamUpdateChannelRequest,
+  AgentTeamUpdateChannelResult,
+  AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
@@ -160,6 +165,14 @@ export interface AgentTeamAuthorizedThreadReadRequest extends AgentTeamThreadRea
 }
 
 export interface AgentTeamAuthorizedRemoveMemberRequest extends AgentTeamRemoveMemberRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedUpdateChannelRequest extends AgentTeamUpdateChannelRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedUpdateMemberRequest extends AgentTeamUpdateMemberRequest {
   readonly actor: AgentTeamHumanActor
 }
 
@@ -311,6 +324,30 @@ export class AgentTeamLedger {
     })
   }
 
+  /** Human rename of one Channel's display facts; identity refs are immutable. */
+  updateChannel(request: AgentTeamAuthorizedUpdateChannelRequest): Promise<AgentTeamLedgerResult<AgentTeamUpdateChannelResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameChannelUpdate(existing, request)
+        return this.resolved(this.channelUpdateResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const name = request.name.trim()
+      const description = request.description.trim()
+      if (name === '') throw new Error('channel name must not be empty')
+      if (description === '') throw new Error('channel description must not be empty')
+      const channel = Object.freeze({ ...this.requireChannel(request.workspaceId, request.channelRef), name, description })
+      const operation: AgentTeamChannelUpdatedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/channel-updated',
+        data: Object.freeze({ workspaceId: request.workspaceId, channel }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.channelUpdateResult(operation))
+    })
+  }
+
   addMember(request: AgentTeamAuthorizedAddMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
     return this.enqueue(async () => {
       const existing = this.state.byRequest.get(request.requestId)
@@ -329,10 +366,48 @@ export class AgentTeamLedger {
       if (channelRefs.length === 0) throw new Error('Agent Member requires at least one initial Channel')
       for (const channelRef of channelRefs) this.requireChannel(request.workspaceId, channelRef)
       this.assertHandleAvailable(request.workspaceId, handle)
-      const member = Object.freeze({ ...request.member, handle, description, presetId, state: 'enabled' as const })
+      this.assertModelSelection(request.member.model)
+      const member = Object.freeze({
+        ...request.member, handle, description, presetId, state: 'enabled' as const,
+        ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
+      })
       const operation: AgentTeamMemberAddedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-added',
         data: Object.freeze({ member, channelRefs }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.memberResult(operation))
+    })
+  }
+
+  /** Human edit of one Member's mutable facts; identity, preset, and lifecycle state are preserved. */
+  updateMember(request: AgentTeamAuthorizedUpdateMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameMemberUpdate(existing, request)
+        return this.resolved(this.memberResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const prior = this.requireMember(request.memberId)
+      if (prior.state === 'inactive') throw new Error(`Agent Member '${prior.memberId}' is inactive and can no longer be edited`)
+      const handle = request.handle.trim()
+      const description = request.description.trim()
+      if (handle === '') throw new Error('member handle must not be empty')
+      if (description === '') throw new Error('member description must not be empty')
+      if (handle !== prior.handle) this.assertHandleAvailable(prior.workspaceId, handle, prior.memberId)
+      this.assertModelSelection(request.model)
+      // An absent model must CLEAR any override (inherit the Host default);
+      // spreading `prior` verbatim would silently keep the pinned selection.
+      const { model: _priorModel, ...priorWithoutModel } = prior
+      const member = Object.freeze({
+        ...priorWithoutModel, handle, description,
+        ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
+      })
+      const operation: AgentTeamMemberUpdatedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/member-updated',
+        data: Object.freeze({ member }),
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
@@ -930,9 +1005,13 @@ export class AgentTeamLedger {
         return undefined
       case 'team/channel-created':
         return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }]
+      case 'team/channel-updated':
+        // The rename is visible in the sidebar list and any open Channel/Thread header.
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'channel', channelRef: operation.data.channel.channelRef }]
       case 'team/member-added':
       case 'team/member-suspended':
       case 'team/member-resumed':
+      case 'team/member-updated':
       case 'team/member-removed':
         return [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
       case 'team/channel-member-added':
@@ -1083,6 +1162,30 @@ export class AgentTeamLedger {
       const expected = operation.kind === 'team/member-suspended' ? 'enabled' : 'suspended'
       const next = operation.kind === 'team/member-suspended' ? 'suspended' : 'enabled'
       if (prior === undefined || prior.state !== expected || operation.data.member.state !== next || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member lifecycle transition')
+      return
+    }
+    if (operation.kind === 'team/channel-updated') {
+      assertHuman()
+      const prior = projection.channels.get(operation.data.channel.channelRef)
+      if (prior === undefined || prior.workspaceId !== operation.data.workspaceId
+        || operation.data.channel.workspaceId !== prior.workspaceId || operation.data.channel.createdAtSequence !== prior.createdAtSequence) {
+        throw new Error('invalid Channel update')
+      }
+      return
+    }
+    if (operation.kind === 'team/member-updated') {
+      assertHuman()
+      const prior = projection.members.get(operation.data.member.memberId)
+      if (prior === undefined || prior.state === 'inactive' || operation.data.member.state !== prior.state
+        || operation.data.member.sessionId !== prior.sessionId || operation.data.member.workspaceId !== prior.workspaceId
+        || operation.data.member.presetId !== prior.presetId
+        || operation.data.member.privateMemoryPath !== prior.privateMemoryPath) throw new Error('invalid Member update')
+      // The renamed handle must stay unique among the workspace's other live Members.
+      const normalized = operation.data.member.handle.normalize('NFKC').trim().toLowerCase()
+      for (const other of projection.members.values()) {
+        if (other.memberId !== prior.memberId && other.state !== 'inactive' && other.workspaceId === prior.workspaceId
+          && other.handle.normalize('NFKC').trim().toLowerCase() === normalized) throw new Error('invalid Member update handle')
+      }
       return
     }
     if (operation.kind === 'team/channel-member-added') {
@@ -1412,6 +1515,14 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/member-suspended' || operation.kind === 'team/member-resumed') {
+      target.members.set(operation.data.member.memberId, operation.data.member)
+      return
+    }
+    if (operation.kind === 'team/channel-updated') {
+      target.channels.set(operation.data.channel.channelRef, operation.data.channel)
+      return
+    }
+    if (operation.kind === 'team/member-updated') {
       target.members.set(operation.data.member.memberId, operation.data.member)
       return
     }
@@ -1998,12 +2109,19 @@ export class AgentTeamLedger {
     return direction.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
   }
 
-  private assertHandleAvailable(workspaceId: WorkspaceId, handle: string): void {
+  private assertHandleAvailable(workspaceId: WorkspaceId, handle: string, exceptMemberId?: AgentTeamMemberId): void {
     const normalized = handle.normalize('NFKC').trim().toLowerCase()
-    if ([...this.state.members.values()].some(member => member.state !== 'inactive' && member.workspaceId === workspaceId
+    if ([...this.state.members.values()].some(member => member.memberId !== exceptMemberId && member.state !== 'inactive'
+      && member.workspaceId === workspaceId
       && member.handle.normalize('NFKC').trim().toLowerCase() === normalized)) {
       throw new Error(`Agent Member handle '${handle}' is already active in Workspace '${workspaceId}'`)
     }
+  }
+
+  /** Provider route and model id are exact identifiers; only whitespace-only values are rejected. */
+  private assertModelSelection(model: AgentTeamUpdateMemberRequest['model']): void {
+    if (model === undefined) return
+    if (model.provider.trim() === '' || model.model.trim() === '') throw new Error('member model selection must name a provider route and a model id')
   }
 
   private initialization(): AgentTeamInitializedOperation {
@@ -2034,12 +2152,26 @@ export class AgentTeamLedger {
     if (operation.kind !== 'team/member-added' || !this.sameActor(operation.actor, request.actor)
       || operation.data.member.workspaceId !== request.workspaceId || operation.data.member.handle !== request.handle.trim()
       || operation.data.member.description !== request.description.trim() || operation.data.member.presetId !== request.presetId.trim()
+      || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.member.model ?? undefined)
       || !this.sameList(operation.data.channelRefs, this.normalizeUnique(request.channelRefs, 'initial Member Channels'))) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameMemberState(operation: AgentTeamOperation, request: AgentTeamAuthorizedSetMemberStateRequest, state: 'enabled' | 'suspended'): asserts operation is AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation {
     const kind = state === 'suspended' ? 'team/member-suspended' : 'team/member-resumed'
     if (operation.kind !== kind || !this.sameActor(operation.actor, request.actor) || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameChannelUpdate(operation: AgentTeamOperation, request: AgentTeamAuthorizedUpdateChannelRequest): asserts operation is AgentTeamChannelUpdatedOperation {
+    if (operation.kind !== 'team/channel-updated' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId || operation.data.channel.channelRef !== request.channelRef
+      || operation.data.channel.name !== request.name.trim() || operation.data.channel.description !== request.description.trim()) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameMemberUpdate(operation: AgentTeamOperation, request: AgentTeamAuthorizedUpdateMemberRequest): asserts operation is AgentTeamMemberUpdatedOperation {
+    if (operation.kind !== 'team/member-updated' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.memberId !== request.memberId || operation.data.member.handle !== request.handle.trim()
+      || operation.data.member.description !== request.description.trim()
+      || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.model ?? undefined)) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameChannelJoin(operation: AgentTeamOperation, request: AgentTeamAuthorizedJoinChannelRequest): asserts operation is AgentTeamChannelMemberAddedOperation {
@@ -2117,6 +2249,7 @@ export class AgentTeamLedger {
   private sameMemberIdentity(left: AgentTeamAgentMember, right: AgentTeamAgentMember): boolean {
     return left.memberId === right.memberId && left.sessionId === right.sessionId && left.workspaceId === right.workspaceId
       && left.handle === right.handle && left.description === right.description && left.presetId === right.presetId
+      && isDeepStrictEqual(left.model ?? undefined, right.model ?? undefined)
       && left.privateMemoryPath === right.privateMemoryPath
   }
 
@@ -2159,7 +2292,11 @@ export class AgentTeamLedger {
     return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel, memberIds: operation.data.memberIds })
   }
 
-  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation): AgentTeamDurableMemberResult {
+  private channelUpdateResult(operation: AgentTeamChannelUpdatedOperation): AgentTeamUpdateChannelResult {
+    return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel })
+  }
+
+  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
     return Object.freeze({ receipt: this.receipt(operation), member: operation.data.member })
   }
 

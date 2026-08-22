@@ -7,6 +7,7 @@ import type {
   AgentTeamCreateChannelRequest,
   AgentTeamMemberId,
   AgentTeamRequestId,
+  AgentTeamUpdateChannelRequest,
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -26,6 +27,7 @@ interface TeamChannelsPanelProps {
   /** Membership and channel facts change outside this panel; the workspace scope keeps the list fresh. */
   readonly subscribeChanges: TeamSidebarProps['subscribeChanges']
   readonly createChannel: TeamSidebarProps['createChannel']
+  readonly updateChannel: TeamSidebarProps['updateChannel']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly creatingAgents: readonly AgentTeamAddMemberRequest[]
@@ -35,7 +37,7 @@ interface TeamChannelsPanelProps {
 }
 
 export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
-  const { workspaceId, loadMembers, loadChannels, subscribeChanges, createChannel, creatingAgents, selectedChannelRef, selectChannel, t } = props
+  const { workspaceId, loadMembers, loadChannels, subscribeChanges, createChannel, updateChannel, creatingAgents, selectedChannelRef, selectChannel, t } = props
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
@@ -203,6 +205,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
                 members={members}
                 joinedIds={joined}
                 selected={selectedChannelRef === channel.channelRef}
+                updateChannel={updateChannel}
                 joinChannel={props.joinChannel}
                 removeChannelMember={props.removeChannelMember}
                 onCommitted={() => { void refresh() }}
@@ -220,13 +223,14 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
 
 /**
  * One sidebar Channel row: the select button keeps the `#` identity while the
- * row menu carries the entry point; M1 editing covers membership only.
+ * row menu carries the entry point; editing covers display facts and membership.
  */
-function ChannelRow({ channel, members, joinedIds, selected, joinChannel, removeChannelMember, onCommitted, selectChannel, t }: {
+function ChannelRow({ channel, members, joinedIds, selected, updateChannel, joinChannel, removeChannelMember, onCommitted, selectChannel, t }: {
   readonly channel: AgentTeamChannel
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly joinedIds: ReadonlySet<AgentTeamMemberId>
   readonly selected: boolean
+  readonly updateChannel: TeamSidebarProps['updateChannel']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly onCommitted: () => Promise<void> | void
@@ -251,10 +255,11 @@ function ChannelRow({ channel, members, joinedIds, selected, joinChannel, remove
         </span>
       </article>
       {editing && (
-        <ChannelMembershipDialog
+        <ChannelEditorDialog
           channel={channel}
           members={members}
           joinedIds={joinedIds}
+          updateChannel={updateChannel}
           joinChannel={joinChannel}
           removeChannelMember={removeChannelMember}
           onCommitted={onCommitted}
@@ -266,40 +271,103 @@ function ChannelRow({ channel, members, joinedIds, selected, joinChannel, remove
   )
 }
 
-/** M1 Channel editor: name and description stay read-only facts; membership commits through the Host. */
-function ChannelMembershipDialog({ channel, members, joinedIds, joinChannel, removeChannelMember, onCommitted, onClose, t }: {
+/**
+ * Channel editor: name and description commit through one durable update;
+ * Channel membership below keeps its own immediate add/remove flow.
+ */
+function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinChannel, removeChannelMember, onCommitted, onClose, t }: {
   readonly channel: AgentTeamChannel
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly joinedIds: ReadonlySet<AgentTeamMemberId>
+  readonly updateChannel: TeamSidebarProps['updateChannel']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly onCommitted: () => Promise<void> | void
   readonly onClose: () => void
   readonly t: TeamSidebarProps['t']
 }) {
+  const [name, setName] = useState(channel.name)
+  const [description, setDescription] = useState(channel.description)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const pendingRequest = useRef<AgentTeamUpdateChannelRequest>()
+
   const membership = useChannelMembership(
     { joinChannel, removeChannelMember },
     change => change.memberId,
     async () => { await onCommitted() },
   )
 
+  const dirty = name.trim() !== channel.name || description.trim() !== channel.description
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const normalizedName = name.trim()
+    const normalizedDescription = description.trim()
+    if (saving || !dirty || normalizedName === '' || normalizedDescription === '') return
+    const samePending = pendingRequest.current !== undefined && pendingRequest.current.channelRef === channel.channelRef
+      && pendingRequest.current.name === normalizedName && pendingRequest.current.description === normalizedDescription
+    const request: AgentTeamUpdateChannelRequest = samePending ? pendingRequest.current! : {
+      requestId: crypto.randomUUID() as AgentTeamRequestId,
+      workspaceId: channel.workspaceId,
+      channelRef: channel.channelRef,
+      name: normalizedName,
+      description: normalizedDescription,
+    }
+    pendingRequest.current = request
+    setSaving(true)
+    setError(undefined)
+    try {
+      const result = await updateChannel(request)
+      if (result.ok) {
+        pendingRequest.current = undefined
+        await onCommitted()
+        onClose()
+      } else {
+        setError(result.error.message)
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <Modal open onClose={onClose} title={t('editChannel')} description={`# ${channel.name}`} closeLabel={t('close')} contentClassName={createCss.dialogContent!}>
-      <p className={css.editDescription}>{channel.description}</p>
-      <div className={css.editMemberList}>
-        {members.map(status => {
-          const joined = joinedIds.has(status.member.memberId)
-          const rowPending = membership.pending.has(status.member.memberId)
-          const disabled = rowPending || (!joined && status.presence === 'unavailable')
-          const rowError = membership.errors.get(status.member.memberId)
-          return <div className={css.editMemberRow} key={status.member.memberId}>
-            <TeamPresenceDot status={status} t={t} />
-            <span className={css.editMemberCopy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
-            <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void membership.change({ workspaceId: channel.workspaceId, channelRef: channel.channelRef, memberId: status.member.memberId, joined }) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
-            {rowError !== undefined && <p className={css.rowError} role="alert">{rowError}</p>}
-          </div>
-        })}
-      </div>
+    <Modal
+      open
+      onClose={onClose}
+      title={t('editChannel')}
+      description={`# ${channel.name}`}
+      closeLabel={t('close')}
+      contentClassName={createCss.dialogContent!}
+      footer={<><Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button><Button type="submit" form="team-channel-edit-form" variant="primary" disabled={saving || !dirty || name.trim() === '' || description.trim() === ''}>{saving ? t('editSaving') : t('editSave')}</Button></>}
+    >
+      <form id="team-channel-edit-form" className={createCss.form} onSubmit={event => { void submit(event) }}>
+        <label className={createCss.field}>
+          <span>{t('channelName')}</span>
+          <Input className={createCss.input!} value={name} onChange={event => { setName(event.target.value); pendingRequest.current = undefined }} disabled={saving} autoFocus />
+        </label>
+        <label className={createCss.field}>
+          <span>{t('channelDescription')}</span>
+          <Input className={createCss.input!} value={description} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
+        </label>
+        <fieldset className={createCss.memberPicker} disabled={saving}>
+          <legend>{t('channelMembersSection')}</legend>
+          {members.map(status => {
+            const joined = joinedIds.has(status.member.memberId)
+            const rowPending = membership.pending.has(status.member.memberId)
+            const disabled = rowPending || (!joined && status.presence === 'unavailable')
+            const rowError = membership.errors.get(status.member.memberId)
+            return <div className={css.editMemberRow} key={status.member.memberId}>
+              <TeamPresenceDot status={status} t={t} />
+              <span className={css.editMemberCopy}><strong>@{status.member.handle}</strong><small>{status.member.description}</small></span>
+              <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void membership.change({ workspaceId: channel.workspaceId, channelRef: channel.channelRef, memberId: status.member.memberId, joined }) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
+              {rowError !== undefined && <p className={css.rowError} role="alert">{rowError}</p>}
+            </div>
+          })}
+        </fieldset>
+        {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
+      </form>
     </Modal>
   )
 }

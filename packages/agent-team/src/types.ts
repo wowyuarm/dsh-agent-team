@@ -48,6 +48,12 @@ export interface AgentTeamMemberActor {
 
 export type AgentTeamActor = AgentTeamHumanActor | AgentTeamMemberActor
 
+/** Provider route plus provider-owned model id one Member can be pinned to. */
+export interface AgentTeamModelSelection {
+  readonly provider: string
+  readonly model: string
+}
+
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
   readonly memberId: AgentTeamMemberId
@@ -56,6 +62,8 @@ export interface AgentTeamAgentMember {
   readonly handle: string
   readonly description: string
   readonly presetId: string
+  /** Absent inherits the Host default model selection at every activation. */
+  readonly model?: AgentTeamModelSelection | undefined
   /** Host-internal namespace; never exposed through Client projections. */
   readonly privateMemoryPath: string
   readonly state: 'enabled' | 'suspended' | 'inactive'
@@ -299,6 +307,21 @@ export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase 
   readonly data: { readonly member: AgentTeamAgentMember }
 }
 
+/** Durable Human rename of one Channel's display facts; identity refs never change. */
+export interface AgentTeamChannelUpdatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/channel-updated'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly channel: AgentTeamChannel
+  }
+}
+
+/** Durable Human edit of one Member's mutable facts (handle, description, model). */
+export interface AgentTeamMemberUpdatedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-updated'
+  readonly data: { readonly member: AgentTeamAgentMember }
+}
+
 /** Durable addition of one Agent Member to one Channel. */
 export interface AgentTeamChannelMemberAddedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/channel-member-added'
@@ -453,6 +476,8 @@ export type AgentTeamOperation =
   | AgentTeamMemberAddedOperation
   | AgentTeamMemberSuspendedOperation
   | AgentTeamMemberResumedOperation
+  | AgentTeamChannelUpdatedOperation
+  | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation
   | AgentTeamChannelMemberRemovedOperation
   | AgentTeamMessageSentOperation
@@ -495,8 +520,34 @@ export interface AgentTeamAddMemberRequest {
   readonly handle: string
   readonly description: string
   readonly presetId: string
+  /** Absent inherits the Host default model selection. */
+  readonly model?: AgentTeamModelSelection
   /** At least one existing Channel in this Workspace. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
+}
+
+/** Human intent to rename one Channel's display facts. */
+export interface AgentTeamUpdateChannelRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+  readonly name: string
+  readonly description: string
+}
+
+/** Result of updating or idempotently resolving one Channel's display facts. */
+export interface AgentTeamUpdateChannelResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly channel: AgentTeamChannel
+}
+
+/** Human intent to edit one Member's mutable facts; an absent model clears any override. */
+export interface AgentTeamUpdateMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly memberId: AgentTeamMemberId
+  readonly handle: string
+  readonly description: string
+  readonly model?: AgentTeamModelSelection
 }
 
 /** Human intent to suspend or resume one Agent Member. */

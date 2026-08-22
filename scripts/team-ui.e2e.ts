@@ -116,15 +116,30 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByText('还没有消息', { exact: true }).waitFor()
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
 
-  // Sidebar row menus: the ⋯ entry opens the M1 editors (membership only).
+  // Sidebar row menus: the ⋯ entry opens the M2 editors — display facts plus
+  // membership. 保存 stays disabled until a field actually changes, and the
+  // committed rename reaches the row through the refreshed projection.
   await page.getByRole('button', { name: '# engineering' }).hover()
   await page.getByRole('button', { name: 'engineering 的操作' }).click()
   await page.getByRole('menuitem', { name: '编辑频道' }).click()
   const channelEditor = page.getByRole('dialog', { name: '编辑频道' })
   await channelEditor.waitFor()
   expect(await channelEditor.getByText('@builder').count()).toBe(1)
+  const channelSave = channelEditor.getByRole('button', { name: '保存' })
+  await expect.poll(async () => await channelSave.isDisabled()).toBe(true)
+  await channelEditor.getByLabel('说明').fill('Platform delivery work')
+  await expect.poll(async () => await channelSave.isDisabled()).toBe(false)
   await page.screenshot({ path: join(UI04_SHOTS, 'channel-edit-modal.png'), fullPage: true })
-  await channelEditor.getByRole('button', { name: '关闭', exact: true }).click()
+  await channelSave.click()
+  await expect.poll(() => page.getByRole('dialog', { name: '编辑频道' }).count()).toBe(0)
+  await page.getByRole('button', { name: '# engineering' }).hover()
+  await page.getByRole('button', { name: 'engineering 的操作' }).click()
+  await page.getByRole('menuitem', { name: '编辑频道' }).click()
+  const channelRecheck = page.getByRole('dialog', { name: '编辑频道' })
+  await channelRecheck.waitFor()
+  await expect.poll(async () => channelRecheck.getByLabel('说明').inputValue()).toBe('Platform delivery work')
+  await channelRecheck.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect.poll(() => page.getByRole('dialog', { name: '编辑频道' }).count()).toBe(0)
   // Collapsed sections hide their rows until expanded again.
   const channelsToggle = page.getByRole('button', { name: '频道', exact: true })
   await channelsToggle.click()
@@ -141,8 +156,37 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // builder joined engineering at provision time and delivery as an initial
   // member, so exactly those two Channel rows offer Remove once loaded.
   await expect.poll(() => agentEditor.getByRole('button', { name: '移除' }).count()).toBe(2)
+  // The per-Member model picker rides the shared Menu primitive: the trigger
+  // echoes the current selection and opening lists the Host catalog grouped
+  // by provider without any live Session round-trip. Re-selecting the
+  // default row closes it without dirtying the form.
+  const modelTrigger = agentEditor.getByRole('button', { name: '模型', exact: true })
+  await modelTrigger.waitFor()
+  await expect.poll(() => modelTrigger.textContent()).toBe('跟随全局默认')
+  await modelTrigger.click()
+  const modelMenu = page.locator('[role="menu"]').filter({ hasText: '跟随全局默认' })
+  await modelMenu.waitFor()
+  expect(await modelMenu.getByRole('menuitem').count()).toBeGreaterThanOrEqual(2)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-model-menu.png'), fullPage: true })
+  await modelMenu.getByRole('menuitem', { name: '跟随全局默认' }).click()
+  await expect.poll(() => page.locator('[role="menu"]').count()).toBe(0)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-edit-modal.png'), fullPage: true })
   await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
+
+  // Clicking the Agent card jumps straight to its Session page: Team mode
+  // deregisters and the ordinary shell selects the Member Session. A Member
+  // session has no human turns yet, so DSH renders its blank-session view —
+  // the hero composer carrying the Member's workspace + `team-member`
+  // preset chips, not the pre-Team draft.
+  await builderRow.getByRole('button', { name: '打开 builder 的会话' }).click()
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.agentTeamMode ?? null)).toBe(null)
+  await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
+  await expect.poll(() => page.locator('textarea:enabled').count()).toBeGreaterThanOrEqual(1)
+  await expect.poll(() => page.getByText('team-member', { exact: true }).count()).toBe(1)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-jump.png'), fullPage: true })
+  // Re-entering Team restores the sidebar composition for the rest of the run.
+  await page.getByRole('button', { name: '团队' }).click()
+  await page.getByRole('button', { name: '# engineering' }).waitFor()
 
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByText('还没有消息', { exact: true }).waitFor()
@@ -321,7 +365,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '对话' }).click()
   await expect.poll(() => newSessionButton.isVisible()).toBe(true)
   await expect.poll(() => brandButton.isVisible()).toBe(true)
-  await ordinaryComposer.waitFor({ timeout: 20_000 })
+  // The Agent-card jump earlier made the Member Session current; leaving Team
+  // restores the ordinary shell around that Session — an existing session's
+  // composer (给智能体发消息), not the fresh-workspace hero placeholder.
+  await page.locator('textarea:enabled').first().waitFor({ timeout: 20_000 })
+  await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
   await page.screenshot({ path: join(UI01_SHOTS, 'restored-conversations.png'), fullPage: true })
 
   const enterTeamKeyboard = page.getByRole('button', { name: '团队' })
@@ -366,7 +414,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const leaveTeamKeyboard = page.getByRole('button', { name: '对话' })
   await leaveTeamKeyboard.focus()
   await leaveTeamKeyboard.press('Space')
-  await ordinaryComposer.waitFor({ timeout: 20_000 })
+  // The card jump earlier made the Member Session current; leaving Team
+  // restores the ordinary shell around that Session — an existing session's
+  // composer (给智能体发消息), not the fresh-workspace hero placeholder.
+  await page.locator('textarea:enabled').first().waitFor({ timeout: 20_000 })
+  await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 120_000)

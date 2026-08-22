@@ -22,6 +22,16 @@ async function bench(persisted: string | null = null) {
   ctx.provide('locale', new LocaleRuntime(ctx))
   ctx.provide('remote', { $mount: async () => async () => {} } as never)
   ctx.provide('remote.agentTeam', {})
+  // The plugin declares these runtime services; the takeover bench only mounts
+  // them, it never drives sessions or the model catalog.
+  ctx.provide('sessions', {
+    list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
+    open: vi.fn(),
+    openSubagent: vi.fn(),
+    search: vi.fn(async () => ({ items: [], hasMore: false })),
+    searchResultLimit: 20,
+  } as never)
+  ctx.provide('connection', { api: { llm: { models: vi.fn(async () => ({ result: { ok: true, value: { groups: [], failures: [] } } })) } } } as never)
   ctx.provide('workspaces', {
     list: workspaceFeed(),
     pickDirectory: vi.fn(async () => null),

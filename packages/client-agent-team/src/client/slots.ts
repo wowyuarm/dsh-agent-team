@@ -22,6 +22,9 @@ import type {
   AgentTeamTaskResult,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
+  AgentTeamUpdateChannelRequest,
+  AgentTeamUpdateChannelResult,
+  AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
 } from '@wowyuarm/dsh-agent-team/types'
@@ -37,6 +40,25 @@ export interface TeamNavigationSource {
 /** Subscribe to one projection scope's invalidation stream; disposal aborts the shared poll. */
 export type SubscribeTeamChanges = (scope: TeamChangeScope, listener: TeamChangeListener) => () => void
 
+/** One selectable model row inside one provider group of the Host catalog. */
+export interface TeamModelOption {
+  readonly id: string
+  readonly name: string
+}
+
+/** Provider-grouped slice of the Host model catalog the editors render. */
+export interface TeamModelProviderGroup {
+  readonly id: string
+  readonly name: string
+  readonly models: readonly TeamModelOption[]
+}
+
+/** Host-scoped catalog load result; per-provider listing failures ride `failures`. */
+export interface TeamModelCatalog {
+  readonly groups: readonly TeamModelProviderGroup[]
+  readonly failures: readonly { readonly id: string; readonly name: string; readonly message: string }[]
+}
+
 export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & PropsLocale<'team'>
   & TeamNavigationActions
@@ -47,8 +69,14 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
     createChannel: (request: AgentTeamCreateChannelRequest) => Promise<RemoteResult<AgentTeamCreateChannelResult>>
+    updateChannel: (request: AgentTeamUpdateChannelRequest) => Promise<RemoteResult<AgentTeamUpdateChannelResult>>
+    updateMember: (request: AgentTeamUpdateMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
+    /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
+    loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
+    /** Focus the Member's own Session conversation page in the ordinary shell. */
+    openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => void
     selectedChannelRef?: AgentTeamChannelRef
   }
 

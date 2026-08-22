@@ -40,6 +40,11 @@ const operationBase = {
   actor: actorSchema,
 }
 
+const modelSelectionSchema = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+}).strict()
+
 const memberSchema = z.object({
   memberId: memberIdSchema,
   sessionId: sessionIdSchema,
@@ -47,6 +52,8 @@ const memberSchema = z.object({
   handle: z.string().min(1),
   description: z.string().min(1),
   presetId: z.string().min(1),
+  // Ledgers written before per-Member model selection existed omit the field.
+  model: modelSelectionSchema.optional(),
   privateMemoryPath: z.string().min(1),
   state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive')]),
 }).strict()
@@ -244,6 +251,18 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/member-resumed'),
+    data: z.object({ member: memberSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/channel-updated'),
+    data: z.object({ workspaceId: workspaceIdSchema, channel: channelSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-updated'),
     data: z.object({ member: memberSchema }).strict(),
   }).strict(),
   z.object({

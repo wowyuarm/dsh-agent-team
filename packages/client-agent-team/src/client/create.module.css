@@ -15,6 +15,53 @@
   width: 100%;
 }
 
+/* Model picker trigger styled to the Input atom chrome; the option list is
+   the shared ui-primitives Menu (grouped rows + selection check). */
+.selectTrigger {
+  align-items: center;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  display: flex;
+  font-size: 14px;
+  gap: 8px;
+  justify-content: space-between;
+  line-height: 22px;
+  min-height: 32px;
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.selectTrigger:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.selectTrigger:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
+  outline: none;
+}
+
+.selectValue {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  color: var(--dsw-alias-label-tertiary);
+  display: inline-flex;
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
 .memberPicker {
   border: 0;
   display: grid;

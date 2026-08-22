@@ -290,35 +290,41 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                         <div
                           class="agentRow"
                         >
-                          <span
-                            aria-label="可用"
-                            class="agentAvatar"
-                            role="img"
-                            style="--team-avatar-hue: 203;"
+                          <button
+                            aria-label="打开 builder 的会话"
+                            class="agentSelect"
+                            type="button"
                           >
-                            B
                             <span
-                              aria-hidden="true"
-                              class="agentAvatarBadge"
+                              aria-label="可用"
+                              class="agentAvatar"
+                              role="img"
+                              style="--team-avatar-hue: 203;"
                             >
+                              B
                               <span
                                 aria-hidden="true"
-                                class="dot"
-                                data-state="done"
-                                style="width: 8px; height: 8px;"
-                              />
+                                class="agentAvatarBadge"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  class="dot"
+                                  data-state="done"
+                                  style="width: 8px; height: 8px;"
+                                />
+                              </span>
                             </span>
-                          </span>
-                          <span
-                            class="agentCopy"
-                          >
-                            <strong>
-                              builder
-                            </strong>
-                            <small>
-                              builder description
-                            </small>
-                          </span>
+                            <span
+                              class="agentCopy"
+                            >
+                              <strong>
+                                builder
+                              </strong>
+                              <small>
+                                builder description
+                              </small>
+                            </span>
+                          </button>
                           <span
                             class="rowMenu"
                           >
@@ -347,39 +353,45 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                         <div
                           class="agentRow"
                         >
-                          <span
-                            aria-label="工作中"
-                            class="agentAvatar"
-                            role="img"
-                            style="--team-avatar-hue: 126;"
+                          <button
+                            aria-label="打开 worker 的会话"
+                            class="agentSelect"
+                            type="button"
                           >
-                            W
                             <span
-                              aria-hidden="true"
-                              class="agentAvatarBadge"
+                              aria-label="工作中"
+                              class="agentAvatar"
+                              role="img"
+                              style="--team-avatar-hue: 126;"
                             >
-                              <svg
+                              W
+                              <span
                                 aria-hidden="true"
-                                class="matrix"
-                                data-content="46e5b206"
-                                data-state="ongoing"
-                                height="8"
-                                shape-rendering="crispEdges"
-                                viewBox="0 0 10 10"
-                                width="8"
-                              />
+                                class="agentAvatarBadge"
+                              >
+                                <svg
+                                  aria-hidden="true"
+                                  class="matrix"
+                                  data-content="46e5b206"
+                                  data-state="ongoing"
+                                  height="8"
+                                  shape-rendering="crispEdges"
+                                  viewBox="0 0 10 10"
+                                  width="8"
+                                />
+                              </span>
                             </span>
-                          </span>
-                          <span
-                            class="agentCopy"
-                          >
-                            <strong>
-                              worker
-                            </strong>
-                            <small>
-                              worker description
-                            </small>
-                          </span>
+                            <span
+                              class="agentCopy"
+                            >
+                              <strong>
+                                worker
+                              </strong>
+                              <small>
+                                worker description
+                              </small>
+                            </span>
+                          </button>
                           <span
                             class="rowMenu"
                           >
@@ -408,35 +420,41 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                         <div
                           class="agentRow"
                         >
-                          <span
-                            aria-label="错误: model failed"
-                            class="agentAvatar"
-                            role="img"
-                            style="--team-avatar-hue: 133;"
+                          <button
+                            aria-label="打开 failed 的会话"
+                            class="agentSelect"
+                            type="button"
                           >
-                            F
                             <span
-                              aria-hidden="true"
-                              class="agentAvatarBadge"
+                              aria-label="错误: model failed"
+                              class="agentAvatar"
+                              role="img"
+                              style="--team-avatar-hue: 133;"
                             >
+                              F
                               <span
                                 aria-hidden="true"
-                                class="dot"
-                                data-state="error"
-                                style="width: 8px; height: 8px;"
-                              />
+                                class="agentAvatarBadge"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  class="dot"
+                                  data-state="error"
+                                  style="width: 8px; height: 8px;"
+                                />
+                              </span>
                             </span>
-                          </span>
-                          <span
-                            class="agentCopy"
-                          >
-                            <strong>
-                              failed
-                            </strong>
-                            <small>
-                              failed description
-                            </small>
-                          </span>
+                            <span
+                              class="agentCopy"
+                            >
+                              <strong>
+                                failed
+                              </strong>
+                              <small>
+                                failed description
+                              </small>
+                            </span>
+                          </button>
                           <span
                             class="rowMenu"
                           >
@@ -465,32 +483,38 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                         <div
                           class="agentRow"
                         >
-                          <span
-                            aria-label="不可用: preset missing"
-                            class="agentAvatar"
-                            role="img"
-                            style="--team-avatar-hue: 139;"
+                          <button
+                            aria-label="打开 offline 的会话"
+                            class="agentSelect"
+                            type="button"
                           >
-                            O
                             <span
-                              aria-hidden="true"
-                              class="agentAvatarBadge"
+                              aria-label="不可用: preset missing"
+                              class="agentAvatar"
+                              role="img"
+                              style="--team-avatar-hue: 139;"
                             >
+                              O
                               <span
-                                class="unavailableDot"
-                              />
+                                aria-hidden="true"
+                                class="agentAvatarBadge"
+                              >
+                                <span
+                                  class="unavailableDot"
+                                />
+                              </span>
                             </span>
-                          </span>
-                          <span
-                            class="agentCopy"
-                          >
-                            <strong>
-                              offline
-                            </strong>
-                            <small>
-                              offline description
-                            </small>
-                          </span>
+                            <span
+                              class="agentCopy"
+                            >
+                              <strong>
+                                offline
+                              </strong>
+                              <small>
+                                offline description
+                              </small>
+                            </span>
+                          </button>
                           <span
                             class="rowMenu"
                           >

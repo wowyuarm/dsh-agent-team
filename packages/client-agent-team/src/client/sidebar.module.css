@@ -258,14 +258,28 @@
 .agentRow {
   align-items: center;
   border-radius: 8px;
-  box-sizing: border-box;
   color: var(--dsw-alias-label-primary);
+  display: flex;
+  min-height: 38px;
+  position: relative;
+}
+.agentSelect {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  box-sizing: border-box;
+  color: inherit;
+  cursor: pointer;
   display: grid;
+  flex: 1;
   gap: 0 8px;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-width: 0;
   min-height: 38px;
   padding: 3px 4px 3px 8px;
+  text-align: left;
 }
+.agentSelect:focus-visible { outline: none; }
 .agentAvatar {
   align-items: center;
   background: hsl(var(--team-avatar-hue, 212) 42% 46%);
@@ -432,6 +446,13 @@
   white-space: nowrap;
 }
 .editMemberRow button { min-width: 60px; }
+/* Quiet helper line under a form field (catalog loading/failure states). */
+.editHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0;
+}
 .rowError {
   color: var(--dsw-alias-state-error-primary);
   font-size: 11px;

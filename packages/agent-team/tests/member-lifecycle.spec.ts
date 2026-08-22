@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -610,5 +610,63 @@ describe('Agent Team Member lifecycle', () => {
     expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view'])
     const definition = markAgentTeamPreset({ name: 'team_message' })
     expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
+  })
+
+  it('applies Member model edits to a live Agent immediately and keeps pinned selections across restarts', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const createSpy = vi.spyOn(ctx.agents, 'create')
+    const resumeSpy = vi.spyOn(ctx.agents, 'resume')
+    // Activation goes through create or resume depending on whether the
+    // Session transcript has been persisted yet; both carry agentOptions.
+    const lastActivationOptions = () => {
+      const call = resumeSpy.mock.calls.at(-1) ?? createSpy.mock.calls.at(-1)
+      expect(call).toBeDefined()
+      return call![0]!.agentOptions
+    }
+    const clearActivationSpies = () => { createSpy.mockClear(); resumeSpy.mockClear() }
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('model-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({
+      requestId: requestId('model-add'), workspaceId, handle: 'builder',
+      description: 'Builds the implementation', presetId: 'team-member',
+      channelRefs: [channel.channel.channelRef], model: { provider: 'mock', model: 'pinned-model' },
+    })
+    // Creation activates with the pinned selection instead of the Host default.
+    expect(added.status.member.model).toEqual({ provider: 'mock', model: 'pinned-model' })
+    expect(lastActivationOptions()).toMatchObject({ provider: 'mock', model: 'pinned-model' })
+
+    // Editing the model on the ACTIVE Member quiesces and reactivates it in
+    // place — same Session id, new selection effective without any restart.
+    clearActivationSpies()
+    const edited = await ctx.agentTeam.updateMember({
+      requestId: requestId('re-model'), memberId: added.status.member.memberId,
+      handle: 'builder', description: 'Builds the implementation',
+      model: { provider: 'mock', model: 'switched-model' },
+    })
+    expect(edited.status.availability).toBe('active')
+    expect(edited.status.member.sessionId).toBe(added.status.member.sessionId)
+    expect(lastActivationOptions()).toMatchObject({ provider: 'mock', model: 'switched-model' })
+
+    // A display-only edit that re-states the current pin leaves the live
+    // Agent untouched; an edit that OMITS model clears the override (below).
+    clearActivationSpies()
+    await ctx.agentTeam.updateMember({ requestId: requestId('desc-only'), memberId: added.status.member.memberId, handle: 'builder', description: 'Builds things', model: { provider: 'mock', model: 'switched-model' } })
+    expect(createSpy).not.toHaveBeenCalled()
+    expect(resumeSpy).not.toHaveBeenCalled()
+    expect(resumeSpy).not.toHaveBeenCalled()
+
+    // Clearing the override reactivates against the live Host default.
+    clearActivationSpies()
+    const cleared = await ctx.agentTeam.updateMember({ requestId: requestId('clear-model'), memberId: added.status.member.memberId, handle: 'builder', description: 'Builds things' })
+    expect(cleared.status.member.model).toBeUndefined()
+    expect(cleared.status.availability).toBe('active')
+    expect(lastActivationOptions()).toEqual({ provider: 'mock', model: 'mock' })
+
+    // A pinned selection survives suspend/resume without any further edit.
+    await ctx.agentTeam.updateMember({ requestId: requestId('repin'), memberId: added.status.member.memberId, handle: 'builder', description: 'Builds things', model: { provider: 'mock', model: 'pinned-again' } })
+    await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: added.status.member.memberId })
+    clearActivationSpies()
+    const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume'), memberId: added.status.member.memberId })
+    expect(resumed.status.member.model).toEqual({ provider: 'mock', model: 'pinned-again' })
+    expect(lastActivationOptions()).toMatchObject({ provider: 'mock', model: 'pinned-again' })
   })
 })

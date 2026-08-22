@@ -6,6 +6,8 @@ const BOUNDARY_OFFSET_PX = 12
 export interface TimelineScroll {
   readonly ref: React.RefObject<HTMLElement>
   onScroll: () => void
+  /** Whether the reader currently sits within the follow margin of the bottom. */
+  isPinned: () => boolean
   /** Jump to the unread-boundary marker on the next content commit. */
   jumpToBoundary: () => void
   /** Jump to the latest fact on the next content commit. */
@@ -64,5 +66,5 @@ export function useTimelineScroll(contentKey: string): TimelineScroll {
     }
   }, [contentKey])
 
-  return { ref, onScroll, jumpToBoundary, jumpToLatest }
+  return { ref, onScroll, isPinned: () => pinnedRef.current, jumpToBoundary, jumpToLatest }
 }

@@ -69,6 +69,7 @@
 ### 时间线滚动（timeline-scroll）
 
 - 策略：读者停留在底部（距底 <48px 视为 pinned）时跟随新内容；不在底部时不打扰。
+- 确认合同：pinned 读者的被动到达直接做持久 `readThread` 确认（消息已在其眼前渲染，不再弹"新更新"提示）；非 pinned 时才计入显式的"读取 N 条新更新"。确认读取失败或被更新一次读取取代时回退到显式提示。
 - 前插更早历史时按 scrollHeight 差值补偿 scrollTop，视口内容不跳动。
 - 显式跳转：未读分界线跳转查询 `[data-thread-boundary]` 并留 12px 余量；"标记为已读"/"继续阅读" 分别触发 latest/boundary 跳转。
 - contentKey 必须随渲染事实变化（当前用 `长度:末位factKey` 组合串）。
@@ -96,7 +97,10 @@
 - 骨架：工作区列表 + 「频道」「Agents」两个常驻可折叠分区，同处一个滚动容器；分区头是原生 button 折叠头（`TeamSidebarSection`，`aria-expanded`），右侧只放新增按钮。刻意保持安静：折叠头无 hover 底色，仅 chevron 变色反馈；不展示分区计数。
 - 行形态：频道行保留 `#` 标识；Agent 行复用头像语言并叠加 presence 角标。行内元数据（成员计数、presence 文字）已移除，保持列表简洁。
 - 定位高亮单一化（对齐宿主会话树「父静叶亮」的惯例）：任一时刻侧栏只有一行携带 `aria-current='page'` 与 hover 底色——打开频道/Thread 时是频道行，否则是所选工作区的概览行；被浏览的工作区行其余时候保持安静，仅以 `data-selected` 让文件夹图标换成 open 形态并着 business 色（镜像宿主 `folderActive`），不再与叶子行同时点亮。
-- 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。M1 菜单只含「编辑」入口，指向成员管理对话框（频道成员增删 / Agent 加入退出频道，走既有 join/remove Remote，幂等 request 按 方向+成员+频道 键复用）；改名/说明等字段待 Host update 操作就绪后再点亮。
+- 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。菜单含「编辑」入口，打开对应编辑器。
+- 频道编辑器（`编辑频道`）：名称/说明输入框 + 成员增删字段集。保存钮无改动即禁用（dirty 门），提交走 `updateChannel` Remote（幂等 request 同载荷复用），成功后由投影刷新回填行文案——不做乐观行内改名；成员增删仍走既有 join/remove Remote（request 按 方向+成员+频道 键复用）。
+- Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择 + 成员字段集。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员立即生效（Host 静默 dispose + 重激活，同 sessionId），纯展示编辑不重启。
+- Agent 卡片跳转：Agent 行的头像与文案整体是选择按钮（`打开 {name} 的会话`），点击先退出 Team 模式（卸载全部 Team 影子）再 `sessions.open(memberSessionId)`，普通外壳随即渲染该成员会话页。
 - 窄屏 rail 保留两个图标按钮，点击请求展开侧栏并聚焦对应分区头部。
 
 ## 数据刷新语义

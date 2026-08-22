@@ -170,8 +170,23 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         currentFactsRef.current = merged
         return merged
       })
-      setNewFactsCount(current => current + additions.length)
       setProjection(current => current === undefined ? current : { ...current, task: result.value.task, thread: result.value.thread, claims: result.value.claims })
+      if (additions.length === 0) return
+      // A reader scrolled away from the tail must be offered the explicit
+      // new-updates action; a reader pinned to the bottom is watching these
+      // facts arrive, so they are already seen and the batch is acknowledged
+      // durably instead of being counted for an explicit read.
+      if (!timeline.isPinned()) {
+        setNewFactsCount(current => current + additions.length)
+        return
+      }
+      const priorSequence = sequenceRef.current
+      if (await readCurrent(true)) return
+      // The durable acknowledgment did not happen (it failed, a newer read
+      // superseded it, or the page unmounted); fall back to the explicit
+      // action unless that newer read now owns the tail.
+      if (!mountedRef.current || sequenceRef.current !== priorSequence + 1) return
+      setNewFactsCount(current => current + additions.length)
     } catch {
       // A passive refresh is an invalidation convenience; the next explicit action rereads Host state.
     }

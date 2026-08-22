@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -69,6 +70,9 @@ import type {
   AgentTeamThreadReadResult,
   AgentTeamThreadObservations,
   AgentTeamThreadObservationsRequest,
+  AgentTeamUpdateChannelRequest,
+  AgentTeamUpdateChannelResult,
+  AgentTeamUpdateMemberRequest,
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
@@ -266,6 +270,16 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /** Human rename of one Channel's display facts; identity refs are immutable. */
+  @Remote('updateChannel')
+  async updateChannel(request: AgentTeamUpdateChannelRequest): Promise<AgentTeamUpdateChannelResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().updateChannel({ ...request, actor: agentTeamHumanActor() })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   /** Create a durable Member and atomically grant its declared initial Channels. */
   @Remote('addMember')
   async addMember(request: AgentTeamAddMemberRequest): Promise<AgentTeamMemberResult> {
@@ -279,6 +293,7 @@ export default class AgentTeam extends TypertRemoteService {
         handle: request.handle,
         description: request.description,
         presetId: request.presetId,
+        ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
         privateMemoryPath: dshHomePath('agent-team', 'members', memberId),
         state: 'enabled',
       })
@@ -314,6 +329,29 @@ export default class AgentTeam extends TypertRemoteService {
       this.clearMemberNotificationState(result.value.member.memberId)
       await this.activateMember(result.value.member)
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
+    })
+  }
+
+  /**
+   * Human edit of one Member's mutable facts. A model change restarts an
+   * active Member: single-Session Members read their selection only at
+   * activation, so the quiescing dispose plus reactivation applies the new
+   * provider/model immediately instead of at the next Host restart.
+   */
+  @Remote('updateMember')
+  async updateMember(request: AgentTeamUpdateMemberRequest): Promise<AgentTeamMemberResult> {
+    return this.enqueueLifecycle(async () => {
+      const previous = this.requireLedger().getMember(request.memberId)
+      const result = await this.requireLedger().updateMember({ ...request, actor: agentTeamHumanActor() })
+      if (result.committed) this.emitCommitted(result.value.receipt)
+      const stored = result.value.member
+      const active = this.handles.get(request.memberId)
+      if (active !== undefined && !isDeepStrictEqual(previous?.model ?? undefined, stored.model ?? undefined)) {
+        await active.dispose()
+        this.handles.delete(request.memberId)
+        await this.activateMember(stored)
+      }
+      return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
     })
   }
 
@@ -564,7 +602,10 @@ export default class AgentTeam extends TypertRemoteService {
           },
         }
       }
-      const agentOptions = this.ctx.agentDefaultModel.currentSelection()
+      // A Member-pinned selection wins; otherwise the Host default applies at
+      // every activation, so an override survives restarts and a cleared one
+      // re-reads the live default.
+      const agentOptions = member.model ?? this.ctx.agentDefaultModel.currentSelection()
       created = persisted
         ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup })
         : await this.ctx.agents.create({
