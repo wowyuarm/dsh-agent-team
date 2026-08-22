@@ -12,6 +12,7 @@ import type {
   AgentTeamOperationId,
   AgentTeamRequestId,
   AgentTeamTaskRef,
+  AgentTeamThreadReadFact,
   AgentTeamThreadRef,
 } from './types.ts'
 
@@ -59,6 +60,7 @@ const channelSchema = z.object({
   createdAtSequence: z.number().int().positive(),
 }).strict()
 
+// Ledgers written before message occurredAt existed store bare messages; the union schema below stamps them on load.
 const messageSchema = z.object({
   messageRef: messageRefSchema,
   channelRef: channelRefSchema,
@@ -68,8 +70,36 @@ const messageSchema = z.object({
   body: z.string().min(1),
   topLevel: z.boolean(),
   sequence: z.number().int().positive(),
-  occurredAt: z.string().datetime(),
+  occurredAt: z.string().datetime().optional(),
 }).strict()
+
+type StoredMessage = z.output<typeof messageSchema>
+
+/** Stamp one bare stored message with the wrapping operation's occurrence instant; complete messages pass through unchanged. */
+function stampMessage(occurredAt: string, message: StoredMessage): Omit<StoredMessage, 'occurredAt'> & { occurredAt: string } {
+  const { occurredAt: stored } = message
+  return stored === undefined ? { ...message, occurredAt } : { ...message, occurredAt: stored }
+}
+
+/** Stamp every bare stored message inside one operation with the operation's occurrence instant. */
+function stampOperationMessages(operation: z.output<typeof storedAgentTeamOperationSchema>): AgentTeamOperation {
+  if (operation.kind === 'team/message-sent') {
+    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } }
+  }
+  if (operation.kind === 'team/thread-replied') {
+    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } }
+  }
+  if (operation.kind === 'team/thread-read') {
+    const facts = operation.data.facts.map((fact): AgentTeamThreadReadFact => {
+      if (fact.fact.kind === 'message') {
+        return { ...fact, fact: { kind: 'message', sequence: fact.fact.sequence, message: stampMessage(operation.occurredAt, fact.fact.message) } }
+      }
+      return { ...fact, fact: fact.fact }
+    })
+    return { ...operation, data: { ...operation.data, anchor: stampMessage(operation.occurredAt, operation.data.anchor), facts } }
+  }
+  return operation
+}
 
 const taskSchema = z.object({
   taskRef: taskRefSchema,
@@ -179,8 +209,8 @@ const claimOperation = (kind: 'team/claim-created' | 'team/claim-done' | 'team/c
   }).strict(),
 }).strict()
 
-/** Durable validator for the closed Agent Team operation union. */
-export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discriminatedUnion('kind', [
+/** Closed Agent Team operation union before occurrence stamping. */
+const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
   z.object({
     ...operationBase,
     previousOperationId: z.null(),
@@ -326,7 +356,10 @@ export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = z.discrim
   }).strict(),
 ])
 
-/** Versioned durable Agent Team ledger declaration. v7 has no compatibility path for older record shapes. */
+/** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */
+export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = storedAgentTeamOperationSchema.transform(stampOperationMessages)
+
+/** Versioned durable Agent Team ledger declaration. v7 has no compatibility path beyond occurrence stamping for older record shapes. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
   version: 7,

@@ -1430,10 +1430,7 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
-      // Ledgers written before occurredAt existed store bare messages; the wrapping operation carries the same instant.
-      const stored = operation.data.message
-      const message = typeof stored.occurredAt === 'string' ? stored
-        : Object.freeze({ ...stored, occurredAt: operation.occurredAt })
+      const { message } = operation.data
       target.messages.push(message)
       this.appendMessageFact(target, message)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
