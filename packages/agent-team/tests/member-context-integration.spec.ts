@@ -65,6 +65,7 @@ describe('Team Member private memory composition', () => {
 
     const first = await preStep(ctx, agent)
     expect(first.kind === 'enter' && first.messages.at(-1)?.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining('own index') }))
+    expect(first.kind === 'enter' && first.messages.at(-1)?.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining(`Private memory directory: ${root}`) }))
 
     await writeFile(own, 'replacement index')
     const second = await preStep(ctx, agent)
@@ -73,6 +74,7 @@ describe('Team Member private memory composition', () => {
     await rm(own)
     const removed = await preStep(ctx, agent)
     expect(removed.kind === 'enter' && removed.messages.at(-1)?.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining('index is empty') }))
+    expect(removed.kind === 'enter' && removed.messages.at(-1)?.content[0]).toEqual(expect.objectContaining({ text: expect.stringContaining(`Memory index: ${root}/memory.md`) }))
     await ctx.fiber.dispose()
   })
 

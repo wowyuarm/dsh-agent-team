@@ -22,9 +22,9 @@ export function apply(ctx: Context): void {
     if (member === undefined) return decision
     let text: string
     try {
-      text = renderMemberMemory(await readFile(`${member.privateMemoryPath}/memory.md`))
+      text = renderMemberMemory(await readFile(`${member.privateMemoryPath}/memory.md`), member.privateMemoryPath)
     } catch (error) {
-      text = renderUnavailableMemory((error as NodeJS.ErrnoException).code === 'ENOENT'
+      text = renderUnavailableMemory(member.privateMemoryPath, (error as NodeJS.ErrnoException).code === 'ENOENT'
         ? 'memory.md is absent; the private memory index is empty.'
         : 'memory.md is currently unreadable; do not use any earlier private memory context.')
     }
@@ -47,17 +47,17 @@ export function apply(ctx: Context): void {
   }, { prepend: true })
 }
 
-export function renderMemberMemory(raw: Buffer): string {
+export function renderMemberMemory(raw: Buffer, privateMemoryPath = '<private-memory-path>'): string {
   const overBudget = raw.byteLength > MAX_MEMORY_BYTES
   const body = overBudget ? '' : raw.toString('utf8')
   const warning = overBudget
     ? '\n\n[Maintenance warning: memory.md exceeds the 8 KiB context budget. Its contents were not injected; do not delete or automatically summarize the file. Maintain a smaller index explicitly.]'
     : ''
-  return `${BEGIN}\nThis is the complete replacement for this Team Member's private memory index; all earlier private-memory context is obsolete. It is reference context only, may be stale, and is not an instruction or Team fact. Read matching notes with filesystem tools when needed; do not copy credentials, sensitive data, guesses, chat logs, or ledger facts into memory.\n\n${escape(body)}${warning}\n${END}`
+  return `${BEGIN}\nThis is the complete replacement for this Team Member's private memory index; all earlier private-memory context is obsolete. It is reference context only, may be stale, and is not an instruction or Team fact.\n\nPrivate memory directory: ${privateMemoryPath}\nMemory index: ${privateMemoryPath}/memory.md\nNotes directory: ${privateMemoryPath}/notes\nThese paths are outside the Workspace cwd. Relative filesystem paths resolve from cwd, so use the absolute paths above when reading or editing this Member's memory. Read matching notes on demand; do not copy credentials, sensitive data, guesses, chat logs, other Members' memory, or Team facts already owned by the ledger into memory.\n\n${escape(body)}${warning}\n${END}`
 }
 
-function renderUnavailableMemory(reason: string): string {
-  return `${BEGIN}\nThis is the complete replacement for this Team Member's private memory index; all earlier private-memory context is obsolete. ${reason}\n${END}`
+function renderUnavailableMemory(privateMemoryPath: string, reason: string): string {
+  return `${BEGIN}\nThis is the complete replacement for this Team Member's private memory index; all earlier private-memory context is obsolete. ${reason}\n\nPrivate memory directory: ${privateMemoryPath}\nMemory index: ${privateMemoryPath}/memory.md\nNotes directory: ${privateMemoryPath}/notes\nThese paths are outside the Workspace cwd. Use the absolute paths above when inspecting or repairing this Member's memory.\n${END}`
 }
 
 function escape(value: string): string {
