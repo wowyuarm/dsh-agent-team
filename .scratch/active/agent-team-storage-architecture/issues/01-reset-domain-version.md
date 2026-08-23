@@ -40,7 +40,8 @@ runtime compatibility path for local v8/v9 media.
 
 ## Operator Tool
 
-`scripts/migrate-team-ledger.ts` (added 2026-08-23, `npm run migrate`) is the
-operator's own one-shot converter: v9 JSON medium in, v1 SQLite medium out,
-replay-verified through the real facility and ledger. It is dev-repo tooling,
-not shipped runtime, and the old JSON medium is never touched by it.
+A one-shot converter (`scripts/migrate-team-ledger.ts`) existed briefly on
+2026-08-23, migrated the operator's own 487-operation v9 medium, was verified
+by a full replay through the real facility and ledger, and was then removed
+as dead weight once its single job was done. The conversion procedure and its
+safety properties live in the git history of that commit, not in the tree.

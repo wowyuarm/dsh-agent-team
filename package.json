@@ -15,7 +15,6 @@
   ],
   "scripts": {
     "generate:typert": "cd ../deepseek-harness && node --import tsx ../dsh-agent-team/scripts/generate-typert.mjs",
-    "migrate": "cd ../deepseek-harness && node --import tsx ../dsh-agent-team/scripts/migrate-team-ledger.ts",
     "prepack": "npm run build",
     "test": "npm run generate:typert && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
