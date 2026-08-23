@@ -113,6 +113,7 @@ type PersistenceBackend = 'jsonl' | 'sqlite'
 async function realHarness(
   adapter: LlmAdapter = new EmptyAdapter(),
   persistenceBackend: PersistenceBackend = 'jsonl',
+  beforeBoot?: (paths: { readonly dshHome: string }) => Promise<void> | void,
 ): Promise<{
   readonly ctx: Context
   readonly workspaceId: WorkspaceId
@@ -126,9 +127,11 @@ async function realHarness(
   const sqlite = join(root, 'sessions.sqlite')
   const presetRoot = join(root, 'presets')
   const presetDir = join(presetRoot, 'team-member')
+  const dshHome = join(root, 'dsh-home')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
-  process.env.DSH_HOME = join(root, 'dsh-home')
+  process.env.DSH_HOME = dshHome
   await writeFile(join(presetDir, 'agent.cordis.yml'), "- id: member-context\n  name: 'test-member-context'\n- id: team-tools\n  name: 'test-team-tools'\n")
+  await beforeBoot?.({ dshHome })
 
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(root).href + '/'
@@ -632,6 +635,21 @@ describe('Agent Team Member lifecycle', () => {
     const lastRequest = JSON.stringify(adapter.requests.at(-1)!.messages)
     expect(lastRequest).toContain('Team Inbox has unread work')
     expect(lastRequest).not.toContain('Unread across Host remount')
+  })
+
+  it('stands down orphan cleanup while the replayed ledger knows no Members', async () => {
+    let planted: string | undefined
+    const { ctx } = await realHarness(new EmptyAdapter(), 'jsonl', async ({ dshHome }) => {
+      planted = join(dshHome, 'agent-team', 'members', 'member:orphan-probe')
+      await mkdir(planted, { recursive: true })
+      await writeFile(join(planted, 'memory.md'), '# planted before first boot\n', 'utf8')
+    })
+    // First boot replays an empty ledger: pruning cannot distinguish true
+    // orphans from Members about to be restored (a discarded medium or an
+    // unisolated test boot), so it must stand down instead of deleting.
+    expect(planted).toBeDefined()
+    expect(await readFile(join(planted!, 'memory.md'), 'utf8')).toContain('# planted before first boot')
+    expect(ctx.agentTeam).toBeDefined()
   })
 
   it('prunes orphan private-memory directories from earlier ledgers at Host startup', async () => {

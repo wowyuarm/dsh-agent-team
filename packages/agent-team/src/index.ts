@@ -683,6 +683,11 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private async cleanupOrphanMembers(ledger: AgentTeamLedger): Promise<void> {
     const known = new Set(ledger.listMembers().map(member => member.memberId))
+    // An empty replayed ledger cannot tell true orphans from Members whose
+    // registration is still on its way back — a discarded medium mid-migration
+    // or an unisolated test boot look identical here. Housekeeping stands down
+    // rather than risk deleting live private memory.
+    if (known.size === 0) return
     const root = dshHomePath('agent-team', 'members')
     const entries = await readdir(root, { withFileTypes: true }).catch(error => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []

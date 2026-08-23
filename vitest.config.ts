@@ -35,5 +35,8 @@ export default defineConfig({
   },
   test: {
     include: ['packages/*/tests/**/*.spec.ts', 'packages/*/tests/**/*.client.spec.tsx'],
+    // Every test file gets a throwaway DSH home so Agent Team boots can never
+    // prune the developer's real Member memory directories.
+    setupFiles: ['./scripts/isolate-dsh-home.setup.ts'],
   },
 })
