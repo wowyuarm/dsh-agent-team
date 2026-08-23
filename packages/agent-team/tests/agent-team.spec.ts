@@ -110,7 +110,7 @@ async function addLedgerMember(
 }
 
 describe('AgentTeam durable Thread Attention ledger', () => {
-  it('boots a v9 empty Team and rejects old ledger media', async () => {
+  it('boots a v1 empty Team and rejects old ledger media', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     expect(first.ctx.agentTeam.status()).toEqual({ initialized: true, sequence: 1, operationCount: 1, channelCount: 0, agentMemberCount: 0, humanMemberId: AGENT_TEAM_HUMAN_MEMBER_ID })
@@ -120,7 +120,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(first.ctx.agentTeam.status()).toMatchObject({ sequence: 1 })
     expect([...pool.media.get('agent_team')!.tables.get('operations')!.values()]).toEqual(records)
     await replay.dispose()
-    await expect(harness(storedPool([], 8))).rejects.toThrow(/stamped v8, descriptor wants v9/)
+    await expect(harness(storedPool([], 9))).rejects.toThrow(/stamped v9, descriptor wants v1/)
   })
 
   it('creates a top-level Task, starts creator Attention, and returns no own unread work', async () => {

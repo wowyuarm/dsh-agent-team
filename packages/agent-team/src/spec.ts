@@ -381,10 +381,10 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
 /** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */
 export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = storedAgentTeamOperationSchema.transform(stampOperationMessages)
 
-/** Versioned durable Agent Team declaration. v9 records per-Message structured mentions on Thread facts. */
+/** Versioned durable Agent Team declaration; v1 is the first public ledger format and older local media reject at open. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 9,
+  version: 1,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },
