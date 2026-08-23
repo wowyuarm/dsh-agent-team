@@ -240,7 +240,13 @@ export type AgentTeamActivity = AgentTeamClaimActivity | AgentTeamTaskActivity |
 
 /** One public, revisioned fact in a Thread timeline. */
 export type AgentTeamThreadFact =
-  | { readonly kind: 'message'; readonly sequence: number; readonly message: AgentTeamMessage }
+  | {
+    readonly kind: 'message'
+    readonly sequence: number
+    readonly message: AgentTeamMessage
+    /** Structured Member refs from the originating send operation; empty when the Message mentions nobody. */
+    readonly mentions: readonly AgentTeamMemberId[]
+  }
   | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity }
 
 /** One fact returned by a durable Thread read. */
@@ -257,7 +263,8 @@ export type AgentTeamStoredMessage = Omit<AgentTeamMessage, 'occurredAt'> & { re
 
 /** Stored form of one Thread timeline fact; mirrors AgentTeamThreadFact with stored messages. */
 export type AgentTeamStoredThreadFact =
-  | { readonly kind: 'message'; readonly sequence: number; readonly message: AgentTeamStoredMessage }
+  | { readonly kind: 'message'; readonly sequence: number; readonly message: AgentTeamStoredMessage;
+    readonly mentions: readonly AgentTeamMemberId[] }
   | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity }
 
 /** Stored form of one durable Thread read fact. */
@@ -444,6 +451,8 @@ export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
     readonly thread: AgentTeamThread
     readonly claims: readonly AgentTeamClaim[]
     readonly anchor: AgentTeamStoredMessage
+    /** Structured Member refs of the anchor Message, from its originating send operation. */
+    readonly anchorMentions: readonly AgentTeamMemberId[]
     readonly facts: readonly AgentTeamStoredThreadReadFact[]
     readonly readThroughSequence: number
     /** Number of unread facts left after this bounded read. */
@@ -814,6 +823,8 @@ export interface AgentTeamThreadReadResult {
   readonly thread: AgentTeamThread
   readonly claims: readonly AgentTeamClaim[]
   readonly anchor: AgentTeamMessage
+  /** Structured Member refs of the anchor Message, from its originating send operation. */
+  readonly anchorMentions: readonly AgentTeamMemberId[]
   readonly facts: readonly AgentTeamThreadReadFact[]
   readonly readThroughSequence: number
   /** Number of unread facts left after this bounded read. */
@@ -834,6 +845,8 @@ export interface AgentTeamThreadHistory {
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly anchor: AgentTeamMessage
+  /** Structured Member refs of the anchor Message, from its originating send operation. */
+  readonly anchorMentions: readonly AgentTeamMemberId[]
   readonly claims: readonly AgentTeamClaim[]
   readonly facts: readonly AgentTeamThreadFact[]
   readonly cursor: number
@@ -862,6 +875,8 @@ export interface AgentTeamThreadObservations {
 /** One bounded Workspace view item. */
 export interface AgentTeamViewItem {
   readonly message: AgentTeamMessage
+  /** Structured Member refs of this Message, from its originating send operation. */
+  readonly mentions: readonly AgentTeamMemberId[]
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly taskNumber: number

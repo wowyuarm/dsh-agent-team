@@ -212,6 +212,7 @@ interface PreparedRead {
   readonly thread: AgentTeamThread
   readonly claims: readonly AgentTeamClaim[]
   readonly anchor: AgentTeamMessage
+  readonly anchorMentions: readonly AgentTeamMemberId[]
   readonly facts: readonly AgentTeamThreadReadFact[]
   readonly readThroughSequence: number
   readonly remainingUnreadCount: number
@@ -238,6 +239,8 @@ interface Projection {
   readonly orderedFacts: AgentTeamThreadFact[]
   readonly factsByThread: Map<AgentTeamThreadRef, AgentTeamThreadFact[]>
   readonly topLevelMessages: AgentTeamMessage[]
+  /** Structured mention refs per Message, derived from the originating send operations. */
+  readonly mentionsByMessage: Map<AgentTeamMessageRef, readonly AgentTeamMemberId[]>
   readonly messageCountByThread: Map<AgentTeamThreadRef, number>
   readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
 }
@@ -245,7 +248,8 @@ interface Projection {
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
     claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
-    orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], messageCountByThread: new Map(), attentionByThread: new Map() }
+    orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], mentionsByMessage: new Map(), messageCountByThread: new Map(),
+    attentionByThread: new Map() }
 }
 
 /** Replay and append logic behind the Agent Team service interface. */
@@ -505,10 +509,9 @@ export class AgentTeamLedger {
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       this.assertMentionTargets(channel, recipients)
-      const unfollowedAgents = recipients.filter(memberId => this.state.members.has(memberId))
-      if (unfollowedAgents.length > 0 && actor.kind === 'member') {
-        return this.resolved(this.memberNotFollowing(request.workspaceId, channel.channelRef, unfollowedAgents))
-      }
+      // Top-level Task creation is open to every actor: mentioned Members join
+      // the new Thread as followers. Only existing-Thread invitations stay
+      // Human-gated (reply path).
       const sequence = this.nextSequence()
       const base = this.operationBase(request, sequence)
       const taskRef = this.ref('task')
@@ -520,7 +523,8 @@ export class AgentTeamLedger {
         sender: request.actor.memberId, body, topLevel: true, sequence, occurredAt: base.occurredAt,
       })
       const started = [this.startAttention(request.actor.memberId, threadRef, sequence),
-        ...unfollowedAgents.map(memberId => this.startAttention(memberId, threadRef, sequence))]
+        ...recipients.filter(memberId => this.state.members.has(memberId))
+          .map(memberId => this.startAttention(memberId, threadRef, sequence))]
       const inbox = this.messageInboxDelta(message, request.actor.memberId, recipients, started)
       const operation: AgentTeamMessageSentOperation = Object.freeze({
         ...base, kind: 'team/message-sent',
@@ -831,7 +835,8 @@ export class AgentTeamLedger {
       const operation: AgentTeamThreadReadOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/thread-read',
         data: Object.freeze({ workspaceId: request.workspaceId, memberId: actor.memberId, task: prepared.task,
-          thread: prepared.thread, claims: prepared.claims, anchor: prepared.anchor, facts: prepared.facts,
+          thread: prepared.thread, claims: prepared.claims, anchor: prepared.anchor, anchorMentions: prepared.anchorMentions,
+          facts: prepared.facts,
           readThroughSequence: prepared.readThroughSequence, remainingUnreadCount: prepared.remainingUnreadCount,
           ...(prepared.attention === undefined ? {} : { attention: prepared.attention }), inbox: prepared.inbox }),
       })
@@ -901,7 +906,8 @@ export class AgentTeamLedger {
     const all = this.threadFacts(thread.threadRef).filter(fact => fact.sequence < before)
     const facts = all.slice(-limit)
     const anchor = this.threadAnchor(task)
-    return Object.freeze({ task, thread, anchor, claims: this.claimsForTask(task.taskRef), facts: Object.freeze(facts),
+    return Object.freeze({ task, thread, anchor, anchorMentions: this.state.mentionsByMessage.get(anchor.messageRef) ?? [],
+      claims: this.claimsForTask(task.taskRef), facts: Object.freeze(facts),
       cursor: facts.length === 0 ? before : facts[0]!.sequence, hasMore: all.length > facts.length })
   }
 
@@ -958,7 +964,7 @@ export class AgentTeamLedger {
       const message = fact.message
       const task = this.requireTask(request.workspaceId, message.taskRef)
       const thread = this.requireThread(message.threadRef)
-      return Object.freeze({ message, task, thread, taskNumber: taskNumbers.get(task.taskRef) ?? 0,
+      return Object.freeze({ message, mentions: fact.mentions, task, thread, taskNumber: taskNumbers.get(task.taskRef) ?? 0,
         messageCount: this.state.messageCountByThread.get(thread.threadRef) ?? 0 })
     })
     const initialization = this.initialization()
@@ -1238,7 +1244,8 @@ export class AgentTeamLedger {
       if (operation.data.memberId !== operation.actor.memberId) throw new Error('Thread read has wrong actor')
       const expected = this.prepareReadFrom(projection, operation.data.memberId, operation.data.workspaceId, operation.data.task.taskRef)
       const expectedData = Object.freeze({ workspaceId: operation.data.workspaceId, memberId: operation.data.memberId,
-        task: expected.task, thread: expected.thread, claims: expected.claims, anchor: expected.anchor, facts: expected.facts,
+        task: expected.task, thread: expected.thread, claims: expected.claims, anchor: expected.anchor,
+        anchorMentions: expected.anchorMentions, facts: expected.facts,
         readThroughSequence: expected.readThroughSequence, remainingUnreadCount: expected.remainingUnreadCount,
         ...(expected.attention === undefined ? {} : { attention: expected.attention }), inbox: expected.inbox })
       if (!isDeepStrictEqual(operation.data, expectedData)) throw new Error('invalid Thread read projection')
@@ -1462,9 +1469,10 @@ export class AgentTeamLedger {
   private validateMessageInbox(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation, projection: Projection): void {
     const { message, mentions } = operation.data
     const mentionedAgents = mentions.filter(memberId => projection.members.has(memberId))
-    if (operation.actor.kind === 'member' && (operation.kind === 'team/message-sent'
-      ? mentionedAgents.length > 0
-      : mentionedAgents.some(memberId => !this.isFollowingFrom(projection, message.threadRef, memberId)))) {
+    // Top-level mentions are open to every actor; only a Member reply may not
+    // pull an unfollowed Member into an existing Thread.
+    if (operation.actor.kind === 'member' && operation.kind === 'team/thread-replied'
+      && mentionedAgents.some(memberId => !this.isFollowingFrom(projection, message.threadRef, memberId))) {
       throw new Error('invalid Agent mention projection')
     }
     const started = operation.kind === 'team/message-sent'
@@ -1550,9 +1558,10 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
-      const { message } = operation.data
+      const { message, mentions } = operation.data
       target.messages.push(message)
-      this.appendMessageFact(target, message)
+      target.mentionsByMessage.set(message.messageRef, Object.freeze([...mentions]))
+      this.appendMessageFact(target, message, mentions)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -1583,8 +1592,9 @@ export class AgentTeamLedger {
   private appendMessageFact(
     target: Pick<Projection, 'orderedFacts' | 'factsByThread' | 'topLevelMessages' | 'messageCountByThread'>,
     message: AgentTeamMessage,
+    mentions: readonly AgentTeamMemberId[],
   ): void {
-    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'message', sequence: message.sequence, message })
+    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'message', sequence: message.sequence, message, mentions })
     target.orderedFacts.push(fact)
     const facts = target.factsByThread.get(message.threadRef) ?? []
     facts.push(fact)
@@ -1647,7 +1657,8 @@ export class AgentTeamLedger {
     const firstRead = attention !== undefined && attention.readThroughSequence < attention.startSequence
     const background = firstRead
       ? projection.messages.filter(message => message.threadRef === thread.threadRef && message.sequence < attention.startSequence)
-        .map(message => Object.freeze({ kind: 'message' as const, sequence: message.sequence, message }))
+        .map(message => Object.freeze({ kind: 'message' as const, sequence: message.sequence, message,
+          mentions: projection.mentionsByMessage.get(message.messageRef) ?? [] }))
         .filter(fact => !unreadFactKeys.has(this.threadFactKey(fact))).slice(-12)
       : []
     const combined = [...background.map(fact => this.readFactFrom(projection, memberId, fact, false)), ...unreadFacts]
@@ -1679,7 +1690,9 @@ export class AgentTeamLedger {
     }
     this.applyInboxDelta(nextProjection, inbox)
     const remainingUnreadCount = this.unreadForFrom(nextProjection, memberId, thread.threadRef).length
-    return Object.freeze({ task, thread, claims: this.claimsForTaskFrom(projection, task.taskRef), anchor, facts: Object.freeze(combined),
+    return Object.freeze({ task, thread, claims: this.claimsForTaskFrom(projection, task.taskRef), anchor,
+      anchorMentions: projection.mentionsByMessage.get(anchor.messageRef) ?? [],
+      facts: Object.freeze(combined),
       readThroughSequence, remainingUnreadCount, ...(attention === undefined ? {} : { attention: nextAttention[0] ?? attention }),
       consumedDirectMarkers: Object.freeze(consumed), inbox })
   }
@@ -2342,7 +2355,7 @@ export class AgentTeamLedger {
     // Loaded records are normalized by sortedRecords(); fresh writes always carry instants.
     const { anchor, facts } = operation.data as unknown as { anchor: AgentTeamMessage; facts: readonly AgentTeamThreadReadFact[] }
     return Object.freeze({ receipt: this.receipt(operation), task: operation.data.task, thread: operation.data.thread,
-      claims: operation.data.claims, anchor, facts,
+      claims: operation.data.claims, anchor, anchorMentions: operation.data.anchorMentions, facts,
       readThroughSequence: operation.data.readThroughSequence, remainingUnreadCount: operation.data.remainingUnreadCount,
       ...(operation.data.attention === undefined ? {} : { attention: operation.data.attention }),
       consumedDirectMarkers: operation.data.inbox.directMarkers.removed })
@@ -2401,7 +2414,8 @@ export class AgentTeamLedger {
     )
     const facts = operation.data.facts.map((fact): AgentTeamThreadReadFact => (
       fact.fact.kind === 'message'
-        ? { ...fact, fact: { kind: 'message', sequence: fact.fact.sequence, message: stamp(fact.fact.message) } }
+        ? { ...fact, fact: { kind: 'message', sequence: fact.fact.sequence, message: stamp(fact.fact.message),
+          mentions: fact.fact.mentions } }
         : { ...fact, fact: fact.fact }
     ))
     return { ...operation, data: { ...operation.data, anchor: stamp(operation.data.anchor), facts } }

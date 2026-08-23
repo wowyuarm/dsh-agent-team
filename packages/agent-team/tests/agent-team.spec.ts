@@ -13,6 +13,7 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from '../src/index.ts'
 import { AgentTeamLedger, agentTeamHumanActor } from '../src/ledger.ts'
+import { agentTeamDomainSpec } from '../src/spec.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
 import type { AgentTeamAgentMember, AgentTeamMemberActor, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
 
@@ -72,7 +73,7 @@ async function sqliteHarness(path: string): Promise<TeamHarness> {
   return { ctx, fiber, facility }
 }
 
-function storedPool(records: Array<[string, unknown]>, version = 8): MemoryMediaPool {
+function storedPool(records: Array<[string, unknown]>, version: number = agentTeamDomainSpec.version): MemoryMediaPool {
   const pool = new MemoryMediaPool()
   pool.versions.set('agent_team', version)
   pool.media.set('agent_team', { tables: new Map([['operations', new Map(records)]]), global: null })
@@ -109,7 +110,7 @@ async function addLedgerMember(
 }
 
 describe('AgentTeam durable Thread Attention ledger', () => {
-  it('boots a v8 empty Team and rejects old ledger media', async () => {
+  it('boots a v9 empty Team and rejects old ledger media', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     expect(first.ctx.agentTeam.status()).toEqual({ initialized: true, sequence: 1, operationCount: 1, channelCount: 0, agentMemberCount: 0, humanMemberId: AGENT_TEAM_HUMAN_MEMBER_ID })
@@ -119,7 +120,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(first.ctx.agentTeam.status()).toMatchObject({ sequence: 1 })
     expect([...pool.media.get('agent_team')!.tables.get('operations')!.values()]).toEqual(records)
     await replay.dispose()
-    await expect(harness(storedPool([], 7))).rejects.toThrow(/stamped v7, descriptor wants v8/)
+    await expect(harness(storedPool([], 8))).rejects.toThrow(/stamped v8, descriptor wants v9/)
   })
 
   it('creates a top-level Task, starts creator Attention, and returns no own unread work', async () => {

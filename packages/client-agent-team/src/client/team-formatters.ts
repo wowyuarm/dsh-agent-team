@@ -45,29 +45,50 @@ export function memberHue(memberId: string): number {
 export interface MentionSegment {
   readonly text: string
   readonly mention: boolean
+  /** Canonical handle of the mentioned Member; present only on mention segments. */
+  readonly name?: string
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /**
- * Split literal text into plain and @handle segments; only handles known to
- * the current Channel become chips, and a word character before '@' (email
- * addresses) never counts. Whitespace lives in the plain segments, so the
- * consumer container's pre-wrap keeps the original layout.
+ * Locate one Message's structured mention names inside its literal body. A
+ * name matches case-insensitively with an optional leading '@' on Unicode word
+ * boundaries, and longer names win at the same position. Mention segments
+ * render the canonical `@Handle`; names absent from the body come back
+ * unmatched so the consumer can append them as a fallback chip row.
  */
-export function splitMentions(text: string, handles: ReadonlySet<string>): MentionSegment[] {
-  if (handles.size === 0) return [{ text, mention: false }]
+export function splitMentionNames(text: string, names: readonly string[]): { segments: MentionSegment[]; unmatched: readonly string[] } {
+  if (names.length === 0) return { segments: [{ text, mention: false }], unmatched: [] }
+  const ordered = [...names].sort((left, right) => right.length - left.length)
+  // The lookbehind keeps the optional '@' from consuming the separator of an
+  // email-like occurrence: the character before the name (or before its '@')
+  // must not be a letter, digit, underscore, or another '@'.
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}_@])@?(?:${ordered.map(name => `(${escapeRegExp(name)})`).join('|')})(?=$|[^\\p{L}\\p{N}_])`,
+    'giu',
+  )
   const segments: MentionSegment[] = []
-  const pattern = /(^|[^A-Za-z0-9_])@([A-Za-z0-9_-]+)/g
+  const matched = new Set<string>()
   let cursor = 0
-  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
-    const handle = match[2]!.toLowerCase()
-    if (!handles.has(handle)) continue
-    const start = match.index + (match[1]?.length ?? 0)
-    if (start > cursor) segments.push({ text: text.slice(cursor, start), mention: false })
-    segments.push({ text: text.slice(start, match.index + match[0].length), mention: true })
+  for (const match of text.matchAll(pattern)) {
+    const groupIndex = match.findIndex((group, index) => index >= 1 && group !== undefined)
+    if (groupIndex < 1) continue
+    if (match.index > cursor) segments.push({ text: text.slice(cursor, match.index), mention: false })
+    const name = ordered[groupIndex - 1]!
+    segments.push({ text: `@${name}`, mention: true, name })
+    matched.add(name.toLowerCase())
     cursor = match.index + match[0].length
   }
   if (cursor < text.length) segments.push({ text: text.slice(cursor), mention: false })
-  return segments
+  return { segments, unmatched: names.filter(name => !matched.has(name.toLowerCase())) }
+}
+
+/** Canonical chip handles for one Message's structured mention refs. */
+export function mentionNamesOf(mentions: readonly AgentTeamMemberId[], handles: ReadonlyMap<AgentTeamMemberId, string>): string[] {
+  return mentions.map(memberId => handles.get(memberId)).filter((name): name is string => name !== undefined)
 }
 
 const pad = (value: number): string => String(value).padStart(2, '0')

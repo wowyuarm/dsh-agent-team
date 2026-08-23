@@ -192,7 +192,8 @@ const claimsReleasedActivitySchema = z.object({
 const activitySchema = z.discriminatedUnion('kind', [claimActivitySchema, taskActivitySchema, claimsReleasedActivitySchema])
 
 const threadFactSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('message'), sequence: z.number().int().positive(), message: messageSchema }).strict(),
+  z.object({ kind: z.literal('message'), sequence: z.number().int().positive(), message: messageSchema,
+    mentions: z.array(memberIdSchema) }).strict(),
   z.object({ kind: z.literal('activity'), sequence: z.number().int().positive(), activity: activitySchema }).strict(),
 ])
 
@@ -354,6 +355,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       thread: threadSchema,
       claims: z.array(claimSchema),
       anchor: messageSchema,
+      anchorMentions: z.array(memberIdSchema),
       facts: z.array(readFactSchema),
       readThroughSequence: z.number().int().nonnegative(),
       remainingUnreadCount: z.number().int().nonnegative(),
@@ -379,10 +381,10 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
 /** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */
 export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = storedAgentTeamOperationSchema.transform(stampOperationMessages)
 
-/** Versioned durable Agent Team ledger declaration. v8 records the intent-routed Task Inbox projection. */
+/** Versioned durable Agent Team declaration. v9 records per-Message structured mentions on Thread facts. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 8,
+  version: 9,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },

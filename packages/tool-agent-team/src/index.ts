@@ -83,7 +83,7 @@ const teamThread = defineTool({
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
       } } },
       facts: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, activity: { type: 'string' }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
+        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, activity: { type: 'string' }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
       } } },
     } },
     render: (_args, value) => [{ type: 'text', text: value.facts.length === 0
@@ -114,13 +114,13 @@ const teamThread = defineTool({
       const history = host.threadHistoryForAgent(agent, { ...base, ...(args.beforeSequence === undefined ? {} : { beforeSequence: args.beforeSequence }), ...(args.limit === undefined ? {} : { limit: args.limit }) })
       const status = host.attentionStatusForAgent(agent, base)
       return threadResult('history', history, status.attention, history.facts.map(fact => fact.kind === 'message'
-          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender }
+          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions] }
           : { sequence: fact.sequence, kind: 'activity', activity: fact.activity.kind }), { cursor: history.cursor, hasMore: history.hasMore })
     }
     if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('read does not accept history arguments')
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
-        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, unread: entry.unread, direct: entry.direct }
+        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], unread: entry.unread, direct: entry.direct }
         : { sequence: entry.fact.sequence, kind: 'activity', activity: entry.fact.activity.kind, unread: entry.unread, direct: entry.direct }), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount })
   },
 })
@@ -129,7 +129,7 @@ function threadResult(
   kind: 'status' | 'follow' | 'unfollow' | 'read' | 'history',
   snapshot: Awaited<ReturnType<AgentTeam['readThreadForAgent']>> | ReturnType<AgentTeam['threadHistoryForAgent']>,
   attention: Awaited<ReturnType<AgentTeam['readThreadForAgent']>>['attention'],
-  facts: Array<{ sequence: number; kind: string; body?: string; sender?: string; activity?: string; unread?: boolean; direct?: boolean }>,
+  facts: Array<{ sequence: number; kind: string; body?: string; sender?: string; mentions?: string[]; activity?: string; unread?: boolean; direct?: boolean }>,
   extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number } = {},
 ) {
   return {
@@ -145,12 +145,13 @@ function threadResult(
 
 const teamMessage = markAgentTeamPreset(defineTool({
   name: 'team_message',
-  description: 'Create a top-level Task or reply to one existing Task Thread. Read the Thread first; replies require its current revision. Structured mentions use Member refs, not @name text.',
+  description: 'Create a top-level Task or reply to one existing Task Thread. Read the Thread first; replies require its current revision. A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips.',
   parameters: {
     action: { type: 'string', required: true, enum: ['start', 'reply'] },
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
     taskRef: { type: 'string', description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
-    body: { type: 'string', required: true }, baseRevision: { type: 'number' }, mentions: { type: 'array', items: { type: 'string' } },
+    body: { type: 'string', required: true }, baseRevision: { type: 'number' },
+    mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {

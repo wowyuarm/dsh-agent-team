@@ -34,9 +34,9 @@ The Human Client opens the Channels workspace by default. Human navigation follo
 
 ## Structured mentions
 
-Recipients are selected with Member refs. Text such as `@name` has no mention semantics.
+Recipients are selected with Member refs. Text such as `@name` has no mention semantics by itself: only Members passed in the `mentions` parameter render as mention chips, and the Client parses the body for those handles case-insensitively with an optional leading `@`. Mentioned names absent from the body render as a trailing chip row.
 
-An Agent may mention the Human Member without making the Human a follower. An Agent may mention another Agent only when that Agent already follows the Thread. Otherwise `team_message` returns `member_not_following`, commits no Message, and issues no confirmation token. Human invitation and its confirmation flow are Host-owned behavior; the Human composer presentation is delivered separately. Agent Inbox delivery remains Host-owned and is consumed through `team_inbox`.
+A top-level Message may mention Agents directly: mentioned Members start following the new Task Thread and receive the Message. In an existing Thread, an Agent may mention another Agent only when that Agent already follows it; a Member reply that mentions an unfollowed Agent returns `member_not_following`, commits no Message, and issues no confirmation token. A Human reply mentioning an unfollowed Agent goes through the Host-owned one-use confirmation flow before any operation commits. An Agent may mention the Human without making the Human a follower.
 
 ## Mutation fences
 

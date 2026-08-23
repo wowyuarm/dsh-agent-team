@@ -17,7 +17,7 @@ import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
-import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle } from './team-formatters.ts'
+import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf } from './team-formatters.ts'
 import { daySeparatorLabel, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import css from './conversation.module.css'
@@ -50,8 +50,8 @@ function factKey(fact: AgentTeamThreadFact): ThreadFactKey {
   return fact.kind === 'message' ? `message:${fact.message.messageRef}` : `activity:${fact.activity.activityRef}`
 }
 
-function messageFact(message: ReadProjection['anchor']): AgentTeamThreadFact {
-  return { kind: 'message', sequence: message.sequence, message }
+function messageFact(message: ReadProjection['anchor'], mentions: readonly AgentTeamMemberId[] = []): AgentTeamThreadFact {
+  return { kind: 'message', sequence: message.sequence, message, mentions }
 }
 
 function mergeFacts(...groups: readonly (readonly AgentTeamThreadFact[])[]): readonly AgentTeamThreadFact[] {
@@ -105,7 +105,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setProjection(next)
     setReadFacts(next.facts)
     setRemainingUnreadCount(next.remainingUnreadCount)
-    const anchor = messageFact(next.anchor)
+    const anchor = messageFact(next.anchor, next.anchorMentions)
     const batch = [anchor, ...next.facts.map(fact => fact.fact)]
     setCurrentFacts(current => {
       const merged = mergeFacts(current, batch)
@@ -286,10 +286,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const effectiveChannelRef = task?.channelRef ?? channelRef
   const channelMemberIds = useMemo(() => new Set(channelView?.members.filter(item => item.channelRef === effectiveChannelRef).map(item => item.memberId) ?? []), [channelView, effectiveChannelRef])
   const channelMembers = members.filter(status => channelMemberIds.size === 0 || channelMemberIds.has(status.member.memberId))
-  const mentionHandles = useMemo(() => new Set(members.map(status => status.member.handle.replace(/^@/, '').toLowerCase())), [members])
+  const mentionHandlesMap = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')])), [members])
   const metadata = useMemo(() => readMeta(readFacts), [readFacts])
   const unreadIndex = useMemo(() => {
-    const all = mergeFacts([messageFact(activeProjection?.anchor ?? ({ messageRef: 'missing', sequence: 0 } as never)), ...readFacts.map(fact => fact.fact), ...currentFacts])
+    const all = mergeFacts([messageFact(activeProjection?.anchor ?? ({ messageRef: 'missing', sequence: 0 } as never), activeProjection?.anchorMentions), ...readFacts.map(fact => fact.fact), ...currentFacts])
     return all.findIndex(fact => metadata.get(factKey(fact))?.unread === true)
   }, [activeProjection?.anchor, readFacts, currentFacts, metadata])
 
@@ -313,7 +313,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         human={fact.message.sender === channelView?.humanMemberId}
         body={fact.message.body}
         occurredAt={fact.message.occurredAt}
-        {...(fact.message.sender === channelView?.humanMemberId ? { mentionHandles } : {})}
+        mentionNames={mentionNamesOf(fact.mentions, mentionHandlesMap)}
         grouped={grouped}
         {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
       />
@@ -410,7 +410,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       if (result.value.kind === 'committed') {
         const committed = result.value as Extract<typeof result.value, { kind: 'committed' }>
         setCurrentFacts(current => {
-          const merged = mergeFacts(current, [{ kind: 'message', sequence: committed.message.sequence, message: committed.message }])
+          const merged = mergeFacts(current, [{ kind: 'message', sequence: committed.message.sequence, message: committed.message, mentions: [...recipients].sort() }])
           currentFactsRef.current = merged
           return merged
         })
@@ -447,7 +447,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     } finally { setPending(false) }
   }
 
-  const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor)], currentFacts)
+  const currentFactsWithAnchor = mergeFacts(activeProjection === undefined ? [] : [messageFact(activeProjection.anchor, activeProjection.anchorMentions)], currentFacts)
   const unreadBoundary = unreadIndex >= 0 ? unreadIndex : undefined
   const risks = taskClaims.filter(claim => claim.state === 'active').flatMap(claim => {
     const status = members.find(candidate => candidate.member.memberId === claim.owner)

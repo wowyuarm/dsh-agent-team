@@ -24,7 +24,7 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
 import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
-import type { AgentTeamChannelRef, AgentTeamRequestId } from '../src/types.ts'
+import type { AgentTeamChannelRef, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -266,10 +266,15 @@ describe('Agent Team Member lifecycle', () => {
     expect(await call('team_thread', { action: 'unfollow', taskRef: agentStarted.taskRef })).toMatchObject({ kind: 'unfollow', following: false })
     expect(await call('team_thread', { action: 'follow', taskRef: agentStarted.taskRef })).toMatchObject({ kind: 'follow', following: true })
 
-    const beforeRejectedStart = ctx.agentTeam.status().sequence
-    expect(await call('team_message', { action: 'start', channelRef: channel.channel.channelRef, body: 'Do not enroll', mentions: [reviewer.status.member.memberId] }))
-      .toMatchObject({ kind: 'member_not_following', memberIds: [reviewer.status.member.memberId] })
-    expect(ctx.agentTeam.status().sequence).toBe(beforeRejectedStart)
+    const enrolled = await call('team_message', { action: 'start', channelRef: channel.channel.channelRef,
+      body: 'Agent-led task for the reviewer', mentions: [reviewer.status.member.memberId] })
+    expect(enrolled).toMatchObject({ kind: 'committed', taskRef: expect.any(String) })
+    const enrolledTaskRef = (enrolled as { taskRef: AgentTeamTaskRef }).taskRef
+    const reviewerAgent = ctx.agents.get(reviewer.status.member.sessionId)!
+    const reviewerInbox = ctx.agentTeam.inboxForAgent(reviewerAgent, { workspaceId })
+    expect(reviewerInbox).toMatchObject({ totalDirectCount: 1,
+      items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: enrolledTaskRef }), directCount: 1 })] })
+    expect(ctx.agentTeam.attentionStatusForAgent(reviewerAgent, { workspaceId, taskRef: enrolledTaskRef }).attention).toBeDefined()
 
     const started = await ctx.agentTeam.sendMessage({ requestId: requestId('protocol-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate the pull protocol' })
     if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
@@ -335,22 +340,31 @@ describe('Agent Team Member lifecycle', () => {
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('loop-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const builder = await ctx.agentTeam.addMember({ requestId: requestId('loop-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
-    const reviewer = await ctx.agentTeam.addMember({ requestId: requestId('loop-reviewer'), workspaceId, handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     const agent = ctx.agents.get(builder.status.member.sessionId)!
-    adapter.enqueue(toolCallResponse('model-team-view', 'team_view', {}))
-    adapter.enqueue(toolCallResponse('model-team-rejected', 'team_message', { action: 'start', channelRef: channel.channel.channelRef,
-      body: 'Attempted invitation', mentions: [reviewer.status.member.memberId] }))
-    adapter.enqueue(textResponse('I will continue without enrolling the reviewer.'))
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('loop-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate the rejection flow' })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('loop-follow'), workspaceId,
+      taskRef: started.task.taskRef, action: 'follow' })
+    const firstRead = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('loop-read'), workspaceId,
+      taskRef: started.task.taskRef })
+    const update = await ctx.agentTeam.reply({ requestId: requestId('loop-update'), workspaceId,
+      taskRef: started.task.taskRef, body: 'Newer context arrived', baseRevision: firstRead.thread.revision })
+    if (update.kind !== 'committed') throw new Error(`expected committed update, received ${update.kind}`)
 
+    adapter.enqueue(toolCallResponse('model-team-view', 'team_view', {}))
+    adapter.enqueue(toolCallResponse('model-team-rejected', 'team_message', { action: 'reply',
+      taskRef: started.task.taskRef, body: 'Premature reply', baseRevision: update.thread.revision }))
+    adapter.enqueue(textResponse('I will read the Thread before replying.'))
+
+    // The committed Human update leaves durable unread work, so its pending
+    // hint wakes the idle Member; that wake carries the model steps under test.
     const idle = waitForIdle(ctx, agent)
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Start the task.' }], source: { kind: 'user' } }))
     await idle
 
     expect(adapter.requests).toHaveLength(3)
     const afterRejection = JSON.stringify(adapter.requests[2]!.messages)
-    expect(afterRejection).toContain(channel.channel.channelRef)
-    expect(afterRejection).toContain('member_not_following')
-    expect(afterRejection).toContain(reviewer.status.member.memberId)
+    expect(afterRejection).toContain(started.task.taskRef)
+    expect(afterRejection).toContain('unread_required')
     const results = agent.session.events.filter(event => event.type === 'tool/result')
     expect(results).toHaveLength(2)
     expect(results.map(result => result.data.message.content[0])).toEqual([
@@ -416,6 +430,39 @@ describe('Agent Team Member lifecycle', () => {
     expect(request).toContain('Please investigate the top-level wake path')
     expect(request).toContain('human')
     expect(request).toContain(committed.task.taskRef)
+  })
+
+  it('delivers an agent-created top-level mention to the mentioned Member', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('peer-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const starter = await ctx.agentTeam.addMember({ requestId: requestId('peer-starter'), workspaceId, handle: 'starter', description: 'Starts work', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const peer = await ctx.agentTeam.addMember({ requestId: requestId('peer-peer'), workspaceId, handle: 'peer', description: 'Peers in', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const starterAgent = ctx.agents.get(starter.status.member.sessionId)!
+    const peerAgent = ctx.agents.get(peer.status.member.sessionId)!
+    let callNumber = 0
+    const call = async (name: string, args: unknown) => {
+      const result = await ctx.tools.execute({ signal: new AbortController().signal,
+        callId: CallId(`peer-mention-${++callNumber}`), name, arguments: args, agent: starterAgent })
+      if (result.isError) throw new Error(result.error.message)
+      return result.value as Record<string, any>
+    }
+
+    const started = await call('team_message', { action: 'start', channelRef: channel.channel.channelRef,
+      body: 'Peer, please verify the export path', mentions: [peer.status.member.memberId] })
+    expect(started).toMatchObject({ kind: 'committed' })
+
+    expect(ctx.agentTeam.inboxForAgent(peerAgent, { workspaceId })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1,
+      items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: started.taskRef }), directCount: 1 })] })
+
+    adapter.enqueue(textResponse('I will verify the export path.'))
+    await peerAgent.whenIdle()
+    expect(adapter.requests).toHaveLength(1)
+    const request = JSON.stringify(adapter.requests[0]!.messages)
+    expect(request).toContain('Direct Team mention')
+    expect(request).toContain('Peer, please verify the export path')
+    expect(request).toContain('starter')
+    expect(request).toContain(started.taskRef)
   })
 
   it('bounds automatic direct context while retaining omitted Messages in durable Inbox', async () => {

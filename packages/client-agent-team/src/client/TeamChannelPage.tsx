@@ -6,7 +6,7 @@ import type { TeamConversationProps } from './slots.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
-import { formatTaskStatus, taskStatusDot } from './team-formatters.ts'
+import { formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { chunkRunsWithDays } from './team-separators.ts'
@@ -68,7 +68,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   // Presence counts ride the header meta line; error and unavailable do not count as online.
   const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
-  const mentionHandles = new Set(members.map(status => status.member.handle.replace(/^@/, '').toLowerCase()))
+  const mentionHandlesMap = new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')]))
 
   const refresh = async (clearError = false) => {
     if (!mountedRef.current) return false
@@ -263,7 +263,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
               human={human}
               body={item.message.body}
               occurredAt={item.message.occurredAt}
-              {...(human ? { mentionHandles } : {})}
+              mentionNames={mentionNamesOf(item.mentions, mentionHandlesMap)}
               grouped={index > 0}
               {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
             >

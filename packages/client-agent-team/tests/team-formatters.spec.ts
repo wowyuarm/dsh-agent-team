@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentTeamActivity, AgentTeamClaim } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, splitMentions, taskStatusDot } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, mentionNamesOf, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -55,19 +55,35 @@ describe('Team presentation formatters', () => {
     expect(formatMessageTime('not-a-date', now)).toBe('')
   })
 
-  it('splits mentions only for known handles and never inside words', () => {
-    const handles = new Set(['builder', 'lead'])
-    expect(splitMentions('@builder please review @Lead', handles)).toEqual([
-      { text: '@builder', mention: true },
+  it('splits only structured mention names, case-insensitively with an optional @', () => {
+    expect(splitMentionNames('@builder please review human', ['builder', 'Human']).segments).toEqual([
+      { text: '@builder', mention: true, name: 'builder' },
       { text: ' please review ', mention: false },
-      { text: '@Lead', mention: true },
+      { text: '@Human', mention: true, name: 'Human' },
     ])
-    // Email addresses and unknown handles stay plain; an empty handle set short-circuits.
-    expect(splitMentions('mail me at a@builder.com or @stranger', handles)).toEqual([
-      { text: 'mail me at a@builder.com or @stranger', mention: false },
+    // Unmentioned names stay plain even when the body spells them out.
+    expect(splitMentionNames('builder and @stranger', ['lead']).segments).toEqual([
+      { text: 'builder and @stranger', mention: false },
     ])
-    expect(splitMentions('plain text', handles)).toEqual([{ text: 'plain text', mention: false }])
-    expect(splitMentions('@builder at line start', new Set<string>())).toEqual([{ text: '@builder at line start', mention: false }])
+    // Email addresses never match; word boundaries hold.
+    expect(splitMentionNames('mail me at a@builder.com', ['builder']).segments).toEqual([
+      { text: 'mail me at a@builder.com', mention: false },
+    ])
+    // A mentioned name absent from the body comes back unmatched.
+    const absent = splitMentionNames('no names here', ['builder'])
+    expect(absent.segments).toEqual([{ text: 'no names here', mention: false }])
+    expect(absent.unmatched).toEqual(['builder'])
+    // Longer names win over their prefixes at the same position.
+    const nested = splitMentionNames('ping builder2', ['build', 'builder2'])
+    expect(nested.segments).toEqual([
+      { text: 'ping ', mention: false },
+      { text: '@builder2', mention: true, name: 'builder2' },
+    ])
+  })
+
+  it('maps mention refs to canonical handles through the member table', () => {
+    const handles = new Map([['member:1' as AgentTeamMemberId, 'builder'], ['member:2' as AgentTeamMemberId, 'lead']])
+    expect(mentionNamesOf(['member:2' as AgentTeamMemberId, 'member:1' as AgentTeamMemberId, 'member:gone' as AgentTeamMemberId], handles)).toEqual(['lead', 'builder'])
   })
 
   it('maps every task status to a status dot variant', () => {

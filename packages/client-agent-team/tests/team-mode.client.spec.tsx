@@ -75,6 +75,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   let memberships: Array<Record<string, unknown>> = []
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
     message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
+    mentions: [],
     task: { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: 'thread:1', status: 'todo', resolution: 'open' },
     thread: { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 },
     taskNumber: 1,
@@ -126,7 +127,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
     const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
     const message = { messageRef: 'message:1', channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, topLevel: true, sequence: 2, occurredAt: '2026-08-21T10:00:00.000Z' }
-    viewItems = [{ message, task, thread, taskNumber: 1, messageCount: 1 }]
+    viewItems = [{ message, mentions: [], task, thread, taskNumber: 1, messageCount: 1 }]
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
   })
   let changeVersion = 0
@@ -135,7 +136,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     const top = viewItems[0]!
     const message = { ...(top.message as object), messageRef: 'message:human-reply', sender: 'member:human', body: request.body, topLevel: false, sequence: request.baseRevision + 1 }
     const thread = { ...(top.thread as object), revision: request.baseRevision + 1 }
-    viewItems = [{ ...top, thread, messageCount: 2 }, { ...top, message, thread, messageCount: 2 }]
+    viewItems = [{ ...top, thread, mentions: [], messageCount: 2 }, { ...top, message, thread, mentions: [], messageCount: 2 }]
     return { ok: true as const, value: { kind: 'committed', receipt: {}, message, task: top.task, thread, attention: [], directMarkers: [] } }
   })
   const changeTask = vi.fn(async (request: { action: 'accept' | 'close' | 'reopen' }) => {
@@ -155,14 +156,14 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     nextRemainingUnreadCount = 0
     return { ok: true as const, value: {
       receipt: {}, task: top.task, thread: top.thread, claims: viewClaims,
-      anchor: top.message, facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],
+      anchor: top.message, anchorMentions: [], facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message, mentions: (item as { mentions?: string[] }).mentions ?? [] }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],
       readThroughSequence: (top.thread as { revision: number }).revision, remainingUnreadCount, consumedDirectMarkers: [],
     } }
   })
   const loadThreadHistory = vi.fn(async ({ taskRef }: { taskRef: string }) => {
     const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
-    return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
+    return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, anchorMentions: [], claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
   })
   const changes = vi.fn((request: { afterVersion: number; scope?: unknown }, _signal?: AbortSignal) => changeVersion > request.afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
@@ -613,7 +614,7 @@ describe('rendered Team mode composition', () => {
       thread: { threadRef: 'thread:1', revision: 2 }, anchor, claims: [], facts, cursor: 0, hasMore: false,
     } } as never))
     const backfillFact = { kind: 'message', sequence: 1, message: { messageRef: 'message:old-1', channelRef: 'channel:1', threadRef: 'thread:1',
-      taskRef: 'task:1', sender: 'member:human', body: 'old backfill', topLevel: false, sequence: 1, occurredAt: '' } }
+      taskRef: 'task:1', sender: 'member:human', body: 'old backfill', topLevel: false, sequence: 1, occurredAt: '' }, mentions: [] }
 
     // The change stream swallows one wake inside its initial silent probe;
     // flush that probe so later wakes reach the listener.
@@ -665,7 +666,7 @@ describe('rendered Team mode composition', () => {
     const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
       sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
     const watchedFact = { kind: 'message', sequence: 9, message: { messageRef: 'message:new-9', channelRef: 'channel:1', threadRef: 'thread:1',
-      taskRef: 'task:1', sender: 'member:builder', body: 'watched live', topLevel: false, sequence: 9, occurredAt: '' } }
+      taskRef: 'task:1', sender: 'member:builder', body: 'watched live', topLevel: false, sequence: 9, occurredAt: '' }, mentions: [] }
     b.loadThreadHistory.mockImplementation(async () => ({ ok: true as const, value: {
       task: { taskRef: 'task:1', channelRef: 'channel:1', status: 'todo', resolution: 'open' },
       thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts: [watchedFact], cursor: 0, hasMore: false,

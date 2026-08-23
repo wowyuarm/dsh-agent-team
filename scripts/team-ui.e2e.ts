@@ -244,7 +244,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '发送' }).click()
   await page.getByRole('status').filter({ hasText: '再次发送' }).waitFor()
   await page.getByRole('button', { name: '发送' }).click()
-  await page.locator('[data-team-thread] article').filter({ hasText: '请 reviewer 加入这个已有 Thread 并回复 Human' }).waitFor()
+  await page.locator('[data-team-thread] article').filter({ hasText: '请 @reviewer 加入这个已有 Thread 并回复 Human @reviewer' }).waitFor()
   const reviewerInbox = scaffold.ctx.agentTeam.inboxForAgent(reviewerAgent, { workspaceId: workspace.id })
   expect(reviewerInbox).toMatchObject({ totalDirectCount: 1, items: [expect.objectContaining({
     task: expect.objectContaining({ taskRef: task.taskRef }), directCount: 1,
