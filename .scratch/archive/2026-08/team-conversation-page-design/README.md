@@ -1,7 +1,7 @@
 # Team Conversation 顶层页面设计优化（channel / thread）
 
-- 状态：本轮已实现并通过全部检查，等待用户过目实际效果后讨论调整
-- 最后核对：2026-08-21
+- 状态：archived — 本轮实现、文档和浏览器验收已完成；本文件保留当时的设计与实施记录，不是当前 UI 合同。
+- 最后核对：2026-08-22
 - 范围：`packages/client-agent-team/src/client/` 中挂在 `conversation` slot 的 `TeamChannelPage` 与 `TeamThreadPage` 及其直接子件（header、时间线、空态、composer 容器行为）。不含侧栏面板。
 - 前置：round 1 已合入；round2（时间戳/排版统一/任务卡）已由并行 agent 完成合入（`db47f7a`…`23779a8`），本工作项未触碰其改动面。
 
@@ -20,21 +20,20 @@
 - `.timelineContent` 全局 flex column 已用两档截图回归验证无副作用。
 - 空态垂直居中第一版 `flex:1` 失效（容器撑满后 margin auto 无空闲空间），改为纯 `margin:auto`。
 
-## 后续候选（未做，留待用户挑选）
+## 后续候选（历史记录）
 
-完整调研见 [next-round-survey.md](next-round-survey.md)（P0：日期分隔线、收件人显式化、channel 发送幂等对齐、侧栏频道订阅；P1：深链恢复、Agents 主区视图、成员弹层搜索；P2：未读徽标/Attention/键盘导航/草稿暂存，含 Host 契约阻塞点）。round3（run hover/mention chip/排版刻度）由另一会话认领中。
+完整调研见 [next-round-survey.md](next-round-survey.md)（P0：日期分隔线、收件人显式化、channel 发送幂等对齐、侧栏频道订阅；P1：深链恢复、Agents 主区视图、成员弹层搜索；P2：未读徽标/Attention/键盘导航/草稿暂存，含 Host 契约阻塞点）。其中 P0 与 round3（run hover/mention chip/排版刻度）均已完成；其余条目只是当时的候选。
 
-## 结束核对清单
+## 归档时的完成情况
 
-- [x] `npm run typecheck && npm test && npm run lint && npm run build && npm run test:browser` 全绿（2026-08-21）
-- [x] 1440×960 与 390×844 截图人工过目：thread 减负、关闭态提示条、频道返回行/在线数、空态居中均生效
-- [x] `docs/frontend-design.md` 已同步（布局骨架、状态胶囊与弹层、可访问性基线）
-- [x] P0 四项（频道订阅/发送幂等/收件人提示/日期分隔）在 feat/team-page-p0 分支实现并全链路验证
-- [ ] 用户过目实际效果并确认方向；确认后本目录归档
+- `npm run typecheck && npm test && npm run lint && npm run build && npm run test:browser` 已通过。
+- 1440×960 与 390×844 截图已核对：Thread header、关闭态提示条、频道返回行/在线数和空态居中均生效。
+- `docs/frontend-design.md` 已同步布局骨架、状态胶囊、弹层、时间线及 composer 合同。
+- 本文件中列出的 P0 候选已在 `295154b` 实现；P1/P2 仅为历史候选，不构成待办。
 
 ## 正式文档出口
 
-长期结论已写入 `docs/frontend-design.md`；用户确认后本目录归档至 `.scratch/archive/YYYY-MM/team-conversation-page-design/`。
+长期结论已写入 [`docs/frontend-design.md`](../../../../docs/frontend-design.md)。新一轮设计应以该文档和当前源码为准，并在 `.scratch/active/` 建立独立工作项。
 
 ---
 

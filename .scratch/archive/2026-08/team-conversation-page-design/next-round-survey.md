@@ -2,7 +2,7 @@
 
 - 状态：survey，待用户挑选与排期
 - 最后核对：2026-08-22
-- 前置边界：round3（`.scratch/active/team-client-ui-round3/`，消息 run hover 块、mention chip、聊天排版刻度）由另一会话认领进行中，本清单不与其重叠；round1/2 与本轮 A1–F1 已合入。
+- 前置边界：round3（`.scratch/archive/2026-08/team-client-ui-round3/`，消息 run hover 块、mention chip、聊天排版刻度）已完成，本清单不与其重叠；round1/2 与本轮 A1–F1 已合入。
 
 ## P0 —— 高价值、低成本、无契约依赖
 
