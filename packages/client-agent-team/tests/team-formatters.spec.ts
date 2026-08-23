@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, mentionNamesOf, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, mentionNamesOf, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -84,6 +84,24 @@ describe('Team presentation formatters', () => {
   it('maps mention refs to canonical handles through the member table', () => {
     const handles = new Map([['member:1' as AgentTeamMemberId, 'builder'], ['member:2' as AgentTeamMemberId, 'lead']])
     expect(mentionNamesOf(['member:2' as AgentTeamMemberId, 'member:1' as AgentTeamMemberId, 'member:gone' as AgentTeamMemberId], handles)).toEqual(['lead', 'builder'])
+  })
+
+  it('accepts plain-prose bodies for literal mention rendering', () => {
+    expect(isPlainTextBody('@lead please review the diff')).toBe(true)
+    expect(isPlainTextBody('two lines\nwith a normal break')).toBe(true)
+  })
+
+  it('rejects Markdown-bearing bodies from literal mention rendering', () => {
+    expect(isPlainTextBody('run this:\n```js\nconst lead = 1\n```')).toBe(false)
+    expect(isPlainTextBody('use `npm test` here')).toBe(false)
+    expect(isPlainTextBody('## heading body')).toBe(false)
+    expect(isPlainTextBody('- list item')).toBe(false)
+    expect(isPlainTextBody('> quoted line')).toBe(false)
+    expect(isPlainTextBody('1. ordered item')).toBe(false)
+    expect(isPlainTextBody('| a | b |')).toBe(false)
+    expect(isPlainTextBody('see [docs](https://example.com) now')).toBe(false)
+    expect(isPlainTextBody('bold **word** inside')).toBe(false)
+    expect(isPlainTextBody('snake_case_word')).toBe(false)
   })
 
   it('maps every task status to a status dot variant', () => {

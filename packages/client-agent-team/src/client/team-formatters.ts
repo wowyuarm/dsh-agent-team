@@ -91,6 +91,20 @@ export function mentionNamesOf(mentions: readonly AgentTeamMemberId[], handles: 
   return mentions.map(memberId => handles.get(memberId)).filter((name): name is string => name !== undefined)
 }
 
+const MARKDOWN_BLOCK_CONSTRUCT = /(^|\n)[ \t]{0,3}(?:#{1,6}[ \t]|>[ \t]|[-*+][ \t]|\d+[.)][ \t])|^[ \t]*\|.+\|/m
+const MARKDOWN_INLINE_CONSTRUCT = /[`*_[\]!]|~~~|```/
+
+/**
+ * Whether an Agent body survives literal rendering unchanged: no fences,
+ * inline code, emphasis markers, links, images, tables, or block constructs.
+ * Only such plain-prose bodies may reuse the Human inline mention flow —
+ * anything richer keeps the trailing chip row because the Markdown primitive
+ * renders block-level documents that cannot interleave inline chips.
+ */
+export function isPlainTextBody(text: string): boolean {
+  return !(MARKDOWN_BLOCK_CONSTRUCT.test(text) || MARKDOWN_INLINE_CONSTRUCT.test(text))
+}
+
 const pad = (value: number): string => String(value).padStart(2, '0')
 
 /**

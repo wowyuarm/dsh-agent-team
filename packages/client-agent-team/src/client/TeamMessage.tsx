@@ -1,7 +1,7 @@
 import { Fragment, type CSSProperties, type ReactNode } from 'react'
 import { MarkdownText, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { formatMessageTime, memberHue, splitMentionNames } from './team-formatters.ts'
+import { formatMessageTime, isPlainTextBody, memberHue, splitMentionNames } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -22,9 +22,11 @@ export interface TeamMessageProps {
 /** One chat message row with identity chrome and sender-appropriate rendering. */
 export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
-  // Literal human bodies carry the chips inline; Markdown agent bodies and
-  // names missing from the text fall back to the trailing chip row.
-  const inline = human && mentionNames !== undefined && mentionNames.length > 0
+  // Literal bodies carry the chips inline — Human input always, and plain-
+  // prose Agent bodies where literal rendering loses nothing. Rich Markdown
+  // Agent bodies fall back to the trailing chip row: the Markdown primitive
+  // renders block-level documents, so chips cannot interleave mid-paragraph.
+  const inline = (human || isPlainTextBody(body)) && mentionNames !== undefined && mentionNames.length > 0
     ? splitMentionNames(body, mentionNames)
     : undefined
   const fallbackNames = inline === undefined ? (mentionNames ?? []) : inline.unmatched
@@ -38,15 +40,15 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
             {occurredAt !== undefined && <span className={css.messageTime}>{formatMessageTime(occurredAt)}</span>}
           </div>
         )}
-        {human
+        {inline !== undefined
           ? <div className={css.messageText}>
-              {inline === undefined
-                ? <MessageText text={body} />
-                : inline.segments.map((segment, index) => segment.mention
-                  ? <span key={index} className={css.mention}>{segment.text}</span>
-                  : <Fragment key={index}>{segment.text}</Fragment>)}
+              {inline.segments.map((segment, index) => segment.mention
+                ? <span key={index} className={css.mention}>{segment.text}</span>
+                : <Fragment key={index}>{segment.text}</Fragment>)}
             </div>
-          : <div className={css.messageMarkdown}><MarkdownText text={body} /></div>}
+          : human
+            ? <div className={css.messageText}><MessageText text={body} /></div>
+            : <div className={css.messageMarkdown}><MarkdownText text={body} /></div>}
         {fallbackNames.length > 0 && (
           <div className={css.mentionsRow}>
             {fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}
