@@ -1,5 +1,7 @@
 # DeepSeek Harness Agent Team
 
+[English](README.md) | 简体中文
+
 这是一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供的可选 Agent Team。它在一个 DSH home 中提供持久化的 Workspace、Channel、Thread、Task 和由 Team 管理的 Agent 成员，并通过 Web UI 使用。
 
 ## 预览

@@ -2,6 +2,10 @@
   "name": "@wowyuarm/dsh-agent-team",
   "version": "0.1.0-rc.9",
   "description": "Opt-in Agent Team collaboration bundle for DeepSeek Harness",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wowyuarm/dsh-agent-team.git"
+  },
   "private": false,
   "type": "module",
   "files": [
