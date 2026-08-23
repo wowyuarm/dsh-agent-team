@@ -123,6 +123,34 @@ dsh web
 
 本 bundle 的最低兼容版本是 DSH `0.1.1-rc.2`。当前 DSH SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
+## Team ledger 存储路由
+
+`agent_team` 域经根 `cordis.patch.yml` 的公开组合路由到 SQLite 后端：插入一行 `@deepseek-ai/dsh-storage-sqlite`（介质为 `$DSH_HOME/storages/agent_team.sqlite`），并以顶层覆写行把 `storage-domain` 配置为 `backend: json` 加 `routes: { agent_team: sqlite }`。其余域保持 JSON 默认路由。
+
+- 覆写必须是顶层行而非 insert 列表项：insert 只追加新行，重复 id 会让装配失败。`packages/agent-team/tests/shipping.spec.ts` 用生产解析器（`loadOverlayPatches` + `applyEntryPatches`）模拟「Web bundle 层 + 本 bundle 层」叠加来锁住这一接线。
+- `@deepseek-ai/dsh-storage-sqlite` 以 regular dependency 声明：它不在 dsh 应用清单的 heal 闭包里，peer 声明在真实安装中可能无法解析。上游给 `storage-domain` 行增加键时，需要同步复述到覆写行。
+- 路由切换创建新的空 SQLite 介质；旧 `agent_team.json` 不被读取也不迁移，由使用者自行搬移或删除。
+- `preview` 与 `preview:ui` 使用手写最小 overlay，不挂载该后端，仍走 JSON 默认路由。
+
+### 存储基准
+
+基准只测存储层写入路径（不含账本校验成本，那部分与后端无关），负载为约 3.4 KB 的典型操作文档：
+
+```sh
+DSH_BENCH_STORAGE=1 npx vitest run packages/agent-team/tests/storage-bench.spec.ts
+```
+
+2026-08-23 实测（WAL、逐次持久化）：
+
+| 后端 | 操作数 | 总耗时 | 单次均值 | p95 |
+| --- | --- | --- | --- | --- |
+| JSON | 1k | 15.1s | 15.0ms | 19.5ms |
+| SQLite | 1k | 5.9s | 5.9ms | 7.7ms |
+| JSON | 10k | 401s | 40.1ms | 64.1ms |
+| SQLite | 10k | 66s | 6.6ms | 10.6ms |
+
+JSON 整文件重写的单次写成本随历史线性增长（1k→10k 涨了约 2.7 倍）；SQLite 稳定在逐语句 fsync 下限附近且不随历史增长。启动侧仍是全量 `loadAll()` 加全量重放，本阶段不变；后续 checkpoint/log 方向见 `.scratch/active/agent-team-storage-architecture/`。
+
 ## 交付前核对
 
 - 改动没有偷偷加入 shipped DSH defaults。

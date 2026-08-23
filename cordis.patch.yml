@@ -15,3 +15,22 @@
       name: '@deepseek-ai/dsh-invariants'
     - id: wowyuarm-agent-team-invariant
       name: '@wowyuarm/dsh-agent-team/invariant'
+    # Team ledger medium backend. A plain dependency of this bundle, mounted
+    # as an ordinary storage provider row beside the shipped JSON backend.
+    - id: storage-sqlite
+      name: '@deepseek-ai/dsh-storage-sqlite'
+      config:
+        path: !!js dshHomePath('storages', 'agent_team.sqlite')
+
+# Only the agent_team domain routes to SQLite; every other domain keeps the
+# JSON default. This row is a top-level override, NOT an insert-list entry:
+# insert lists append new rows, so a colliding id here would duplicate the
+# shipped storage-domain row and fail the boot sweep. A patch replaces the
+# targeted row's whole config, so `backend: json` must be restated and this
+# override follows the shipped row's keys — update it when upstream adds one.
+- id: storage-domain
+  name: '@deepseek-ai/dsh-storage-domain'
+  config:
+    backend: json
+    routes:
+      agent_team: sqlite

@@ -126,3 +126,5 @@ For Workspace, Session, storage, persistence, or Thread Inbox changes, read the 
 - `../deepseek-harness/docs/defensive-patterns.md`
 
 The Team ledger remains the only Team durable authority. Recovery and teardown changes need failure-window or composition evidence, not a silent fallback.
+
+The shipped bundle composition routes only the `agent_team` domain to the SQLite backend through the public per-domain route table; every other domain keeps the JSON default. The SQLite medium (`$DSH_HOME/storages/agent_team.sqlite`) is created fresh on first routed open, and an older `agent_team.json` medium is never read or migrated — moving or removing it is an operator decision.

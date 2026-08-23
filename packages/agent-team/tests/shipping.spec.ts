@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import { applyEntryPatches } from '@deepseek-ai/cordis-plugin-include'
+import { loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 
 const root = resolve(import.meta.dirname, '../../../')
 
@@ -21,6 +23,22 @@ describe('Agent Team shipping contract', () => {
     expect(patch).toContain("name: '@wowyuarm/dsh-agent-team'")
     expect(patch).toContain("name: '@deepseek-ai/dsh-invariants'")
     expect(patch).toContain("name: '@wowyuarm/dsh-agent-team/invariant'")
+    // The Team ledger medium: only agent_team routes to SQLite through the
+    // public per-domain route table. Simulate the real layer stack (the
+    // shipped Web bundle patch, then this bundle's) because insert blocks
+    // append rather than override: a colliding id inside an insert list would
+    // duplicate the shipped row and fail the boot sweep.
+    expect(patch).toContain("name: '@deepseek-ai/dsh-storage-sqlite'")
+    const composed = applyEntryPatches([], [
+      ...loadOverlayPatches('shipping contract', resolve(root, '../deepseek-harness/packages/bundle/web-app/cordis.patch.yml')),
+      ...loadOverlayPatches('shipping contract', resolve(root, 'cordis.patch.yml')),
+    ], () => {})
+    const ids = composed.map(entry => entry.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(composed.find(entry => entry.id === 'storage-domain')?.config).toMatchObject({
+      backend: 'json',
+      routes: { agent_team: 'sqlite' },
+    })
     expect(patch).not.toContain('dsh-tool-agent-team')
 
     expect(preset).toContain("name: '@wowyuarm/dsh-agent-team/tools'")
@@ -57,7 +75,7 @@ describe('Agent Team shipping contract', () => {
     expect(manifest.files).toContain('packages/agent-team/lib/**/*')
     expect(manifest.files).toContain('packages/client-agent-team/lib/**/*')
     expect(manifest.name).toBe('@wowyuarm/dsh-agent-team')
-    expect(manifest.dependencies).toEqual({ zod: '^4.4.3' })
+    expect(manifest.dependencies).toEqual({ '@deepseek-ai/dsh-storage-sqlite': '>=0.1.1-rc.2 <0.2.0', zod: '^4.4.3' })
     expect(bundleManifest.dsh.client).toEqual({
       platform: 'web',
       inject: expect.not.arrayContaining(['@wowyuarm/dsh-agent-team/host']),

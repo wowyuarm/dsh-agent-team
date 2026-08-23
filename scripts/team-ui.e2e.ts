@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from 'node:fs/promises'
+import { cp, mkdir, rm, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { chromium, type Browser } from 'playwright'
@@ -33,6 +33,13 @@ async function installLocalBundle(): Promise<void> {
     recursive: true,
     filter: source => !source.includes('/node_modules') && !source.includes('/src') && !source.includes('/artifacts'),
   })
+  // The routed ledger backend in its installed position. A real `dsh plugin
+  // add` installs this bundle's dependencies under the profile tree; this
+  // lane emulates the layout, so the dependency links beside the copied
+  // bundle instead of relying on the harness app's own dependency closure.
+  const storageSqliteLink = join(HOME, 'profiles/node_modules/@deepseek-ai/dsh-storage-sqlite')
+  await mkdir(join(storageSqliteLink, '..'), { recursive: true })
+  await symlink(join(process.cwd(), 'packages/storage/storage-sqlite'), storageSqliteLink, 'junction')
   await mkdir(UI01_SHOTS, { recursive: true })
   await mkdir(UI02_SHOTS, { recursive: true })
   await mkdir(UI03_SHOTS, { recursive: true })
