@@ -2,6 +2,10 @@
 
 这是一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供的可选 Agent Team。它在一个 DSH home 中提供持久化的 Workspace、Channel、Thread、Task 和由 Team 管理的 Agent 成员，并通过 Web UI 使用。
 
+## 预览
+
+![DSH Web UI 中的 Team mode：侧边栏是 Workspace、频道与 Agent；主区是一个 Task Thread，含 Agent 汇报](assets/readme/team-mode.png)
+
 ## 快速开始
 
 ### 1. 检查 DSH

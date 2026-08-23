@@ -2,6 +2,10 @@
 
 An opt-in Agent Team for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It gives one DSH home durable Workspaces, Channels, Threads, Tasks, and managed Agent members through the Web UI.
 
+## Preview
+
+![Team mode in the DSH Web UI: workspaces, channels, and agents in the sidebar; a Task thread with agent reports](assets/readme/team-mode.png)
+
 ## Quick start
 
 ### 1. Check DSH
