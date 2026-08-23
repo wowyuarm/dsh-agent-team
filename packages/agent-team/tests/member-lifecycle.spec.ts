@@ -113,7 +113,6 @@ type PersistenceBackend = 'jsonl' | 'sqlite'
 async function realHarness(
   adapter: LlmAdapter = new EmptyAdapter(),
   persistenceBackend: PersistenceBackend = 'jsonl',
-  beforeBoot?: (paths: { readonly dshHome: string }) => Promise<void> | void,
 ): Promise<{
   readonly ctx: Context
   readonly workspaceId: WorkspaceId
@@ -127,11 +126,9 @@ async function realHarness(
   const sqlite = join(root, 'sessions.sqlite')
   const presetRoot = join(root, 'presets')
   const presetDir = join(presetRoot, 'team-member')
-  const dshHome = join(root, 'dsh-home')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
-  process.env.DSH_HOME = dshHome
+  process.env.DSH_HOME = join(root, 'dsh-home')
   await writeFile(join(presetDir, 'agent.cordis.yml'), "- id: member-context\n  name: 'test-member-context'\n- id: team-tools\n  name: 'test-team-tools'\n")
-  await beforeBoot?.({ dshHome })
 
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(root).href + '/'
@@ -635,40 +632,6 @@ describe('Agent Team Member lifecycle', () => {
     const lastRequest = JSON.stringify(adapter.requests.at(-1)!.messages)
     expect(lastRequest).toContain('Team Inbox has unread work')
     expect(lastRequest).not.toContain('Unread across Host remount')
-  })
-
-  it('stands down orphan cleanup while the replayed ledger knows no Members', async () => {
-    let planted: string | undefined
-    const { ctx } = await realHarness(new EmptyAdapter(), 'jsonl', async ({ dshHome }) => {
-      planted = join(dshHome, 'agent-team', 'members', 'member:orphan-probe')
-      await mkdir(planted, { recursive: true })
-      await writeFile(join(planted, 'memory.md'), '# planted before first boot\n', 'utf8')
-    })
-    // First boot replays an empty ledger: pruning cannot distinguish true
-    // orphans from Members about to be restored (a discarded medium or an
-    // unisolated test boot), so it must stand down instead of deleting.
-    expect(planted).toBeDefined()
-    expect(await readFile(join(planted!, 'memory.md'), 'utf8')).toContain('# planted before first boot')
-    expect(ctx.agentTeam).toBeDefined()
-  })
-
-  it('prunes orphan private-memory directories from earlier ledgers at Host startup', async () => {
-    const { ctx, workspaceId, root, teamFiber } = await realHarness()
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('orphan-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    const added = await ctx.agentTeam.addMember({ requestId: requestId('orphan-builder'), workspaceId, handle: 'builder', description: 'Keeps its memory', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
-    const membersRoot = join(root, 'dsh-home', 'agent-team', 'members')
-    const orphan = join(membersRoot, `member:${randomUUID()}`)
-    const foreign = join(membersRoot, 'not-a-member-directory')
-    await Promise.all([mkdir(orphan, { recursive: true }), mkdir(foreign, { recursive: true })])
-    await writeFile(join(orphan, 'memory.md'), '# Left over from a discarded ledger\n', 'utf8')
-
-    await teamFiber.dispose()
-    await ctx.plugin(AgentTeam)
-
-    await expect(access(orphan)).rejects.toThrow()
-    expect(await readFile(join(added.status.member.privateMemoryPath, 'memory.md'), 'utf8')).toContain('# Member memory')
-    await expect(access(foreign)).resolves.toBeUndefined()
-    expect(ctx.agents.get(added.status.member.sessionId)).toBeDefined()
   })
 
   it('validates the final five-tool Team marker during unpublished setup', async () => {

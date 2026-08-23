@@ -185,7 +185,6 @@ export default class AgentTeam extends TypertRemoteService {
     this.ledger = ledger
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
-    await this.cleanupOrphanMembers(ledger)
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
     const persistedSessions = new Set((await this.ctx.sessionPersistence.list()).map(header => header.id))
@@ -673,32 +672,6 @@ export default class AgentTeam extends TypertRemoteService {
     ])
     const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
     if (failures.length > 0) throw new AggregateError(failures, `failed to clean up removed Member '${member.memberId}'`)
-  }
-
-  /**
-   * Delete private-memory directories no ledger Member references. Ledger
-   * resets (schema version bumps discard the medium) leave earlier directories
-   * behind; only `member:`-shaped directories are candidates, and every Member
-   * known to the replayed ledger protects its own directory.
-   */
-  private async cleanupOrphanMembers(ledger: AgentTeamLedger): Promise<void> {
-    const known = new Set(ledger.listMembers().map(member => member.memberId))
-    // An empty replayed ledger cannot tell true orphans from Members whose
-    // registration is still on its way back — a discarded medium mid-migration
-    // or an unisolated test boot look identical here. Housekeeping stands down
-    // rather than risk deleting live private memory.
-    if (known.size === 0) return
-    const root = dshHomePath('agent-team', 'members')
-    const entries = await readdir(root, { withFileTypes: true }).catch(error => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw error
-    })
-    const orphanPaths = entries
-      .filter(entry => entry.isDirectory() && entry.name.startsWith('member:') && !known.has(entry.name as AgentTeamMemberId))
-      .map(entry => join(root, entry.name))
-    const results = await Promise.allSettled(orphanPaths.map(path => rm(path, { recursive: true, force: true })))
-    const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
-    if (failures.length > 0) throw new AggregateError(failures, 'failed to clean up orphan Member private memory')
   }
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
