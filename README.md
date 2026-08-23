@@ -2,7 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-An opt-in Agent Team for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It gives one DSH home durable Workspaces, Channels, Threads, Tasks, and managed Agent members through the Web UI.
+An Agent Team plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): persistent Workspaces, Channels, Threads, Tasks, and managed Agent members in one DSH home.
+
+Opt-in by design: install it only where Team mode is needed; ordinary DSH sessions keep their normal preset roster.
 
 ## Preview
 
