@@ -132,6 +132,19 @@ dsh web
 - 路由切换创建新的空 SQLite 介质；旧 `agent_team.json` 不被读取也不迁移，由使用者自行搬移或删除。
 - `preview` 与 `preview:ui` 使用手写最小 overlay，不挂载该后端，仍走 JSON 默认路由。
 
+### 本地旧数据迁移（运维工具）
+
+`scripts/migrate-team-ledger.ts` 是一次性运维工具，不属于发布运行时。在 DSH 停止的状态下，它把本地 v9 JSON 介质迁移为 v1 SQLite 介质：逐条 schema 校验、sequence 链完整性检查、逐条写入后用真实 `DomainFacility` + `AgentTeamLedger` 重放验证。
+
+```sh
+npm run migrate [-- --home <dsh home>] [--force]
+```
+
+- 源：`$DSH_HOME/storages/agent_team.json`（只接受 v9 版本戳，其他版本明确拒绝）；目标：同目录 `agent_team.sqlite`。
+- 目标已存在时默认拒绝，防止与误启动新构建产生的空账本合并；`--force` 删除目标后从源整体重建。
+- 旧 JSON 文件始终原样保留，归档或删除由使用者自行决定。
+- 迁移行为有集成测试覆盖：`packages/agent-team/tests/migrate-tool.spec.ts`。
+
 ### 存储基准
 
 基准只测存储层写入路径（不含账本校验成本，那部分与后端无关），负载为约 3.4 KB 的典型操作文档：

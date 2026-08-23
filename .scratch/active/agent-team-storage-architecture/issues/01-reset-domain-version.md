@@ -37,3 +37,10 @@ runtime compatibility path for local v8/v9 media.
 - Reset lands once, alongside the SQLite cutover of issue 02, not before.
 - No shipped export/import tool. Local data conversion is an operator-run
   one-off task outside the product (the operator arranges it separately).
+
+## Operator Tool
+
+`scripts/migrate-team-ledger.ts` (added 2026-08-23, `npm run migrate`) is the
+operator's own one-shot converter: v9 JSON medium in, v1 SQLite medium out,
+replay-verified through the real facility and ledger. It is dev-repo tooling,
+not shipped runtime, and the old JSON medium is never touched by it.
