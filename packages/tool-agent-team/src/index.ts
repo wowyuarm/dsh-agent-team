@@ -150,7 +150,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     action: { type: 'string', required: true, enum: ['start', 'reply'] },
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
     taskRef: { type: 'string', description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
-    body: { type: 'string', required: true }, baseRevision: { type: 'number' },
+    body: { type: 'string', required: true }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task." },
     mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
   },
   output: {
@@ -202,7 +202,7 @@ const teamClaim = defineTool({
   parameters: {
     action: { type: 'string', required: true, enum: ['list', 'claim', 'done', 'release'] },
     taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
-    baseRevision: { type: 'number' }, direction: { type: 'string' },
+    baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task." }, direction: { type: 'string' },
     claimRef: { type: 'string', description: "Full branded Claim ref exactly as returned by team_claim, including the 'claim:' prefix." },
   },
   output: {
