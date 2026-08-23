@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderMemberMemory } from '../src/member-context.ts'
+import { renderMemberIdentity, renderMemberMemory } from '../src/member-context.ts'
 
 describe('Team Member private memory context', () => {
   it('escapes framing and preserves a bounded private index', () => {
@@ -22,5 +22,17 @@ describe('Team Member private memory context', () => {
     const rendered = renderMemberMemory(Buffer.alloc(8 * 1024, 'y'))
     expect(rendered).toContain('y'.repeat(100))
     expect(rendered).not.toContain('Maintenance warning')
+  })
+})
+
+describe('Team Member identity context', () => {
+  it('renders the handle with its description', () => {
+    expect(renderMemberIdentity({ handle: 'Lead', description: 'dsh-agent-team tech-lead' }))
+      .toBe('Team identity: you are @Lead — dsh-agent-team tech-lead')
+  })
+
+  it('omits the description segment when the description is empty', () => {
+    expect(renderMemberIdentity({ handle: 'Builder', description: '' }))
+      .toBe('Team identity: you are @Builder.')
   })
 })

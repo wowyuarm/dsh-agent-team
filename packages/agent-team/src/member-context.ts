@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { AgentTeamAgentMember } from './types.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
 const MAX_MEMORY_BYTES = 8 * 1024
@@ -20,14 +21,15 @@ export function apply(ctx: Context): void {
     if (host === undefined) return decision
     const member = host.memberForAgent(agent)
     if (member === undefined) return decision
-    let text: string
+    let memory: string
     try {
-      text = renderMemberMemory(await readFile(`${member.privateMemoryPath}/memory.md`), member.privateMemoryPath)
+      memory = renderMemberMemory(await readFile(`${member.privateMemoryPath}/memory.md`), member.privateMemoryPath)
     } catch (error) {
-      text = renderUnavailableMemory(member.privateMemoryPath, (error as NodeJS.ErrnoException).code === 'ENOENT'
+      memory = renderUnavailableMemory(member.privateMemoryPath, (error as NodeJS.ErrnoException).code === 'ENOENT'
         ? 'memory.md is absent; the private memory index is empty.'
         : 'memory.md is currently unreadable; do not use any earlier private memory context.')
     }
+    const text = `${renderMemberIdentity(member)}\n\n${memory}`
     const latestText = agent.session.surface.nodes.toReversed().flatMap(sequence => {
       const event = agent.session.events[sequence]
       return event?.type === 'user/message'
@@ -45,6 +47,12 @@ export function apply(ctx: Context): void {
     })
     return { kind: 'enter', messages: [...decision.messages, message] }
   }, { prepend: true })
+}
+
+export function renderMemberIdentity(member: Pick<AgentTeamAgentMember, 'handle' | 'description'>): string {
+  return member.description === ''
+    ? `Team identity: you are @${member.handle}.`
+    : `Team identity: you are @${member.handle} — ${member.description}`
 }
 
 export function renderMemberMemory(raw: Buffer, privateMemoryPath = '<private-memory-path>'): string {
