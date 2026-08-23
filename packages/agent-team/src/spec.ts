@@ -150,7 +150,7 @@ const inboxDeltaSchema = z.object({
   activityMarkers: z.object({
     added: z.array(activityMarkerSchema),
     removed: z.array(activityMarkerSchema),
-  }).strict().default({ added: [], removed: [] }),
+  }).strict(),
 }).strict()
 
 const claimSchema = z.object({
@@ -379,10 +379,10 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
 /** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */
 export const agentTeamOperationSchema: z.ZodType<AgentTeamOperation> = storedAgentTeamOperationSchema.transform(stampOperationMessages)
 
-/** Versioned durable Agent Team ledger declaration. v7 has no compatibility path beyond occurrence stamping for older record shapes. */
+/** Versioned durable Agent Team ledger declaration. v8 records the intent-routed Task Inbox projection. */
 export const agentTeamDomainSpec = defineDomain({
   name: 'agent_team',
-  version: 7,
+  version: 8,
   tables: {
     operations: domainTable<AgentTeamOperationId, AgentTeamOperation>(agentTeamOperationSchema),
   },
