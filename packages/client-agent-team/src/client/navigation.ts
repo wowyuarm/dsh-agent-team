@@ -1,4 +1,4 @@
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { AgentTeamChannelRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@wowyuarm/dsh-agent-team/types'
 
 export type TeamMode = 'conversation' | 'team'
@@ -10,6 +10,10 @@ export interface TeamNavigationSnapshot {
   taskRef?: AgentTeamTaskRef
   threadRef?: AgentTeamThreadRef
   taskNumber?: number
+  /** Runtime-only Member Session embedded in the conversation seat; never persisted. */
+  memberSessionId?: SessionId
+  /** Runtime-only session to restore when the Member view closes; never persisted. */
+  returnToSessionId?: SessionId
 }
 
 const STORAGE_KEY = 'dsh.agent-team.navigation'
@@ -46,6 +50,14 @@ export interface TeamNavigationActions {
   backToWorkspace: () => void
   /** Leave the selected Channel for the workspace Channel list; keeps mode and Workspace. */
   backToChannels: () => void
+  /**
+   * Swap the conversation seat to a Member Session while Team chrome stays
+   * mounted. `returnToSessionId` is captured once — switching between Member
+   * Sessions keeps the original target.
+   */
+  enterMemberSession: (sessionId: SessionId, returnToSessionId?: SessionId) => void
+  /** Close the embedded Member Session view and return to the Team views. */
+  exitMemberSession: () => void
 }
 
 /** Root-scoped Team mode state. Slot lifetimes subscribe to this source. */
@@ -62,13 +74,15 @@ export class TeamNavigation {
 
   actions(): TeamNavigationActions {
     return {
-      enterTeam: () => { this.setMode('team') },
+      enterTeam: () => { this.clearMemberSession(); this.setMode('team') },
       leaveTeam: () => { this.setMode('conversation') },
-      selectWorkspace: workspaceId => { this.setWorkspace(workspaceId) },
-      selectChannel: channelRef => { this.setChannel(channelRef) },
-      selectThread: (taskRef, threadRef, channelRef, taskNumber) => { this.setThread(taskRef, threadRef, channelRef, taskNumber) },
-      backToWorkspace: () => { this.setThread(undefined) },
-      backToChannels: () => { this.clearChannel() },
+      selectWorkspace: workspaceId => { this.clearMemberSession(); this.setWorkspace(workspaceId) },
+      selectChannel: channelRef => { this.clearMemberSession(); this.setChannel(channelRef) },
+      selectThread: (taskRef, threadRef, channelRef, taskNumber) => { this.clearMemberSession(); this.setThread(taskRef, threadRef, channelRef, taskNumber) },
+      backToWorkspace: () => { this.clearMemberSession(); this.setThread(undefined) },
+      backToChannels: () => { this.clearMemberSession(); this.clearChannel() },
+      enterMemberSession: (sessionId, returnToSessionId) => { this.setMemberSession(sessionId, returnToSessionId) },
+      exitMemberSession: () => { this.clearMemberSession() },
     }
   }
 
@@ -79,6 +93,27 @@ export class TeamNavigation {
   private setMode(mode: TeamMode): void {
     if (this.snapshot.mode === mode) return
     this.snapshot = { ...this.snapshot, mode }
+    this.commit()
+  }
+
+  private setMemberSession(sessionId: SessionId, returnToSessionId?: SessionId): void {
+    // Re-selecting the active Member keeps the original return target.
+    if (this.snapshot.memberSessionId === sessionId && this.snapshot.mode === 'team') return
+    const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, memberSessionId: _memberSessionId, ...base } = this.snapshot
+    this.snapshot = {
+      ...base,
+      mode: 'team',
+      memberSessionId: sessionId,
+      ...(returnToSessionId === undefined ? {} : { returnToSessionId }),
+    }
+    this.commit()
+  }
+
+  /** Any explicit Team navigation or the footer leave closes a Member view. */
+  private clearMemberSession(): void {
+    if (this.snapshot.memberSessionId === undefined && this.snapshot.returnToSessionId === undefined) return
+    const { memberSessionId: _memberSessionId, returnToSessionId: _returnToSessionId, ...base } = this.snapshot
+    this.snapshot = base
     this.commit()
   }
 

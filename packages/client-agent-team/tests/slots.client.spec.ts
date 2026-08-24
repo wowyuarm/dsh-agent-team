@@ -120,4 +120,58 @@ describe('Team Client slot takeover', () => {
     await fiber.dispose()
     expect(slots.entries('conversation')).toHaveLength(1)
   })
+
+  it('keeps Team chrome mounted for a Member Session view and restores the return session on leave', async () => {
+    const { ctx, slots } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    const sessions = ctx.get('sessions') as unknown as { open: ReturnType<typeof vi.fn>; list: { getSnapshot: () => { current?: string } } }
+    sessions.list.getSnapshot = () => ({ current: 'session:human-origin' })
+
+    ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
+    ctx.teamNavigation.actions().enterTeam()
+
+    // Drive the real wiring through the workspaces shadow's injected remotes —
+    // the same payload the Agent card button consumes.
+    const shadow = slots.entriesOfSlot('sidebar.workspaces').find(entry => entry.options.priority === -100)
+    expect(shadow).toBeDefined()
+    const injected = (shadow!.inject as () => Record<string, unknown>)()
+    ;(injected.openMemberSession as (sessionId: string) => void)('session:builder')
+
+    expect(sessions.open).toHaveBeenCalledWith('session:builder')
+    expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder', returnToSessionId: 'session:human-origin' })
+    // The conversation seat yields to the shipped root while both sidebars stay.
+    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('sidebar.workspaces')).toHaveLength(2)
+    expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
+    expect(slots.entriesOfSlot('sidebar.settings')[0]!.options.priority).toBe(-100)
+
+    // The footer's wrapped leave closes the Member view and restores the
+    // Human's original session before deregistering the Team chrome.
+    const footer = slots.entriesOfSlot('sidebar.footer.action')[0]!
+    const footerActions = (footer.inject as () => Record<string, unknown>)()
+    ;(footerActions.leaveTeam as () => void)()
+
+    expect(sessions.open).toHaveBeenLastCalledWith('session:human-origin')
+    expect(ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
+    expect(slots.entriesOfSlot('conversation')).toHaveLength(1)
+    expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
+
+    await fiber.dispose()
+  })
+
+  it('exits an embedded Member Session view when explicit Team navigation arrives', async () => {
+    const { ctx, slots } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    ctx.teamNavigation.actions().enterTeam()
+    ctx.teamNavigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
+    expect(slots.entries('conversation')).toHaveLength(1)
+
+    ctx.teamNavigation.actions().selectChannel('channel:engineering' as never)
+    expect(ctx.teamNavigation.getSnapshot().memberSessionId).toBeUndefined()
+    expect(slots.entries('conversation')).toHaveLength(2)
+
+    await fiber.dispose()
+  })
 })

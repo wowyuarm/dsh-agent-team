@@ -75,7 +75,7 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
-    /** Focus the Member's own Session conversation page in the ordinary shell. */
+    /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => void
     selectedChannelRef?: AgentTeamChannelRef
   }

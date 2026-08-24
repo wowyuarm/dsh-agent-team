@@ -49,4 +49,64 @@ describe('TeamNavigation', () => {
     localStorage.setItem(STORAGE_KEY, '{broken')
     expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation' })
   })
+
+  it('embeds a Member Session view with runtime-only fields', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+    navigation.actions().enterTeam()
+    navigation.actions().selectThread('task:1' as never, 'thread:1' as never, 'channel:1' as never, 7)
+    navigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
+
+    expect(navigation.getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', memberSessionId: 'session:builder', returnToSessionId: 'session:return',
+    })
+    // The Member view is runtime state only; a reload starts from the persisted core.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:one' })
+    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one' })
+  })
+
+  it('keeps the original return target when another Member is selected', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().enterTeam()
+    navigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
+    // While the Member view is open the shell current session is the Member's
+    // own, so re-entering without a fresh target must not steal the return.
+    navigation.actions().enterMemberSession('session:reviewer' as never)
+
+    expect(navigation.getSnapshot()).toEqual({
+      mode: 'team', memberSessionId: 'session:reviewer', returnToSessionId: 'session:return',
+    })
+  })
+
+  it('closes the Member view on any explicit Team navigation or the exit action', () => {
+    const reopen = (navigation: TeamNavigation): void => {
+      navigation.actions().enterTeam()
+      navigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
+    }
+    const steps: Array<(navigation: TeamNavigation) => void> = [
+      navigation => { navigation.actions().selectWorkspace('workspace:two' as never) },
+      navigation => { navigation.actions().selectChannel('channel:2' as never) },
+      navigation => { navigation.actions().selectThread('task:9' as never, 'thread:9' as never) },
+      navigation => { navigation.actions().backToChannels() },
+      navigation => { navigation.actions().backToWorkspace() },
+      navigation => { navigation.actions().enterTeam() },
+      navigation => { navigation.actions().exitMemberSession() },
+    ]
+    for (const step of steps) {
+      const navigation = new TeamNavigation()
+      reopen(navigation)
+      step(navigation)
+      const snapshot = navigation.getSnapshot()
+      expect(snapshot.memberSessionId).toBeUndefined()
+      expect(snapshot.returnToSessionId).toBeUndefined()
+      expect(snapshot.mode).toBe('team')
+    }
+  })
+
+  it('exposes Member view actions on every actions() instance', () => {
+    const navigation = new TeamNavigation()
+    const actions = navigation.actions()
+    expect(typeof actions.enterMemberSession).toBe('function')
+    expect(typeof actions.exitMemberSession).toBe('function')
+  })
 })

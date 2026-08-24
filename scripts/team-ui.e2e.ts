@@ -180,20 +180,27 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-edit-modal.png'), fullPage: true })
   await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
 
-  // Clicking the Agent card jumps straight to its Session page: Team mode
-  // deregisters and the ordinary shell selects the Member Session. A Member
-  // session has no human turns yet, so DSH renders its blank-session view —
-  // the hero composer carrying the Member's workspace + `team-member`
-  // preset chips, not the pre-Team draft.
+  // Clicking the Agent card keeps Team mode mounted and swaps only the right
+  // pane: the conversation shadow stands down so the shipped root renders the
+  // Member Session between the Team sidebars. A Member session has no human
+  // turns yet, so DSH renders its blank-session view — the hero composer
+  // carrying the Member's workspace + `team-member` preset chips.
   await builderRow.getByRole('button', { name: '打开 builder 的会话' }).click()
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.agentTeamMode ?? null)).toBe(null)
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.agentTeamMode ?? null)).toBe('team')
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
   await expect.poll(() => page.locator('textarea:enabled').count()).toBeGreaterThanOrEqual(1)
   await expect.poll(() => page.getByText('team-member', { exact: true }).count()).toBe(1)
-  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-jump.png'), fullPage: true })
-  // Re-entering Team restores the sidebar composition for the rest of the run.
-  await page.getByRole('button', { name: '团队' }).click()
-  await page.getByRole('button', { name: '# engineering' }).waitFor()
+  await expect.poll(() => page.locator('[class*="agentRow"]').count()).toBeGreaterThan(0)
+  await expect.poll(() => page.getByRole('button', { name: '# delivery' }).count()).toBe(1)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  // Explicit Team navigation closes the embedded Member view again.
+  await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByRole('heading', { name: '# delivery' }).waitFor()
+  await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(1)
 
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByText('还没有消息', { exact: true }).waitFor()
@@ -372,9 +379,9 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '对话' }).click()
   await expect.poll(() => newSessionButton.isVisible()).toBe(true)
   await expect.poll(() => brandButton.isVisible()).toBe(true)
-  // The Agent-card jump earlier made the Member Session current; leaving Team
-  // restores the ordinary shell around that Session — an existing session's
-  // composer (给智能体发消息), not the fresh-workspace hero placeholder.
+  // Leaving Team closes any embedded Member Session view and restores the
+  // session the Human came from, so the ordinary shell shows an ordinary
+  // conversation composer rather than a stranded Member Session.
   await page.locator('textarea:enabled').first().waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
   await page.screenshot({ path: join(UI01_SHOTS, 'restored-conversations.png'), fullPage: true })
@@ -421,9 +428,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const leaveTeamKeyboard = page.getByRole('button', { name: '对话' })
   await leaveTeamKeyboard.focus()
   await leaveTeamKeyboard.press('Space')
-  // The card jump earlier made the Member Session current; leaving Team
-  // restores the ordinary shell around that Session — an existing session's
-  // composer (给智能体发消息), not the fresh-workspace hero placeholder.
+  // Leaving Team restores the Human's original session (see the Member view
+  // above), so the ordinary shell renders a conversation composer.
   await page.locator('textarea:enabled').first().waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
 

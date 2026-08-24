@@ -399,19 +399,28 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
-  it('opens the Member Session page from the Agent card and leaves Team mode', async () => {
+  it('opens the Member Session inside Team mode from the Agent card', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
     await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
     await b.view.findByText('builder')
     expect(document.documentElement.dataset.agentTeamMode).toBe('team')
+    // Team views own the conversation seat before the card click.
+    expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeNull()
 
     fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
     await waitFor(() => {
       expect(b.runtime.sessions.calls.some(call => call.method === 'open' && call.args[0] === 'session:member:builder')).toBe(true)
     })
-    // Leaving to the ordinary shell is part of the same jump: the Team shadow
-    // must deregister so the opened Session is actually visible.
-    await waitFor(() => { expect(document.documentElement.dataset.agentTeamMode).toBeUndefined() })
+    // The card stays inside Team mode: the chrome remains mounted and the
+    // conversation seat yields to the shipped root rendering the Member Session.
+    expect(document.documentElement.dataset.agentTeamMode).toBe('team')
+    await waitFor(() => { expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeTruthy() })
+    expect(b.view.container.querySelector('[data-team-conversation]')).toBeNull()
+
+    // Explicit Team navigation closes the embedded Member view again.
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[data-team-channel]')).toBeTruthy() })
+    expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeNull()
     await b.runtime.dispose()
   })
 

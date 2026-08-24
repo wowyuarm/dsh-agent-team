@@ -78,18 +78,27 @@ function registerModeShadow<T extends object>(
       return response.result
     },
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => {
-      // Leave Team mode first so every Team shadow deregisters and the
-      // ordinary shell actually renders the Member Session selected below.
-      navigation.actions().leaveTeam()
-      // The Host-side dsh-session Context merge shadows the runtime face under
-      // this bundle's combined tsconfig; the outward sessions service is ISessions.
-      ;(ctx.sessions as unknown as ISessions).open(sessionId)
+      // Stay in Team mode: the conversation shadow stands down for Member
+      // Session views (see registerModeShadow), so the shipped conversation
+      // root renders the selected Member Session inside the Team shell.
+      const sessions = ctx.sessions as unknown as ISessions
+      const snapshot = navigation.getSnapshot()
+      const current = sessions.list.getSnapshot().current
+      // The return target is captured on first entry only — switching between
+      // Member Sessions must keep pointing at the Human's original session.
+      const returnTo = snapshot.memberSessionId === undefined && current !== undefined && current !== sessionId ? current : undefined
+      navigation.actions().enterMemberSession(sessionId, returnTo)
+      sessions.open(sessionId)
     },
   }
   ctx.slots.inject(name, () => {
     let dispose: (() => void) | undefined
     const reconcile = (): void => {
-      const active = navigation.getSnapshot().mode === 'team'
+      const snapshot = navigation.getSnapshot()
+      // The conversation seat yields to the shipped conversation root while a
+      // Member Session view is embedded; both sidebar seats stay shadowed so
+      // the Team chrome keeps working around the Member conversation.
+      const active = snapshot.mode === 'team' && !(name === 'conversation' && snapshot.memberSessionId !== undefined)
       if (active && dispose === undefined) {
         dispose = ctx.slots.register({
           name,
@@ -155,7 +164,25 @@ function applyUi(ctx: ClientContext): void {
     id: 'agent-team',
     order: 100,
     locale: NS,
-    inject: () => ({ navigation, ...navigation.actions(), loadMemberGroups }),
+    inject: () => ({
+      navigation,
+      ...navigation.actions(),
+      // The footer is the only surface that leaves Team mode; it also closes
+      // an embedded Member Session view, restoring the session the Human came
+      // from so the ordinary shell never strands them inside a Member Session.
+      leaveTeam: () => {
+        const snapshot = navigation.getSnapshot()
+        if (snapshot.memberSessionId === undefined) {
+          navigation.actions().leaveTeam()
+          return
+        }
+        const returnTo = snapshot.returnToSessionId
+        navigation.actions().exitMemberSession()
+        if (returnTo !== undefined) (ctx.sessions as unknown as ISessions).open(returnTo)
+        navigation.actions().leaveTeam()
+      },
+      loadMemberGroups,
+    }),
   }, TeamFooterAction as never))
 
   registerModeShadow(ctx, navigation, changes, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
