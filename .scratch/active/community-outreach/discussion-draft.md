@@ -2,36 +2,53 @@
 
 Status: active
 Last checked: 2026-08-24
-Current frontier: awesome-dsh-plugin submission branch ready (`wowyuarm:add-wowyuarm-dsh-agent-team`); open the PR after repo age passes 24h (GitHub repo created 2026-08-23T16:05:44Z -> eligible 2026-08-24T16:05:44Z).
-Exit condition: merged entries on tracked registries; archive after links are stable and maintained docs point at them.
+Current frontier: official showcase discussion LIVE (#4303); awesome-dsh-plugin PR still pending repo age gate (eligible 2026-08-24T16:05:44Z, branch `wowyuarm:add-wowyuarm-dsh-agent-team` pushed).
+Exit condition: merged registry entries + stable discussion presence; archive when links and cadence are settled in maintained docs.
 
-## Submission tracker
+## Official discussion operations (delegated to Shipper, 2026-08-24)
 
-| Target | Status | Notes |
-| --- | --- | --- |
-| awesome-dsh-plugin/awesome-dsh-plugin (~11.8k★) | branch ready, PR pending age gate | one YAML `data/plugins/wowyuarm__dsh-agent-team.yml` + 1 screenshot entry; READMEs regenerated (+1 line each only); category `workflow`; CI needs repo ≥1 day & ≥10 commits |
-| dsh-market/dsh-market (~2k★) | covered automatically | catalog is fetched live from awesome-dsh-plugin.com/plugins.json; do NOT PR entries there |
-| AdamPlatin123/awesome-dsh-plugins radar | PR opened | [#290](https://github.com/AdamPlatin123/awesome-dsh-plugins/pull/290) PLUGINS.md 🔌 单插件 row, title `docs: 登记 dsh-agent-team`, maintainerCanModify=true; topic-based auto-discovery also covers us |
-| deepseek-harness official discussion | human opens first post | draft below |
+Canonical post: https://github.com/deepseek-ai/deepseek-harness/discussions/4303
+Title: DSH｜dsh-agent-team｜帮 human 有序管理任务：持久身份 Agent + Channel 职责 + Task Thread 串联协作
+Category: Show Your Plugins!
 
-## Official discussion draft
+Cadence:
+- Post a release comment within 24h of every npm release (changelog highlights + npm/GitHub links).
+- Edit the main post when positioning-level features land.
+- Weekly sweep of Show Your Plugins! and Q&A for multi-agent/task/workspace threads; reply helpfully as wowyuarm.
 
-**Title:** Agent Team — durable multi-agent collaboration plugin (Web UI)
+Positioning (human-approved framing, supersedes "单主机持久化 Agent 团队" phrasing):
+- Agents are persistent identities for sessions, not throwaway runs.
+- Workspaces organize different agents/sessions per project.
+- The human manages Channels and responsibilities; @mentions route work.
+- Task Threads chain multiple session agents so work advances coherently.
+- Essence: help humans manage tasks in an orderly way and use agents as real collaborators.
 
-> [dsh-agent-team](https://github.com/wowyuarm/dsh-agent-team) is an opt-in bundle that adds a single-host Agent Team to DeepSeek Harness: Workspaces, Channels, Threads, Tasks, Claims, and managed Agent members, backed by an append-only operation ledger as the single authority.
->
-> The Web Client gets a **Team mode**: enter and exit freely, create Channels and Agents, hand off Tasks, and review Thread updates; ordinary Sessions keep their normal preset roster and never see Team tools or guidance. Managed agents work through an isolated `team-member` preset exposing five tools: `team_inbox`, `team_thread`, `team_message`, `team_claim`, `team_view`.
->
-> Install (certified against DSH `0.1.1-rc.2`):
->
-> ```sh
-> dsh plugin --profile web add @wowyuarm/dsh-agent-team
-> dsh web
-> ```
->
-> npm: https://www.npmjs.com/package/@wowyuarm/dsh-agent-team · Docs: docs/README.md in the repo · Issues and feedback: https://github.com/wowyuarm/dsh-agent-team/issues
+Posted body is archived below.
 
-## Conventions learned
+---
 
-- awesome-dsh-plugin: descriptions must be literal claims checked against code; no marketing words; quote `en:` if it contains ": "; regenerate READMEs via their script; ≤3 entries/PR; change only own entries (screenshots.json needs 1-space-indent textual insert, not re-serialization).
-- Radar PLUGINS.md: title format `docs: 登记 <name>`; 运行级 starts 待测 until their k8s pipeline tests it; enable maintainer edits.
+**dsh-agent-team** 把多 Agent 协作变成一件可以有序管理的事。
+
+**核心想法**
+
+- **Agent 是持久身份，不只是会话。** 每个 Agent 成员有自己的记忆与职责边界，跨会话保持连续性。
+- **Workspace 组织一切。** 不同项目放在不同 Workspace，各自管理自己的 Agents 与 Channels。
+- **Human 管 Channel 与职责。** 你决定谁在哪个频道、负责什么；@提及把工作路由到对的 Agent。
+- **Task Thread 串联推进。** 用 Task 认领方向、Thread 保持上下文，多个 Session Agent 围绕同一条工作线推进而不散乱。
+
+对 human 的价值：有序地管理任务，把 agents 用成真正的协作成员，而不是一堆平行开立的会话。
+
+**安装**（已认证 DSH `0.1.1-rc.2`）：
+
+```sh
+dsh plugin --profile web add @wowyuarm/dsh-agent-team
+dsh web
+```
+
+安装后在 DSH 导航进入 **Team mode** 即可开始；普通 Session 不受影响（opt-in bundle）。
+
+- GitHub: https://github.com/wowyuarm/dsh-agent-team
+- npm: https://www.npmjs.com/package/@wowyuarm/dsh-agent-team
+- 反馈与问题：https://github.com/wowyuarm/dsh-agent-team/issues
+
+> 本帖随版本更新长期维护，更新记录见评论区。EN: dsh-agent-team gives a DeepSeek Harness home durable Workspaces, Channels, Threads, Tasks, and managed Agent members with persistent identities — so a human can organize work and let agents collaborate through Task Threads.
