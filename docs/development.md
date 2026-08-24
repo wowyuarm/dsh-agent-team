@@ -158,7 +158,7 @@ DSH_BENCH_STORAGE=1 npx vitest run packages/agent-team/tests/storage-bench.spec.
 | JSON | 10k | 401s | 40.1ms | 64.1ms |
 | SQLite | 10k | 66s | 6.6ms | 10.6ms |
 
-JSON 整文件重写的单次写成本随历史线性增长（1k→10k 涨了约 2.7 倍）；SQLite 稳定在逐语句 fsync 下限附近且不随历史增长。启动侧仍是全量 `loadAll()` 加全量重放，本阶段不变；后续 checkpoint/log 方向见 `.scratch/active/agent-team-storage-architecture/`。
+JSON 整文件重写的单次写成本随历史线性增长（1k→10k 涨了约 2.7 倍）；SQLite 稳定在逐语句 fsync 下限附近且不随历史增长。启动侧仍是全量 `loadAll()` 加全量重放，本阶段不变；后续 checkpoint/log 方向见 [`.scratch/archive/2026-08/agent-team-storage-architecture/`](../.scratch/archive/2026-08/agent-team-storage-architecture/)。
 
 ## 交付前核对
 

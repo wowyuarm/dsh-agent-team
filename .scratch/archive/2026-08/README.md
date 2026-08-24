@@ -12,5 +12,7 @@
 | UI round 3 | 完成消息 run、mention 强调、聊天排版刻度和 Task 状态点 | [`team-client-ui-round3/`](team-client-ui-round3/) |
 | Sidebar sections | 完成侧栏分区、编辑器、成员模型固定和 Agent 会话跳转 | [`team-sidebar-sections/`](team-sidebar-sections/) |
 | UI loading investigation | 收口 scoped invalidation、共享可取消 long-poll 与 Host 投影索引优化 | [`team-ui-loading-investigation/`](team-ui-loading-investigation/) |
+| Ledger storage | 以 v1 域版本重置与公开组合路由把 Team ledger 切到 SQLite，移除随历史增长的 JSON 整文件重写成本；checkpoint/log 方向显式延后并记录在案 | [`agent-team-storage-architecture/`](agent-team-storage-architecture/) |
+| README positioning | 以价值优先的产品定位更新 README 与 package 元数据，保留 opt-in 与单主机边界表述 | [`readme-positioning/`](readme-positioning/) |
 
 代表性浏览器图在 [`validation/browser/`](validation/browser/)。它们是已确认的里程碑证据；日常测试输出不写入此目录。

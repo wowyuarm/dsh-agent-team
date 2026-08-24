@@ -1,6 +1,6 @@
 # Benchmark And Defer Physical Compaction
 
-Status: planned — light pre-release part only; scale decisions post-release
+Status: light pre-release part done (1k/10k results recorded in docs/development.md); 100k-scale and archive-segment decisions deferred post-release
 
 ## Goal
 

@@ -1,9 +1,6 @@
 # Community outreach materials
 
-Status: active
-Last checked: 2026-08-24
-Current frontier: official showcase discussion LIVE (#4303); awesome-dsh-plugin PR still pending repo age gate (eligible 2026-08-24T16:05:44Z, branch `wowyuarm:add-wowyuarm-dsh-agent-team` pushed).
-Exit condition: merged registry entries + stable discussion presence; archive when links and cadence are settled in maintained docs.
+状态与当前前沿以 [`README.md`](README.md) 为唯一接续入口；本文件保存操作细节、human 认可的定位表述和已发布正文存档。
 
 ## Official discussion operations (delegated to Shipper, 2026-08-24)
 

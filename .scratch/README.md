@@ -6,7 +6,7 @@
 
 ```text
 .scratch/
-├── active/                 # 尚未结束的工作项；当前为空
+├── active/                 # 尚未结束的工作项
 ├── archive/YYYY-MM/<work>/ # 已完成工作项的历史资料
 └── local/                  # Git 忽略的私人草稿和临时输出
 ```

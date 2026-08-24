@@ -1,6 +1,6 @@
 # Reset Agent Team Domain Version
 
-Status: implemented 2026-08-23 (uncommitted)
+Status: implemented 2026-08-23; committed in `7bc27f7` and shipped in release 0.1.0
 
 ## Outcome
 

@@ -1,8 +1,8 @@
 # Agent Team Ledger Storage
 
-Status: release scope implemented 2026-08-23 (issues 01+02 uncommitted)
+Status: closed 2026-08-24 — release scope (issues 01+02) shipped in 0.1.0; issues 03/04 and the post-release half of issue 05 stay deferred here
 
-Last checked: 2026-08-23
+Last checked: 2026-08-24
 
 ## Scope
 
