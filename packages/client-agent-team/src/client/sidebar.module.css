@@ -280,6 +280,12 @@
   text-align: left;
 }
 .agentSelect:focus-visible { outline: none; }
+/* The leaf-row convention: while this Member's Session is the conversation
+   seat, its card carries the resident fill the workspace overview yields. */
+.agentSelect[aria-current='page'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 8px;
+}
 .agentAvatar {
   align-items: center;
   background: hsl(var(--team-avatar-hue, 212) 42% 46%);

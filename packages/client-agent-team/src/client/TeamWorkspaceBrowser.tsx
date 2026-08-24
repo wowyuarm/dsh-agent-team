@@ -16,9 +16,10 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
   const selectedExists = selected !== undefined && workspaces.some(workspace => workspace.workspaceId === selected)
   const selectedId = selectedExists ? selected : workspaces[0]?.workspaceId
   // Exactly one sidebar row carries aria-current='page': the open Channel while
-  // one is set, otherwise the browsed Workspace's overview. The selected row
-  // keeps its quiet folder tint (data-selected) in both cases.
-  const overviewIsCurrent = navigationState.channelRef === undefined
+  // one is set, the selected Agent card while a Member Session view is open,
+  // otherwise the browsed Workspace's overview. The selected row keeps its
+  // quiet folder tint (data-selected) in every case.
+  const overviewIsCurrent = navigationState.channelRef === undefined && navigationState.memberSessionId === undefined
   const [creatingAgents, setCreatingAgents] = useState<readonly AgentTeamAddMemberRequest[]>([])
   // Rail icons request expansion and name the section to reveal once wide.
   const [pendingSection, setPendingSection] = useState<SidebarSection>()
@@ -64,7 +65,7 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
         <TeamChannelsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} loadChannels={loadChannels} subscribeChanges={subscribeChanges} createChannel={createChannel} updateChannel={updateChannel} joinChannel={joinChannel} removeChannelMember={removeChannelMember} creatingAgents={creatingAgents.filter(request => request.workspaceId === selectedId)} {...(navigationState.channelRef === undefined ? {} : { selectedChannelRef: navigationState.channelRef })} selectChannel={selectChannel} t={t} />
       </div>
       <div ref={agentsRef}>
-        <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} loadChannels={loadChannels} addMember={addMember} updateMember={updateMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
+        <TeamAgentsPanel key={selectedId} workspaceId={selectedId} loadMembers={loadMembers} subscribeChanges={subscribeChanges} loadChannels={loadChannels} addMember={addMember} updateMember={updateMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} {...(navigationState.memberSessionId === undefined ? {} : { memberSessionId: navigationState.memberSessionId })} openMemberSession={openMemberSession} onCreatingChange={(request, creating) => { setCreatingAgents(current => creating ? [...current.filter(item => item.requestId !== request.requestId), request] : current.filter(item => item.requestId !== request.requestId)) }} t={t} />
       </div>
     </div>}
   </section>

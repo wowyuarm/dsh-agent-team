@@ -416,11 +416,19 @@ describe('rendered Team mode composition', () => {
     expect(document.documentElement.dataset.agentTeamMode).toBe('team')
     await waitFor(() => { expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeTruthy() })
     expect(b.view.container.querySelector('[data-team-conversation]')).toBeNull()
+    // The single positioning highlight moves to the selected Agent card; the
+    // workspace overview row goes quiet.
+    const card = b.view.getByRole('button', { name: '打开 builder 的会话' })
+    await waitFor(() => { expect(card.getAttribute('aria-current')).toBe('page') })
+    for (const row of b.view.container.querySelectorAll('[aria-current="page"]')) {
+      expect(row).toBe(card)
+    }
 
     // Explicit Team navigation closes the embedded Member view again.
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-channel]')).toBeTruthy() })
     expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeNull()
+    expect(card.getAttribute('aria-current')).toBeNull()
     await b.runtime.dispose()
   })
 

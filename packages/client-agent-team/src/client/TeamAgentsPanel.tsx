@@ -28,12 +28,14 @@ interface TeamAgentsPanelProps {
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
+  /** The Member Session currently embedded in the conversation seat, if any. */
+  readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
   const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
@@ -179,7 +181,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         {!loading && members.length === 0 && <p className={css.emptyState}>{t('emptyAgents')}</p>}
         <div className={css.agentList}>
           {members.map(status => (
-            <AgentRow key={status.member.memberId} status={status} channels={channels} loadChannels={loadChannels} updateMember={updateMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
+            <AgentRow key={status.member.memberId} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
           ))}
         </div>
       </TeamSidebarSection>
@@ -198,8 +200,10 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, channels, loadChannels, updateMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, channels, loadChannels, updateMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
+  /** This Member's Session is the one embedded in the conversation seat. */
+  readonly current?: boolean
   readonly channels: readonly AgentTeamChannel[]
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly updateMember: TeamSidebarProps['updateMember']
@@ -215,7 +219,7 @@ function AgentRow({ status, channels, loadChannels, updateMember, joinChannel, r
   return (
     <>
       <div className={css.agentRow} data-menu-open={menuOpen || undefined}>
-        <button type="button" className={css.agentSelect} aria-label={t('openAgentSession', { name: status.member.handle })} onClick={() => { openMemberSession(status.member.sessionId) }}>
+        <button type="button" className={css.agentSelect} aria-label={t('openAgentSession', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { openMemberSession(status.member.sessionId) }}>
           <TeamMemberAvatar status={status} t={t} />
           <span className={css.agentCopy}>
             <strong>{status.member.handle}</strong>

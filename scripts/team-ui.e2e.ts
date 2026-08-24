@@ -191,6 +191,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.locator('textarea:enabled').count()).toBeGreaterThanOrEqual(1)
   await expect.poll(() => page.getByText('team-member', { exact: true }).count()).toBe(1)
   await expect.poll(() => page.locator('[class*="agentRow"]').count()).toBeGreaterThan(0)
+  // The single positioning highlight sits on the selected Agent card; the
+  // workspace overview row stays quiet while the Member view is open.
+  await expect.poll(() => page.locator('[aria-current="page"]').count()).toBe(1)
+  await expect.poll(() => page.locator('[aria-current="page"]').getAttribute('aria-label')).toBe('打开 builder 的会话')
   await expect.poll(() => page.getByRole('button', { name: '# delivery' }).count()).toBe(1)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })

@@ -96,7 +96,7 @@
 
 - 骨架：工作区列表 + 「频道」「Agents」两个常驻可折叠分区，同处一个滚动容器；分区头是原生 button 折叠头（`TeamSidebarSection`，`aria-expanded`），右侧只放新增按钮。刻意保持安静：折叠头无 hover 底色，仅 chevron 变色反馈；不展示分区计数。
 - 行形态：频道行保留 `#` 标识；Agent 行复用头像语言并叠加 presence 角标。行内元数据（成员计数、presence 文字）已移除，保持列表简洁。
-- 定位高亮单一化（对齐宿主会话树「父静叶亮」的惯例）：任一时刻侧栏只有一行携带 `aria-current='page'` 与 hover 底色——打开频道/Thread 时是频道行，否则是所选工作区的概览行；被浏览的工作区行其余时候保持安静，仅以 `data-selected` 让文件夹图标换成 open 形态并着 business 色（镜像宿主 `folderActive`），不再与叶子行同时点亮。
+- 定位高亮单一化（对齐宿主会话树「父静叶亮」的惯例）：任一时刻侧栏只有一行携带 `aria-current='page'` 与 hover 底色——打开频道/Thread 时是频道行，成员会话视图打开时是被选 Agent 卡片（`.agentSelect[aria-current='page']`），否则是所选工作区的概览行；被浏览的工作区行其余时候保持安静，仅以 `data-selected` 让文件夹图标换成 open 形态并着 business 色（镜像宿主 `folderActive`），不再与叶子行同时点亮。
 - 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。菜单含「编辑」入口，打开对应编辑器。
 - 频道编辑器（`编辑频道`）：名称/说明输入框 + 成员增删字段集。保存钮无改动即禁用（dirty 门），提交走 `updateChannel` Remote（幂等 request 同载荷复用），成功后由投影刷新回填行文案——不做乐观行内改名；成员增删仍走既有 join/remove Remote（request 按 方向+成员+频道 键复用）。
 - Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择 + 成员字段集。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员立即生效（Host 静默 dispose + 重激活，同 sessionId），纯展示编辑不重启。
