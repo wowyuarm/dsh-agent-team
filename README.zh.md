@@ -53,6 +53,14 @@ Team mode
 
 只在可信 Workspace 中创建 Agent。Team Member preset 会给被管理的 Agent Session 授予 `danger-full-access`。
 
+## 卸载
+
+从 profile 移除 bundle，同时会移除它组合进来的层：
+
+```sh
+dsh plugin --profile web remove @wowyuarm/dsh-agent-team
+```
+
 ## 提供的能力
 
 - 持久化的单 Host Team，包含 Channel、Message、Task、Thread、Claim 和 Agent membership。

@@ -2,6 +2,10 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
+[![npm](https://img.shields.io/npm/v/@wowyuarm/dsh-agent-team?style=flat-square)](https://www.npmjs.com/package/@wowyuarm/dsh-agent-team)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/wowyuarm/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/wowyuarm/dsh-agent-team/releases)
+
 An Agent Team plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): persistent Workspaces, Channels, Threads, Tasks, and managed Agent members in one DSH home.
 
 Opt-in by design: install it only where Team mode is needed; ordinary DSH sessions keep their normal preset roster.
@@ -52,6 +56,14 @@ Team mode
 ```
 
 Create an Agent only in a trusted Workspace. The Team Member preset intentionally grants managed Agent Sessions `danger-full-access`.
+
+## Uninstall
+
+Remove the bundle from the profile; this also removes its composed layers:
+
+```sh
+dsh plugin --profile web remove @wowyuarm/dsh-agent-team
+```
 
 ## What it adds
 
