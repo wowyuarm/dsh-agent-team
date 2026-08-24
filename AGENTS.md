@@ -63,6 +63,8 @@ git diff --check
 
 `npm run test:browser` is required for changes that can affect the assembled Web bundle, Client loading, slot takeover, Remote activation, or visible UI. It uses the adjacent Harness checkout and a temporary profile; it does not modify the Harness repository permanently.
 
+Release cadence is batched: between releases the operator daily-drives a locally linked build as a lightweight acceptance channel, so choose the narrowest applicable check per change instead of demanding full acceptance for every small fix. See "Profile 模式与发布节奏" in [`docs/development.md`](docs/development.md).
+
 ## Further reading
 
 - Domain and Host behavior: `packages/agent-team/src/`, its tests, and `docs/architecture.md`.

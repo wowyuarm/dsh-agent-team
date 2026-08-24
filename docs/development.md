@@ -121,6 +121,15 @@ dsh web
 
 真实安装验证必须使用已构建 package 的发布布局。直接 symlink 到源码可能绕过 profile 内的 peer fallback，导致与真实安装不同的结果；`scripts/team-ui.e2e.ts` 和 `scripts/team-ui.preview.ts` 已采用复制 package 的方式。
 
+### Profile 模式与发布节奏
+
+日常自用与开发验收使用两个并存 profile，互不干扰：
+
+- **稳定模式**（`--profile web`）：依赖 npm 发布版（`^0.1.0`），升级跟随 release。
+- **开发模式**（`--profile web-dev`）：依赖 `link:` 本地检出，rebuild + 重启即用最新代码。
+
+发布节奏是批量的：两次发布之间，操作者将本地构建日常自用，作为轻量验收渠道——日常使用反馈等同有效验证。agent 与贡献者按检查梯度选择最窄检查即可，不必为每个小改动要求完整验收；累积若干修复与优化、在日常使用中稳定后，再批量发新版。
+
 本 bundle 的最低兼容版本是 DSH `0.1.1-rc.2`。当前 DSH SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
 ## Team ledger 存储路由
