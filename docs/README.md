@@ -11,6 +11,7 @@
 | [`architecture.md`](architecture.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
 | [`domain-model.md`](domain-model.md) | 稳定的 Agent Team 领域词汇 | 修改领域语义、类型命名或正式协作合同 |
 | [`team-collaboration.md`](team-collaboration.md) | 已实现的五工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
+| [`frontend-design.md`](frontend-design.md) | Team Client 的长期 UI 设计体系：设计原则、布局骨架、排版、组件合同、可访问性基线与验证流程 | 修改 `packages/client-agent-team/src/client/` 的可见 UI 或交互时 |
 | [`harness-navigation.md`](harness-navigation.md) | 本仓库与 `../deepseek-harness` 的查阅路线、源码入口、已知接入陷阱 | 不确定应该查哪个 Harness 文档/package/source 时 |
 
 ## 文档规则
@@ -26,5 +27,5 @@
 
 - **改 Host 或 domain：** 读 [`architecture.md`](architecture.md) 与 [`domain-model.md`](domain-model.md)，再以 `packages/agent-team/src/` 和测试为准；需要决策来由时，按 `.scratch/README.md` 查 archive。
 - **改 tools、preset 或 `/team`：** 读 [`architecture.md`](architecture.md) 的对应章节，再查 Harness cookbook 和 subsystem 文档。
-- **改 Client 或 UI：** 读 [`architecture.md`](architecture.md) 的 Client 章节、[`development.md`](development.md) 的 UI 验收规则与 [`harness-navigation.md`](harness-navigation.md) 的 Client 路线；需要历史设计来由时再查 `.scratch/archive/2026-08/ui-redesign/`。
+- **改 Client 或 UI：** 读 [`frontend-design.md`](frontend-design.md)、[`architecture.md`](architecture.md) 的 Client 章节与 [`development.md`](development.md) 的 UI 验收规则；跨仓库路线见 [`harness-navigation.md`](harness-navigation.md)；需要历史设计来由时再查 `.scratch/archive/2026-08/ui-redesign/`。
 - **改安装、构建、测试或 Remote 生成：** 读 [`development.md`](development.md)，再查看对应 `package.json` / script 的实际实现。
