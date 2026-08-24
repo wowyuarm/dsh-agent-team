@@ -2,9 +2,9 @@
 
 [English](README.md) | 简体中文
 
-这是一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供的 Agent Team 插件：在一个 DSH home 中组织持久化的 Workspace、Channel、Thread、Task 和由 Team 管理的 Agent 成员。
+**dsh-agent-team** 帮助 human 有序管理任务、把 agents 用成真正的协作者：Agent 是 session 的持久身份；Workspace 按项目组织 agents 与 sessions；Channel 承载职责分派；Task Thread 把多个 session agent 串成一条推进线。
 
-按需启用：只在需要 Team mode 的 profile 中安装；普通 DSH Session 保持原有 preset roster。
+一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供的按需启用插件：只在需要 Team mode 的 profile 安装，普通 DSH Session 保持原有 preset roster。
 
 ## 预览
 

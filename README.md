@@ -6,9 +6,9 @@
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/wowyuarm/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/wowyuarm/dsh-agent-team/releases)
 
-An Agent Team plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): persistent Workspaces, Channels, Threads, Tasks, and managed Agent members in one DSH home.
+**dsh-agent-team** helps a human manage tasks in an orderly way and use agents as true collaborators: agents are persistent identities for their sessions; Workspaces organize agents and sessions per project; Channels carry responsibilities; Task Threads chain session agents into one line of progress.
 
-Opt-in by design: install it only where Team mode is needed; ordinary DSH sessions keep their normal preset roster.
+An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): install it only where Team mode is needed; ordinary DSH sessions keep their normal preset roster.
 
 ## Preview
 
