@@ -79,6 +79,13 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     setHighlight(current => Math.min(current, candidates.length - 1))
   }, [mention, candidates.length])
 
+  // The confirmation is returned after the first send has disabled this
+  // textarea. Put the reader back here so Enter confirms without a mouse trip.
+  useEffect(() => {
+    if (confirmation === undefined || pending) return
+    inputRef.current?.focus({ preventScroll: true })
+  }, [confirmation, pending])
+
   const pruneRecipients = (nextDraft: string): void => {
     const knownMembers = new Map(members.map(status => [status.member.memberId, status.member]))
     const next = new Set([...recipients].filter(memberId => {

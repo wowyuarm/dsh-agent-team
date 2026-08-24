@@ -259,9 +259,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const invitationComposer = page.getByRole('textbox', { name: '消息内容' })
   await invitationComposer.fill('请 reviewer 加入这个已有 Thread 并回复 Human @re')
   await page.getByRole('option', { name: /@reviewer/ }).click()
-  await page.getByRole('button', { name: '发送' }).click()
+  await invitationComposer.press('Enter')
   await page.getByRole('status').filter({ hasText: '再次发送' }).waitFor()
-  await page.getByRole('button', { name: '发送' }).click()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
+  await invitationComposer.press('Enter')
   await page.locator('[data-team-thread] article').filter({ hasText: '请 @reviewer 加入这个已有 Thread 并回复 Human @reviewer' }).waitFor()
   const reviewerInbox = scaffold.ctx.agentTeam.inboxForAgent(reviewerAgent, { workspaceId: workspace.id })
   expect(reviewerInbox).toMatchObject({ totalDirectCount: 1, items: [expect.objectContaining({

@@ -76,7 +76,7 @@
 
 ### Composer 与 @mention
 
-- textarea 自增高（上限 180px）；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。
+- textarea 自增高（上限 180px）；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。未关注成员的首次发送返回确认提醒时，输入框在请求完成后自动恢复焦点，保留草稿与收件人，第二次 Enter 可直接确认发送。
 - mention 弹层向上展开，`role="listbox"`，textarea 以 `aria-controls/aria-activedescendant/aria-expanded` 关联；↑↓ 循环、Tab/Enter 接受候选、Escape 关闭；外点关闭复用 `useDismissOnOutsidePointer`；高度钳制复用 `useAnchoredMaxHeight`（cap 320px）。
 - 接受候选后光标落点精确到插入文本之后；删除提及文本会同步收缩 recipients。
 - 收件人显式化：recipients 非空时草稿与工具栏之间渲染 quiet 提示行（`.notifyRow`，`composerNotify` 文案 + `{ids}` 句柄列表），发送前即可看到"将通知谁"；空集合不占位。
