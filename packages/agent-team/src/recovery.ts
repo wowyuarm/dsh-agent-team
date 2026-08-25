@@ -19,6 +19,8 @@ export function classifyRecoverableError(message: string): RecoverableErrorKind 
 export interface RecoveryCoordinatorOptions {
   /** Performs the injection; throwing means the Member is gone and tracking stops. */
   readonly inject: (memberId: AgentTeamMemberId, attempt: number, kind: RecoverableErrorKind) => void
+  /** Called once when an episode exhausts its attempts and tracking stands down. */
+  readonly onStandDown?: (memberId: AgentTeamMemberId, attempts: number) => void
   /** Delay between an error and its automatic recovery injection. */
   readonly delayMs?: number
   /** Automatic attempts per episode before standing down for the operator. */
@@ -30,6 +32,7 @@ interface EpisodeState {
   lastError: string
   attempts: number
   timer?: ReturnType<typeof setTimeout> | undefined
+  stoodDown?: boolean | undefined
 }
 
 export const RECOVERY_DELAY_MS = 120_000
@@ -44,11 +47,13 @@ export const RECOVERY_MAX_ATTEMPTS = 3
 export class RecoveryCoordinator {
   private readonly episodes = new Map<AgentTeamMemberId, EpisodeState>()
   private readonly inject: RecoveryCoordinatorOptions['inject']
+  private readonly onStandDown: RecoveryCoordinatorOptions['onStandDown']
   private readonly delayMs: number
   private readonly maxAttempts: number
 
   constructor(options: RecoveryCoordinatorOptions) {
     this.inject = options.inject
+    this.onStandDown = options.onStandDown
     this.delayMs = options.delayMs ?? RECOVERY_DELAY_MS
     this.maxAttempts = options.maxAttempts ?? RECOVERY_MAX_ATTEMPTS
   }
@@ -67,7 +72,11 @@ export class RecoveryCoordinator {
       episode = { kind, lastError: errorMessage, attempts: 0 }
       this.episodes.set(memberId, episode)
     } else if (episode.attempts >= this.maxAttempts) {
-      // The same error survived every allowed injection — stand down.
+      // The same error survived every allowed injection — stand down once.
+      if (episode.stoodDown !== true) {
+        episode.stoodDown = true
+        this.onStandDown?.(memberId, episode.attempts)
+      }
       return
     }
     if (episode.timer !== undefined) return

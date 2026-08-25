@@ -149,7 +149,13 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly runtimeErrors = new Map<SessionId, string>()
   private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
   private readonly recovery = new RecoveryCoordinator({
-    inject: (memberId, attempt, kind) => { this.injectRecovery(memberId, attempt, kind) },
+    inject: (memberId, attempt, kind) => {
+      this.ctx.logger.info(`agent-team: automatic recovery steering member '${this.memberLabel(memberId)}' (attempt ${attempt}/${RECOVERY_MAX_ATTEMPTS}, ${kind})`)
+      this.injectRecovery(memberId, attempt, kind)
+    },
+    onStandDown: (memberId, attempts) => {
+      this.ctx.logger.warn(`agent-team: member '${this.memberLabel(memberId)}' still failing after ${attempts} automatic recovery attempts; leaving it in error for the operator`)
+    },
   })
   private lifecycleTail: Promise<void> = Promise.resolve()
   private accepting = true
@@ -167,6 +173,8 @@ export default class AgentTeam extends TypertRemoteService {
       if (member === undefined) return
       const message = error instanceof Error ? error.message : String(error)
       this.runtimeErrors.set(agent.id, message)
+      const kind = classifyRecoverableError(message)
+      if (kind !== undefined) this.ctx.logger.warn(`agent-team: member '${member.handle}' hit a recoverable error (${kind}); automatic recovery scheduled`)
       this.recovery.onError(member.memberId, message)
       this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
     })
@@ -357,8 +365,14 @@ export default class AgentTeam extends TypertRemoteService {
     const storedError = this.storedErrorFor(member.memberId)
     this.recovery.stopTracking(request.memberId)
     const kind = classifyRecoverableError(storedError ?? '')
+    this.ctx.logger.info(`agent-team: operator asked member '${member.handle}' to resume`)
     this.steerResume(member, this.resumeText(kind ?? 'unspecified failure', { operatorRequested: true }))
     return Object.freeze({ status: this.memberStatus(member) })
+  }
+
+  /** Ledger handle for log lines; falls back to the raw id when unknown. */
+  private memberLabel(memberId: AgentTeamMemberId): string {
+    return this.ledger?.getMember(memberId)?.handle ?? memberId
   }
 
   /** Latest runtime error summary for a Member's live session, if any. */

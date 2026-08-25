@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_DELAY_MS, RECOVERY_MAX_ATTEMPTS } from '../src/recovery.ts'
+import type { AgentTeamMemberId } from '../src/types.ts'
 
 describe('recoverable error classification', () => {
   it.each([
@@ -33,10 +34,10 @@ describe('RecoveryCoordinator', () => {
     vi.useRealTimers()
   })
 
-  const memberId = 'member:builder' as never
+  const memberId = 'member:builder' as AgentTeamMemberId
 
   function harness() {
-    const injections: Array<{ memberId: typeof memberId; attempt: number; kind: string }> = []
+    const injections: Array<{ memberId: AgentTeamMemberId; attempt: number; kind: string }> = []
     const coordinator = new RecoveryCoordinator({
       inject: (id, attempt, kind) => { injections.push({ memberId: id, attempt, kind }) },
     })
@@ -124,10 +125,28 @@ describe('RecoveryCoordinator', () => {
     expect(injections).toEqual([{ memberId, attempt: 1, kind: 'transient network' }])
   })
 
+  it('notifies stand-down exactly once per episode', () => {
+    const standDowns: Array<{ memberId: AgentTeamMemberId; attempts: number }> = []
+    const coordinator = new RecoveryCoordinator({
+      inject: () => {},
+      onStandDown: (id, attempts) => { standDowns.push({ memberId: id, attempts }) },
+      maxAttempts: 2,
+    })
+    for (let round = 0; round <= 3; round += 1) {
+      coordinator.onError(memberId, 'HTTP 429')
+      vi.advanceTimersByTime(RECOVERY_DELAY_MS)
+    }
+    expect(standDowns).toEqual([{ memberId, attempts: 2 }])
+    // A changed error string opens a fresh episode that can stand down again.
+    coordinator.onError(memberId, 'ETIMEDOUT')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS * 4)
+    expect(standDowns).toHaveLength(1)
+  })
+
   it('dispose cancels every pending timer', () => {
     const { coordinator } = harness()
-    coordinator.onError('member:a' as never, 'fetch failed')
-    coordinator.onError('member:b' as never, 'HTTP 429')
+    coordinator.onError('member:a' as AgentTeamMemberId, 'fetch failed')
+    coordinator.onError('member:b' as AgentTeamMemberId, 'HTTP 429')
     expect(vi.getTimerCount()).toBe(2)
     coordinator.dispose()
     expect(vi.getTimerCount()).toBe(0)
