@@ -571,6 +571,18 @@ export interface AgentTeamMemberResult {
   readonly status: AgentTeamAgentMemberStatus
 }
 
+/** Operator intent to nudge one error-stopped Member into continuing its work. */
+export interface AgentTeamRecoverMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+}
+
+/** Result of a recovery nudge; runtime-only steering, so there is no ledger receipt. */
+export interface AgentTeamRecoverMemberResult {
+  readonly status: AgentTeamAgentMemberStatus
+}
+
 /** Human intent to remove one Agent Member from one Channel. */
 export interface AgentTeamRemoveChannelMemberRequest {
   readonly requestId: AgentTeamRequestId

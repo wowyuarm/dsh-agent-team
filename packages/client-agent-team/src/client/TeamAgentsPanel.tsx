@@ -8,7 +8,7 @@ import type {
   AgentTeamUpdateMemberRequest,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronDownOutline14, IconEditOutline16, IconPlusOutline16, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconEditOutline16, IconPlusOutline16, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
@@ -25,6 +25,7 @@ interface TeamAgentsPanelProps {
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly addMember: TeamSidebarProps['addMember']
   readonly updateMember: TeamSidebarProps['updateMember']
+  readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
@@ -35,7 +36,7 @@ interface TeamAgentsPanelProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, recoverMember, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
   const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
@@ -181,7 +182,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         {!loading && members.length === 0 && <p className={css.emptyState}>{t('emptyAgents')}</p>}
         <div className={css.agentList}>
           {members.map(status => (
-            <AgentRow key={status.member.memberId} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
+            <AgentRow key={status.member.memberId} status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
           ))}
         </div>
       </TeamSidebarSection>
@@ -200,13 +201,14 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, channels, loadChannels, updateMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
   readonly channels: readonly AgentTeamChannel[]
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly updateMember: TeamSidebarProps['updateMember']
+  readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
@@ -216,6 +218,14 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, joinC
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
+  const resume = async (): Promise<void> => {
+    await recoverMember({
+      requestId: crypto.randomUUID() as AgentTeamRequestId,
+      workspaceId: status.member.workspaceId,
+      memberId: status.member.memberId,
+    })
+    await onUpdated()
+  }
   return (
     <>
       <div className={css.agentRow} data-menu-open={menuOpen || undefined}>
@@ -229,8 +239,14 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, joinC
         <span className={css.rowMenu}>
           <TeamRowMenu
             label={t('actionsAgent', { name: status.member.handle })}
-            items={[{ id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> }]}
-            onSelect={() => { setEditing(true) }}
+            items={[
+              ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconChevronRightOutline14 /> }] : []),
+              { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
+            ]}
+            onSelect={(id) => {
+              if (id === 'resume') void resume()
+              else setEditing(true)
+            }}
             onOpenChange={setMenuOpen}
           />
         </span>

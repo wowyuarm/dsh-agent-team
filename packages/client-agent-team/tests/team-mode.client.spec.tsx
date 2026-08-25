@@ -117,6 +117,10 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     const status = memberRows.find(entry => entry.member.memberId === request.memberId)
     return { ok: true as const, value: { receipt: {}, ...(status === undefined ? {} : { status }) } }
   })
+  const recoverMember = vi.fn(async (request: { requestId: string; memberId: string }) => ({
+    ok: true as const,
+    value: { status: memberRows.find(entry => entry.member.memberId === request.memberId) },
+  }))
   const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
     groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
       { id: 'deepseek-chat', name: 'DeepSeek Chat' },
@@ -183,7 +187,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, updateChannel, updateMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   runtime.provide('connection', { api: { llm: { models: loadModels } } })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
@@ -203,7 +207,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, updateMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, updateMember, recoverMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
 
 describe('rendered Team mode composition', () => {
@@ -367,6 +371,27 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByText('# platform')).toBeTruthy()
     expect(b.view.queryByText('# engineering')).toBeNull()
     fireEvent.keyDown(document, { key: 'Escape' })
+    await b.runtime.dispose()
+  })
+
+  it('offers 恢复 in the row menu only for error Members and nudges through the Host remote', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+
+    // A healthy Member's menu carries only the editor entry.
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    const healthyMenu = await within(document.body).findByRole('menu')
+    expect(within(healthyMenu).getByRole('menuitem', { name: '编辑 Agent' })).toBeTruthy()
+    expect(within(healthyMenu).queryAllByRole('menuitem', { name: '恢复' })).toEqual([])
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+
+    // The error Member additionally gets the recovery entry.
+    fireEvent.click(b.view.getByRole('button', { name: 'failed 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '恢复' }))
+    await waitFor(() => {
+      expect(b.recoverMember).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:failed' }))
+    })
     await b.runtime.dispose()
   })
 
