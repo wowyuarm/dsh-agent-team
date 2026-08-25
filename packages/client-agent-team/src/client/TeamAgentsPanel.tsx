@@ -8,7 +8,7 @@ import type {
   AgentTeamUpdateMemberRequest,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronDownOutline14, IconChevronRightOutline14, IconEditOutline16, IconPlusOutline16, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline14, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
@@ -251,8 +251,8 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
             label={t('actionsAgent', { name: status.member.handle })}
             items={[
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
-              ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconChevronRightOutline14 /> }] : []),
-              { id: 'restart', label: t('restartAgent'), icon: <IconChevronRightOutline14 /> },
+              ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
+              { id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline14 /> },
             ]}
             onSelect={(id) => {
               if (id === 'resume') void resume()
