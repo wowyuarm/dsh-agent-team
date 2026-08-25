@@ -286,8 +286,12 @@ describe('rendered Team mode composition', () => {
     const agentName = b.view.getByLabelText('名称')
     await waitFor(() => expect(document.activeElement).toBe(agentName))
     fireEvent.change(agentName, { target: { value: 'reviewer' } })
-    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'Reviews changes' } })
-    fireEvent.click(await b.view.findByRole('checkbox', { name: 'engineering' }))
+    fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'Reviews changes' } })
+    // Channels ride the shared multi-select Menu now: open, check, leave open.
+    fireEvent.click(b.view.getByRole('button', { name: '初始频道' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'engineering' }))
+    // The trigger keeps its aria-label; the count renders as content.
+    expect(b.view.getByText('已选 1 个频道')).toBeTruthy()
     b.addMember.mockResolvedValueOnce({ ok: false, error: { message: 'connection lost' } } as never)
     fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
     expect((await b.view.findByRole('alert')).textContent).toContain('connection lost')
@@ -305,6 +309,28 @@ describe('rendered Team mode composition', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(b.view.queryByRole('dialog', { name: '添加 Agent' })).toBeNull()
     await waitFor(() => expect(document.activeElement).toBe(addAgentTrigger))
+    await b.runtime.dispose()
+  })
+
+  it('creates an Agent with empty description, no Channels, and an optional model', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+    fireEvent.click(b.view.getByRole('button', { name: '添加 Agent' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'bare' } })
+    // Description stays empty; the placeholder marks it optional.
+    expect(b.view.getByPlaceholderText('留空则暂无描述')).toBeTruthy()
+    // Pick a model through the capped menu.
+    fireEvent.click(await b.view.findByRole('button', { name: '模型' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'DeepSeek Chat' }))
+    // Channels stay untouched: the picker shows the empty prompt.
+    expect(b.view.getByText('选择初始频道')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
+    expect(await b.view.findByText('bare')).toBeTruthy()
+    expect(b.addMember).toHaveBeenLastCalledWith(expect.objectContaining({
+      workspaceId: 'w1', handle: 'bare', description: '', presetId: 'team-member', channelRefs: [],
+      model: { provider: 'deepseek-official', model: 'deepseek-chat' },
+    }))
     await b.runtime.dispose()
   })
 

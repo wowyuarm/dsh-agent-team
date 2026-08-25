@@ -238,6 +238,29 @@ describe('Agent Team Member lifecycle', () => {
     await expect(ctx.agentTeam.restartMember({ requestId: requestId('suspended'), workspaceId, memberId: added.status.member.memberId })).rejects.toThrow(/only enabled Members can be restarted/)
   })
 
+  it('creates a Member with no description and no Channels and lights delivery on join', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const bare = await ctx.agentTeam.addMember({ requestId: requestId('bare'), workspaceId, handle: 'bare', description: '', presetId: 'team-member', channelRefs: [] })
+    expect(bare.status.availability).toBe('active')
+    expect(bare.status.member.description).toBe('')
+    const agent = ctx.agents.get(bare.status.member.sessionId)!
+    expect(agent).toBeDefined()
+
+    // A message to an empty Channel commits with an empty notification set.
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('bare-channel'), workspaceId, name: 'ops', description: 'Ops work' })
+    const before = await ctx.agentTeam.sendMessage({ requestId: requestId('pre-join'), workspaceId, channelRef: channel.channel.channelRef, body: 'Posted before anyone joined' })
+    expect(before.kind).toBe('committed')
+    expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+
+    // Joining a Channel lights the whole delivery chain for later mentions.
+    await ctx.agentTeam.joinChannel({ requestId: requestId('join'), workspaceId, channelRef: channel.channel.channelRef, memberId: bare.status.member.memberId })
+    const after = await ctx.agentTeam.sendMessage({ requestId: requestId('post-join'), workspaceId, channelRef: channel.channel.channelRef, body: 'Pinged after joining', recipients: [bare.status.member.memberId] })
+    expect(after.kind).toBe('committed')
+    if (after.kind !== 'committed') throw new Error(`expected committed post-join mention, received ${after.kind}`)
+    expect(ctx.agentTeam.inboxForAgent(agent, { workspaceId })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1,
+      items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: after.task.taskRef }), directCount: 1 })] })
+  })
+
   it('creates, suspends, resumes, and removes a Member with a current DSH SQLite Session database', async () => {
     const { ctx, workspaceId } = await realHarness(new EmptyAdapter(), 'sqlite')
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('sqlite-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -253,10 +276,9 @@ describe('Agent Team Member lifecycle', () => {
     expect(removed.member.state).toBe('inactive')
   })
 
-  it('requires initial Channel authority and rejects an incomplete Team preset before publication', async () => {
+  it('requires referenced Channel authority and rejects an incomplete Team preset before publication', async () => {
     const { ctx, workspaceId } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    await expect(ctx.agentTeam.addMember({ requestId: requestId('empty'), workspaceId, handle: 'none', description: 'No channel', presetId: 'team-member', channelRefs: [] })).rejects.toThrow(/at least one initial Channel/)
     await expect(ctx.agentTeam.addMember({ requestId: requestId('wrong-workspace'), workspaceId, handle: 'wrong', description: 'Wrong channel', presetId: 'team-member', channelRefs: ['channel:missing' as AgentTeamChannelRef] })).rejects.toThrow(/unknown Channel/)
     const first = await ctx.agentTeam.addMember({ requestId: requestId('first'), workspaceId, handle: 'first', description: 'First', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     await expect(ctx.agentTeam.addMember({ requestId: requestId('duplicate'), workspaceId, handle: 'FIRST', description: 'Duplicate', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })).rejects.toThrow(/already active/)

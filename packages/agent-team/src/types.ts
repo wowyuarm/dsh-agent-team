@@ -549,11 +549,12 @@ export interface AgentTeamAddMemberRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly handle: string
+  /** Display purpose text; may be empty and filled in later through an edit. */
   readonly description: string
   readonly presetId: string
   /** Absent inherits the Host default model selection. */
   readonly model?: AgentTeamModelSelection
-  /** At least one existing Channel in this Workspace. */
+  /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
 }
 

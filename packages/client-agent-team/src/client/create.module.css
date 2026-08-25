@@ -11,8 +11,18 @@
   line-height: 18px;
 }
 
+/* border-box keeps the wrap's own padding+border inside width:100% — without
+   it every Input overflows the dialog body's right padding (the lopsided
+   gutter this form was showing). */
 .input {
+  box-sizing: border-box;
   width: 100%;
+}
+
+/* Picker lists cap their card and scroll internally so growing model
+   catalogs cannot stretch the dialog. */
+.menuCap {
+  max-height: min(320px, 56vh);
 }
 
 /* Model picker trigger styled to the Input atom chrome; the option list is

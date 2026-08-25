@@ -94,11 +94,43 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     const dialog = page.getByRole('dialog', { name: '添加 Agent' })
     await dialog.getByLabel('名称').fill(name)
     await dialog.getByLabel('说明').fill(description)
-    await dialog.getByLabel('engineering').check()
-    if (name === 'builder') await page.screenshot({ path: join(UI03_SHOTS, 'agent-create-modal.png'), fullPage: true })
+    // Initial Channels ride the shared multi-select Menu now.
+    await dialog.getByRole('button', { name: '初始频道' }).click()
+    await page.getByRole('menuitem', { name: 'engineering' }).click()
+    if (name === 'builder') {
+      await page.screenshot({ path: join(UI03_SHOTS, 'agent-create-modal.png'), fullPage: true })
+      // The model picker caps its card and scrolls internally.
+      await dialog.getByRole('button', { name: '模型' }).click()
+      await page.getByRole('menuitem', { name: '跟随全局默认' }).waitFor()
+      await page.screenshot({ path: join(UI03_SHOTS, 'agent-create-model-menu.png'), fullPage: true })
+      // Selecting the default row closes the menu and keeps the model unset
+      // (Escape would bubble to the Modal and close the whole dialog).
+      await page.getByRole('menuitem', { name: '跟随全局默认' }).click()
+      // The Input atoms sit evenly inside the dialog card (the lopsided
+      // right gutter regression this guard pins).
+      const inputBox = await dialog.getByLabel('名称').boundingBox()
+      const cardBox = await dialog.boundingBox()
+      expect(inputBox).not.toBeNull()
+      expect(cardBox).not.toBeNull()
+      const leftGap = inputBox!.x - cardBox!.x
+      const rightGap = cardBox!.x + cardBox!.width - (inputBox!.x + inputBox!.width)
+      expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(2)
+    }
     await dialog.getByRole('button', { name: '创建 Agent' }).click()
     await page.getByText(name, { exact: true }).waitFor({ timeout: 20_000 })
   }
+  // Narrow-viewport create form with every field optional.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: '添加 Agent' }).click()
+  const narrowDialog = page.getByRole('dialog', { name: '添加 Agent' })
+  await narrowDialog.getByLabel('名称').waitFor()
+  const narrowBox = await narrowDialog.boundingBox()
+  expect(narrowBox).not.toBeNull()
+  expect(narrowBox!.x).toBeGreaterThanOrEqual(0)
+  expect(narrowBox!.x + narrowBox!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(UI03_SHOTS, 'agent-create-modal-narrow.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+  await page.setViewportSize({ width: 1440, height: 960 })
   await expect.poll(() => page.getByLabel('可用').count(), { timeout: 20_000 }).toBeGreaterThanOrEqual(2)
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-agents.png'), fullPage: true })
 

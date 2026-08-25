@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
+  AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
   AgentTeamChannel,
   AgentTeamChannelMembership,
@@ -46,6 +47,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
   const [formOpen, setFormOpen] = useState(false)
   const [handle, setHandle] = useState('')
   const [description, setDescription] = useState('')
+  const [model, setModel] = useState<readonly [provider: string, id: string] | undefined>(undefined)
   const [creating, setCreating] = useState(false)
   const [retryRequest, setRetryRequest] = useState<AgentTeamAddMemberRequest>()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -99,6 +101,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         })
         setHandle('')
         setDescription('')
+        setModel(undefined)
         setChannelRefs([])
         setFormOpen(false)
         if (result.value.status.presence === 'unavailable') {
@@ -123,10 +126,10 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
     event.preventDefault()
     const normalizedHandle = handle.trim()
     const normalizedDescription = description.trim()
-    if (normalizedHandle.length === 0 || normalizedDescription.length === 0 || creating) return
-    if (channelRefs.length === 0) return
+    if (normalizedHandle.length === 0 || creating) return
     const sameRequest = retryRequest !== undefined && retryRequest.workspaceId === workspaceId
       && retryRequest.handle === normalizedHandle && retryRequest.description === normalizedDescription
+      && sameModel(retryRequest.model === undefined ? undefined : [retryRequest.model.provider, retryRequest.model.model], model)
       && retryRequest.channelRefs.length === channelRefs.length && retryRequest.channelRefs.every(ref => channelRefs.includes(ref))
     void provision(sameRequest ? retryRequest : {
       requestId: crypto.randomUUID() as AgentTeamRequestId,
@@ -135,6 +138,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
       description: normalizedDescription,
       presetId: 'team-member',
       channelRefs,
+      ...(model === undefined ? {} : { model: { provider: model[0], model: model[1] } }),
     })
   }
 
@@ -146,7 +150,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         title={t('addAgent')}
         closeLabel={t('close')}
         contentClassName={createCss.dialogContent!}
-        footer={<><Button variant="outline" disabled={creating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-agent-create-form" variant="primary" disabled={creating || handle.trim().length === 0 || description.trim().length === 0 || channelRefs.length === 0}>{creating ? t('creatingAgent') : t('createAgent')}</Button></>}
+        footer={<><Button variant="outline" disabled={creating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-agent-create-form" variant="primary" disabled={creating || handle.trim().length === 0}>{creating ? t('creatingAgent') : t('createAgent')}</Button></>}
       >
         <form id="team-agent-create-form" className={createCss.form} onSubmit={submit}>
           <label className={createCss.field}>
@@ -154,18 +158,14 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
             <Input className={createCss.input!} value={handle} onChange={event => { setHandle(event.target.value); setRetryRequest(undefined) }} disabled={creating} autoFocus />
           </label>
           <label className={createCss.field}>
-            <span>{t('agentDescription')}</span>
-            <Input className={createCss.input!} value={description} onChange={event => { setDescription(event.target.value); setRetryRequest(undefined) }} disabled={creating} />
+            <span>{t('agentDescription')}{t('optionalSuffix')}</span>
+            <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); setRetryRequest(undefined) }} disabled={creating} />
           </label>
-          <fieldset className={createCss.field}>
-            <legend>{t('initialChannels')}</legend>
-            {channels.length === 0 ? <span>{t('noChannelsForAgent')}</span> : channels.map(channel => <label key={channel.channelRef}>
-              <input type="checkbox" checked={channelRefs.includes(channel.channelRef)} disabled={creating} onChange={event => {
-                setChannelRefs(current => event.target.checked ? [...current, channel.channelRef] : current.filter(ref => ref !== channel.channelRef))
-                setRetryRequest(undefined)
-              }} /> {channel.name}
-            </label>)}
-          </fieldset>
+          <ModelPickerField model={model} onModelChange={choice => { setModel(choice); setRetryRequest(undefined) }} loadModels={loadModels} disabled={creating} t={t} />
+          <ChannelMultiPicker channelRefs={channelRefs} channels={channels} disabled={creating} onToggle={ref => {
+            setChannelRefs(current => current.includes(ref) ? current.filter(item => item !== ref) : [...current, ref])
+            setRetryRequest(undefined)
+          }} t={t} />
           {formOpen && error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
       </Modal>
@@ -287,6 +287,130 @@ function modelKey(provider: string, model: string): string {
 }
 
 /**
+ * Shared provider/model dropdown for the create and edit forms. The option
+ * list rides the shared Menu primitive (one leading "follow Host default"
+ * row, then non-selectable provider headings) with a capped, internally
+ * scrolling card so growing model catalogs cannot stretch the dialog.
+ */
+function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
+  readonly model: readonly [provider: string, id: string] | undefined
+  readonly onModelChange: (choice: readonly [provider: string, id: string] | undefined) => void
+  readonly loadModels: TeamSidebarProps['loadModels']
+  readonly disabled: boolean
+  readonly t: TeamSidebarProps['t']
+}) {
+  const [groups, setGroups] = useState<readonly TeamModelProviderGroup[]>()
+  const [modelsError, setModelsError] = useState<string>()
+  const [open, setModelOpen] = useState(false)
+  useEffect(() => {
+    let mounted = true
+    void loadModels().then(result => {
+      if (!mounted) return
+      if (result.ok) {
+        setGroups(result.value.groups)
+        setModelsError(undefined)
+      } else {
+        setModelsError(result.error.message)
+      }
+    })
+    return () => { mounted = false }
+  }, [loadModels])
+
+  const items: MenuEntry[] = [{ id: '', label: t('modelFollowDefault') }]
+  const byKey = new Map<string, { provider: string; id: string; name: string }>()
+  for (const group of groups ?? []) {
+    items.push({ type: 'label', id: `model-group:${group.id}`, text: group.name })
+    for (const entry of group.models) {
+      const key = modelKey(group.id, entry.id)
+      byKey.set(key, { provider: group.id, id: entry.id, name: entry.name })
+      items.push({ id: key, label: entry.name })
+    }
+  }
+  const selectedModelKey = model === undefined ? '' : modelKey(model[0], model[1])
+  const triggerLabel = model === undefined
+    ? t('modelFollowDefault')
+    : byKey.get(selectedModelKey)?.name ?? `${model[0]} / ${model[1]}`
+
+  return <div className={createCss.field}>
+    <span>{t('memberModel')}</span>
+    {groups === undefined && modelsError === undefined && <small className={css.editHint}>{t('modelsLoading')}</small>}
+    {modelsError !== undefined && <small className={css.editHint}>{t('modelsLoadFailed', { message: modelsError })}</small>}
+    {groups !== undefined && (
+      <Menu
+        open={open}
+        portal
+        className={createCss.menuCap!}
+        items={items}
+        selectedId={selectedModelKey}
+        onSelect={key => {
+          setModelOpen(false)
+          const choice = byKey.get(key)
+          onModelChange(choice === undefined ? undefined : [choice.provider, choice.id])
+        }}
+        onClose={() => { setModelOpen(false) }}
+        anchor={
+          <button
+            type="button"
+            className={createCss.selectTrigger!}
+            aria-label={t('memberModel')}
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            disabled={disabled}
+            onClick={() => { setModelOpen(value => !value) }}
+          >
+            <span className={createCss.selectValue}>{triggerLabel}</span>
+            <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
+          </button>
+        }
+      />
+    )}
+  </div>
+}
+
+/**
+ * Initial-Channels picker for the create form: the same Menu control as every
+ * other picker, multi-select through check marks. Selecting never closes the
+ * list, so several Channels can be toggled in one pass.
+ */
+function ChannelMultiPicker({ channelRefs, channels, disabled, onToggle, t }: {
+  readonly channelRefs: readonly AgentTeamChannelRef[]
+  readonly channels: readonly AgentTeamChannel[]
+  readonly disabled: boolean
+  readonly onToggle: (channelRef: AgentTeamChannelRef) => void
+  readonly t: TeamSidebarProps['t']
+}) {
+  const [open, setChannelsOpen] = useState(false)
+  return <div className={createCss.field}>
+    <span>{t('initialChannels')}{t('optionalSuffix')}</span>
+    {channels.length === 0 ? <small className={css.editHint}>{t('noChannelsForAgent')}</small> : (
+      <Menu
+        open={open}
+        portal
+        className={createCss.menuCap!}
+        items={channels.map(channel => ({ id: channel.channelRef, label: channel.name }))}
+        selectedIds={channelRefs}
+        onSelect={ref => { onToggle(ref as AgentTeamChannelRef) }}
+        onClose={() => { setChannelsOpen(false) }}
+        anchor={
+          <button
+            type="button"
+            className={createCss.selectTrigger!}
+            aria-label={t('initialChannels')}
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            disabled={disabled}
+            onClick={() => { setChannelsOpen(value => !value) }}
+          >
+            <span className={createCss.selectValue}>{channelRefs.length === 0 ? t('channelsPickerEmpty') : t('channelsPickerCount', { count: channelRefs.length })}</span>
+            <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
+          </button>
+        }
+      />
+    )}
+  </div>
+}
+
+/**
  * Agent editor: handle, description, and per-Member model selection commit
  * through one durable update; Channel membership below keeps its own
  * immediate add/remove flow.
@@ -307,9 +431,6 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
   const [handle, setHandle] = useState(status.member.handle)
   const [description, setDescription] = useState(status.member.description)
   const [model, setModel] = useState<readonly [provider: string, id: string] | undefined>(status.member.model === undefined ? undefined : [status.member.model.provider, status.member.model.model])
-  const [groups, setGroups] = useState<readonly TeamModelProviderGroup[]>()
-  const [modelsError, setModelsError] = useState<string>()
-  const [modelOpen, setModelOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const pendingRequest = useRef<AgentTeamUpdateMemberRequest>()
@@ -317,20 +438,6 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
   // state never flips a committed fact backwards.
   const [memberships, setMemberships] = useState<readonly AgentTeamChannelMembership[]>()
   const [loadError, setLoadError] = useState<string>()
-
-  useEffect(() => {
-    let mounted = true
-    void loadModels().then(result => {
-      if (!mounted) return
-      if (result.ok) {
-        setGroups(result.value.groups)
-        setModelsError(undefined)
-      } else {
-        setModelsError(result.error.message)
-      }
-    })
-    return () => { mounted = false }
-  }, [loadModels])
 
   useEffect(() => {
     let mounted = true
@@ -361,27 +468,6 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
 
   // A successful join appends the durable fact; removal filters it out above.
   const joinedChannels = new Set((memberships ?? []).filter(item => item.memberId === memberId).map(item => item.channelRef))
-
-  // The provider-grouped option list rides the shared Menu primitive: one
-  // leading "follow Host default" row, then a non-selectable heading per
-  // provider group. Keys resolve back through the map, never by parsing.
-  const modelChoices = (() => {
-    const items: MenuEntry[] = [{ id: '', label: t('modelFollowDefault') }]
-    const byKey = new Map<string, { provider: string; id: string; name: string }>()
-    for (const group of groups ?? []) {
-      items.push({ type: 'label', id: `model-group:${group.id}`, text: group.name })
-      for (const entry of group.models) {
-        const key = modelKey(group.id, entry.id)
-        byKey.set(key, { provider: group.id, id: entry.id, name: entry.name })
-        items.push({ id: key, label: entry.name })
-      }
-    }
-    return { items, byKey }
-  })()
-  const selectedModelKey = model === undefined ? '' : modelKey(model[0], model[1])
-  const modelTriggerLabel = model === undefined
-    ? t('modelFollowDefault')
-    : modelChoices.byKey.get(selectedModelKey)?.name ?? `${model[0]} / ${model[1]}`
 
   const dirty = handle.trim() !== status.member.handle || description.trim() !== status.member.description
     || !sameModel(model, status.member.model === undefined ? undefined : [status.member.model.provider, status.member.model.model])
@@ -441,40 +527,7 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
           <span>{t('agentDescription')}</span>
           <Input className={createCss.input!} value={description} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
         </label>
-        <div className={createCss.field}>
-          <span>{t('memberModel')}</span>
-          {groups === undefined && modelsError === undefined && <small className={css.editHint}>{t('modelsLoading')}</small>}
-          {modelsError !== undefined && <small className={css.editHint}>{t('modelsLoadFailed', { message: modelsError })}</small>}
-          {groups !== undefined && (
-            <Menu
-              open={modelOpen}
-              portal
-              items={modelChoices.items}
-              selectedId={selectedModelKey}
-              onSelect={(key) => {
-                setModelOpen(false)
-                pendingRequest.current = undefined
-                const choice = modelChoices.byKey.get(key)
-                setModel(choice === undefined ? undefined : [choice.provider, choice.id])
-              }}
-              onClose={() => { setModelOpen(false) }}
-              anchor={
-                <button
-                  type="button"
-                  className={createCss.selectTrigger!}
-                  aria-label={t('memberModel')}
-                  aria-haspopup="listbox"
-                  aria-expanded={modelOpen}
-                  disabled={saving}
-                  onClick={() => { setModelOpen(value => !value) }}
-                >
-                  <span className={createCss.selectValue}>{modelTriggerLabel}</span>
-                  <span className={`${createCss.chevron!} ${modelOpen ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
-                </button>
-              }
-            />
-          )}
-        </div>
+        <ModelPickerField model={model} onModelChange={choice => { pendingRequest.current = undefined; setModel(choice) }} loadModels={loadModels} disabled={saving} t={t} />
         <fieldset className={createCss.memberPicker} disabled={saving}>
           <legend>{t('channelMembersSection')}</legend>
           {channels.map(channel => {

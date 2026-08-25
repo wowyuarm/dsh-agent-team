@@ -376,10 +376,10 @@ export class AgentTeamLedger {
       const description = request.description.trim()
       const presetId = request.presetId.trim()
       if (handle === '') throw new Error('member handle must not be empty')
-      if (description === '') throw new Error('member description must not be empty')
       if (presetId === '') throw new Error('member preset must not be empty')
+      // Description and initial Channels are optional: a Member with neither is
+      // still drivable through its DM view, and joins Channels later.
       const channelRefs = this.normalizeUnique(request.channelRefs, 'initial Member Channels')
-      if (channelRefs.length === 0) throw new Error('Agent Member requires at least one initial Channel')
       for (const channelRef of channelRefs) this.requireChannel(request.workspaceId, channelRef)
       this.assertHandleAvailable(request.workspaceId, handle)
       this.assertModelSelection(request.member.model)
