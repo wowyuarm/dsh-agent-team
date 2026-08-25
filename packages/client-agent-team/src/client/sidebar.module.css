@@ -286,6 +286,13 @@
   background: var(--dsw-alias-interactive-bg-hover);
   border-radius: 8px;
 }
+/* While any row-level interaction state paints the full-row fill, suppress
+   the card's own resident fill so the two never stack into a visible seam. */
+.agentRow:hover .agentSelect[aria-current='page'],
+.agentRow:focus-within .agentSelect[aria-current='page'],
+.agentRow[data-menu-open] .agentSelect[aria-current='page'] {
+  background: transparent;
+}
 .agentAvatar {
   align-items: center;
   background: hsl(var(--team-avatar-hue, 212) 42% 46%);

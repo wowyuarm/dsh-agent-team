@@ -197,6 +197,16 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.locator('[aria-current="page"]').getAttribute('aria-label')).toBe('打开 builder 的会话')
   await expect.poll(() => page.getByRole('button', { name: '# delivery' }).count()).toBe(1)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm.png'), fullPage: true })
+  // Opening the row menu on the selected card must show ONE seamless full-row
+  // fill: the leaf's resident fill is suppressed while the row paints its own.
+  await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
+  await page.getByRole('menuitem', { name: '编辑 Agent' }).waitFor()
+  await expect.poll(() => page.evaluate(() => {
+    const el = document.querySelector('[aria-current="page"]')
+    return el === null ? 'missing' : getComputedStyle(el).backgroundColor
+  })).toBe('rgba(0, 0, 0, 0)')
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm-row-menu.png'), fullPage: true })
+  await page.keyboard.press('Escape')
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm-narrow.png'), fullPage: true })
