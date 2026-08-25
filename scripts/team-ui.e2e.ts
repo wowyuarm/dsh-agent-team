@@ -240,6 +240,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=', 'base64')
   const uploadPath = join(BROWSER_ARTIFACTS, 'upload-fixture.png')
   await writeFile(uploadPath, pngBytes)
+  // The "+" control must open the real file picker (not a command menu).
+  const pickerPromise = page.waitForEvent('filechooser', { timeout: 5000 })
+  await page.getByRole('button', { name: '添加附件' }).click()
+  await pickerPromise
   await page.locator('[data-team-composer] input[type="file"]').setInputFiles([{ name: '验收截图.png', mimeType: 'image/png', buffer: pngBytes }])
   await page.getByText('验收截图.png').waitFor()
   await channelComposer.fill('这是带附件的验收消息')
