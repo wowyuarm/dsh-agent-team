@@ -23,6 +23,7 @@ import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-p
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
+import { ATTACHMENT_MAX_BYTES, attachmentsRoot, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, writeAttachment } from './attachments.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_ATTEMPTS, type RecoverableErrorKind } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
@@ -38,17 +39,23 @@ import type {
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
   AgentTeamClientMemberStatus,
+  AgentTeamAttachmentId,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamGetAttachmentRequest,
+  AgentTeamGetAttachmentResult,
   AgentTeamInbox,
   AgentTeamInboxRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
   AgentTeamMemberActor,
+  AgentTeamMessageAttachment,
   AgentTeamMemberId,
   AgentTeamMemberResult,
   AgentTeamMembersRequest,
   AgentTeamOperationReceipt,
+  AgentTeamPutAttachmentRequest,
+  AgentTeamPutAttachmentResult,
   AgentTeamRecoverMemberRequest,
   AgentTeamRecoverMemberResult,
   AgentTeamRemoveChannelMemberRequest,
@@ -148,6 +155,8 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
   private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
+  private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
+
   private readonly recovery = new RecoveryCoordinator({
     inject: (memberId, attempt, kind) => {
       this.ctx.logger.info(`agent-team: automatic recovery steering member '${this.memberLabel(memberId)}' (attempt ${attempt}/${RECOVERY_MAX_ATTEMPTS}, ${kind})`)
@@ -195,6 +204,8 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.effect(() => async () => {
       this.accepting = false
       this.recovery.dispose()
+      if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
+      this.attachmentGcTimer = undefined
       this.emitChanged()
       await this.lifecycleTail
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
@@ -206,6 +217,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.ledger = ledger
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
+    this.startAttachmentGc(ledger)
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
     const persistedSessions = new Set((await this.ctx.sessionPersistence.list()).map(header => header.id))
@@ -375,6 +387,21 @@ export default class AgentTeam extends TypertRemoteService {
     return this.ledger?.getMember(memberId)?.handle ?? memberId
   }
 
+  /**
+   * Cache GC: uploads referenced by a Message survive 72h from upload so
+   * Member agents keep a consumption window; orphans (never sent) go after
+   * 24h. Runs once at startup and then daily — in-process only, because the
+   * cache is transient by design and rebuilds nothing across restarts.
+   */
+  private startAttachmentGc(ledger: AgentTeamLedger): void {
+    const sweep = async (): Promise<void> => {
+      await sweepAttachmentCache(attachmentsRoot(), ledger.referencedAttachmentIds(), Date.now())
+    }
+    void sweep()
+    this.attachmentGcTimer = setInterval(() => { void sweep() }, 24 * 60 * 60 * 1000)
+    this.attachmentGcTimer.unref?.()
+  }
+
   /** Latest runtime error summary for a Member's live session, if any. */
   private storedErrorFor(memberId: AgentTeamMemberId): string | undefined {
     const handle = this.handles.get(memberId)
@@ -500,9 +527,54 @@ export default class AgentTeam extends TypertRemoteService {
   async sendMessage(request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().sendMessage({ ...request, actor: agentTeamHumanActor() })
+    const prepared = await this.prepareAttachments(request.body, request.attachments)
+    const result = await this.requireLedger().sendMessage({
+      ...request, body: prepared.body,
+      ...(prepared.metadata === undefined ? {} : { resolvedAttachments: prepared.metadata }),
+      actor: agentTeamHumanActor(),
+    })
     this.emitCommittedOutcome(result)
     return result.value
+  }
+
+  /**
+   * Verify requested attachment ids against the cache and derive the stored
+   * body: one `[attachment] <absolute path>` line per attachment appended to
+   * the member-facing text, plus the metadata that lands on the Message.
+   */
+  private async prepareAttachments(body: string, requested?: readonly AgentTeamAttachmentId[]): Promise<{ body: string; metadata?: readonly AgentTeamMessageAttachment[] }> {
+    if (requested === undefined || requested.length === 0) return { body }
+    const metadata: AgentTeamMessageAttachment[] = []
+    const lines: string[] = []
+    for (const attachmentId of requested) {
+      const stored = await readAttachment(attachmentsRoot(), attachmentId)
+      if (stored === undefined) throw new Error(`attachment '${attachmentId}' is not in the upload cache`)
+      metadata.push(Object.freeze({ attachmentId, name: stored.name, byteSize: stored.byteSize, mediaType: stored.mediaType }))
+      lines.push(`[attachment] ${dshHomePath('agent-team', 'attachments', 'v1', attachmentId, stored.name)}`)
+    }
+    const trimmed = body.trim()
+    return { body: `${trimmed}\n${lines.join('\n')}`, metadata }
+  }
+
+  /** Upload one composer attachment into the cache; bytes are immutable once written. */
+  @Remote('putAttachment')
+  async putAttachment(request: AgentTeamPutAttachmentRequest): Promise<AgentTeamPutAttachmentResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const bytes = Buffer.from(request.bytesBase64, 'base64')
+    if (bytes.byteLength === 0) throw new Error('attachment must not be empty')
+    if (bytes.byteLength > ATTACHMENT_MAX_BYTES) throw new Error(`attachment exceeds the ${ATTACHMENT_MAX_BYTES} byte limit`)
+    const mediaType = sanitizeMediaType(request.mediaType)
+    const attachmentId = newAttachmentId()
+    return Object.freeze(await writeAttachment(attachmentsRoot(), attachmentId, request.name, mediaType, bytes))
+  }
+
+  /** Read one cached attachment back for client display; gone entries throw and the UI degrades to a chip. */
+  @Remote('getAttachment')
+  async getAttachment(request: AgentTeamGetAttachmentRequest): Promise<AgentTeamGetAttachmentResult> {
+    const stored = await readAttachment(attachmentsRoot(), request.attachmentId)
+    if (stored === undefined) throw new Error(`attachment '${request.attachmentId}' is no longer cached`)
+    return Object.freeze({ name: stored.name, mediaType: stored.mediaType, byteSize: stored.byteSize, bytesBase64: stored.bytes.toString('base64') })
   }
 
   /** Human existing-Thread reply; unread and revision conflicts are business outcomes. */

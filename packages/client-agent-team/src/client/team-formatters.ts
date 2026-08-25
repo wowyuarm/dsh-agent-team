@@ -140,3 +140,8 @@ export function formatActivity(activity: AgentTeamActivity, options: {
   if (activity.kind === 'claims_released') return options.t('activityClaimsReleased', { actor, count: activity.claimRefs.length })
   throw new Error(`unknown Team Activity kind: ${(activity as { kind: string }).kind}`)
 }
+
+/** Remove the machine-facing `[attachment] <path>` prompt lines from a body before display. */
+export function stripAttachmentLines(body: string): string {
+  return body.replaceAll(/^\[attachment\] .*$(\n)?/gm, '').replace(/\n+$/, '')
+}

@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, symlink } from 'node:fs/promises'
+import { cp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { chromium, type Browser } from 'playwright'
@@ -233,6 +233,27 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.getByRole('textbox', { name: '消息内容' }).inputValue()).toBe('')
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
   await page.getByRole('button', { name: '发送', exact: true }).waitFor()
+
+  // Attachment upload: the "+" picker takes real files, chips confirm the
+  // selection, and the committed message renders the image thumbnail from the
+  // Host cache — the full upload → ledger → display loop on the real app.
+  const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=', 'base64')
+  const uploadPath = join(BROWSER_ARTIFACTS, 'upload-fixture.png')
+  await writeFile(uploadPath, pngBytes)
+  await page.locator('[data-team-composer] input[type="file"]').setInputFiles([{ name: '验收截图.png', mimeType: 'image/png', buffer: pngBytes }])
+  await page.getByText('验收截图.png').waitFor()
+  await channelComposer.fill('这是带附件的验收消息')
+  await page.screenshot({ path: join(UI04_SHOTS, 'composer-attachment-chip.png'), fullPage: true })
+  await page.getByRole('button', { name: '发送' }).click()
+  const attachmentMessage = page.locator('[data-team-channel] article').filter({ hasText: '这是带附件的验收消息' })
+  await attachmentMessage.waitFor()
+  await expect.poll(() => page.locator('[data-team-channel] article img[src^="data:image/png"]').count()).toBeGreaterThanOrEqual(1)
+  await expect.poll(() => page.getByText('验收截图.png', { exact: true }).count()).toBe(0)
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-thumbnail.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-thumbnail-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   const channelGeometry = await page.locator('[data-team-channel]').evaluate(element => {
     const children = [...element.children].map(child => child.getBoundingClientRect())
     return children.map(rect => ({ top: rect.top, bottom: rect.bottom, height: rect.height }))

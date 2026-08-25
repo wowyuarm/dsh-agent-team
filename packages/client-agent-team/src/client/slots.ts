@@ -7,6 +7,10 @@ import type {
   AgentTeamCreateChannelResult,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
+  AgentTeamGetAttachmentRequest,
+  AgentTeamGetAttachmentResult,
+  AgentTeamPutAttachmentRequest,
+  AgentTeamPutAttachmentResult,
   AgentTeamMemberResult,
   AgentTeamRecoverMemberRequest,
   AgentTeamRecoverMemberResult,
@@ -92,6 +96,8 @@ export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'
   readThread: (request: AgentTeamThreadReadRequest) => Promise<RemoteResult<AgentTeamThreadReadResult>>
   loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => Promise<RemoteResult<AgentTeamThreadHistory>>
   subscribeChanges: SubscribeTeamChanges
+  putAttachment: (request: AgentTeamPutAttachmentRequest) => Promise<RemoteResult<AgentTeamPutAttachmentResult>>
+  getAttachment: (request: AgentTeamGetAttachmentRequest) => Promise<RemoteResult<AgentTeamGetAttachmentResult>>
   sendMessage: (request: AgentTeamSendMessageRequest) => Promise<RemoteResult<AgentTeamSendMessageResult>>
   joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
   removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>

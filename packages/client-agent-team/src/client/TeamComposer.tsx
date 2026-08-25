@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconPlusOutline16, IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import css from './composer.module.css'
@@ -38,7 +38,7 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
-export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, t }: {
+export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, pendingFiles, onFilesChange, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
@@ -48,9 +48,13 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   readonly onDraftChange: (draft: string) => void
   readonly onRecipientsChange: (recipients: ReadonlySet<AgentTeamMemberId>) => void
   readonly onSubmit: () => void
+  /** Upload-capable surfaces pass this to enable the "+" file picker; the reply path omits it. */
+  readonly pendingFiles?: readonly File[]
+  readonly onFilesChange?: (files: readonly File[]) => void
   readonly t: TeamConversationProps['t']
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLFormElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
@@ -178,6 +182,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   }
 
   return <form ref={rootRef} className={css.root} onSubmit={event => {
+    console.log('DBG composer submit pending=%s draft=%j', pending, draft)
     event.preventDefault()
     if (!pending && draft.trim() !== '') onSubmit()
   }}>
@@ -223,7 +228,30 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
         />
       </div>
       {recipients.size > 0 && <p className={css.notifyRow} data-team-notify>{t('composerNotify', { ids: [...recipients].sort().map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') })}</p>}
+      {onFilesChange !== undefined && pendingFiles !== undefined && pendingFiles.length > 0 && (
+        <ul className={css.fileChips} aria-label={t('attachFiles')}>
+          {pendingFiles.map((file, index) => <li key={`${file.name}-${index}`} className={css.fileChip}>
+            <span className={css.fileChipName} title={file.name}>{file.name}</span>
+            <button type="button" className={css.fileChipRemove} aria-label={t('removeFile', { name: file.name })} disabled={pending}
+              onClick={() => { onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index)) }}>×</button>
+          </li>)}
+        </ul>
+      )}
       <div className={css.toolbar}>
+        {onFilesChange !== undefined && (
+          <>
+            <input ref={fileInputRef} type="file" multiple className={css.fileInput} aria-hidden="true" tabIndex={-1}
+              onChange={event => {
+                const chosen = [...event.target.files ?? []]
+                if (chosen.length > 0 && pendingFiles !== undefined) onFilesChange([...pendingFiles, ...chosen])
+                event.target.value = ''
+              }} />
+            <button type="button" className={css.attachButton} aria-label={t('attachFiles')} title={t('attachFiles')}
+              disabled={pending} onClick={() => { fileInputRef.current?.click() }}>
+              <IconPlusOutline16 size={14} />
+            </button>
+          </>
+        )}
         <button
           type="submit"
           className={css.sendButton}

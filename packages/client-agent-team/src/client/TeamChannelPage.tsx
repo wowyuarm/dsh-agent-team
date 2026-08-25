@@ -3,6 +3,8 @@ import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberI
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
+import { bytesToBase64 } from './attachment-preview.ts'
+import type { AgentTeamAttachmentId, AgentTeamRequestId } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -22,6 +24,8 @@ interface TeamChannelPageProps {
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly drafts: TeamDraftStore
+  readonly getAttachment: TeamConversationProps['getAttachment']
+  readonly putAttachment: TeamConversationProps['putAttachment']
   readonly sendMessage: TeamConversationProps['sendMessage']
   readonly joinChannel: TeamConversationProps['joinChannel']
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
@@ -47,10 +51,11 @@ function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTe
   }
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, sendMessage, joinChannel, removeChannelMember, selectThread, backToChannels, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, backToChannels, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [error, setError] = useState<string>()
+  const [pendingFiles, setPendingFiles] = useState<readonly File[]>([])
   const [statusMessage, setStatusMessage] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
@@ -175,16 +180,36 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const pendingSendId = useRef<AgentTeamSendMessageRequest['requestId']>()
 
   const send = async () => {
+    console.log('DBG send entry pending=%s draft=%j files=%d', pending, draft, pendingFiles.length)
     if (pending || draft.trim() === '') return
     const recipientIds = [...recipients].sort()
     const requestId = pendingSendId.current ?? crypto.randomUUID() as AgentTeamSendMessageRequest['requestId']
     pendingSendId.current = requestId
-    const request: AgentTeamSendMessageRequest = {
-      requestId, workspaceId,
-      channelRef, body: draft.trim(), recipients: recipientIds,
-    }
     setPending(true); setError(undefined); setStatusMessage(undefined)
     try {
+      // Upload chosen files first; any failure aborts the send with the
+      // existing error surface and keeps the chips for a retry.
+      const attachmentIds: AgentTeamAttachmentId[] = []
+      for (const file of pendingFiles) {
+        const uploaded = await putAttachment({
+          requestId: crypto.randomUUID() as AgentTeamRequestId,
+          workspaceId,
+          name: file.name,
+          mediaType: file.type === '' ? undefined : file.type,
+          bytesBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
+        })
+        if (!uploaded.ok) {
+          pendingSendId.current = undefined
+          setError(uploaded.error.message)
+          return
+        }
+        attachmentIds.push(uploaded.value.attachmentId)
+      }
+      const request: AgentTeamSendMessageRequest = {
+        requestId, workspaceId,
+        channelRef, body: draft.trim(), recipients: recipientIds,
+        ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }),
+      }
       const result = await sendMessage(request)
       if (!result.ok) {
         pendingSendId.current = undefined
@@ -193,6 +218,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         pendingSendId.current = undefined
         await refresh()
         drafts.clear(draftKey)
+        setPendingFiles([])
         setStatusMessage(undefined)
       } else if (result.value.kind === 'confirmation_required') {
         // Same-requestId resend continues the pending operation.
@@ -264,6 +290,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
               memberId={item.message.sender}
               human={human}
               body={item.message.body}
+              attachments={item.message.attachments}
+              loadAttachment={getAttachment}
+              t={t}
               occurredAt={item.message.occurredAt}
               mentionNames={mentionNamesOf(item.mentions, mentionHandlesMap)}
               grouped={index > 0}
@@ -300,6 +329,8 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       onDraftChange={next => { drafts.writeDraft(draftKey, next); setStatusMessage(undefined) }}
       onRecipientsChange={next => { drafts.writeRecipients(draftKey, next); setStatusMessage(undefined) }}
       onSubmit={() => { void send() }}
+      pendingFiles={pendingFiles}
+      onFilesChange={setPendingFiles}
       t={t}
     /> : <div />}
   </main>

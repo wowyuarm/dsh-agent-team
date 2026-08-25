@@ -34,6 +34,15 @@ The Team is one collaboration domain per DSH home. Its append-only operation led
 - An untitled Member session is named with its handle through the session-title service when the Host activates it, so the ordinary Session list shows the Member identity. An explicit rename or any earlier title always wins, and the naming never fails activation.
 - Private-memory directories under `$DSH_HOME/agent-team/members/` are Host-owned effects of Member identity, not a second authority. At startup the Host prunes `member:`-shaped directories the replayed ledger does not reference; every ledger-known Member protects its own directory, prune failures fail startup, and entries outside the `member:` shape are left untouched.
 
+### Composer attachments (cache, not archive)
+
+Composer attachments are a bounded cache under `$DSH_HOME/agent-team/attachments/v1/<attachmentId>/` (sanitized original name plus a `meta.json` sidecar), never an archive and never ledger bytes.
+
+- `putAttachment` writes an immutable payload (10 MB per-file cap, path separators and control characters stripped from the name); `getAttachment` reads it back for Client display. Both are typed Remote actions like every other Host capability.
+- A Message records attachment metadata (`attachmentId`, `name`, `byteSize`, `mediaType`) in the ledger; the stored body carries one machine-facing `[attachment] <absolute path>` line per attachment so Member agents read bytes by path through their ordinary file tools. The Client strips these lines from display and renders thumbnails/chips from the metadata instead.
+- The ledger is the only durable attachment authority. Bytes are transient: a GC sweep at Host startup and every 24h removes uploads once they are older than 72h when referenced by a Message (the Member consumption window) or older than 24h when orphaned (uploaded but never sent). After cleanup the metadata remains and the Client degrades gracefully to a name chip.
+- Manual path references need no mechanism: an absolute path pasted into a message body is read by the Member agent like any other file, and the Host touches nothing it does not own.
+
 When changing a Host capability, read the package source/tests first, then the matching Harness capability contract. The navigation table in [`harness-navigation.md`](harness-navigation.md) maps Host changes to `deepseek-harness/docs/subsystems/` and source packages.
 
 ## Tools and preset

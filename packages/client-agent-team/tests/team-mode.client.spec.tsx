@@ -128,10 +128,23 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     ] }],
     failures: [],
   } } }))
+  const putAttachment = vi.fn(async (request: { requestId: string; name: string; mediaType?: string; bytesBase64: string }) => ({
+    ok: true as const,
+    value: { attachmentId: `attachment:${putAttachmentCounter += 1}`, path: `/cache/${request.name}`, name: request.name, byteSize: request.bytesBase64.length, mediaType: request.mediaType ?? 'application/octet-stream' },
+  }))
+  let putAttachmentCounter = 0
+  const getAttachment = vi.fn(async (request: { attachmentId: string }) => {
+    if (request.attachmentId === 'attachment:2') return { ok: false as const, error: new Error('no longer cached') }
+    return { ok: true as const, value: { name: 'x', mediaType: 'image/png', byteSize: 8, bytesBase64: 'aGVsbG8=' } }
+  })
+  let sentMessageCount = 0
   const sendMessage = vi.fn(async (request: AgentTeamSendMessageRequest) => {
+    sentMessageCount += 1
+    const sequence = 1 + sentMessageCount
     const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
-    const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 }
-    const message = { messageRef: 'message:1', channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, topLevel: true, sequence: 2, occurredAt: '2026-08-21T10:00:00.000Z' }
+    const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: sequence }
+    const attachments = request.attachments === undefined ? [] : request.attachments.map(id => ({ attachmentId: id, name: `file-${id}.png`, byteSize: 8, mediaType: 'image/png' }))
+    const message = { messageRef: `message:${sequence}`, channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, ...(attachments.length === 0 ? {} : { attachments }), topLevel: true, sequence, occurredAt: '2026-08-21T10:00:00.000Z' }
     viewItems = [{ message, mentions: [], task, thread, taskNumber: 1, messageCount: 1 }]
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
   })
@@ -187,7 +200,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   runtime.provide('connection', { api: { llm: { models: loadModels } } })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
@@ -207,7 +220,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, updateMember, recoverMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
 
 describe('rendered Team mode composition', () => {
@@ -371,6 +384,50 @@ describe('rendered Team mode composition', () => {
     expect(await b.view.findByText('# platform')).toBeTruthy()
     expect(b.view.queryByText('# engineering')).toBeNull()
     fireEvent.keyDown(document, { key: 'Escape' })
+    await b.runtime.dispose()
+  })
+
+  it('uploads composer attachments as chips, sends their ids, and renders the strip', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    // Let the browser's one-time workspace selection settle first; a late
+    // selectWorkspace would strip the channel ref mid-test.
+    await waitFor(() => { expect(b.view.container.querySelector('[aria-current="page"]')?.textContent).toContain('Alpha') })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    const composer = b.view.container
+    const chipCount = (): number => composer.querySelectorAll('ul[aria-label="添加附件"] > li').length
+
+    // The "+" picker adds chips; the remove button drops one.
+    const input = composer.querySelector('input[type="file"]') as HTMLInputElement
+    const png = new File(['png'], 'shot.png', { type: 'image/png' })
+    const pdf = new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })
+    await waitFor(() => { fireEvent.change(input, { target: { files: [png, pdf] } }) })
+    await waitFor(() => { expect(chipCount()).toBe(2) })
+    fireEvent.click(composer.querySelector('[class*="fileChipRemove"]') as HTMLButtonElement)
+    await waitFor(() => { expect(chipCount()).toBe(1) })
+    expect(composer.querySelector('[class*="fileChipName"]')?.textContent).toBe('spec.pdf')
+
+    // Sending uploads the remaining file and passes its id to sendMessage.
+    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: '带附件' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => { expect(b.putAttachment).toHaveBeenCalledWith(expect.objectContaining({ name: 'spec.pdf', mediaType: 'application/pdf' })) })
+    await waitFor(() => { expect(b.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ body: '带附件', attachments: ['attachment:1'] })) })
+    // Committed send clears the chips along with the draft...
+    await waitFor(() => { expect(chipCount()).toBe(0) })
+    // ...and the echoed message renders its image as a thumbnail.
+    await waitFor(() => { expect(composer.querySelector('img[src^="data:image/png"]')).toBeTruthy() })
+
+    // A second message whose bytes the Host no longer caches (GC'd) degrades
+    // to an expiry chip: history stays honest about what was shared.
+    await waitFor(() => { fireEvent.change(input, { target: { files: [new File(['gone'], 'expired.png', { type: 'image/png' })] } }) })
+    await waitFor(() => { expect(chipCount()).toBe(1) })
+    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: '图已过期' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => {
+      const chips = [...b.view.container.querySelectorAll('[class*="attachmentChip"]')]
+      return expect(chips.some(chip => chip.textContent?.includes('文件已过期清理'))).toBe(true)
+    }, { timeout: 4000 })
     await b.runtime.dispose()
   })
 

@@ -4,6 +4,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamActivityRef,
+  AgentTeamAttachmentId,
   AgentTeamChannelRef,
   AgentTeamClaimRef,
   AgentTeamMemberId,
@@ -26,6 +27,7 @@ const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value 
 const threadRefSchema = z.string().regex(/^thread:[^:]+$/).transform(value => value as AgentTeamThreadRef)
 const claimRefSchema = z.string().regex(/^claim:[^:]+$/).transform(value => value as AgentTeamClaimRef)
 const activityRefSchema = z.string().regex(/^activity:[^:]+$/).transform(value => value as AgentTeamActivityRef)
+const attachmentIdSchema = z.string().min(1).transform(value => value as AgentTeamAttachmentId)
 
 const actorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('human'), memberId: memberIdSchema, handle: z.string().min(1) }).strict(),
@@ -66,7 +68,15 @@ const channelSchema = z.object({
   createdAtSequence: z.number().int().positive(),
 }).strict()
 
-// Ledgers written before message occurredAt existed store bare messages; the union schema below stamps them on load.
+// Ledgers written before message occurredAt or attachments existed store bare
+// messages; the union schema below stamps occurredAt on load and leaves absent
+// attachment metadata undefined, so old ledgers replay unchanged.
+const attachmentSchema = z.object({
+  attachmentId: attachmentIdSchema,
+  name: z.string().min(1),
+  byteSize: z.number().int().nonnegative(),
+  mediaType: z.string().min(1),
+}).strict()
 const messageSchema = z.object({
   messageRef: messageRefSchema,
   channelRef: channelRefSchema,
@@ -74,6 +84,7 @@ const messageSchema = z.object({
   taskRef: taskRefSchema,
   sender: memberIdSchema,
   body: z.string().min(1),
+  attachments: z.array(attachmentSchema).optional(),
   topLevel: z.boolean(),
   sequence: z.number().int().positive(),
   occurredAt: z.string().datetime().optional(),

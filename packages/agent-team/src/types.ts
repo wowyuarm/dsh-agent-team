@@ -8,6 +8,9 @@ export type AgentTeamOperationId = Branded<'AgentTeamOperationId'>
 /** Caller-supplied idempotency identifier for one business operation. */
 export type AgentTeamRequestId = Branded<'AgentTeamRequestId'>
 
+/** Stable identifier of one uploaded composer attachment (cache, not archive). */
+export type AgentTeamAttachmentId = Branded<'AgentTeamAttachmentId'>
+
 /** Stable identifier of one Team member. */
 export type AgentTeamMemberId = Branded<'AgentTeamMemberId'>
 
@@ -115,6 +118,13 @@ export interface AgentTeamChannelMembership {
 }
 
 /** One immutable top-level or reply Message. */
+export interface AgentTeamMessageAttachment {
+  readonly attachmentId: AgentTeamAttachmentId
+  readonly name: string
+  readonly byteSize: number
+  readonly mediaType: string
+}
+
 export interface AgentTeamMessage {
   readonly messageRef: AgentTeamMessageRef
   readonly channelRef: AgentTeamChannelRef
@@ -122,6 +132,7 @@ export interface AgentTeamMessage {
   readonly taskRef: AgentTeamTaskRef
   readonly sender: AgentTeamMemberId
   readonly body: string
+  readonly attachments?: readonly AgentTeamMessageAttachment[] | undefined
   readonly topLevel: boolean
   readonly sequence: number
   /** Wall-clock instant of the wrapping ledger operation; pre-occurredAt ledgers normalize on replay. */
@@ -621,7 +632,39 @@ export interface AgentTeamSendMessageRequest {
   readonly channelRef: AgentTeamChannelRef
   readonly body: string
   readonly recipients?: readonly AgentTeamMemberId[]
+  /** Uploaded attachments to reference; the Host resolves and verifies each id. */
+  readonly attachments?: readonly AgentTeamAttachmentId[] | undefined
   readonly confirmationToken?: AgentTeamConfirmationToken
+}
+
+/** Upload one composer attachment into the Team attachment cache. */
+export interface AgentTeamPutAttachmentRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly name: string
+  readonly mediaType?: string | undefined
+  readonly bytesBase64: string
+}
+
+export interface AgentTeamPutAttachmentResult {
+  readonly attachmentId: AgentTeamAttachmentId
+  /** Absolute path members read the bytes from; stable for the cache lifetime. */
+  readonly path: string
+  readonly name: string
+  readonly byteSize: number
+  readonly mediaType: string
+}
+
+/** Read one uploaded attachment back for client-side display. */
+export interface AgentTeamGetAttachmentRequest {
+  readonly attachmentId: AgentTeamAttachmentId
+}
+
+export interface AgentTeamGetAttachmentResult {
+  readonly name: string
+  readonly mediaType: string
+  readonly byteSize: number
+  readonly bytesBase64: string
 }
 
 /** Intent to append one public Message to an existing Thread. */

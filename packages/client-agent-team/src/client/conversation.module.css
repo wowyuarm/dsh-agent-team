@@ -289,3 +289,63 @@
 @media (prefers-reduced-motion: reduce) {
   .messageRun { transition: none; }
 }
+
+/* Attachment strip under one message body: thumbnails open the large view,
+   chips carry name + size, and GC'd bytes degrade to a name-only chip. */
+.attachmentStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.attachmentThumb {
+  border: 0;
+  border-radius: 8px;
+  cursor: zoom-in;
+  padding: 0;
+}
+.attachmentThumb img {
+  border-radius: 8px;
+  display: block;
+  height: 96px;
+  object-fit: cover;
+  width: 128px;
+}
+.attachmentThumb:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-focus, currentColor);
+  outline-offset: 1px;
+}
+
+.attachmentZoom {
+  display: block;
+  margin: 0 auto;
+  max-height: 70vh;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.attachmentChip {
+  align-items: baseline;
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 6px;
+  display: inline-flex;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+}
+
+.attachmentChipName {
+  font-size: 12px;
+  line-height: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachmentChipSize {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+}

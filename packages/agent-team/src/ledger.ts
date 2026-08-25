@@ -7,6 +7,7 @@ import type {
   AgentTeamActivityMarker,
   AgentTeamActivityRef,
   AgentTeamAddMemberRequest,
+  AgentTeamAttachmentId,
   AgentTeamAgentMember,
   AgentTeamChannel,
   AgentTeamChangeScope,
@@ -56,6 +57,7 @@ import type {
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
   AgentTeamRequestId,
+  AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
   AgentTeamSetMemberStateRequest,
@@ -142,6 +144,8 @@ export interface AgentTeamAuthorizedRemoveChannelMemberRequest extends AgentTeam
 
 export interface AgentTeamAuthorizedSendMessageRequest extends AgentTeamSendMessageRequest {
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+  /** Metadata the Host resolved from the attachment cache before the append. */
+  readonly resolvedAttachments?: readonly AgentTeamMessageAttachment[] | undefined
 }
 
 export interface AgentTeamAuthorizedReplyRequest extends AgentTeamReplyRequest {
@@ -520,7 +524,9 @@ export class AgentTeamLedger {
       const thread: AgentTeamThread = Object.freeze({ threadRef, taskRef, revision: sequence })
       const message: AgentTeamMessage = Object.freeze({
         messageRef: this.ref('message'), channelRef: channel.channelRef, threadRef, taskRef,
-        sender: request.actor.memberId, body, topLevel: true, sequence, occurredAt: base.occurredAt,
+        sender: request.actor.memberId, body,
+        ...(request.resolvedAttachments === undefined ? {} : { attachments: request.resolvedAttachments }),
+        topLevel: true, sequence, occurredAt: base.occurredAt,
       })
       const started = [this.startAttention(request.actor.memberId, threadRef, sequence),
         ...recipients.filter(memberId => this.state.members.has(memberId))
@@ -892,6 +898,16 @@ export class AgentTeamLedger {
       default:
         return undefined
     }
+  }
+
+  /** Attachment ids referenced by any stored Message — the GC's keep-set oracle. */
+  referencedAttachmentIds(): Set<AgentTeamAttachmentId> {
+    const referenced = new Set<AgentTeamAttachmentId>()
+    for (const fact of this.state.orderedFacts) {
+      if (fact.kind !== 'message') continue
+      for (const attachment of fact.message.attachments ?? []) referenced.add(attachment.attachmentId)
+    }
+    return referenced
   }
 
   threadHistory(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
@@ -2200,7 +2216,8 @@ export class AgentTeamLedger {
   private assertSameMessage(operation: AgentTeamOperation, request: AgentTeamAuthorizedSendMessageRequest, recipients: readonly AgentTeamMemberId[]): asserts operation is AgentTeamMessageSentOperation {
     if (operation.kind !== 'team/message-sent' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId || operation.data.message.channelRef !== request.channelRef
-      || operation.data.message.body !== request.body.trim() || !this.sameList(operation.data.mentions, recipients)) this.throwRequestCollision(request.requestId)
+      || operation.data.message.body !== request.body.trim() || !this.sameList(operation.data.mentions, recipients)
+      || !this.sameList(operation.data.message.attachments?.map(attachment => attachment.attachmentId) ?? [], request.attachments ?? [])) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameReply(operation: AgentTeamOperation, request: AgentTeamAuthorizedReplyRequest, recipients: readonly AgentTeamMemberId[]): asserts operation is AgentTeamThreadRepliedOperation {

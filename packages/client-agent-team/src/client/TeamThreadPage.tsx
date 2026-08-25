@@ -37,6 +37,7 @@ interface TeamThreadPageProps {
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly drafts: TeamDraftStore
+  readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
   readonly t: TeamConversationProps['t']
@@ -74,7 +75,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace,
     loadChannels, readThread, loadThreadHistory,
-    subscribeChanges, loadMembers, drafts, reply, changeTask, t,
+    subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, t,
   } = props
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
@@ -316,6 +317,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         memberId={fact.message.sender}
         human={fact.message.sender === channelView?.humanMemberId}
         body={fact.message.body}
+        attachments={fact.message.attachments}
+        loadAttachment={getAttachment}
+        t={t}
         occurredAt={fact.message.occurredAt}
         mentionNames={mentionNamesOf(fact.mentions, mentionHandlesMap)}
         grouped={grouped}
