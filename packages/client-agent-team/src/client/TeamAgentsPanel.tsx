@@ -3,6 +3,7 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
+  AgentTeamModelSelection,
   AgentTeamChannel,
   AgentTeamChannelMembership,
   AgentTeamRequestId,
@@ -11,7 +12,7 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronDownOutline14, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline14, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
+import type { TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
@@ -48,7 +49,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
   const [formOpen, setFormOpen] = useState(false)
   const [handle, setHandle] = useState('')
   const [description, setDescription] = useState('')
-  const [model, setModel] = useState<readonly [provider: string, id: string] | undefined>(undefined)
+  const [model, setModel] = useState<AgentTeamModelSelection | undefined>(undefined)
   const [creating, setCreating] = useState(false)
   const [retryRequest, setRetryRequest] = useState<AgentTeamAddMemberRequest>()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -130,7 +131,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
     if (normalizedHandle.length === 0 || creating) return
     const sameRequest = retryRequest !== undefined && retryRequest.workspaceId === workspaceId
       && retryRequest.handle === normalizedHandle && retryRequest.description === normalizedDescription
-      && sameModel(retryRequest.model === undefined ? undefined : [retryRequest.model.provider, retryRequest.model.model], model)
+      && sameModel(retryRequest.model, model)
       && retryRequest.channelRefs.length === channelRefs.length && retryRequest.channelRefs.every(ref => channelRefs.includes(ref))
     void provision(sameRequest ? retryRequest : {
       requestId: crypto.randomUUID() as AgentTeamRequestId,
@@ -139,7 +140,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
       description: normalizedDescription,
       presetId: 'team-member',
       channelRefs,
-      ...(model === undefined ? {} : { model: { provider: model[0], model: model[1] } }),
+      ...(model === undefined ? {} : { model }),
     })
   }
 
@@ -300,8 +301,8 @@ function modelKey(provider: string, model: string): string {
  * scrolling card so growing model catalogs cannot stretch the dialog.
  */
 function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
-  readonly model: readonly [provider: string, id: string] | undefined
-  readonly onModelChange: (choice: readonly [provider: string, id: string] | undefined) => void
+  readonly model: AgentTeamModelSelection | undefined
+  readonly onModelChange: (choice: AgentTeamModelSelection | undefined) => void
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly disabled: boolean
   readonly t: TeamSidebarProps['t']
@@ -309,6 +310,7 @@ function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
   const [groups, setGroups] = useState<readonly TeamModelProviderGroup[]>()
   const [modelsError, setModelsError] = useState<string>()
   const [open, setModelOpen] = useState(false)
+  const [effortOpen, setEffortOpen] = useState(false)
   useEffect(() => {
     let mounted = true
     void loadModels().then(result => {
@@ -324,19 +326,27 @@ function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
   }, [loadModels])
 
   const items: MenuEntry[] = [{ id: '', label: t('modelFollowDefault') }]
-  const byKey = new Map<string, { provider: string; id: string; name: string }>()
+  const byKey = new Map<string, { provider: string; id: string; name: string; efforts: readonly TeamModelEffortOption[] }>()
   for (const group of groups ?? []) {
     items.push({ type: 'label', id: `model-group:${group.id}`, text: group.name })
     for (const entry of group.models) {
       const key = modelKey(group.id, entry.id)
-      byKey.set(key, { provider: group.id, id: entry.id, name: entry.name })
+      byKey.set(key, { provider: group.id, id: entry.id, name: entry.name, efforts: entry.reasoning?.efforts ?? [] })
       items.push({ id: key, label: entry.name })
     }
   }
-  const selectedModelKey = model === undefined ? '' : modelKey(model[0], model[1])
+  const selectedModelKey = model === undefined ? '' : modelKey(model.provider, model.model)
   const triggerLabel = model === undefined
     ? t('modelFollowDefault')
-    : byKey.get(selectedModelKey)?.name ?? `${model[0]} / ${model[1]}`
+    : byKey.get(selectedModelKey)?.name ?? `${model.provider} / ${model.model}`
+  // The effort sub-row only makes sense for a pinned model with adapter-exposed
+  // efforts; following the Host default inherits the operator's whole selection.
+  const efforts = model === undefined ? [] : byKey.get(selectedModelKey)?.efforts ?? []
+  const effortItems: MenuEntry[] = [{ id: '', label: t('effortFollowDefault') }, ...efforts.map(effort => ({ id: effort.id, label: effort.name }))]
+  const selectedEffort = model?.reasoningEffort ?? ''
+  const effortTriggerLabel = model === undefined || selectedEffort === ''
+    ? t('effortFollowDefault')
+    : efforts.find(effort => effort.id === selectedEffort)?.name ?? selectedEffort
 
   return <div className={createCss.field}>
     <span>{t('memberModel')}</span>
@@ -352,7 +362,7 @@ function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
         onSelect={key => {
           setModelOpen(false)
           const choice = byKey.get(key)
-          onModelChange(choice === undefined ? undefined : [choice.provider, choice.id])
+          onModelChange(choice === undefined ? undefined : { provider: choice.provider, model: choice.id })
         }}
         onClose={() => { setModelOpen(false) }}
         anchor={
@@ -367,6 +377,36 @@ function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
           >
             <span className={createCss.selectValue}>{triggerLabel}</span>
             <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
+          </button>
+        }
+      />
+    )}
+    {model !== undefined && efforts.length > 0 && (
+      <Menu
+        open={effortOpen}
+        portal
+        className={createCss.menuCap!}
+        items={effortItems}
+        selectedId={selectedEffort}
+        onSelect={key => {
+          setEffortOpen(false)
+          onModelChange(key === ''
+            ? { provider: model.provider, model: model.model }
+            : { provider: model.provider, model: model.model, reasoningEffort: key as NonNullable<AgentTeamModelSelection['reasoningEffort']> })
+        }}
+        onClose={() => { setEffortOpen(false) }}
+        anchor={
+          <button
+            type="button"
+            className={createCss.selectTrigger!}
+            aria-label={t('reasoningEffort')}
+            aria-haspopup="listbox"
+            aria-expanded={effortOpen}
+            disabled={disabled}
+            onClick={() => { setEffortOpen(value => !value) }}
+          >
+            <span className={createCss.selectValue}>{`${t('reasoningEffort')} · ${effortTriggerLabel}`}</span>
+            <span className={`${createCss.chevron!} ${effortOpen ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
           </button>
         }
       />
@@ -394,7 +434,7 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
   const memberId = status.member.memberId
   const [handle, setHandle] = useState(status.member.handle)
   const [description, setDescription] = useState(status.member.description)
-  const [model, setModel] = useState<readonly [provider: string, id: string] | undefined>(status.member.model === undefined ? undefined : [status.member.model.provider, status.member.model.model])
+  const [model, setModel] = useState<AgentTeamModelSelection | undefined>(status.member.model)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const pendingRequest = useRef<AgentTeamUpdateMemberRequest>()
@@ -434,7 +474,7 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
   const joinedChannels = new Set((memberships ?? []).filter(item => item.memberId === memberId).map(item => item.channelRef))
 
   const dirty = handle.trim() !== status.member.handle || description.trim() !== status.member.description
-    || !sameModel(model, status.member.model === undefined ? undefined : [status.member.model.provider, status.member.model.model])
+    || !sameModel(model, status.member.model)
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const normalizedHandle = handle.trim()
@@ -444,11 +484,11 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
       memberId,
       handle: normalizedHandle,
       description: normalizedDescription,
-      ...(model === undefined ? {} : { model: { provider: model[0], model: model[1] } }),
+      ...(model === undefined ? {} : { model }),
     }
     const samePending = pendingRequest.current !== undefined && pendingRequest.current.memberId === payload.memberId
       && pendingRequest.current.handle === payload.handle && pendingRequest.current.description === payload.description
-      && sameModel(pendingRequest.current.model === undefined ? undefined : [pendingRequest.current.model.provider, pendingRequest.current.model.model], model)
+      && sameModel(pendingRequest.current.model, model)
     const request: AgentTeamUpdateMemberRequest = samePending ? pendingRequest.current! : {
       requestId: crypto.randomUUID() as AgentTeamRequestId,
       ...payload,
@@ -514,8 +554,8 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
   )
 }
 
-function sameModel(left: readonly [string, string] | undefined, right: readonly [string, string] | undefined): boolean {
+function sameModel(left: AgentTeamModelSelection | undefined, right: AgentTeamModelSelection | undefined): boolean {
   if (left === undefined && right === undefined) return true
   if (left === undefined || right === undefined) return false
-  return left[0] === right[0] && left[1] === right[1]
+  return left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
 }

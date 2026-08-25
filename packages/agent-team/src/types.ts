@@ -1,3 +1,4 @@
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -55,6 +56,8 @@ export type AgentTeamActor = AgentTeamHumanActor | AgentTeamMemberActor
 export interface AgentTeamModelSelection {
   readonly provider: string
   readonly model: string
+  /** Adapter-owned reasoning effort, or the model's provider/default behavior when absent. */
+  readonly reasoningEffort?: ReasoningEffortId
 }
 
 /** Durable identity and lifecycle intent of one team-managed Agent. */

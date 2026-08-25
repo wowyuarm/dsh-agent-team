@@ -4,6 +4,7 @@ import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import AgentTeam from '../src/index.ts'
@@ -134,6 +135,12 @@ describe('Agent Team display-fact updates', () => {
     const clearedDescription = await ctx.agentTeam.updateMember({ requestId: requestId('clear-description'), memberId: builder.status.member.memberId, handle: 'architect', description: '' })
     expect(clearedDescription.status.member.description).toBe('')
 
+    // A pinned reasoning effort rides the model selection and clears with it.
+    const pinned = await ctx.agentTeam.updateMember({ requestId: requestId('pin-effort'), memberId: builder.status.member.memberId, handle: 'architect', description: 'Designs systems', model: { provider: 'mock', model: 'pinned', reasoningEffort: 'high' as ReasoningEffortId } })
+    expect(pinned.status.member.model).toEqual({ provider: 'mock', model: 'pinned', reasoningEffort: 'high' })
+    const unpinned = await ctx.agentTeam.updateMember({ requestId: requestId('unpin-effort'), memberId: builder.status.member.memberId, handle: 'architect', description: 'Designs systems' })
+    expect(unpinned.status.member.model).toBeUndefined()
+
     // A removed Member freezes against further edits, including its old handle.
     await ctx.agentTeam.removeMember({ requestId: requestId('remove-reviewer'), memberId: reviewer.status.member.memberId })
     await expect(ctx.agentTeam.updateMember({ requestId: requestId('edit-inactive'), memberId: reviewer.status.member.memberId, handle: 'reviewer2', description: 'x' })).rejects.toThrow(/is inactive and can no longer be edited/)
@@ -141,7 +148,7 @@ describe('Agent Team display-fact updates', () => {
     const replayed = replayLedger(facility)
     expect(() => replayed.validate()).not.toThrow()
     const stored = replayed.listMembers().find(member => member.memberId === builder.status.member.memberId)
-    expect(stored).toMatchObject({ handle: 'architect', description: '' })
+    expect(stored).toMatchObject({ handle: 'architect', description: 'Designs systems' })
     expect(stored?.model).toBeUndefined()
     expect(replayed.listMembers().find(member => member.memberId === reviewer.status.member.memberId)?.state).toBe('inactive')
   })

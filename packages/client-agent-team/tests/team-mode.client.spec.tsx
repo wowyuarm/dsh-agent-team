@@ -127,7 +127,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   }))
   const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
     groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'low', name: 'low' }, { id: 'high', name: 'high' }] } },
       { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
     ] }],
     failures: [],
@@ -320,16 +320,18 @@ describe('rendered Team mode composition', () => {
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'bare' } })
     // Description stays empty; the placeholder marks it optional.
     expect(b.view.getByPlaceholderText('留空则暂无描述')).toBeTruthy()
-    // Pick a model through the capped menu.
+    // Pick a model through the capped menu; pinning reveals the effort row.
     fireEvent.click(await b.view.findByRole('button', { name: '模型' }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'DeepSeek Chat' }))
+    fireEvent.click(b.view.getByRole('button', { name: /推理强度/ }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'high' }))
     // Channels stay untouched: the picker shows the empty prompt.
     expect(b.view.getByText('选择初始频道')).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
     expect(await b.view.findByText('bare')).toBeTruthy()
     expect(b.addMember).toHaveBeenLastCalledWith(expect.objectContaining({
       workspaceId: 'w1', handle: 'bare', description: '', presetId: 'team-member', channelRefs: [],
-      model: { provider: 'deepseek-official', model: 'deepseek-chat' },
+      model: { provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high' },
     }))
     await b.runtime.dispose()
   })

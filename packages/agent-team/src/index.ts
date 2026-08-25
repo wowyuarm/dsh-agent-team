@@ -40,6 +40,7 @@ import type {
   AgentTeamClaimResult,
   AgentTeamClientMemberStatus,
   AgentTeamAttachmentId,
+  AgentTeamModelSelection,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamGetAttachmentRequest,
@@ -324,6 +325,7 @@ export default class AgentTeam extends TypertRemoteService {
   async addMember(request: AgentTeamAddMemberRequest): Promise<AgentTeamMemberResult> {
     return this.enqueueLifecycle(async () => {
       const workspace = this.requireWorkspace(request.workspaceId)
+      await this.assertModelRoute(request.model)
       const memberId = `member:${randomUUID()}` as AgentTeamMemberId
       const member: AgentTeamAgentMember = Object.freeze({
         memberId,
@@ -504,6 +506,7 @@ export default class AgentTeam extends TypertRemoteService {
   @Remote('updateMember')
   async updateMember(request: AgentTeamUpdateMemberRequest): Promise<AgentTeamMemberResult> {
     return this.enqueueLifecycle(async () => {
+      await this.assertModelRoute(request.model)
       const previous = this.requireLedger().getMember(request.memberId)
       const result = await this.requireLedger().updateMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
@@ -821,6 +824,24 @@ export default class AgentTeam extends TypertRemoteService {
 
   private requireAgentWorkspace(actor: AgentTeamMemberActor, workspaceId: AgentTeamViewRequest['workspaceId']): void {
     if (this.requireLedger().getMember(actor.memberId)?.workspaceId !== workspaceId) throw new Error('Member cannot mutate another Workspace')
+  }
+
+  /**
+   * Validate a pinned model route's reasoning effort against the adapter's own
+   * metadata when the LLM service is reachable; unknown routes defer to the
+   * LLM layer's runtime check at call time.
+   */
+  private async assertModelRoute(model: AgentTeamModelSelection | undefined): Promise<void> {
+    if (model === undefined || model.reasoningEffort === undefined) return
+    try {
+      const resolved = await this.ctx.llm.resolveModelInfo(model.provider, model.model)
+      const efforts = resolved.reasoning?.efforts ?? []
+      if (efforts.length > 0 && !efforts.some(effort => effort.id === model.reasoningEffort)) {
+        throw new Error(`reasoning effort '${model.reasoningEffort}' is not supported by ${model.provider}/${model.model}`)
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('is not supported by')) throw error
+    }
   }
 
   private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>): Promise<void> {

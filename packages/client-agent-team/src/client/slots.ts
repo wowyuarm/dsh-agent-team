@@ -49,10 +49,20 @@ export interface TeamNavigationSource {
 /** Subscribe to one projection scope's invalidation stream; disposal aborts the shared poll. */
 export type SubscribeTeamChanges = (scope: TeamChangeScope, listener: TeamChangeListener) => () => void
 
+/** One adapter-owned selectable reasoning effort of one model route. */
+export interface TeamModelEffortOption {
+  readonly id: string
+  readonly name: string
+}
+
 /** One selectable model row inside one provider group of the Host catalog. */
 export interface TeamModelOption {
   readonly id: string
   readonly name: string
+  /** Selectable reasoning levels when the adapter exposes them. */
+  readonly reasoning?: {
+    readonly efforts: readonly TeamModelEffortOption[]
+  }
 }
 
 /** Provider-grouped slice of the Host model catalog the editors render. */
