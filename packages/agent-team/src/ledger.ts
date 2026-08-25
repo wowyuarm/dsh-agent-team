@@ -323,7 +323,6 @@ export class AgentTeamLedger {
       const name = request.name.trim()
       const description = request.description.trim()
       if (name === '') throw new Error('channel name must not be empty')
-      if (description === '') throw new Error('channel description must not be empty')
       const memberIds = this.normalizeUnique(request.memberIds, 'initial Channel members')
       for (const memberId of memberIds) this.assertJoinableMember(request.workspaceId, memberId)
       const sequence = this.nextSequence()
@@ -352,7 +351,6 @@ export class AgentTeamLedger {
       const name = request.name.trim()
       const description = request.description.trim()
       if (name === '') throw new Error('channel name must not be empty')
-      if (description === '') throw new Error('channel description must not be empty')
       const channel = Object.freeze({ ...this.requireChannel(request.workspaceId, request.channelRef), name, description })
       const operation: AgentTeamChannelUpdatedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/channel-updated',

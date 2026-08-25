@@ -14,6 +14,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { MultiMenuField } from './multi-menu-field.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { useChannelMembership } from './team-membership.ts'
@@ -106,7 +107,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (mutating || name.trim() === '' || description.trim() === '') return
+    if (mutating || name.trim() === '') return
     const payload = { workspaceId, name: name.trim(), description: description.trim(), memberIds: [...selected] }
     const samePending = pendingCreate !== undefined && pendingCreate.workspaceId === payload.workspaceId
       && pendingCreate.name === payload.name && pendingCreate.description === payload.description
@@ -145,41 +146,32 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
         title={t('addChannel')}
         closeLabel={t('close')}
         contentClassName={createCss.dialogContent!}
-        footer={<><Button variant="outline" disabled={mutating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-channel-create-form" variant="primary" disabled={mutating || name.trim() === '' || description.trim() === ''}>{mutating ? t('creatingChannel') : t('createChannel')}</Button></>}
+        footer={<><Button variant="outline" disabled={mutating} onClick={closeForm}>{t('cancel')}</Button><Button type="submit" form="team-channel-create-form" variant="primary" disabled={mutating || name.trim() === ''}>{mutating ? t('creatingChannel') : t('createChannel')}</Button></>}
       >
         <form id="team-channel-create-form" className={createCss.form} onSubmit={event => { void submit(event) }}>
           <label className={createCss.field}><span>{t('channelName')}</span><Input className={createCss.input!} value={name} disabled={mutating} autoFocus onChange={event => { setName(event.target.value); setPendingCreate(undefined) }} /></label>
-          <label className={createCss.field}><span>{t('channelDescription')}</span><Input className={createCss.input!} value={description} disabled={mutating} onChange={event => { setDescription(event.target.value); setPendingCreate(undefined) }} /></label>
-          <fieldset className={createCss.memberPicker} disabled={mutating}>
-            <legend>{t('initialMembers')}</legend>
-            {creatingAgents.map(request => (
-              <label className={createCss.memberOption} key={request.requestId}>
-                <input type="checkbox" disabled aria-describedby={`creating-member-reason-${request.requestId}`} />
-                <span className={createCss.unavailableDot} aria-hidden="true" />
-                <span>{request.handle}</span>
-                <small id={`creating-member-reason-${request.requestId}`}>{t('memberCreatingReason')}</small>
-              </label>
-            ))}
-            {members.map(status => {
-              const disabled = status.presence === 'unavailable'
-              const reasonId = `initial-member-reason-${status.member.memberId}`
-              return (
-                <label className={createCss.memberOption} key={status.member.memberId}>
-                  <input type="checkbox" disabled={disabled} aria-describedby={disabled ? reasonId : undefined} checked={selected.has(status.member.memberId)} onChange={event => {
-                    setSelected(current => {
-                      const next = new Set(current)
-                      if (event.target.checked) next.add(status.member.memberId); else next.delete(status.member.memberId)
-                      return next
-                    })
-                    setPendingCreate(undefined)
-                  }} />
-                  <TeamPresenceDot status={status} t={t} />
-                  <span>{status.member.handle}</span>
-                  {disabled && <small id={reasonId}>{t('memberUnavailableReason')}</small>}
-                </label>
-              )
-            })}
-          </fieldset>
+          <label className={createCss.field}><span>{t('channelDescription')}{t('optionalSuffix')}</span><Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} disabled={mutating} onChange={event => { setDescription(event.target.value); setPendingCreate(undefined) }} /></label>
+          <MultiMenuField label={t('initialMembers')} disabled={mutating}
+            options={[
+              ...creatingAgents.map(request => ({ id: request.requestId, label: request.handle, disabled: true, hint: t('memberCreatingReason') })),
+              ...members.map(status => ({
+                id: status.member.memberId,
+                label: status.member.handle,
+                ...(status.presence === 'unavailable' ? { disabled: true, hint: t('memberUnavailableReason') } : {}),
+                icon: <TeamPresenceDot status={status} t={t} />,
+              })),
+            ]}
+            selected={[...selected]}
+            onToggle={id => {
+              setSelected(current => {
+                const next = new Set(current)
+                if (next.has(id)) next.delete(id); else next.add(id)
+                return next
+              })
+              setPendingCreate(undefined)
+            }}
+            triggerEmptyLabel={t('membersPickerEmpty')}
+            formatCount={count => t('membersPickerCount', { count })} />
           {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
       </Modal>
@@ -303,7 +295,7 @@ function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinC
     event.preventDefault()
     const normalizedName = name.trim()
     const normalizedDescription = description.trim()
-    if (saving || !dirty || normalizedName === '' || normalizedDescription === '') return
+    if (saving || !dirty || normalizedName === '') return
     const samePending = pendingRequest.current !== undefined && pendingRequest.current.channelRef === channel.channelRef
       && pendingRequest.current.name === normalizedName && pendingRequest.current.description === normalizedDescription
     const request: AgentTeamUpdateChannelRequest = samePending ? pendingRequest.current! : {
@@ -340,7 +332,7 @@ function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinC
       description={`# ${channel.name}`}
       closeLabel={t('close')}
       contentClassName={createCss.dialogContent!}
-      footer={<><Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button><Button type="submit" form="team-channel-edit-form" variant="primary" disabled={saving || !dirty || name.trim() === '' || description.trim() === ''}>{saving ? t('editSaving') : t('editSave')}</Button></>}
+      footer={<><Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button><Button type="submit" form="team-channel-edit-form" variant="primary" disabled={saving || !dirty || name.trim() === ''}>{saving ? t('editSaving') : t('editSave')}</Button></>}
     >
       <form id="team-channel-edit-form" className={createCss.form} onSubmit={event => { void submit(event) }}>
         <label className={createCss.field}>
@@ -348,8 +340,8 @@ function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinC
           <Input className={createCss.input!} value={name} onChange={event => { setName(event.target.value); pendingRequest.current = undefined }} disabled={saving} autoFocus />
         </label>
         <label className={createCss.field}>
-          <span>{t('channelDescription')}</span>
-          <Input className={createCss.input!} value={description} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
+          <span>{t('channelDescription')}{t('optionalSuffix')}</span>
+          <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
         </label>
         <fieldset className={createCss.memberPicker} disabled={saving}>
           <legend>{t('channelMembersSection')}</legend>

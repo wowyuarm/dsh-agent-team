@@ -533,6 +533,7 @@ export interface AgentTeamCreateChannelRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly name: string
+  /** Display purpose text; may be empty and filled in later through an edit. */
   readonly description: string
   readonly memberIds?: readonly AgentTeamMemberId[]
 }
@@ -564,6 +565,7 @@ export interface AgentTeamUpdateChannelRequest {
   readonly workspaceId: WorkspaceId
   readonly channelRef: AgentTeamChannelRef
   readonly name: string
+  /** Display purpose text; may be empty, matching creation. */
   readonly description: string
 }
 

@@ -15,6 +15,7 @@ import type { TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
+import { MultiMenuField } from './multi-menu-field.tsx'
 import { useChannelMembership } from './team-membership.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
@@ -162,10 +163,16 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
             <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); setRetryRequest(undefined) }} disabled={creating} />
           </label>
           <ModelPickerField model={model} onModelChange={choice => { setModel(choice); setRetryRequest(undefined) }} loadModels={loadModels} disabled={creating} t={t} />
-          <ChannelMultiPicker channelRefs={channelRefs} channels={channels} disabled={creating} onToggle={ref => {
-            setChannelRefs(current => current.includes(ref) ? current.filter(item => item !== ref) : [...current, ref])
-            setRetryRequest(undefined)
-          }} t={t} />
+          <MultiMenuField label={`${t('initialChannels')}${t('optionalSuffix')}`} disabled={creating}
+            options={channels.map(channel => ({ id: channel.channelRef, label: channel.name }))}
+            selected={channelRefs}
+            onToggle={ref => {
+              setChannelRefs(current => current.includes(ref) ? current.filter(item => item !== ref) : [...current, ref])
+              setRetryRequest(undefined)
+            }}
+            emptyText={t('noChannelsForAgent')}
+            triggerEmptyLabel={t('channelsPickerEmpty')}
+            formatCount={count => t('channelsPickerCount', { count })} />
           {formOpen && error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
       </Modal>
@@ -359,49 +366,6 @@ function ModelPickerField({ model, onModelChange, loadModels, disabled, t }: {
             onClick={() => { setModelOpen(value => !value) }}
           >
             <span className={createCss.selectValue}>{triggerLabel}</span>
-            <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
-          </button>
-        }
-      />
-    )}
-  </div>
-}
-
-/**
- * Initial-Channels picker for the create form: the same Menu control as every
- * other picker, multi-select through check marks. Selecting never closes the
- * list, so several Channels can be toggled in one pass.
- */
-function ChannelMultiPicker({ channelRefs, channels, disabled, onToggle, t }: {
-  readonly channelRefs: readonly AgentTeamChannelRef[]
-  readonly channels: readonly AgentTeamChannel[]
-  readonly disabled: boolean
-  readonly onToggle: (channelRef: AgentTeamChannelRef) => void
-  readonly t: TeamSidebarProps['t']
-}) {
-  const [open, setChannelsOpen] = useState(false)
-  return <div className={createCss.field}>
-    <span>{t('initialChannels')}{t('optionalSuffix')}</span>
-    {channels.length === 0 ? <small className={css.editHint}>{t('noChannelsForAgent')}</small> : (
-      <Menu
-        open={open}
-        portal
-        className={createCss.menuCap!}
-        items={channels.map(channel => ({ id: channel.channelRef, label: channel.name }))}
-        selectedIds={channelRefs}
-        onSelect={ref => { onToggle(ref as AgentTeamChannelRef) }}
-        onClose={() => { setChannelsOpen(false) }}
-        anchor={
-          <button
-            type="button"
-            className={createCss.selectTrigger!}
-            aria-label={t('initialChannels')}
-            aria-haspopup="listbox"
-            aria-expanded={open}
-            disabled={disabled}
-            onClick={() => { setChannelsOpen(value => !value) }}
-          >
-            <span className={createCss.selectValue}>{channelRefs.length === 0 ? t('channelsPickerEmpty') : t('channelsPickerCount', { count: channelRefs.length })}</span>
             <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
           </button>
         }

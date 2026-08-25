@@ -83,10 +83,22 @@ describe('Agent Team display-fact updates', () => {
     const replayView = replayed.view({ workspaceId: alpha, topLevelOnly: true })
     expect(replayView.channels.find(channel => channel.channelRef === created.channel.channelRef)).toMatchObject({ name: 'platform', description: 'Infrastructure work' })
 
-    // Blank display facts and unknown refs are rejected before any record lands.
+    // Blank display facts and unknown refs are rejected before any record lands;
+    // clearing the description is a legal edit, matching optional creation.
     await expect(ctx.agentTeam.updateChannel({ requestId: requestId('blank-name'), workspaceId: alpha, channelRef: created.channel.channelRef, name: '   ', description: 'x' })).rejects.toThrow(/name must not be empty/)
-    await expect(ctx.agentTeam.updateChannel({ requestId: requestId('blank-description'), workspaceId: alpha, channelRef: created.channel.channelRef, name: 'x', description: '  ' })).rejects.toThrow(/description must not be empty/)
     await expect(ctx.agentTeam.updateChannel({ requestId: requestId('unknown-ref'), workspaceId: alpha, channelRef: 'channel:missing' as AgentTeamChannelRef, name: 'x', description: 'y' })).rejects.toThrow(/unknown Channel ref/)
+    const cleared = await ctx.agentTeam.updateChannel({ requestId: requestId('clear-description'), workspaceId: alpha, channelRef: created.channel.channelRef, name: 'platform', description: '' })
+    expect(cleared.channel.description).toBe('')
+    const replayedCleared = replayLedger(facility)
+    expect(() => replayedCleared.validate()).not.toThrow()
+    expect(replayedCleared.view({ workspaceId: alpha, topLevelOnly: true }).channels.find(channel => channel.channelRef === created.channel.channelRef)).toMatchObject({ name: 'platform', description: '' })
+  })
+
+  it('creates a Channel with an empty description and no initial Members', async () => {
+    const { ctx } = await harness()
+    const created = await ctx.agentTeam.createChannel({ requestId: requestId('bare-channel'), workspaceId: alpha, name: 'ops', description: '' })
+    expect(created.channel.description).toBe('')
+    expect(created.memberIds).toEqual([])
   })
 
   it('edits Member facts with handle uniqueness, model pinning, and replay validation', async () => {

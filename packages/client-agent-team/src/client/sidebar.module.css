@@ -466,6 +466,13 @@
   line-height: 16px;
   margin: 0;
 }
+
+.menuHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  margin-left: 4px;
+}
 .rowError {
   color: var(--dsw-alias-state-error-primary);
   font-size: 11px;

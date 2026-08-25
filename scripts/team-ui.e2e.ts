@@ -138,8 +138,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const channelDialog = page.getByRole('dialog', { name: '新建频道' })
   await channelDialog.getByLabel('名称').fill('delivery')
   await channelDialog.getByLabel('说明').fill('M2 完整协作验收')
-  await channelDialog.getByLabel(/builder/).check()
-  await channelDialog.getByLabel(/reviewer/).check()
+  // Initial members ride the shared multi-select Menu now.
+  await channelDialog.getByRole('button', { name: '初始成员' }).click()
+  await page.getByRole('menuitem', { name: /builder/ }).click()
+  await page.getByRole('menuitem', { name: /reviewer/ }).click()
+  await expect.poll(async () => (await channelDialog.getByRole('button', { name: /初始成员/ }).textContent())?.trim() ?? '').toContain('已选 2 个成员')
   await page.screenshot({ path: join(UI03_SHOTS, 'channel-create-modal.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   const dialogBox = await channelDialog.boundingBox()
