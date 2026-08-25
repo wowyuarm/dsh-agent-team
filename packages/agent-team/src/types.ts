@@ -578,6 +578,7 @@ export interface AgentTeamUpdateMemberRequest {
   readonly requestId: AgentTeamRequestId
   readonly memberId: AgentTeamMemberId
   readonly handle: string
+  /** Display purpose text; may be empty, matching creation. */
   readonly description: string
   readonly model?: AgentTeamModelSelection
 }

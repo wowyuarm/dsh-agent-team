@@ -118,6 +118,9 @@ describe('Agent Team display-fact updates', () => {
     const retried = await ctx.agentTeam.updateMember({ requestId: requestId('clear-model'), memberId: builder.status.member.memberId, handle: 'architect', description: 'Designs systems' })
     expect(retried.status.member.model).toBeUndefined()
     await expect(ctx.agentTeam.updateMember({ requestId: requestId('clear-model'), memberId: builder.status.member.memberId, handle: 'architect', description: 'Changed after commit' })).rejects.toThrow(/was reused with a different operation or payload/)
+    // Clearing the description is a legal edit, matching optional creation.
+    const clearedDescription = await ctx.agentTeam.updateMember({ requestId: requestId('clear-description'), memberId: builder.status.member.memberId, handle: 'architect', description: '' })
+    expect(clearedDescription.status.member.description).toBe('')
 
     // A removed Member freezes against further edits, including its old handle.
     await ctx.agentTeam.removeMember({ requestId: requestId('remove-reviewer'), memberId: reviewer.status.member.memberId })
@@ -126,7 +129,7 @@ describe('Agent Team display-fact updates', () => {
     const replayed = replayLedger(facility)
     expect(() => replayed.validate()).not.toThrow()
     const stored = replayed.listMembers().find(member => member.memberId === builder.status.member.memberId)
-    expect(stored).toMatchObject({ handle: 'architect', description: 'Designs systems' })
+    expect(stored).toMatchObject({ handle: 'architect', description: '' })
     expect(stored?.model).toBeUndefined()
     expect(replayed.listMembers().find(member => member.memberId === reviewer.status.member.memberId)?.state).toBe('inactive')
   })

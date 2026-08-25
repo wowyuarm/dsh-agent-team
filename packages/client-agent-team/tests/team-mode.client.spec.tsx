@@ -405,7 +405,7 @@ describe('rendered Team mode composition', () => {
     // Save stays disabled until something actually changes.
     expect(((within(editor).getByRole('button', { name: '保存' }) as HTMLButtonElement)).disabled).toBe(true)
     fireEvent.change(within(editor).getByLabelText('名称'), { target: { value: 'platform' } })
-    fireEvent.change(within(editor).getByLabelText('说明'), { target: { value: 'Infrastructure work' } })
+    fireEvent.change(within(editor).getByLabelText(/说明/), { target: { value: 'Infrastructure work' } })
     fireEvent.click(within(editor).getByRole('button', { name: '保存' }))
     await waitFor(() => { expect(b.updateChannel).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'w1', channelRef: 'channel:engineering', name: 'platform', description: 'Infrastructure work',
@@ -505,7 +505,7 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(within(modelMenu).getByRole('menuitem', { name: 'DeepSeek Reasoner' }))
     await waitFor(() => { expect(modelTrigger.textContent).toContain('DeepSeek Reasoner') })
     fireEvent.change(within(editor).getByLabelText('名称'), { target: { value: 'architect' } })
-    fireEvent.change(within(editor).getByLabelText('说明'), { target: { value: 'System design owner' } })
+    fireEvent.change(within(editor).getByLabelText(/说明/), { target: { value: 'System design owner' } })
     fireEvent.click(within(editor).getByRole('button', { name: '保存' }))
     await waitFor(() => { expect(b.updateMember).toHaveBeenCalledWith(expect.objectContaining({
       memberId: 'member:builder', handle: 'architect', description: 'System design owner',

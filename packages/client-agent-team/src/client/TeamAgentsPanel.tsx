@@ -475,7 +475,7 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
     event.preventDefault()
     const normalizedHandle = handle.trim()
     const normalizedDescription = description.trim()
-    if (saving || !dirty || normalizedHandle.length === 0 || normalizedDescription.length === 0) return
+    if (saving || !dirty || normalizedHandle.length === 0) return
     const payload = {
       memberId,
       handle: normalizedHandle,
@@ -516,7 +516,7 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
       description={`@${status.member.handle}`}
       closeLabel={t('close')}
       contentClassName={createCss.dialogContent!}
-      footer={<><Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button><Button type="submit" form="team-agent-edit-form" variant="primary" disabled={saving || !dirty || handle.trim().length === 0 || description.trim().length === 0}>{saving ? t('editSaving') : t('editSave')}</Button></>}
+      footer={<><Button variant="outline" disabled={saving} onClick={onClose}>{t('cancel')}</Button><Button type="submit" form="team-agent-edit-form" variant="primary" disabled={saving || !dirty || handle.trim().length === 0}>{saving ? t('editSaving') : t('editSave')}</Button></>}
     >
       <form id="team-agent-edit-form" className={createCss.form} onSubmit={event => { void submit(event) }}>
         <label className={createCss.field}>
@@ -524,8 +524,8 @@ function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinC
           <Input className={createCss.input!} value={handle} onChange={event => { setHandle(event.target.value); pendingRequest.current = undefined }} disabled={saving} autoFocus />
         </label>
         <label className={createCss.field}>
-          <span>{t('agentDescription')}</span>
-          <Input className={createCss.input!} value={description} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
+          <span>{t('agentDescription')}{t('optionalSuffix')}</span>
+          <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
         </label>
         <ModelPickerField model={model} onModelChange={choice => { pendingRequest.current = undefined; setModel(choice) }} loadModels={loadModels} disabled={saving} t={t} />
         <fieldset className={createCss.memberPicker} disabled={saving}>

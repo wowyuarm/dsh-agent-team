@@ -411,7 +411,6 @@ export class AgentTeamLedger {
       const handle = request.handle.trim()
       const description = request.description.trim()
       if (handle === '') throw new Error('member handle must not be empty')
-      if (description === '') throw new Error('member description must not be empty')
       if (handle !== prior.handle) this.assertHandleAvailable(prior.workspaceId, handle, prior.memberId)
       this.assertModelSelection(request.model)
       // An absent model must CLEAR any override (inherit the Host default);
