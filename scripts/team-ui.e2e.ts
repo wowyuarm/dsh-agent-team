@@ -218,6 +218,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
   await committedMessage.waitFor()
   await expect.poll(() => page.getByRole('textbox', { name: '消息内容' }).inputValue()).toBe('')
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
   await page.getByRole('button', { name: '发送', exact: true }).waitFor()
   const channelGeometry = await page.locator('[data-team-channel]').evaluate(element => {
     const children = [...element.children].map(child => child.getBoundingClientRect())

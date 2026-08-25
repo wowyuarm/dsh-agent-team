@@ -203,7 +203,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
           aria-activedescendant={menuOpen && activeCandidate !== undefined ? `${listId}-${activeCandidate.member.memberId}` : undefined}
           aria-expanded={menuOpen}
           value={draft}
-          disabled={pending}
+          readOnly={pending}
           placeholder={t('messagePlaceholder')}
           rows={1}
           onChange={onChange}
@@ -220,6 +220,11 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
           className={css.sendButton}
           aria-label={pending ? t('sendingMessage') : t('sendMessage')}
           disabled={pending || draft.trim() === ''}
+          onMouseDown={event => {
+            // Keep the composer focused when the send control is clicked.
+            event.preventDefault()
+            inputRef.current?.focus({ preventScroll: true })
+          }}
         >
           <IconSendOutline16 size={16} />
         </button>
