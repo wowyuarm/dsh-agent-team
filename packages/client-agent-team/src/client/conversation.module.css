@@ -317,12 +317,19 @@
   outline-offset: 1px;
 }
 
+/* The shared dialog card is form-sized (380px); the image preview needs a
+   wide card so the zoomed screenshot stays readable. */
+.attachmentModal {
+  width: min(1100px, 92vw);
+}
+
 .attachmentZoom {
   display: block;
   margin: 0 auto;
-  max-height: 70vh;
+  max-height: 78vh;
   max-width: 100%;
   object-fit: contain;
+  border-radius: 12px;
 }
 
 .attachmentChip {

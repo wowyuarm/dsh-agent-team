@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { chromium, type Browser } from 'playwright'
@@ -237,7 +237,9 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // Attachment upload: the "+" picker takes real files, chips confirm the
   // selection, and the committed message renders the image thumbnail from the
   // Host cache — the full upload → ledger → display loop on the real app.
-  const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAgAAAAIAQMAAAD+wSzIAAAABlBMVEX///+/v7+jQ3Y5AAAADklEQVQI12P4AIX8EAgALgAD/aNpbtEAAAAASUVORK5CYII=', 'base64')
+  // Upload a real screenshot-sized PNG so thumbnails and the zoom preview
+  // demonstrate actual scaling, not a tiny fixture.
+  const pngBytes = await readFile(join(UI02_SHOTS, 'sidebar-channels.png'))
   const uploadPath = join(BROWSER_ARTIFACTS, 'upload-fixture.png')
   await writeFile(uploadPath, pngBytes)
   // The "+" control must open the real file picker (not a command menu).
@@ -254,6 +256,13 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.locator('[data-team-channel] article img[src^="data:image/png"]').count()).toBeGreaterThanOrEqual(1)
   await expect.poll(() => page.getByText('验收截图.png', { exact: true }).count()).toBe(0)
   await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-thumbnail.png'), fullPage: true })
+  // Zoom: clicking the thumbnail opens a wide preview card over the mask.
+  await page.locator('[data-team-channel] article img[src^="data:image/png"]').first().click()
+  await page.getByRole('dialog').waitFor()
+  await expect.poll(() => page.getByRole('dialog').locator('img').count()).toBe(1)
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-zoom.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+  await expect.poll(() => page.getByRole('dialog').count()).toBe(0)
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-thumbnail-narrow.png'), fullPage: true })

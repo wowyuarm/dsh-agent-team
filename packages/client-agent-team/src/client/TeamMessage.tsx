@@ -89,7 +89,7 @@ function TeamAttachmentStrip({ attachments, loadAttachment, t }: {
       {...(t === undefined ? {} : { t })}
       onZoom={setZoomed}
     />)}
-    {zoomed !== undefined && <Modal open title={zoomed.name} onClose={() => { setZoomed(undefined) }}>
+    {zoomed !== undefined && <Modal open {...(css.attachmentModal === undefined ? {} : { className: css.attachmentModal })} title={zoomed.name} onClose={() => { setZoomed(undefined) }}>
       <img className={css.attachmentZoom} src={cachedAttachmentDataUrl(zoomed.attachmentId) ?? undefined} alt={zoomed.name} />
     </Modal>}
   </div>
