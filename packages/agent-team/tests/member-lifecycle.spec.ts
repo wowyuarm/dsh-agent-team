@@ -24,7 +24,7 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
 import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
-import type { AgentTeamChannelRef, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
+import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -206,6 +206,36 @@ describe('Agent Team Member lifecycle', () => {
     expect(removed.member.state).toBe('inactive')
     expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
+  })
+
+  it('restarts an enabled Member in place, keeping the session identity and memory', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const liveBefore = ctx.agents.get(added.status.member.sessionId)
+    expect(liveBefore).toBeDefined()
+
+    // Restart: same Member, same session id, freshly minted handle.
+    const restarted = await ctx.agentTeam.restartMember({ requestId: requestId('restart'), workspaceId, memberId: added.status.member.memberId })
+    expect(restarted.status.availability).toBe('active')
+    expect(restarted.status.member.sessionId).toBe(added.status.member.sessionId)
+    const liveAfter = ctx.agents.get(added.status.member.sessionId)
+    expect(liveAfter).toBeDefined()
+    expect(liveAfter).not.toBe(liveBefore)
+    expect(liveAfter?.session.header.cwd).toBe(liveBefore?.session.header.cwd)
+
+    // Private memory survives: it is addressed by Member, not by handle.
+    await expect(access(join(added.status.member.privateMemoryPath, 'memory.md'))).resolves.toBeUndefined()
+
+    // The audit operation replays cleanly and dedupes by request.
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+    const again = await ctx.agentTeam.restartMember({ requestId: requestId('restart'), workspaceId, memberId: added.status.member.memberId })
+    expect(again.receipt.operationId).toBe(restarted.receipt.operationId)
+
+    // Guards: unknown and suspended Members cannot restart.
+    await expect(ctx.agentTeam.restartMember({ requestId: requestId('unknown'), workspaceId, memberId: 'member:missing' as AgentTeamMemberId })).rejects.toThrow(/unknown Member/)
+    await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: added.status.member.memberId })
+    await expect(ctx.agentTeam.restartMember({ requestId: requestId('suspended'), workspaceId, memberId: added.status.member.memberId })).rejects.toThrow(/only enabled Members can be restarted/)
   })
 
   it('creates, suspends, resumes, and removes a Member with a current DSH SQLite Session database', async () => {

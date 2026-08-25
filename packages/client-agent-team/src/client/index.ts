@@ -12,6 +12,7 @@ import type {
   AgentTeamMembersRequest,
   AgentTeamPutAttachmentRequest,
   AgentTeamRecoverMemberRequest,
+  AgentTeamRestartMemberRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamReplyRequest,
   AgentTeamTaskRequest,
@@ -79,6 +80,7 @@ function registerModeShadow<T extends object>(
     updateChannel: (request: AgentTeamUpdateChannelRequest) => ctx.remote.agentTeam.updateChannel(request),
     updateMember: (request: AgentTeamUpdateMemberRequest) => ctx.remote.agentTeam.updateMember(request),
     recoverMember: (request: AgentTeamRecoverMemberRequest) => ctx.remote.agentTeam.recoverMember(request),
+    restartMember: (request: AgentTeamRestartMemberRequest) => ctx.remote.agentTeam.restartMember(request),
     // The Host-scoped catalog needs no live Member, so suspended ones stay editable too.
     loadModels: async () => {
       const connection = ctx.get('connection') as ConnectionHandle

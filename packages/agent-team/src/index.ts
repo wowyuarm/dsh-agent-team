@@ -57,6 +57,8 @@ import type {
   AgentTeamPutAttachmentRequest,
   AgentTeamPutAttachmentResult,
   AgentTeamRecoverMemberRequest,
+  AgentTeamRestartMemberRequest,
+  AgentTeamRestartMemberResult,
   AgentTeamRecoverMemberResult,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -154,6 +156,8 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
+  /** Agent ids with a turn in flight; restarts must wait for the boundary. */
+  private readonly runningAgents = new Set<SessionId>()
   private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
   private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
 
@@ -189,6 +193,8 @@ export default class AgentTeam extends TypertRemoteService {
     })
     this.ctx.on('agent/status', ({ agent, status }) => {
       const member = this.memberForAgent(agent)
+      if (status === 'running') this.runningAgents.add(agent.id)
+      else this.runningAgents.delete(agent.id)
       if (status === 'running' && member !== undefined) {
         const recovered = this.runtimeErrors.delete(agent.id)
         if (recovered) this.notifiedInbox.delete(member.memberId)
@@ -210,6 +216,7 @@ export default class AgentTeam extends TypertRemoteService {
       await this.lifecycleTail
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
+      this.runningAgents.clear()
       await domain.close()
     }, 'agentTeam.dispose')
     this.domain = domain
@@ -380,6 +387,44 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.logger.info(`agent-team: operator asked member '${member.handle}' to resume`)
     this.steerResume(member, this.resumeText(kind ?? 'unspecified failure', { operatorRequested: true }))
     return Object.freeze({ status: this.memberStatus(member) })
+  }
+
+  /**
+   * Restart one enabled Member's live session in place: dispose the handle and
+   * reactivate on the same session id, so the transcript, private memory, and
+   * every ledger fact survive while tools and prompt templates are re-minted
+   * from the running plugin. The audit operation changes no projection state.
+   */
+  @Remote('restartMember')
+  async restartMember(request: AgentTeamRestartMemberRequest): Promise<AgentTeamRestartMemberResult> {
+    return this.enqueueLifecycle(async () => {
+      this.requireAccepting()
+      this.requireWorkspace(request.workspaceId)
+      const stored = this.requireLedger().getMember(request.memberId)
+      if (stored === undefined || stored.workspaceId !== request.workspaceId) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
+      if (stored.state !== 'enabled') throw new Error(`Agent Member '${stored.handle}' is ${stored.state}; only enabled Members can be restarted`)
+      const active = this.handles.get(request.memberId)
+      if (active === undefined) throw new Error(`Agent Member '${stored.handle}' has no active session to restart`)
+      if (this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before restarting`)
+      const result = await this.requireLedger().restartMember({ ...request, actor: agentTeamHumanActor() })
+      if (result.committed) this.emitCommitted(result.value.receipt)
+      // Drop the old handle's transient state: pending recovery episodes and
+      // error markers belong to the disposed agent, not to the Member.
+      this.recovery.stopTracking(request.memberId)
+      this.runtimeErrors.delete(active.agent.id)
+      this.notifiedInbox.delete(request.memberId)
+      await active.dispose()
+      this.handles.delete(request.memberId)
+      this.diagnostics.delete(request.memberId)
+      await this.activateMember(stored)
+      const reactivated = this.handles.get(request.memberId)
+      if (reactivated === undefined) {
+        // Reactivation failed; the activation diagnostic carries the reason and
+        // the audit record stays honest about the attempt.
+        throw new Error(`Agent Member '${stored.handle}' failed to reactivate: ${this.diagnostics.get(request.memberId) ?? 'unknown error'}`)
+      }
+      return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
+    })
   }
 
   /** Ledger handle for log lines; falls back to the raw id when unknown. */

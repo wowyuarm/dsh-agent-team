@@ -325,6 +325,16 @@ export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase 
   readonly data: { readonly member: AgentTeamAgentMember }
 }
 
+/**
+ * Audit record of one in-place Member session restart. The restart changes no
+ * projection state — the Member keeps identity, transcript, and memory — so
+ * apply() treats this operation as a marker only.
+ */
+export interface AgentTeamMemberSessionRestartedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-session-restarted'
+  readonly data: { readonly member: AgentTeamAgentMember }
+}
+
 /** Durable Human rename of one Channel's display facts; identity refs never change. */
 export interface AgentTeamChannelUpdatedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/channel-updated'
@@ -496,6 +506,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberAddedOperation
   | AgentTeamMemberSuspendedOperation
   | AgentTeamMemberResumedOperation
+  | AgentTeamMemberSessionRestartedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation
@@ -591,6 +602,19 @@ export interface AgentTeamRecoverMemberRequest {
 
 /** Result of a recovery nudge; runtime-only steering, so there is no ledger receipt. */
 export interface AgentTeamRecoverMemberResult {
+  readonly status: AgentTeamAgentMemberStatus
+}
+
+/** Human intent to restart one enabled Member's live Agent session in place. */
+export interface AgentTeamRestartMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+}
+
+/** The Member keeps its identity, session transcript, and memory; only the handle is fresh. */
+export interface AgentTeamRestartMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
   readonly status: AgentTeamAgentMemberStatus
 }
 

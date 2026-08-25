@@ -33,6 +33,7 @@ describe('Agent Team generated Typert boundary', () => {
       'recoverMember',
       'removeChannelMember',
       'reply',
+      'restartMember',
       'sendMessage',
       'threadHistory',
       'threadObservations',

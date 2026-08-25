@@ -42,6 +42,7 @@ import type {
   AgentTeamMemberId,
   AgentTeamMemberRemovedOperation,
   AgentTeamMemberResumedOperation,
+  AgentTeamMemberSessionRestartedOperation,
   AgentTeamMemberSuspendedOperation,
   AgentTeamMemberUpdatedOperation,
   AgentTeamMessage,
@@ -60,6 +61,7 @@ import type {
   AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
+  AgentTeamRestartMemberRequest,
   AgentTeamSetMemberStateRequest,
   AgentTeamStaleRevision,
   AgentTeamStatus,
@@ -131,6 +133,10 @@ export interface AgentTeamAuthorizedAddMemberRequest extends AgentTeamAddMemberR
 }
 
 export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMemberStateRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedRestartMemberRequest extends AgentTeamRestartMemberRequest {
   readonly actor: AgentTeamHumanActor
 }
 
@@ -431,6 +437,31 @@ export class AgentTeamLedger {
 
   resumeMember(request: AgentTeamAuthorizedSetMemberStateRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
     return this.setMemberState(request, 'enabled')
+  }
+
+  /**
+   * Audit record of one in-place Member session restart. The operation changes
+   * no projection state — identity, transcript, and memory are untouched — so
+   * replay treats it as a marker while the Host re-mints the live handle.
+   */
+  restartMember(request: AgentTeamAuthorizedRestartMemberRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameMemberRestart(existing, request)
+        return this.resolved(this.memberResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const member = this.requireMember(request.memberId)
+      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can be restarted`)
+      const operation: AgentTeamMemberSessionRestartedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/member-session-restarted',
+        data: Object.freeze({ member }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.memberResult(operation))
+    })
   }
 
   getMember(memberId: AgentTeamMemberId): AgentTeamAgentMember | undefined {
@@ -1037,6 +1068,7 @@ export class AgentTeamLedger {
       case 'team/member-added':
       case 'team/member-suspended':
       case 'team/member-resumed':
+      case 'team/member-session-restarted':
       case 'team/member-updated':
       case 'team/member-removed':
         return [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
@@ -1188,6 +1220,13 @@ export class AgentTeamLedger {
       const expected = operation.kind === 'team/member-suspended' ? 'enabled' : 'suspended'
       const next = operation.kind === 'team/member-suspended' ? 'suspended' : 'enabled'
       if (prior === undefined || prior.state !== expected || operation.data.member.state !== next || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member lifecycle transition')
+      return
+    }
+    if (operation.kind === 'team/member-session-restarted') {
+      assertHuman()
+      const prior = projection.members.get(operation.data.member.memberId)
+      // The restart records the unchanged Member: same identity, still enabled.
+      if (prior === undefined || prior.state !== 'enabled' || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member restart')
       return
     }
     if (operation.kind === 'team/channel-updated') {
@@ -1544,6 +1583,11 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/member-suspended' || operation.kind === 'team/member-resumed') {
       target.members.set(operation.data.member.memberId, operation.data.member)
+      return
+    }
+    if (operation.kind === 'team/member-session-restarted') {
+      // Audit-only: identity, transcript, and memory are untouched, so the
+      // projection deliberately does not change.
       return
     }
     if (operation.kind === 'team/channel-updated') {
@@ -2189,6 +2233,11 @@ export class AgentTeamLedger {
       || !this.sameList(operation.data.channelRefs, this.normalizeUnique(request.channelRefs, 'initial Member Channels'))) this.throwRequestCollision(request.requestId)
   }
 
+  private assertSameMemberRestart(operation: AgentTeamOperation, request: AgentTeamAuthorizedRestartMemberRequest): asserts operation is AgentTeamMemberSessionRestartedOperation {
+    if (operation.kind !== 'team/member-session-restarted' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
+  }
+
   private assertSameMemberState(operation: AgentTeamOperation, request: AgentTeamAuthorizedSetMemberStateRequest, state: 'enabled' | 'suspended'): asserts operation is AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation {
     const kind = state === 'suspended' ? 'team/member-suspended' : 'team/member-resumed'
     if (operation.kind !== kind || !this.sameActor(operation.actor, request.actor) || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
@@ -2330,7 +2379,7 @@ export class AgentTeamLedger {
     return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel })
   }
 
-  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
+  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberSessionRestartedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
     return Object.freeze({ receipt: this.receipt(operation), member: operation.data.member })
   }
 
