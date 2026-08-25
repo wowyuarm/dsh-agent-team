@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkRunsWithDays, daySeparatorLabel } from '../src/client/team-separators.ts'
+import { chunkRunsWithDays, daySeparatorLabel, isRunGap } from '../src/client/team-separators.ts'
 
 interface Row {
   readonly sender?: string | undefined
@@ -55,5 +55,19 @@ describe('timeline day separators', () => {
     ], senderOf, occurredAtOf)
     expect(blocks).toHaveLength(2)
     expect(blocks.every(block => block.kind === 'run')).toBe(true)
+  })
+})
+
+describe('same-sender turn gap', () => {
+  it('marks waits of at least five minutes as separate turns', () => {
+    expect(isRunGap('2026-08-21T09:00:00.000Z', '2026-08-21T09:05:00.000Z')).toBe(true)
+    expect(isRunGap('2026-08-21T09:00:00.000Z', '2026-08-21T09:04:59.000Z')).toBe(false)
+  })
+
+  it('stays silent without two valid instants', () => {
+    expect(isRunGap(undefined, '2026-08-21T09:05:00.000Z')).toBe(false)
+    expect(isRunGap('2026-08-21T09:00:00.000Z', undefined)).toBe(false)
+    expect(isRunGap('not-a-date', '2026-08-21T09:05:00.000Z')).toBe(false)
+    expect(isRunGap('2026-08-21T09:00:00.000Z', '2026-08-21T08:59:00.000Z')).toBe(false)
   })
 })

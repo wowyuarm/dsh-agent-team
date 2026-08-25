@@ -3,6 +3,21 @@ export type TimelineBlock<T> =
   | { readonly kind: 'run'; readonly items: readonly T[] }
   | { readonly kind: 'day'; readonly label: string }
 
+/** Same-sender messages at least this many minutes apart count as separate turns. */
+export const RUN_GAP_MINUTES = 5
+
+/**
+ * Whether two adjacent same-sender run items are separated by a real waiting
+ * gap: only such gaps earn an explicit time divider, while rapid bursts stay
+ * merged into one seamless run.
+ */
+export function isRunGap(previousOccurredAt: string | undefined, occurredAt: string | undefined): boolean {
+  if (previousOccurredAt === undefined || occurredAt === undefined) return false
+  const previous = Date.parse(previousOccurredAt)
+  const at = Date.parse(occurredAt)
+  return !Number.isNaN(previous) && !Number.isNaN(at) && at - previous >= RUN_GAP_MINUTES * 60_000
+}
+
 const pad = (value: number): string => String(value).padStart(2, '0')
 
 /** Local-calendar day key for one wall-clock instant; shared by bespoke loops. */

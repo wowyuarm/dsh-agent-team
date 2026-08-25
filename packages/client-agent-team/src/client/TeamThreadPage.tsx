@@ -18,8 +18,9 @@ import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
+import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf } from './team-formatters.ts'
-import { daySeparatorLabel, timelineDayKey } from './team-separators.ts'
+import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -335,7 +336,20 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     let run: AgentTeamThreadFact[] = []
     let lastDay: string | undefined
     const flushRun = () => {
-      if (run.length > 0) nodes.push(<div className={css.messageRun} key={`run-${factKey(run[0]!)}`}>{run.map((entry, entryIndex) => renderFact(entry, entryIndex > 0))}</div>)
+      if (run.length > 0) {
+        nodes.push(
+          <div className={css.messageRun} key={`run-${factKey(run[0]!)}`}>
+            {run.map((entry, entryIndex) => {
+              const previous = entryIndex > 0 ? run[entryIndex - 1] : undefined
+              const turnGap = entry.kind === 'message' && isRunGap(previous?.kind === 'message' ? previous.message.occurredAt : undefined, entry.message.occurredAt)
+              return <Fragment key={factKey(entry)}>
+                {turnGap && <TeamRunDivider occurredAt={entry.message.occurredAt} />}
+                {renderFact(entry, entryIndex > 0)}
+              </Fragment>
+            })}
+          </div>,
+        )
+      }
       run = []
     }
     facts.forEach((fact, index) => {

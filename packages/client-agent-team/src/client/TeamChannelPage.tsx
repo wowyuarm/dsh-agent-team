@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -9,10 +9,11 @@ import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
+import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
-import { chunkRunsWithDays } from './team-separators.ts'
+import { chunkRunsWithDays, isRunGap } from './team-separators.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -284,35 +285,38 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
             const senderStatus = members.find(member => member.member.memberId === item.message.sender)
             const human = item.message.sender === view!.humanMemberId
             const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender
-            return <TeamMessage
-              key={item.message.messageRef}
-              senderName={sender}
-              memberId={item.message.sender}
-              human={human}
-              body={item.message.body}
-              attachments={item.message.attachments}
-              loadAttachment={getAttachment}
-              t={t}
-              occurredAt={item.message.occurredAt}
-              mentionNames={mentionNamesOf(item.mentions, mentionHandlesMap)}
-              grouped={index > 0}
-              {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
-            >
-              {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
-                <span className={channelCss.taskDot}>
-                  {(() => {
-                    const dot = taskStatusDot(item.task.status)
-                    return dot === 'ongoing' || dot === 'warning' || dot === 'done'
-                      ? <StateDot size={8} state={dot} />
-                      : <span className={channelCss.taskDotQuiet} data-variant={dot} />
-                  })()}
-                </span>
-                <span className={channelCss.taskNumber}>{t('taskLabel', { number: item.taskNumber })}</span>
-                <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
-                <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
-                <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
-              </button>}
-            </TeamMessage>
+            return <Fragment key={item.message.messageRef}>
+              {isRunGap(index > 0 ? block.items[index - 1]!.message.occurredAt : undefined, item.message.occurredAt)
+                && <TeamRunDivider occurredAt={item.message.occurredAt} />}
+              <TeamMessage
+                senderName={sender}
+                memberId={item.message.sender}
+                human={human}
+                body={item.message.body}
+                attachments={item.message.attachments}
+                loadAttachment={getAttachment}
+                t={t}
+                occurredAt={item.message.occurredAt}
+                mentionNames={mentionNamesOf(item.mentions, mentionHandlesMap)}
+                grouped={index > 0}
+                {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
+              >
+                {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
+                  <span className={channelCss.taskDot}>
+                    {(() => {
+                      const dot = taskStatusDot(item.task.status)
+                      return dot === 'ongoing' || dot === 'warning' || dot === 'done'
+                        ? <StateDot size={8} state={dot} />
+                        : <span className={channelCss.taskDotQuiet} data-variant={dot} />
+                    })()}
+                  </span>
+                  <span className={channelCss.taskNumber}>{t('taskLabel', { number: item.taskNumber })}</span>
+                  <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
+                  <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
+                  <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
+                </button>}
+              </TeamMessage>
+            </Fragment>
           })}
         </div>)}
       </div>

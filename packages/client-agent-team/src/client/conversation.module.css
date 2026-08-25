@@ -261,6 +261,25 @@
   padding-top: 7px;
 }
 
+/* Turn divider inside one run: same-sender messages separated by a real
+   waiting gap (isRunGap) are separate turns — the hairline restores their
+   block boundary and the label below it shows the later message's instant,
+   which the suppressed identity chrome would have carried. The label aligns
+   with the text column (avatar 28px + gap 10px), and the divider replaces
+   the following row's own task-chip hairline so the lines never stack. */
+.runDivider {
+  border-top: 1px solid var(--dsw-alias-border-subtle);
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  margin: 2px 0 0;
+  padding: 5px 0 0 38px;
+}
+.runDivider + .messageRow[data-grouped]:has(.messageBody > button) {
+  border-top: 0;
+  margin-top: 0;
+}
+
 /* Mention chip for @Member references in Human literal messages, and for the
    structured mention fallback row present on every message kind. */
 .mention {

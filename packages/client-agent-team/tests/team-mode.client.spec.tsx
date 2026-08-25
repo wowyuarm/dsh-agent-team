@@ -946,5 +946,26 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
+  it('separates wide same-sender gaps with a turn divider on both timelines', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true, seededMessages: [
+      { body: 'burst one', occurredAt: '2026-08-21T09:00:00.000Z' },
+      { body: 'burst two', occurredAt: '2026-08-21T09:01:00.000Z' },
+      { body: 'later publication', occurredAt: '2026-08-21T11:30:00.000Z' },
+    ] })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByText('later publication')).toBeTruthy()
+    // Only the two-hour gap earns a divider; the one-minute burst stays a
+    // seamless run, and the label carries the later message's instant.
+    const channelDividers = b.view.getAllByRole('separator')
+    expect(channelDividers).toHaveLength(1)
+    expect(channelDividers[0]!.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-21T11:30:00.000Z')
+
+    fireEvent.click(b.view.getAllByRole('button', { name: '打开 Task #1' })[0]!)
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    const threadDividers = b.view.getAllByRole('separator')
+    expect(threadDividers).toHaveLength(1)
+    expect(threadDividers[0]!.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-21T11:30:00.000Z')
+    await b.runtime.dispose()
+  })
 
 })
