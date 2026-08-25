@@ -381,7 +381,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.reload()
   await page.getByRole('button', { name: '# delivery' }).waitFor({ timeout: 20_000 })
   await expect.poll(() => page.evaluate(() => localStorage.getItem('dsh.agent-team.navigation'))).toContain('"mode":"team"')
-  await page.getByRole('button', { name: '# delivery' }).click()
+  // Browser restoration returns to the last selected Channel instead of the
+  // empty Team welcome surface.
   await page.getByRole('heading', { name: '# delivery' }).waitFor()
   await expect.poll(() => page.getByText('Human 已检查 Thread', { exact: true }).count()).toBe(0)
   await expect.poll(() => page.getByText('验收后继续讨论', { exact: true }).count()).toBe(0)
@@ -402,6 +403,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.getByRole('button', { name: '团队' }).getAttribute('data-team-action')).toBe('enter')
   await enterTeamKeyboard.press('Enter')
   await expect.poll(() => page.getByRole('button', { name: '成员', exact: true }).count()).toBe(1)
+  await page.getByRole('heading', { name: '# delivery' }).waitFor()
 
   const membersKeyboard = page.getByRole('button', { name: '成员', exact: true })
   await membersKeyboard.focus()

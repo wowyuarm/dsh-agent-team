@@ -404,6 +404,8 @@ describe('rendered Team mode composition', () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
     await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
     await b.view.findByText('builder')
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
     expect(document.documentElement.dataset.agentTeamMode).toBe('team')
     // Team views own the conversation seat before the card click.
     expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeNull()

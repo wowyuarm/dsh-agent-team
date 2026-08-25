@@ -35,22 +35,52 @@ describe('TeamNavigation', () => {
     off()
   })
 
-  it('rehydrates Team mode while ignoring stale persisted fields', () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: 'team', workspaceId: 'workspace:old', activeTab: 'inbox' }))
+  it('rehydrates the last Team location while ignoring unknown persisted fields', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode: 'team', workspaceId: 'workspace:old', channelRef: 'channel:old',
+      taskRef: 'task:old', threadRef: 'thread:old', taskNumber: 7, activeTab: 'inbox',
+    }))
     const navigation = new TeamNavigation()
-    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:old' })
+    expect(navigation.getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:old', channelRef: 'channel:old',
+      taskRef: 'task:old', threadRef: 'thread:old', taskNumber: 7,
+    })
 
     navigation.actions().selectWorkspace('workspace:existing' as never)
     expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:existing' })
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:existing' })
   })
 
-  it('ignores malformed persisted state', () => {
+  it('persists Channel and Thread location across a new navigation instance', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+    navigation.actions().enterTeam()
+    navigation.actions().selectThread('task:1' as never, 'thread:1' as never, 'channel:1' as never, 7)
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      taskRef: 'task:1', threadRef: 'thread:1', taskNumber: 7,
+    })
+    expect(new TeamNavigation().getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      taskRef: 'task:1', threadRef: 'thread:1', taskNumber: 7,
+    })
+  })
+
+  it('ignores malformed and incomplete persisted state', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      taskRef: 'task:orphaned', taskNumber: 7,
+    }))
+    expect(new TeamNavigation().getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+    })
+
     localStorage.setItem(STORAGE_KEY, '{broken')
     expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'conversation' })
   })
 
-  it('embeds a Member Session view with runtime-only fields', () => {
+  it('overlays a runtime-only Member Session without losing the Team location', () => {
     const navigation = new TeamNavigation()
     navigation.actions().selectWorkspace('workspace:one' as never)
     navigation.actions().enterTeam()
@@ -58,11 +88,19 @@ describe('TeamNavigation', () => {
     navigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
 
     expect(navigation.getSnapshot()).toEqual({
-      mode: 'team', workspaceId: 'workspace:one', memberSessionId: 'session:builder', returnToSessionId: 'session:return',
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      taskRef: 'task:1', threadRef: 'thread:1', taskNumber: 7,
+      memberSessionId: 'session:builder', returnToSessionId: 'session:return',
     })
-    // The Member view is runtime state only; a reload starts from the persisted core.
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:one' })
-    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one' })
+    // Only the Member overlay is runtime state; a reload restores the Team location below it.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      taskRef: 'task:1', threadRef: 'thread:1', taskNumber: 7,
+    })
+    expect(new TeamNavigation().getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      taskRef: 'task:1', threadRef: 'thread:1', taskNumber: 7,
+    })
   })
 
   it('keeps the original return target when another Member is selected', () => {

@@ -22,9 +22,16 @@ function readSnapshot(): TeamNavigationSnapshot {
   if (typeof localStorage === 'undefined') return { mode: 'conversation' }
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '') as Partial<TeamNavigationSnapshot>
+    const hasThread = typeof parsed.taskRef === 'string' && typeof parsed.threadRef === 'string'
     return {
       mode: parsed.mode === 'team' ? 'team' : 'conversation',
       ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId as WorkspaceId } : {}),
+      ...(typeof parsed.channelRef === 'string' ? { channelRef: parsed.channelRef as AgentTeamChannelRef } : {}),
+      ...(hasThread ? {
+        taskRef: parsed.taskRef as AgentTeamTaskRef,
+        threadRef: parsed.threadRef as AgentTeamThreadRef,
+        ...(typeof parsed.taskNumber === 'number' && Number.isInteger(parsed.taskNumber) && parsed.taskNumber > 0 ? { taskNumber: parsed.taskNumber } : {}),
+      } : {}),
     }
   } catch {
     return { mode: 'conversation' }
@@ -34,8 +41,15 @@ function readSnapshot(): TeamNavigationSnapshot {
 function persistSnapshot(snapshot: TeamNavigationSnapshot): void {
   if (typeof localStorage === 'undefined') return
   try {
-    const { mode, workspaceId } = snapshot
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode, ...(workspaceId === undefined ? {} : { workspaceId }) }))
+    const { mode, workspaceId, channelRef, taskRef, threadRef, taskNumber } = snapshot
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode,
+      ...(workspaceId === undefined ? {} : { workspaceId }),
+      ...(channelRef === undefined ? {} : { channelRef }),
+      ...(taskRef === undefined ? {} : { taskRef }),
+      ...(threadRef === undefined ? {} : { threadRef }),
+      ...(taskNumber === undefined ? {} : { taskNumber }),
+    }))
   } catch {
     // Local persistence is a convenience; private mode and quota failures do not block navigation.
   }
@@ -99,7 +113,7 @@ export class TeamNavigation {
   private setMemberSession(sessionId: SessionId, returnToSessionId?: SessionId): void {
     // Re-selecting the active Member keeps the original return target.
     if (this.snapshot.memberSessionId === sessionId && this.snapshot.mode === 'team') return
-    const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, memberSessionId: _memberSessionId, ...base } = this.snapshot
+    const { memberSessionId: _memberSessionId, ...base } = this.snapshot
     this.snapshot = {
       ...base,
       mode: 'team',
