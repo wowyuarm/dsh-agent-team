@@ -258,6 +258,24 @@ describe('Agent Team Member lifecycle', () => {
     expect(discovered).not.toHaveProperty('items')
     expect(ctx.tools.schemas(agent).every(schema => !Object.hasOwn(schema.parameters.properties ?? {}, 'workspaceId'))).toBe(true)
 
+    // team_message attachments: the tool passes absolute paths, the Host
+    // validates and copies them into the cache, and the committed message
+    // carries the same metadata and prompt lines as a manual upload.
+    const shotPath = join(process.env.DSH_HOME!, 'protocol-shot.png')
+    await writeFile(shotPath, Buffer.from('png-bytes'))
+    const shotMessage = await call('team_message', { action: 'start', channelRef: channel.channel.channelRef,
+      body: 'Agent-created task with a screenshot', attachments: [shotPath] })
+    expect(shotMessage).toMatchObject({ kind: 'committed' })
+    const shotTaskRef = (shotMessage as { taskRef: string }).taskRef
+    const shotHistory = ctx.agentTeam.threadHistory({ workspaceId, taskRef: shotTaskRef as never })
+    const shotFact = shotHistory.facts.find(fact => fact.kind === 'message' && fact.message.attachments !== undefined)
+    expect(shotFact).toBeDefined()
+    expect(shotHistory.facts.some(fact => fact.kind === 'message' && /\[attachment\] .*attachments\/v1\//.test(fact.message?.body ?? ''))).toBe(true)
+    const rejected = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-protocol-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'start', channelRef: channel.channel.channelRef, body: 'Never committed', attachments: ['relative/shot.png'] }, agent })
+    expect(rejected.isError).toBe(true)
+    expect(rejected.error?.message ?? rejected.value).toMatch(/must be absolute/)
+    expect(ctx.agentTeam.threadHistory({ workspaceId, taskRef: shotTaskRef as never }).facts.some(fact => fact.kind === 'message' && fact.message?.body === 'Never committed')).toBe(false)
+
     const agentStarted = await call('team_message', { action: 'start', channelRef: channel.channel.channelRef,
       body: 'Agent-created task for Human', mentions: [AGENT_TEAM_HUMAN_MEMBER_ID] })
     expect(agentStarted).toMatchObject({ kind: 'committed' })

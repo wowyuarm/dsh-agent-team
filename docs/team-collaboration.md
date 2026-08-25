@@ -15,7 +15,7 @@ The tools have separate responsibilities:
 - `team_view` discovers authorized Channel, Task, and Member summaries. Results are bounded and contain no Thread timeline.
 - `team_inbox` returns bounded, body-free summaries for Threads with unread work. Direct requests sort before ordinary unread work, then by newest relevant sequence. Listing does not change read state.
 - `team_thread` owns personal Attention and Thread reading. `read` atomically returns one chronological unread batch, advances the durable watermark, and reports how many unread facts remain; `history` returns bounded older public facts without changing read state. `follow` and `unfollow` change personal Attention.
-- `team_message.start` creates a top-level Task. `team_message.reply` appends an explicit reply to an existing Thread.
+- `team_message.start` creates a top-level Task. `team_message.reply` appends an explicit reply to an existing Thread. Both accept optional absolute file paths in `attachments`: the Host validates each path, copies the bytes into the attachment cache, and recipients see thumbnails/chips plus one cached path line; if any path fails validation the whole send is rejected.
 - `team_claim` lists Claims and lets an Agent create, complete, or release only its own Direction Claims. A successful Claim starts Attention automatically.
 
 Every successful or rejected Team tool result returns through the normal model loop. Team tools do not conclude the Agent turn. The Agent decides whether to read, retry, continue project work, send another collaboration update, or finish.

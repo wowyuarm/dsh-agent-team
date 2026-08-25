@@ -23,7 +23,7 @@ import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-p
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { ATTACHMENT_MAX_BYTES, attachmentsRoot, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, writeAttachment } from './attachments.ts'
+import { ATTACHMENT_MAX_BYTES, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_ATTEMPTS, type RecoverableErrorKind } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
@@ -527,10 +527,10 @@ export default class AgentTeam extends TypertRemoteService {
   async sendMessage(request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const prepared = await this.prepareAttachments(request.body, request.attachments)
+    const metadata = await this.resolveMessageAttachments(request)
     const result = await this.requireLedger().sendMessage({
-      ...request, body: prepared.body,
-      ...(prepared.metadata === undefined ? {} : { resolvedAttachments: prepared.metadata }),
+      ...request, body: this.appendAttachmentLines(request.body, metadata),
+      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
       actor: agentTeamHumanActor(),
     })
     this.emitCommittedOutcome(result)
@@ -538,22 +538,40 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * Verify requested attachment ids against the cache and derive the stored
-   * body: one `[attachment] <absolute path>` line per attachment appended to
-   * the member-facing text, plus the metadata that lands on the Message.
+   * Resolve uploaded ids and agent-supplied absolute paths into one attachment
+   * metadata list. Paths are all validated before anything is copied, so one
+   * rejection leaves the cache untouched and the message uncommitted.
    */
-  private async prepareAttachments(body: string, requested?: readonly AgentTeamAttachmentId[]): Promise<{ body: string; metadata?: readonly AgentTeamMessageAttachment[] }> {
-    if (requested === undefined || requested.length === 0) return { body }
+  private async resolveMessageAttachments(request: { readonly attachments?: readonly AgentTeamAttachmentId[] | undefined; readonly attachmentPaths?: readonly string[] | undefined }): Promise<readonly AgentTeamMessageAttachment[]> {
+    const fromPaths: AgentTeamMessageAttachment[] = []
+    if (request.attachmentPaths !== undefined && request.attachmentPaths.length > 0) {
+      for (const absolutePath of request.attachmentPaths) await validatePathAttachment(absolutePath)
+      for (const absolutePath of request.attachmentPaths) fromPaths.push(Object.freeze(await copyPathAttachment(attachmentsRoot(), absolutePath)))
+    }
+    return [...fromPaths, ...await this.prepareAttachments(request.attachments)]
+  }
+
+  /** Verify requested attachment ids against the cache. */
+  private async prepareAttachments(requested?: readonly AgentTeamAttachmentId[]): Promise<readonly AgentTeamMessageAttachment[]> {
+    if (requested === undefined || requested.length === 0) return []
     const metadata: AgentTeamMessageAttachment[] = []
-    const lines: string[] = []
     for (const attachmentId of requested) {
       const stored = await readAttachment(attachmentsRoot(), attachmentId)
       if (stored === undefined) throw new Error(`attachment '${attachmentId}' is not in the upload cache`)
       metadata.push(Object.freeze({ attachmentId, name: stored.name, byteSize: stored.byteSize, mediaType: stored.mediaType }))
-      lines.push(`[attachment] ${dshHomePath('agent-team', 'attachments', 'v1', attachmentId, stored.name)}`)
     }
+    return metadata
+  }
+
+  /**
+   * Derive the stored body: one machine-facing `[attachment] <absolute path>`
+   * line per attachment appended to the member-facing text.
+   */
+  private appendAttachmentLines(body: string, metadata: readonly AgentTeamMessageAttachment[]): string {
     const trimmed = body.trim()
-    return { body: `${trimmed}\n${lines.join('\n')}`, metadata }
+    if (metadata.length === 0) return trimmed
+    const lines = metadata.map(attachment => `[attachment] ${dshHomePath('agent-team', 'attachments', 'v1', attachment.attachmentId, attachment.name)}`)
+    return `${trimmed}\n${lines.join('\n')}`
   }
 
   /** Upload one composer attachment into the cache; bytes are immutable once written. */
@@ -582,7 +600,12 @@ export default class AgentTeam extends TypertRemoteService {
   async reply(request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().reply({ ...request, actor: agentTeamHumanActor() })
+    const metadata = await this.resolveMessageAttachments(request)
+    const result = await this.requireLedger().reply({
+      ...request, body: this.appendAttachmentLines(request.body, metadata),
+      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+      actor: agentTeamHumanActor(),
+    })
     this.emitCommittedOutcome(result)
     return result.value
   }
@@ -640,7 +663,12 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireAccepting()
     const actor = this.memberActor(agent)
     this.requireAgentWorkspace(actor, request.workspaceId)
-    const result = await this.requireLedger().sendMessage({ ...request, actor })
+    const metadata = await this.resolveMessageAttachments(request)
+    const result = await this.requireLedger().sendMessage({
+      ...request, body: this.appendAttachmentLines(request.body, metadata),
+      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+      actor,
+    })
     this.emitCommittedOutcome(result)
     return result.value
   }
@@ -650,7 +678,12 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireAccepting()
     const actor = this.memberActor(agent)
     this.requireAgentWorkspace(actor, request.workspaceId)
-    const result = await this.requireLedger().reply({ ...request, actor })
+    const metadata = await this.resolveMessageAttachments(request)
+    const result = await this.requireLedger().reply({
+      ...request, body: this.appendAttachmentLines(request.body, metadata),
+      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+      actor,
+    })
     this.emitCommittedOutcome(result)
     return result.value
   }

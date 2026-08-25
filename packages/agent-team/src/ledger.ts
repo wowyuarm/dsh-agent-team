@@ -150,6 +150,8 @@ export interface AgentTeamAuthorizedSendMessageRequest extends AgentTeamSendMess
 
 export interface AgentTeamAuthorizedReplyRequest extends AgentTeamReplyRequest {
   readonly actor: AgentTeamHumanActor | AgentTeamMemberActor
+  /** Metadata the Host resolved from the attachment cache before the append. */
+  readonly resolvedAttachments?: readonly AgentTeamMessageAttachment[] | undefined
 }
 
 export interface AgentTeamAuthorizedClaimRequest extends AgentTeamClaimRequest {
@@ -576,7 +578,9 @@ export class AgentTeamLedger {
       const base = this.operationBase(request, sequence)
       const message: AgentTeamMessage = Object.freeze({
         messageRef: this.ref('message'), channelRef: task.channelRef, threadRef: task.threadRef,
-        taskRef: task.taskRef, sender: request.actor.memberId, body, topLevel: false, sequence, occurredAt: base.occurredAt,
+        taskRef: task.taskRef, sender: request.actor.memberId, body,
+        ...(request.resolvedAttachments === undefined ? {} : { attachments: request.resolvedAttachments }),
+        topLevel: false, sequence, occurredAt: base.occurredAt,
       })
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
       const started = unfollowedAgents.map(memberId => this.startAttention(memberId, thread.threadRef, sequence))

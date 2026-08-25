@@ -634,6 +634,11 @@ export interface AgentTeamSendMessageRequest {
   readonly recipients?: readonly AgentTeamMemberId[]
   /** Uploaded attachments to reference; the Host resolves and verifies each id. */
   readonly attachments?: readonly AgentTeamAttachmentId[] | undefined
+  /**
+   * Agent-supplied absolute file paths; the Host validates each one, copies the
+   * bytes into the attachment cache, and turns them into the same metadata.
+   */
+  readonly attachmentPaths?: readonly string[] | undefined
   readonly confirmationToken?: AgentTeamConfirmationToken
 }
 
@@ -675,6 +680,8 @@ export interface AgentTeamReplyRequest {
   readonly body: string
   readonly baseRevision: number
   readonly recipients?: readonly AgentTeamMemberId[]
+  /** Agent-supplied absolute file paths, resolved like sendMessage's. */
+  readonly attachmentPaths?: readonly string[] | undefined
   readonly confirmationToken?: AgentTeamConfirmationToken
 }
 

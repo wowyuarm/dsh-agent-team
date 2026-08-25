@@ -9,7 +9,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
-import { ATTACHMENT_MAX_BYTES, attachmentsRoot, newAttachmentId, readAttachment, sanitizeFileName, sanitizeMediaType, sweepAttachmentCache, writeAttachment } from '../src/attachments.ts'
+import { ATTACHMENT_MAX_BYTES, attachmentsRoot, copyPathAttachment, mediaTypeForPath, newAttachmentId, readAttachment, sanitizeFileName, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from '../src/attachments.ts'
 import AgentTeam from '../src/index.ts'
 import { AgentTeamLedger } from '../src/ledger.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
@@ -178,5 +178,82 @@ describe('Agent Team attachment remotes', () => {
     expect(cold.referencedAttachmentIds().has(uploaded.attachmentId)).toBe(true)
     const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task.taskRef })
     expect(history.facts.some(fact => fact.kind === 'message' && fact.message.attachments?.[0]?.name === 'design.png')).toBe(true)
+  })
+})
+
+describe('agent-supplied attachment paths', () => {
+  it('derives media types from file extensions', async () => {
+    expect(mediaTypeForPath('/tmp/shot.png')).toBe('image/png')
+    expect(mediaTypeForPath('/tmp/shot.JPG')).toBe('image/jpeg')
+    expect(mediaTypeForPath('/tmp/clip.webp')).toBe('image/webp')
+    expect(mediaTypeForPath('/tmp/notes.txt')).toBe('text/plain')
+    expect(mediaTypeForPath('/tmp/blob.bin')).toBe('application/octet-stream')
+  })
+
+  it('rejects relative, missing, directory, empty, and oversized sources', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-attach-paths-'))
+    cleanups.push(async () => { await rm(dir, { recursive: true, force: true }) })
+    await expect(validatePathAttachment('relative/shot.png')).rejects.toThrow(/must be absolute/)
+    await expect(validatePathAttachment(join(dir, 'missing.png'))).rejects.toThrow(/does not exist/)
+    await expect(validatePathAttachment(dir)).rejects.toThrow(/not a regular file/)
+    const empty = join(dir, 'empty.png')
+    await writeFile(empty, '')
+    await expect(validatePathAttachment(empty)).rejects.toThrow(/must not be empty/)
+    const big = join(dir, 'big.png')
+    await writeFile(big, Buffer.alloc(ATTACHMENT_MAX_BYTES + 1))
+    await expect(validatePathAttachment(big)).rejects.toThrow(/byte limit/)
+  })
+
+  it('copies validated paths into the cache for sends and replies, and rejects atomically', async () => {
+    const { ctx, facility } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const sourceDir = await mkdtemp(join(tmpdir(), 'dsh-attach-src-'))
+    cleanups.push(async () => { await rm(sourceDir, { recursive: true, force: true }) })
+    const screenshot = join(sourceDir, '验收截图.png')
+    await writeFile(screenshot, Buffer.from('png-bytes'))
+
+    const cacheBefore = await readdir(attachmentsRoot()).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[]
+      throw error
+    })
+    const sent = await ctx.agentTeam.sendMessage({
+      requestId: requestId('send'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: '截图在下面', attachmentPaths: [screenshot],
+    })
+    expect(sent.kind).toBe('committed')
+    if (sent.kind !== 'committed') return
+    // Same metadata shape as a manual upload, with an inferred image type.
+    expect(sent.message.attachments).toHaveLength(1)
+    const attachment = sent.message.attachments?.[0]
+    expect(attachment?.name).toBe('验收截图.png')
+    expect(attachment?.mediaType).toBe('image/png')
+    expect(attachment?.byteSize).toBe(Buffer.byteLength('png-bytes'))
+    // The prompt line points at the cached copy, which holds the original bytes.
+    const cachedPath = sent.message.body.split('\n').find(line => line.startsWith('[attachment] '))?.slice('[attachment] '.length)
+    expect(cachedPath).toBeDefined()
+    expect(cachedPath).toContain(attachment?.attachmentId)
+    expect((await readFile(cachedPath!)).toString('utf8')).toBe('png-bytes')
+    expect(await readdir(attachmentsRoot())).toHaveLength(cacheBefore.length + 1)
+
+    // A reply carries path attachments through the same pipeline.
+    const replied = await ctx.agentTeam.reply({
+      requestId: requestId('reply'), workspaceId: alpha, taskRef: sent.task.taskRef,
+      body: '补充一张', baseRevision: sent.thread.revision, attachmentPaths: [screenshot],
+    })
+    expect(replied.kind).toBe('committed')
+    if (replied.kind !== 'committed') return
+    expect(replied.message.attachments?.[0]?.mediaType).toBe('image/png')
+    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task.taskRef })
+    expect(history.facts.filter(fact => fact.kind === 'message' && fact.message.attachments !== undefined)).toHaveLength(2)
+
+    // One bad path rejects the whole send: no message, no cache writes.
+    const entriesBefore = await readdir(attachmentsRoot())
+    await expect(ctx.agentTeam.sendMessage({
+      requestId: requestId('send-bad'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: '不应提交', attachmentPaths: [join(sourceDir, 'missing.png')],
+    })).rejects.toThrow(/does not exist/)
+    const coldAfterFailure = replayLedger(facility)
+    expect(() => coldAfterFailure.validate()).not.toThrow()
+    expect(await readdir(attachmentsRoot())).toEqual(entriesBefore)
   })
 })

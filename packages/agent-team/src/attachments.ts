@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, extname, isAbsolute, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import type { AgentTeamAttachmentId } from './types.ts'
@@ -29,6 +29,46 @@ export function newAttachmentId(): AgentTeamAttachmentId {
 export function sanitizeFileName(raw: string): string {
   const cleaned = raw.replaceAll(/[\\/\u0000-\u001f\u007f]/g, '').replaceAll(/^\.+/g, '').trim()
   return cleaned === '' ? 'attachment' : cleaned.slice(0, 180)
+}
+
+/** Extension-derived media types for agent-supplied files; unknown types stay generic. */
+const PATH_MEDIA_TYPES: Readonly<Record<string, string>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.json': 'application/json',
+}
+
+/** Best-effort media type from one path's extension, so images render as thumbnails. */
+export function mediaTypeForPath(raw: string): string {
+  return PATH_MEDIA_TYPES[extname(raw).toLowerCase()] ?? 'application/octet-stream'
+}
+
+/**
+ * Validate one agent-supplied attachment path before any cache write happens,
+ * so a rejection anywhere leaves the upload cache untouched.
+ */
+export async function validatePathAttachment(raw: string): Promise<void> {
+  if (!isAbsolute(raw)) throw new Error(`attachment path '${raw}' must be absolute`)
+  const info = await stat(raw).catch(() => undefined)
+  if (info === undefined) throw new Error(`attachment path '${raw}' does not exist`)
+  if (!info.isFile()) throw new Error(`attachment path '${raw}' is not a regular file`)
+  if (info.size === 0) throw new Error(`attachment '${basename(raw)}' must not be empty`)
+  if (info.size > ATTACHMENT_MAX_BYTES) throw new Error(`attachment '${basename(raw)}' exceeds the ${ATTACHMENT_MAX_BYTES} byte limit`)
+}
+
+/** Copy one validated file into the cache as a fresh immutable entry. */
+export async function copyPathAttachment(root: string, raw: string): Promise<{ attachmentId: AgentTeamAttachmentId; name: string; byteSize: number; mediaType: string }> {
+  const bytes = await readFile(raw)
+  const stored = await writeAttachment(root, newAttachmentId(), basename(raw), mediaTypeForPath(raw), bytes)
+  return { attachmentId: stored.attachmentId, name: stored.name, byteSize: stored.byteSize, mediaType: stored.mediaType }
 }
 
 interface AttachmentMeta {

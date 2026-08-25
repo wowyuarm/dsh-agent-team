@@ -152,6 +152,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     taskRef: { type: 'string', description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
     body: { type: 'string', required: true }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task." },
     mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
+    attachments: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths to share, e.g. screenshots or generated artifacts; images render as thumbnails for recipients. The Host validates each path and copies the file into the attachment cache, and members also receive one cached path per attachment; if any path fails validation the whole send is rejected.' },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
@@ -167,10 +168,13 @@ const teamMessage = markAgentTeamPreset(defineTool({
     const current = member(agent)
     const host = service(agent)
     const mentions = args.mentions as AgentTeamMemberId[] | undefined
+    const rawPaths = args.attachments
+    const attachmentPaths = Array.isArray(rawPaths) ? rawPaths.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : undefined
+    const paths = attachmentPaths !== undefined && attachmentPaths.length > 0 ? { attachmentPaths } : {}
     if (args.action === 'start') {
       if (args.channelRef === undefined || args.taskRef !== undefined || args.baseRevision !== undefined) throw new Error('start requires channelRef and does not accept taskRef or baseRevision')
       const result = await host.sendMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
-        channelRef: args.channelRef as never, body: args.body, ...(mentions === undefined ? {} : { recipients: mentions }) })
+        channelRef: args.channelRef as never, body: args.body, ...(mentions === undefined ? {} : { recipients: mentions }), ...paths })
       return messageOutcome(result)
     }
     const baseRevision = args.baseRevision
@@ -179,7 +183,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     }
     const result = await host.replyForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
       taskRef: args.taskRef as AgentTeamTaskRef, body: args.body, baseRevision,
-      ...(mentions === undefined ? {} : { recipients: mentions }) })
+      ...(mentions === undefined ? {} : { recipients: mentions }), ...paths })
     return messageOutcome(result)
   },
 }))
