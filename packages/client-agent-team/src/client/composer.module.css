@@ -115,25 +115,31 @@
   padding: 2px 8px 6px;
 }
 
+/* Attach circle — mirrors the base composer's 28px "+" control so both
+   composers read as one design language (figma + control). */
 .attachButton {
-  align-items: center;
-  background: transparent;
+  background: var(--dsw-specific-selector);
   border: 0;
-  border-radius: 6px;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  display: inline-flex;
-  height: 26px;
-  justify-content: center;
-  margin-right: auto;
-  padding: 0;
-  width: 26px;
-}
-.attachButton:hover,
-.attachButton:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: 999px;
   color: var(--dsw-alias-label-primary);
-  outline: none;
+  cursor: pointer;
+  display: grid;
+  flex: none;
+  height: 28px;
+  margin-right: auto;
+  place-items: center;
+  width: 28px;
+}
+.attachButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+.attachButton:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.attachButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-focus, var(--dsw-specific-selector));
+  outline-offset: 1px;
 }
 
 .fileInput {
