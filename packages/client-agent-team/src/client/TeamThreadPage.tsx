@@ -536,6 +536,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             </div>
           </div>
         : <TeamComposer
+      key={draftKey}
       members={channelMembers}
       recipients={recipients}
       draft={draft}

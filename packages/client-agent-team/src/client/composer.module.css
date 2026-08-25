@@ -20,10 +20,6 @@
   box-shadow: var(--dsw-shadow-lv2);
 }
 
-.card:focus-within {
-  border-color: var(--dsw-alias-state-business-primary);
-}
-
 .inputArea {
   position: relative;
   min-height: 28px;

@@ -290,6 +290,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     </section>
 
     {channel !== undefined ? <TeamComposer
+      key={draftKey}
       members={channelMembers}
       recipients={recipients}
       draft={draft}

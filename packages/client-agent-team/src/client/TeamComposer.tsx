@@ -79,8 +79,17 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     setHighlight(current => Math.min(current, candidates.length - 1))
   }, [mention, candidates.length])
 
-  // The confirmation is returned after the first send has disabled this
-  // textarea. Put the reader back here so Enter confirms without a mouse trip.
+  // Match the resident DSH composer without stealing a later user choice: Team
+  // data can load after navigation, so a dialog or another control may already
+  // own focus by the time this composer appears.
+  useEffect(() => {
+    const active = document.activeElement
+    if (active !== document.body && active?.closest('[aria-current="page"]') === null) return
+    inputRef.current?.focus({ preventScroll: true })
+  }, [])
+
+  // Confirmation settles after a read-only submission span. Restore focus in
+  // case the browser moved it so the second Enter can confirm immediately.
   useEffect(() => {
     if (confirmation === undefined || pending) return
     inputRef.current?.focus({ preventScroll: true })
