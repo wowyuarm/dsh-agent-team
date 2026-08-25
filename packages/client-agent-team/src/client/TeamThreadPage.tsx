@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type {
   AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
@@ -14,6 +14,7 @@ import type {
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
+import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
@@ -35,6 +36,7 @@ interface TeamThreadPageProps {
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
+  readonly drafts: TeamDraftStore
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
   readonly t: TeamConversationProps['t']
@@ -72,7 +74,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace,
     loadChannels, readThread, loadThreadHistory,
-    subscribeChanges, loadMembers, reply, changeTask, t,
+    subscribeChanges, loadMembers, drafts, reply, changeTask, t,
   } = props
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
@@ -84,8 +86,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const [historyHasMore, setHistoryHasMore] = useState(false)
   const [remainingUnreadCount, setRemainingUnreadCount] = useState(0)
   const [newFactsCount, setNewFactsCount] = useState(0)
-  const [draft, setDraft] = useState('')
-  const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
+  // The reply draft lives in the keyed draft cache: view switches unmount
+  // this page, and a refresh must not cost the half-written message either.
+  const draftKey: TeamDraftKey = `thread:${threadRef}`
+  const { draft, recipients } = useSyncExternalStore(drafts.subscribe, () => drafts.getSnapshot(draftKey))
   const [claimsOpen, setClaimsOpen] = useState(false)
   const [replyRequestId, setReplyRequestId] = useState<AgentTeamRequestId>()
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
@@ -415,8 +419,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           return merged
         })
         setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread })
-        setDraft('')
-        setRecipients(new Set())
+        drafts.clear(draftKey)
         setReplyRequestId(undefined)
         setConfirmation(undefined)
         setStatusMessage(undefined)
@@ -539,8 +542,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}
-      onDraftChange={next => { setDraft(next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
-      onRecipientsChange={next => { setRecipients(next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
+      onDraftChange={next => { drafts.writeDraft(draftKey, next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
+      onRecipientsChange={next => { drafts.writeRecipients(draftKey, next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
       onSubmit={() => { void sendReply() }}
       t={t}
     />

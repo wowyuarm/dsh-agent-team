@@ -26,6 +26,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { TeamNavigation } from './navigation.ts'
 import { TeamChangeStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
+import { TeamDraftStore } from './drafts.ts'
 import { TeamFooterAction } from './TeamFooterAction.tsx'
 import { TeamSettings } from './TeamSettings.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
@@ -51,6 +52,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     teamNavigation: TeamNavigation
+    teamDrafts: TeamDraftStore
   }
 }
 
@@ -58,6 +60,7 @@ function registerModeShadow<T extends object>(
   ctx: ClientContext,
   navigation: TeamNavigation,
   changes: TeamChangeStream,
+  drafts: TeamDraftStore,
   name: 'sidebar.workspaces' | 'conversation' | 'sidebar.settings',
   component: T,
   extraInject?: () => Record<string, unknown>,
@@ -66,6 +69,7 @@ function registerModeShadow<T extends object>(
   const sharedRemotes = {
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
     subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
+    drafts,
     loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
@@ -142,9 +146,13 @@ function applyUi(ctx: ClientContext): void {
 
   const navigation = new TeamNavigation()
   const disposeNavigation = ctx.reflect.provide('teamNavigation', navigation)
+  const drafts = new TeamDraftStore()
+  const disposeDrafts = ctx.reflect.provide('teamDrafts', drafts)
   ctx.effect(() => () => {
     navigation.dispose()
+    drafts.dispose()
     void disposeNavigation()
+    void disposeDrafts()
   }, 'agent-team: navigation service')
 
   const changes = new TeamChangeStream((request, signal) => ctx.remote.agentTeam.changes(request, signal))
@@ -185,9 +193,9 @@ function applyUi(ctx: ClientContext): void {
     }),
   }, TeamFooterAction as never))
 
-  registerModeShadow(ctx, navigation, changes, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
-  registerModeShadow(ctx, navigation, changes, 'conversation', TeamConversation as never)
-  registerModeShadow(ctx, navigation, changes, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
+  registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
+  registerModeShadow(ctx, navigation, changes, drafts, 'conversation', TeamConversation as never)
+  registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 
 export async function apply(ctx: ClientContext): Promise<void> {

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
+import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
@@ -20,6 +21,7 @@ interface TeamChannelPageProps {
   readonly loadChannels: TeamConversationProps['loadChannels']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
+  readonly drafts: TeamDraftStore
   readonly sendMessage: TeamConversationProps['sendMessage']
   readonly joinChannel: TeamConversationProps['joinChannel']
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
@@ -45,17 +47,19 @@ function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTe
   }
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, selectThread, backToChannels, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, sendMessage, joinChannel, removeChannelMember, selectThread, backToChannels, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
-  const [draft, setDraft] = useState('')
   const [error, setError] = useState<string>()
   const [statusMessage, setStatusMessage] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
-  const [recipients, setRecipients] = useState<ReadonlySet<AgentTeamMemberId>>(new Set())
   const [managingMembers, setManagingMembers] = useState(false)
+  // The composer draft lives in the keyed draft cache: view switches unmount
+  // this page, and a refresh must not cost the half-written message either.
+  const draftKey: TeamDraftKey = `channel:${channelRef}`
+  const { draft, recipients } = useSyncExternalStore(drafts.subscribe, () => drafts.getSnapshot(draftKey))
   const manageTriggerRef = useRef<HTMLSpanElement>(null)
   const memberListRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(false)
@@ -114,7 +118,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     setView(undefined)
     setError(undefined)
     setLoading(true)
-    setRecipients(new Set())
     setManagingMembers(false)
     void refresh()
     const disposers = [
@@ -189,8 +192,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       } else if (result.value.kind === 'committed') {
         pendingSendId.current = undefined
         await refresh()
-        setDraft('')
-        setRecipients(new Set())
+        drafts.clear(draftKey)
         setStatusMessage(undefined)
       } else if (result.value.kind === 'confirmation_required') {
         // Same-requestId resend continues the pending operation.
@@ -294,8 +296,8 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       pending={pending}
       {...(statusMessage === undefined ? {} : { confirmation: statusMessage })}
       {...(error === undefined ? {} : { error })}
-      onDraftChange={next => { setDraft(next); setStatusMessage(undefined) }}
-      onRecipientsChange={next => { setRecipients(next); setStatusMessage(undefined) }}
+      onDraftChange={next => { drafts.writeDraft(draftKey, next); setStatusMessage(undefined) }}
+      onRecipientsChange={next => { drafts.writeRecipients(draftKey, next); setStatusMessage(undefined) }}
       onSubmit={() => { void send() }}
       t={t}
     /> : <div />}

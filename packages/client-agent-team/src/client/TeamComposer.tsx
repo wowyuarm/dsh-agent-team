@@ -95,6 +95,15 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     if (next.size !== recipients.size) onRecipientsChange(next)
   }
 
+  // Restored drafts may carry recipients that no longer match the text (or
+  // unknown Members); converge on mount and on every state change so the
+  // cached entry never stays stale — the same rule user edits already apply.
+  // An unloaded roster must never judge recipients unknown.
+  useEffect(() => {
+    if (members.length === 0) return
+    pruneRecipients(draft)
+  }, [draft, recipients, members])
+
   const updateMention = (nextDraft: string, caret: number): void => {
     const match = findMention(nextDraft, caret)
     setMention(match)

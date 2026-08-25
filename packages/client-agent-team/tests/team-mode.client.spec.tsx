@@ -9,6 +9,7 @@ import { SlotTestRuntime, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-cli
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { apply as applySidebar, inject as injectSidebar } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { apply, inject } from '../src/client/index.ts'
+import { TEAM_DRAFTS_STORAGE_KEY } from '../src/client/drafts.ts'
 
 
 usePinnedBrowserLanguages('zh-CN')
@@ -540,6 +541,91 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '返回频道' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
+    await b.runtime.dispose()
+  })
+
+  it('caches composer drafts across view switches and clears them on committed sends', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    // A second Channel gives the draft somewhere to switch away to.
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+
+    const input = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'engineering draft' } })
+    // Writes go straight through to the persisted cache.
+    expect(JSON.parse(localStorage.getItem(TEAM_DRAFTS_STORAGE_KEY) ?? '{}')).toMatchObject({
+      'channel:channel:engineering': { draft: 'engineering draft', recipientIds: [] },
+    })
+
+    // Switching views unmounts the page; returning restores from the cache.
+    fireEvent.click(b.view.getByRole('button', { name: '# backend' }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+    expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value).toBe('')
+    fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
+    await waitFor(() => {
+      const restored = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+      return expect(restored.value).toBe('engineering draft')
+    })
+
+    // Failed sends keep the cached draft...
+    b.sendMessage.mockResolvedValueOnce({ ok: false, error: { message: 'send failed' } } as never)
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect((await b.view.findByRole('alert')).textContent).toContain('send failed')
+    expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value).toBe('engineering draft')
+    // ...and a committed send drops the key entirely.
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem(TEAM_DRAFTS_STORAGE_KEY) ?? '{}') as Record<string, unknown>
+      expect(stored['channel:channel:engineering']).toBeUndefined()
+    })
+    expect((b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement).value).toBe('')
+    await b.runtime.dispose()
+  })
+
+  it('rehydrates drafts from localStorage and prunes stale recipients on restore', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    // Open the seeded Channel first so the browser's one-time workspace
+    // selection settles before the new Channel row is clicked.
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
+    fireEvent.change(b.view.getByLabelText('说明'), { target: { value: 'API' } })
+    fireEvent.click(b.view.getByRole('checkbox', { name: /builder/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
+    expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
+
+    // Seed the cache under the Channel's REAL ref, then reload — the same
+    // content a fresh page load would rehydrate for this view.
+    const channelRef = b.runtime.ctx.teamNavigation.getSnapshot().channelRef!
+    localStorage.setItem(TEAM_DRAFTS_STORAGE_KEY, JSON.stringify({
+      [`channel:${channelRef}`]: {
+        draft: 'hello team @builder',
+        recipientIds: ['member:builder', 'member:ghost'],
+        savedAt: Date.now(),
+      },
+    }))
+    b.runtime.ctx.teamDrafts.reload()
+
+    // The restored text lands in the composer untouched...
+    await waitFor(() => {
+      const input = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+      return expect(input.value).toBe('hello team @builder')
+    })
+    // ...while the Composer's convergence pass rewrites the cached entry with
+    // only the recipients that are known Members still named in the draft.
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem(TEAM_DRAFTS_STORAGE_KEY) ?? '{}') as Record<string, { recipientIds: string[] }>
+      return expect(stored[`channel:${channelRef}`]?.recipientIds).toEqual(['member:builder'])
+    })
     await b.runtime.dispose()
   })
 
