@@ -59,7 +59,7 @@ const memberSchema = z.object({
   sessionId: sessionIdSchema,
   workspaceId: workspaceIdSchema,
   handle: z.string().min(1),
-  description: z.string().min(1),
+  description: z.string(),
   presetId: z.string().min(1),
   // Ledgers written before per-Member model selection existed omit the field.
   model: modelSelectionSchema.optional(),
@@ -71,7 +71,7 @@ const channelSchema = z.object({
   channelRef: channelRefSchema,
   workspaceId: workspaceIdSchema,
   name: z.string().min(1),
-  description: z.string().min(1),
+  description: z.string(),
   createdAtSequence: z.number().int().positive(),
 }).strict()
 
@@ -258,7 +258,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/member-added'),
-    data: z.object({ member: memberSchema, channelRefs: z.array(channelRefSchema).min(1) }).strict(),
+    data: z.object({ member: memberSchema, channelRefs: z.array(channelRefSchema) }).strict(),
   }).strict(),
   z.object({
     ...operationBase,

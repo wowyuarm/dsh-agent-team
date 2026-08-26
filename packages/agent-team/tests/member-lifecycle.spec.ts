@@ -239,13 +239,16 @@ describe('Agent Team Member lifecycle', () => {
   })
 
   it('creates a Member with no description and no Channels and lights delivery on join', async () => {
-    const { ctx, workspaceId } = await realHarness()
+    const { ctx, workspaceId, teamFiber } = await realHarness()
     const bare = await ctx.agentTeam.addMember({ requestId: requestId('bare'), workspaceId, handle: 'bare', description: '', presetId: 'team-member', channelRefs: [] })
     expect(bare.status.availability).toBe('active')
     expect(bare.status.member.description).toBe('')
     // The invariant companion replays the same durable record shape; an empty
     // initial Channel list is valid and must not be rejected as divergent.
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+    await teamFiber.dispose()
+    await ctx.plugin(AgentTeam)
+    expect(ctx.agentTeam.status().agentMemberCount).toBe(1)
     const agent = ctx.agents.get(bare.status.member.sessionId)!
     expect(agent).toBeDefined()
 
