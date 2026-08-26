@@ -5,6 +5,7 @@ import { IconPlusOutline16, IconSendOutline16, useAnchoredMaxHeight, useDismissO
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import css from './composer.module.css'
+import { formatByteSize } from './attachment-preview.ts'
 
 interface MentionMatch {
   readonly start: number
@@ -36,6 +37,19 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
   return members.filter(status => status.presence !== 'unavailable'
     && status.member.state !== 'inactive'
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
+}
+
+/** One object URL per draft file; revoked when the draft is removed. */
+const draftPreviewUrls = new WeakMap<File, string>()
+
+function draftPreviewUrl(file: File): string | undefined {
+  if (!file.type.startsWith('image/')) return undefined
+  let url = draftPreviewUrls.get(file)
+  if (url === undefined) {
+    url = URL.createObjectURL(file)
+    draftPreviewUrls.set(file, url)
+  }
+  return url
 }
 
 export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, pendingFiles, onFilesChange, t }: {
@@ -231,13 +245,16 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
       {onFilesChange !== undefined && pendingFiles !== undefined && pendingFiles.length > 0 && (
         <ul className={css.fileChips} aria-label={t('attachFiles')}>
           {pendingFiles.map((file, index) => {
-            const image = file.type.startsWith('image/')
-            const previewUrl = image ? URL.createObjectURL(file) : undefined
-            return <li key={`${file.name}-${index}`} className={`${css.fileChip} ${image ? css.imageChip! : ''}`}>
-              {previewUrl !== undefined && <img src={previewUrl} alt="" className={css.imageChipPreview} onLoad={() => URL.revokeObjectURL(previewUrl)} />}
-              <span className={css.fileChipName} title={file.name}>{file.name}</span>
+            const previewUrl = draftPreviewUrl(file)
+            return <li key={`${file.name}-${index}`} className={`${css.fileChip} ${previewUrl !== undefined ? css.imageChip! : ''}`}>
+              {previewUrl !== undefined && <img src={previewUrl} alt="" className={css.imageChipPreview} />}
+              <span className={css.fileChipName} title={file.name}>{file.name}<span className={css.fileChipSize}>{formatByteSize(file.size)}</span></span>
               <button type="button" className={css.fileChipRemove} aria-label={t('removeFile', { name: file.name })} disabled={pending}
-                onClick={() => { onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index)) }}>×</button>
+                onClick={() => {
+                  const url = draftPreviewUrls.get(file)
+                  if (url !== undefined) URL.revokeObjectURL(url)
+                  onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index))
+                }}>×</button>
             </li>
           })}
         </ul>

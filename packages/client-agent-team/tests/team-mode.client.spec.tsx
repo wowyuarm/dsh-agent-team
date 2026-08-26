@@ -445,7 +445,8 @@ describe('rendered Team mode composition', () => {
     expect(chips.find(chip => chip.textContent?.includes('spec.pdf'))?.querySelector('img')).toBeNull()
     fireEvent.click(composer.querySelector('[class*="fileChipRemove"]') as HTMLButtonElement)
     await waitFor(() => { expect(chipCount()).toBe(1) })
-    expect(composer.querySelector('[class*="fileChipName"]')?.textContent).toBe('spec.pdf')
+    expect(composer.querySelector('[class*="fileChipName"]')?.textContent).toBe('spec.pdf3 B')
+    expect(composer.querySelector('[class*="fileChipSize"]')?.textContent).toBe('3 B')
 
     // Sending uploads the remaining file and passes its id to sendMessage.
     fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: '带附件' } })

@@ -65,13 +65,9 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
           : human || (onOpenRef !== undefined && isPlainTextBody(displayBody) && splitBrandedRefs(displayBody).some(segment => segment.ref !== undefined))
             ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef)}</div>
             : <div className={css.messageMarkdown}><MarkdownText text={displayBody} /></div>}
-        {fallbackNames.length > 0 && (
+        {(fallbackNames.length > 0 || fallbackRefs.length > 0) && (
           <div className={css.mentionsRow}>
             {fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}
-          </div>
-        )}
-        {fallbackRefs.length > 0 && (
-          <div className={css.mentionsRow}>
             {fallbackRefs.map(ref => <button key={ref} type="button" className={css.refLink} onClick={() => { onOpenRef!(ref) }}>{ref}</button>)}
           </div>
         )}
