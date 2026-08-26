@@ -11,7 +11,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
@@ -406,17 +406,18 @@ export default class AgentTeam extends TypertRemoteService {
       if (stored === undefined || stored.workspaceId !== request.workspaceId) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
       if (stored.state !== 'enabled') throw new Error(`Agent Member '${stored.handle}' is ${stored.state}; only enabled Members can be restarted`)
       const active = this.handles.get(request.memberId)
-      if (active === undefined) throw new Error(`Agent Member '${stored.handle}' has no active session to restart`)
-      if (this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before restarting`)
+      if (active !== undefined && this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before restarting`)
       const result = await this.requireLedger().restartMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
       // Drop the old handle's transient state: pending recovery episodes and
       // error markers belong to the disposed agent, not to the Member.
       this.recovery.stopTracking(request.memberId)
-      this.runtimeErrors.delete(active.agent.id)
+      if (active !== undefined) this.runtimeErrors.delete(active.agent.id)
       this.notifiedInbox.delete(request.memberId)
-      await active.dispose()
-      this.handles.delete(request.memberId)
+      if (active !== undefined) {
+        await active.dispose()
+        this.handles.delete(request.memberId)
+      }
       this.diagnostics.delete(request.memberId)
       await this.activateMember(stored)
       const reactivated = this.handles.get(request.memberId)
@@ -853,9 +854,16 @@ export default class AgentTeam extends TypertRemoteService {
       await this.initializePrivateMemory(member.privateMemoryPath)
       const persisted = knownSessions !== undefined ? knownSessions.has(member.sessionId)
         : (await this.ctx.sessionPersistence.list()).some(header => header.id === member.sessionId)
+      // AgentOptions declares only provider/model. Install the full selection
+      // through the public Agent model-selection seam so reasoning effort is
+      // applied to the next request and not lost during activation.
+      const selection = member.model ?? this.ctx.agentDefaultModel.currentSelection()
+      const agentOptions = { provider: selection.provider, model: selection.model }
       const setup = async (agentCtx: Context) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.validateMemberPreset(agentCtx)
+        const selected: ModelSelectionRef = { current: selection, assembled: undefined }
+        installModelSelection(agentCtx, selected)
         return {
           commit: () => {
             const agent = agentCtx.agent
@@ -864,10 +872,6 @@ export default class AgentTeam extends TypertRemoteService {
           },
         }
       }
-      // A Member-pinned selection wins; otherwise the Host default applies at
-      // every activation, so an override survives restarts and a cleared one
-      // re-reads the live default.
-      const agentOptions = member.model ?? this.ctx.agentDefaultModel.currentSelection()
       created = persisted
         ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup })
         : await this.ctx.agents.create({

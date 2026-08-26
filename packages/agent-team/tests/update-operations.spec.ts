@@ -138,6 +138,11 @@ describe('Agent Team display-fact updates', () => {
     // A pinned reasoning effort rides the model selection and clears with it.
     const pinned = await ctx.agentTeam.updateMember({ requestId: requestId('pin-effort'), memberId: builder.status.member.memberId, handle: 'architect', description: 'Designs systems', model: { provider: 'mock', model: 'pinned', reasoningEffort: 'high' as ReasoningEffortId } })
     expect(pinned.status.member.model).toEqual({ provider: 'mock', model: 'pinned', reasoningEffort: 'high' })
+    // A cold replay must preserve a selected effort; this is the path used by
+    // Host restart before any Member can be activated again.
+    const replayedWithEffort = replayLedger(facility)
+    expect(() => replayedWithEffort.validate()).not.toThrow()
+    expect(replayedWithEffort.getMember(builder.status.member.memberId)?.model).toEqual({ provider: 'mock', model: 'pinned', reasoningEffort: 'high' })
     const unpinned = await ctx.agentTeam.updateMember({ requestId: requestId('unpin-effort'), memberId: builder.status.member.memberId, handle: 'architect', description: 'Designs systems' })
     expect(unpinned.status.member.model).toBeUndefined()
 

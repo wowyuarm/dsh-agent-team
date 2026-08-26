@@ -247,7 +247,7 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
   return (
     <>
       <div className={css.agentRow} data-menu-open={menuOpen || undefined}>
-        <button type="button" className={css.agentSelect} aria-label={t('openAgentSession', { name: status.member.handle })} aria-current={current ? 'page' : undefined} onClick={() => { openMemberSession(status.member.sessionId) }}>
+        <button type="button" className={css.agentSelect} aria-label={t('openAgentSession', { name: status.member.handle })} aria-current={current ? 'page' : undefined} disabled={status.availability !== 'active'} onClick={() => { openMemberSession(status.member.sessionId) }}>
           <TeamMemberAvatar status={status} t={t} />
           <span className={css.agentCopy}>
             <strong>{status.member.handle}</strong>

@@ -486,6 +486,7 @@ exports[`rendered Team mode composition > restores persisted Team mode, reconcil
                           <button
                             aria-label="打开 offline 的会话"
                             class="agentSelect"
+                            disabled=""
                             type="button"
                           >
                             <span

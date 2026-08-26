@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { AgentTeamModelSelection } from './types.ts'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -45,7 +47,12 @@ const operationBase = {
 const modelSelectionSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
-}).strict()
+  reasoningEffort: z.string().min(1).transform(value => value as ReasoningEffortId).optional(),
+}).strict().transform(({ provider, model, reasoningEffort }): AgentTeamModelSelection => ({
+  provider,
+  model,
+  ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+}))
 
 const memberSchema = z.object({
   memberId: memberIdSchema,
