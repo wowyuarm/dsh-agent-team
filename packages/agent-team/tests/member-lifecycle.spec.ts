@@ -215,13 +215,12 @@ describe('Agent Team Member lifecycle', () => {
     const liveBefore = ctx.agents.get(added.status.member.sessionId)
     expect(liveBefore).toBeDefined()
 
-    // Restart: same Member, same session id, freshly minted handle.
+    // Restart keeps the published Agent and Session identity intact.
     const restarted = await ctx.agentTeam.restartMember({ requestId: requestId('restart'), workspaceId, memberId: added.status.member.memberId })
     expect(restarted.status.availability).toBe('active')
     expect(restarted.status.member.sessionId).toBe(added.status.member.sessionId)
     const liveAfter = ctx.agents.get(added.status.member.sessionId)
-    expect(liveAfter).toBeDefined()
-    expect(liveAfter).not.toBe(liveBefore)
+    expect(liveAfter).toBe(liveBefore)
     expect(liveAfter?.session.header.cwd).toBe(liveBefore?.session.header.cwd)
 
     // Private memory survives: it is addressed by Member, not by handle.
@@ -716,8 +715,37 @@ describe('Agent Team Member lifecycle', () => {
     expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
   })
 
+  it('keeps a persisted Member session active after switching its model and restarting', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const added = await ctx.agentTeam.addMember({
+      requestId: requestId('persisted-model-add'), workspaceId, handle: 'builder',
+      description: 'Builds the implementation', presetId: 'team-member', channelRefs: [],
+      model: { provider: 'mock', model: 'initial-model' },
+    })
+    const agent = ctx.agents.get(added.status.member.sessionId)!
+    adapter.enqueue(textResponse('initial response'))
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Create a persisted transcript.' }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+
+    const edited = await ctx.agentTeam.updateMember({
+      requestId: requestId('persisted-model-edit'), memberId: added.status.member.memberId,
+      handle: 'builder', description: 'Builds the implementation',
+      model: { provider: 'mock', model: 'switched-model' },
+    })
+    expect(edited.status.availability).toBe('active')
+
+    const restarted = await ctx.agentTeam.restartMember({
+      requestId: requestId('persisted-model-restart'), workspaceId, memberId: added.status.member.memberId,
+    })
+    expect(restarted.status.availability).toBe('active')
+    expect(restarted.status.diagnostic).toBeUndefined()
+    expect(ctx.agents.get(added.status.member.sessionId)).toBeDefined()
+  })
+
   it('applies Member model edits to a live Agent immediately and keeps pinned selections across restarts', async () => {
-    const { ctx, workspaceId } = await realHarness()
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
     const createSpy = vi.spyOn(ctx.agents, 'create')
     const resumeSpy = vi.spyOn(ctx.agents, 'resume')
     // Activation goes through create or resume depending on whether the
@@ -734,12 +762,14 @@ describe('Agent Team Member lifecycle', () => {
       description: 'Builds the implementation', presetId: 'team-member',
       channelRefs: [channel.channel.channelRef], model: { provider: 'mock', model: 'pinned-model' },
     })
+    const liveAgent = () => ctx.agents.get(added.status.member.sessionId)!
     // Creation activates with the pinned selection instead of the Host default.
     expect(added.status.member.model).toEqual({ provider: 'mock', model: 'pinned-model' })
     expect(lastActivationOptions()).toMatchObject({ provider: 'mock', model: 'pinned-model' })
+    const liveBeforeEdit = liveAgent()
 
-    // Editing the model on the ACTIVE Member quiesces and reactivates it in
-    // place — same Session id, new selection effective without any restart.
+    // Editing the model on the ACTIVE Member updates the live selection in
+    // place — the same Session id remains usable by the Web Composer.
     clearActivationSpies()
     const edited = await ctx.agentTeam.updateMember({
       requestId: requestId('re-model'), memberId: added.status.member.memberId,
@@ -748,7 +778,13 @@ describe('Agent Team Member lifecycle', () => {
     })
     expect(edited.status.availability).toBe('active')
     expect(edited.status.member.sessionId).toBe(added.status.member.sessionId)
-    expect(lastActivationOptions()).toMatchObject({ provider: 'mock', model: 'switched-model' })
+    expect(liveAgent()).toBe(liveBeforeEdit)
+    expect(createSpy).not.toHaveBeenCalled()
+    expect(resumeSpy).not.toHaveBeenCalled()
+    adapter.enqueue(textResponse('switched response'))
+    liveAgent().followup(createUserMessage({ content: [{ type: 'text', text: 'Use the switched model.' }], source: { kind: 'user' } }))
+    await liveAgent().whenIdle()
+    expect(adapter.requests.at(-1)).toMatchObject({ provider: 'mock', model: 'switched-model' })
 
     // A display-only edit that re-states the current pin leaves the live
     // Agent untouched; an edit that OMITS model clears the override (below).
@@ -758,12 +794,13 @@ describe('Agent Team Member lifecycle', () => {
     expect(resumeSpy).not.toHaveBeenCalled()
     expect(resumeSpy).not.toHaveBeenCalled()
 
-    // Clearing the override reactivates against the live Host default.
+    // Clearing the override updates the same live Agent back to the Host default.
     clearActivationSpies()
     const cleared = await ctx.agentTeam.updateMember({ requestId: requestId('clear-model'), memberId: added.status.member.memberId, handle: 'builder', description: 'Builds things' })
     expect(cleared.status.member.model).toBeUndefined()
     expect(cleared.status.availability).toBe('active')
-    expect(lastActivationOptions()).toEqual({ provider: 'mock', model: 'mock' })
+    expect(createSpy).not.toHaveBeenCalled()
+    expect(resumeSpy).not.toHaveBeenCalled()
 
     // A pinned selection survives suspend/resume without any further edit.
     await ctx.agentTeam.updateMember({ requestId: requestId('repin'), memberId: added.status.member.memberId, handle: 'builder', description: 'Builds things', model: { provider: 'mock', model: 'pinned-again' } })

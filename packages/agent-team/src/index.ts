@@ -155,6 +155,8 @@ export default class AgentTeam extends TypertRemoteService {
   private domain?: Domain<typeof agentTeamDomainSpec>
   private ledger?: AgentTeamLedger
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
+  /** Live selection refs let model edits take effect without disposing the Session. */
+  private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
@@ -217,6 +219,7 @@ export default class AgentTeam extends TypertRemoteService {
       await this.lifecycleTail
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
+      this.modelSelections.clear()
       this.runningAgents.clear()
       await domain.close()
     }, 'agentTeam.dispose')
@@ -356,6 +359,7 @@ export default class AgentTeam extends TypertRemoteService {
         await handle.dispose()
         this.handles.delete(request.memberId)
       }
+      this.modelSelections.delete(request.memberId)
       this.diagnostics.delete(request.memberId)
       this.clearMemberNotificationState(request.memberId)
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
@@ -392,10 +396,9 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * Restart one enabled Member's live session in place: dispose the handle and
-   * reactivate on the same session id, so the transcript, private memory, and
-   * every ledger fact survive while tools and prompt templates are re-minted
-   * from the running plugin. The audit operation changes no projection state.
+   * Reset one enabled Member without replacing its published Session. Replacing
+   * the handle emits session/disposed, which makes the Web Client mark this
+   * Session id unavailable even if Team recreates it immediately.
    */
   @Remote('restartMember')
   async restartMember(request: AgentTeamRestartMemberRequest): Promise<AgentTeamRestartMemberResult> {
@@ -409,15 +412,20 @@ export default class AgentTeam extends TypertRemoteService {
       if (active !== undefined && this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before restarting`)
       const result = await this.requireLedger().restartMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
-      // Drop the old handle's transient state: pending recovery episodes and
-      // error markers belong to the disposed agent, not to the Member.
+      // Preserve the published Agent and Session identity. Model changes and
+      // restart both update the live route; only a missing handle needs a new
+      // activation.
       this.recovery.stopTracking(request.memberId)
-      if (active !== undefined) this.runtimeErrors.delete(active.agent.id)
-      this.notifiedInbox.delete(request.memberId)
       if (active !== undefined) {
-        await active.dispose()
-        this.handles.delete(request.memberId)
+        this.runtimeErrors.delete(active.agent.id)
+        this.notifiedInbox.delete(request.memberId)
+        this.diagnostics.delete(request.memberId)
+        const selection = this.modelSelections.get(request.memberId)
+        if (selection !== undefined) selection.current = stored.model ?? this.ctx.agentDefaultModel.currentSelection()
+        return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
       }
+      this.notifiedInbox.delete(request.memberId)
+      this.modelSelections.delete(request.memberId)
       this.diagnostics.delete(request.memberId)
       await this.activateMember(stored)
       const reactivated = this.handles.get(request.memberId)
@@ -499,10 +507,10 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * Human edit of one Member's mutable facts. A model change restarts an
-   * active Member: single-Session Members read their selection only at
-   * activation, so the quiescing dispose plus reactivation applies the new
-   * provider/model immediately instead of at the next Host restart.
+   * Human edit of one Member's mutable facts. A live model selection is
+   * updated in place: disposing an Agent emits session/disposed, which makes
+   * the Web Client permanently mark the same Session id unavailable even when
+   * Team immediately recreates it.
    */
   @Remote('updateMember')
   async updateMember(request: AgentTeamUpdateMemberRequest): Promise<AgentTeamMemberResult> {
@@ -514,9 +522,9 @@ export default class AgentTeam extends TypertRemoteService {
       const stored = result.value.member
       const active = this.handles.get(request.memberId)
       if (active !== undefined && !isDeepStrictEqual(previous?.model ?? undefined, stored.model ?? undefined)) {
-        await active.dispose()
-        this.handles.delete(request.memberId)
-        await this.activateMember(stored)
+        const selection = this.modelSelections.get(request.memberId)
+        if (selection === undefined) throw new Error(`Agent Member '${stored.handle}' has no live model selection`)
+        selection.current = stored.model ?? this.ctx.agentDefaultModel.currentSelection()
       }
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
     })
@@ -532,6 +540,7 @@ export default class AgentTeam extends TypertRemoteService {
         await handle.dispose()
         this.handles.delete(request.memberId)
       }
+      this.modelSelections.delete(request.memberId)
       this.diagnostics.delete(request.memberId)
       this.clearMemberNotificationState(request.memberId)
       await this.cleanupRemovedMember(result.value.member)
@@ -859,10 +868,10 @@ export default class AgentTeam extends TypertRemoteService {
       // applied to the next request and not lost during activation.
       const selection = member.model ?? this.ctx.agentDefaultModel.currentSelection()
       const agentOptions = { provider: selection.provider, model: selection.model }
+      const selected: ModelSelectionRef = { current: selection, assembled: undefined }
       const setup = async (agentCtx: Context) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.validateMemberPreset(agentCtx)
-        const selected: ModelSelectionRef = { current: selection, assembled: undefined }
         installModelSelection(agentCtx, selected)
         return {
           commit: () => {
@@ -882,11 +891,13 @@ export default class AgentTeam extends TypertRemoteService {
           })
       await workspace.attachSession(member.sessionId)
       this.handles.set(member.memberId, created)
+      this.modelSelections.set(member.memberId, selected)
       this.diagnostics.delete(member.memberId)
       this.nameMemberSession(member, created.agent)
       this.notifyMember(created.agent)
     } catch (error) {
       await created?.dispose()
+      this.modelSelections.delete(member.memberId)
       this.diagnostics.set(member.memberId, error instanceof Error ? error.message : String(error))
     } finally {
       // Activation only changes this Workspace's presence projection.
