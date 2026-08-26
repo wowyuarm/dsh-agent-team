@@ -713,6 +713,8 @@ export interface AgentTeamReplyRequest {
   readonly recipients?: readonly AgentTeamMemberId[]
   /** Agent-supplied absolute file paths, resolved like sendMessage's. */
   readonly attachmentPaths?: readonly string[] | undefined
+  /** Attachment cache IDs from the Human picker, resolved like sendMessage's. */
+  readonly attachments?: readonly AgentTeamAttachmentId[] | undefined
   readonly confirmationToken?: AgentTeamConfirmationToken
 }
 

@@ -385,6 +385,21 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   })
   expect(reviewerReply.kind).toBe('committed')
 
+  // Human reply with attachment inside the Task Thread: the reply composer
+  // offers the same "+" upload chain as the Channel composer.
+  const replyPicker = page.waitForEvent('filechooser', { timeout: 5000 })
+  await page.getByRole('button', { name: '添加附件' }).click()
+  await replyPicker
+  await page.locator('[data-team-composer] input[type="file"]').setInputFiles([{ name: 'thread-evidence.png', mimeType: 'image/png', buffer: pngBytes }])
+  await page.getByText('thread-evidence.png').waitFor()
+  await page.getByRole('textbox', { name: '消息内容' }).fill('这是带附件的 Thread 回复')
+  await page.getByRole('button', { name: '发送' }).click()
+  const replyWithFile = page.locator('article').filter({ hasText: '这是带附件的 Thread 回复' })
+  await replyWithFile.waitFor()
+  await expect.poll(() => replyWithFile.locator('img[src^="data:image/png"]').count()).toBeGreaterThanOrEqual(1)
+  await expect.poll(() => page.getByText('thread-evidence.png', { exact: true }).count()).toBe(0)
+  await page.screenshot({ path: join(UI04_SHOTS, 'thread-reply-attachment.png'), fullPage: true })
+
   await page.getByRole('button', { name: '返回频道' }).click()
   await page.getByRole('button', { name: /Task #1/ }).waitFor()
   await page.reload()

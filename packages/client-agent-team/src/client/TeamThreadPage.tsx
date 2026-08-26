@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type {
+  AgentTeamAttachmentId,
   AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
@@ -22,6 +23,7 @@ import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf } from './team-formatters.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
+import { bytesToBase64 } from './attachment-preview.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
 
@@ -41,6 +43,7 @@ interface TeamThreadPageProps {
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
+  readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly t: TeamConversationProps['t']
 }
@@ -75,7 +78,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel,
+    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, putAttachment,
     loadChannels, readThread, loadThreadHistory,
     subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, t,
   } = props
@@ -309,6 +312,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const messageSender = (fact: AgentTeamThreadFact): AgentTeamMemberId | undefined =>
     fact.kind === 'message' ? fact.message.sender : undefined
 
+  const [pendingFiles, setPendingFiles] = useState<readonly File[]>([])
+
   // Branded-ref navigation for message bodies: channel refs hop to the
   // Channel; the open Task's own refs are already on screen, and other Tasks
   // are not resolvable from this surface, so they degrade to a no-op.
@@ -433,7 +438,24 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setPending(true)
     setError(undefined)
     try {
-      const result = await reply({ requestId: id, workspaceId, taskRef: task.taskRef, body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
+      // Upload chosen files first; any failure aborts the reply with the
+      // existing error surface and keeps the chips for a retry.
+      const attachmentIds: AgentTeamAttachmentId[] = []
+      for (const file of pendingFiles) {
+        const uploaded = await putAttachment({
+          requestId: crypto.randomUUID() as AgentTeamRequestId,
+          workspaceId,
+          name: file.name,
+          mediaType: file.type === '' ? undefined : file.type,
+          bytesBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
+        })
+        if (!uploaded.ok) {
+          setError(uploaded.error.message)
+          return
+        }
+        attachmentIds.push(uploaded.value.attachmentId)
+      }
+      const result = await reply({ requestId: id, workspaceId, taskRef: task.taskRef, body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
       if (!result.ok) {
         setError(result.error.message)
         return
@@ -447,6 +469,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         })
         setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread })
         drafts.clear(draftKey)
+        setPendingFiles([])
         setReplyRequestId(undefined)
         setConfirmation(undefined)
         setStatusMessage(undefined)
@@ -573,6 +596,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       onDraftChange={next => { drafts.writeDraft(draftKey, next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
       onRecipientsChange={next => { drafts.writeRecipients(draftKey, next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
       onSubmit={() => { void sendReply() }}
+      pendingFiles={pendingFiles}
+      onFilesChange={setPendingFiles}
       t={t}
     />
     ) : <div />}

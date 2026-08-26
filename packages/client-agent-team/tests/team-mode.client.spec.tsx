@@ -668,6 +668,30 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
+  it('uploads thread reply attachments and passes their ids to reply', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true, remainingUnreadCount: 1, seededMessages: [{ body: '开个任务', occurredAt: '2026-08-21T09:00:00.000Z' }] })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    const composer = b.view.container
+    const chipCount = (): number => composer.querySelectorAll('ul[aria-label="添加附件"] > li').length
+
+    // The reply composer offers the same "+" picker as the Channel composer.
+    const input = composer.querySelector('input[type="file"]') as HTMLInputElement
+    await waitFor(() => { fireEvent.change(input, { target: { files: [new File(['png'], 'evidence.png', { type: 'image/png' })] } }) })
+    await waitFor(() => { expect(chipCount()).toBe(1) })
+
+    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: '带截图的回复' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => { expect(b.putAttachment).toHaveBeenCalledWith(expect.objectContaining({ name: 'evidence.png', mediaType: 'image/png' })) })
+    await waitFor(() => { expect(b.reply).toHaveBeenCalledWith(expect.objectContaining({ body: '带截图的回复', attachments: ['attachment:1'] })) })
+    // Committed reply clears the chips along with the draft.
+    await waitFor(() => { expect(chipCount()).toBe(0) })
+    expect(await b.view.findByText('带截图的回复')).toBeTruthy()
+    await b.runtime.dispose()
+  })
+
   it('caches composer drafts across view switches and clears them on committed sends', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))

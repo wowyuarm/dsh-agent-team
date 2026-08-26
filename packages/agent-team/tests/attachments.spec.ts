@@ -179,6 +179,40 @@ describe('Agent Team attachment remotes', () => {
     const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task.taskRef })
     expect(history.facts.some(fact => fact.kind === 'message' && fact.message.attachments?.[0]?.name === 'design.png')).toBe(true)
   })
+
+  it('resolves Human reply attachments from the upload cache and replays them', async () => {
+    const { ctx, facility } = await harness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
+    const started = await ctx.agentTeam.sendMessage({
+      requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: '开个任务',
+    })
+    if (started.kind !== 'committed') throw new Error('expected committed')
+    const uploaded = await ctx.agentTeam.putAttachment({
+      requestId: requestId('put'), workspaceId: alpha,
+      name: 'reply.png', mediaType: 'image/png', bytesBase64: Buffer.from('png').toString('base64'),
+    })
+    const replied = await ctx.agentTeam.reply({
+      requestId: requestId('reply'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: '补充截图', baseRevision: started.thread.revision, attachments: [uploaded.attachmentId],
+    })
+    expect(replied.kind).toBe('committed')
+    if (replied.kind !== 'committed') return
+    expect(replied.message.attachments).toHaveLength(1)
+    expect(replied.message.attachments?.[0]?.name).toBe('reply.png')
+    expect(replied.message.body).toMatch(/\[attachment\] .*attachments\/v1\//)
+
+    // An unknown attachment id is rejected before the ledger append.
+    await expect(ctx.agentTeam.reply({
+      requestId: requestId('reply-unknown'), workspaceId: alpha, taskRef: started.task.taskRef,
+      body: 'missing', baseRevision: replied.thread.revision, attachments: [newAttachmentId()],
+    })).rejects.toThrow(/not in the upload cache/)
+
+    const cold = replayLedger(facility)
+    expect(() => cold.validate()).not.toThrow()
+    expect(cold.referencedAttachmentIds().has(uploaded.attachmentId)).toBe(true)
+    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: started.task.taskRef })
+    expect(history.facts.some(fact => fact.kind === 'message' && fact.message.attachments?.[0]?.name === 'reply.png')).toBe(true)
+  })
 })
 
 describe('agent-supplied attachment paths', () => {
