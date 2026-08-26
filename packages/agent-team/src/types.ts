@@ -307,7 +307,7 @@ export interface AgentTeamChannelCreatedOperation extends AgentTeamOperationBase
   }
 }
 
-/** Durable Agent Member creation with at least one initial Channel membership. */
+/** Durable Agent Member creation with optional initial Channel memberships. */
 export interface AgentTeamMemberAddedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-added'
   readonly data: {

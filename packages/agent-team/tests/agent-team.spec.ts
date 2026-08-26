@@ -91,21 +91,23 @@ function replayLedger(test: TeamHarness): AgentTeamLedger {
 
 async function addLedgerMember(
   ledger: AgentTeamLedger,
-  channelRef: string,
+  channelRef: string | undefined,
   memberId = `member:agent-${crypto.randomUUID()}`,
+  description = 'Test Agent',
 ): Promise<{ readonly member: AgentTeamAgentMember; readonly actor: AgentTeamMemberActor }> {
   const member: AgentTeamAgentMember = {
     memberId: memberId as never,
     sessionId: SessionId(`session:${memberId}`),
     workspaceId: alpha,
     handle: memberId.slice('member:'.length),
-    description: 'Test Agent',
+    description,
     presetId: 'team-member',
     privateMemoryPath: `/tmp/${memberId}`,
     state: 'enabled',
   }
   await ledger.addMember({ requestId: requestId(`add:${memberId}`), actor: agentTeamHumanActor(), member, handle: member.handle,
-    description: member.description, presetId: member.presetId, workspaceId: alpha, channelRefs: [channelRef as never] })
+    description: member.description, presetId: member.presetId, workspaceId: alpha,
+    channelRefs: channelRef === undefined ? [] : [channelRef as never] })
   return { member, actor: { kind: 'member', memberId: member.memberId, handle: member.handle } }
 }
 
@@ -143,6 +145,25 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const records = [...(test.facility.get('agent_team')?.table('operations').entries() ?? [])].map(([, operation]) => JSON.stringify(operation))
     expect(records.join('\n')).not.toContain('delivery')
     expect(records.join('\n')).not.toContain('follow-changed')
+  })
+
+  it('opens a persisted Member with no initial Channels in a fresh Host', async () => {
+    const first = await harness()
+    const ledger = replayLedger(first)
+    await addLedgerMember(ledger, undefined, 'member:bare', '')
+    const records = [...first.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const revived = await harness(storedPool(records))
+    expect(revived.ctx.agentTeam.status()).toMatchObject({ agentMemberCount: 1 })
+    expect(() => replayLedger(revived).validate()).not.toThrow()
+  })
+
+  it('opens a persisted Channel with no initial Members in a fresh Host', async () => {
+    const first = await harness()
+    await first.ctx.agentTeam.createChannel({ requestId: requestId('bare-channel'), workspaceId: alpha, name: 'ops', description: '' })
+    const records = [...first.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const revived = await harness(storedPool(records))
+    expect(revived.ctx.agentTeam.status()).toMatchObject({ channelCount: 1, agentMemberCount: 0 })
+    expect(() => replayLedger(revived).validate()).not.toThrow()
   })
 
   it('starts Agent Attention and direct Inbox delivery after a top-level mention without confirmation', async () => {
