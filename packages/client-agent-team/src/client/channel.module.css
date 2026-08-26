@@ -1,6 +1,6 @@
 .headerMeta {
   align-items: center;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   display: flex;
   flex-wrap: wrap;
   font-size: 12px;
@@ -17,9 +17,9 @@
 .taskFooter {
   align-items: center;
   background: transparent;
-  border: 1px solid var(--dsw-alias-border-subtle);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   display: inline-flex;
   gap: 6px;
@@ -33,8 +33,8 @@
 .taskFooter:hover,
 .taskFooter:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
-  border-color: var(--dsw-alias-border-default);
-  color: var(--dsw-alias-text-primary);
+  border-color: var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-primary);
 }
 
 .taskFooter:focus-visible {
@@ -43,7 +43,7 @@
 }
 
 .taskNumber {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 12px;
   font-weight: 600;
   line-height: 18px;
@@ -51,7 +51,7 @@
 
 .taskStatus,
 .taskCount {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 18px;
 }
@@ -77,10 +77,10 @@
 }
 
 .taskDotQuiet[data-variant='todo'] {
-  border: 1px solid var(--dsw-alias-text-tertiary);
+  border: 1px solid var(--dsw-alias-label-tertiary);
 }
 
-.taskDotQuiet[data-variant='closed'] { color: var(--dsw-alias-text-tertiary); }
+.taskDotQuiet[data-variant='closed'] { color: var(--dsw-alias-label-tertiary); }
 .taskDotQuiet[data-variant='closed']::before {
   background: currentColor;
   border-radius: 50%;
@@ -102,7 +102,7 @@
    the same offset from its content; hover nudges it forward. */
 .taskArrow {
   align-items: center;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   display: inline-flex;
   transition: transform 120ms ease;
 }
@@ -135,7 +135,7 @@
 }
 
 .memberCopy strong {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -145,7 +145,7 @@
 }
 
 .memberCopy small {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 10px;
   line-height: 14px;
   overflow: hidden;

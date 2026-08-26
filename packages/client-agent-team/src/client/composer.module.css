@@ -16,7 +16,7 @@
   padding: 10px 0 0;
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 22px;
-  background: var(--dsw-specific-input-major, var(--dsw-alias-surface-primary));
+  background: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1));
   box-shadow: var(--dsw-shadow-lv2);
 }
 
@@ -37,7 +37,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--dsw-alias-label-primary, var(--dsw-alias-text-primary));
+  color: var(--dsw-alias-label-primary, var(--dsw-alias-label-primary));
   font: inherit;
   font-size: 15px;
   line-height: 24px;
@@ -46,7 +46,7 @@
 }
 
 .inputArea textarea::placeholder {
-  color: var(--dsw-alias-label-caption, var(--dsw-alias-text-tertiary));
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary));
 }
 
 .inputArea textarea:disabled {
@@ -80,7 +80,7 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: var(--dsw-alias-label-primary, var(--dsw-alias-text-primary));
+  color: var(--dsw-alias-label-primary, var(--dsw-alias-label-primary));
   cursor: pointer;
   font-size: 14px;
   line-height: 22px;
@@ -101,7 +101,7 @@
 .mentionDescription {
   min-width: 0;
   overflow: hidden;
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-text-tertiary));
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-tertiary));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -138,7 +138,7 @@
   opacity: 0.5;
 }
 .attachButton:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-focus, var(--dsw-specific-selector));
+  outline: 2px solid var(--dsw-alias-state-business-primary, var(--dsw-specific-selector));
   outline-offset: 1px;
 }
 
@@ -225,7 +225,7 @@
 
 .confirmation {
   align-self: stretch;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
   margin: 0;
@@ -234,7 +234,7 @@
 
 /* Quiet "who gets notified" line; sits between the draft and the send action. */
 .notifyRow {
-  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-text-tertiary));
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-tertiary));
   font-size: 12px;
   line-height: 18px;
   margin: 0;

@@ -8,14 +8,14 @@
 .titleLine h1 { margin: 0; }
 
 .workSection {
-  border-top: 1px solid var(--dsw-alias-border-subtle);
+  border-top: 1px solid var(--dsw-alias-border-l2);
   margin: 12px auto 0;
   max-width: 880px;
   padding-top: 8px;
 }
 
 .riskSection {
-  border-top: 1px solid var(--dsw-alias-border-subtle);
+  border-top: 1px solid var(--dsw-alias-border-l2);
   margin: 12px auto 0;
   max-width: 880px;
   padding-top: 10px;
@@ -31,7 +31,7 @@
 
 .riskRow {
   align-items: center;
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   display: flex;
   font-size: 12px;
   gap: 8px;
@@ -58,7 +58,7 @@
 .claimRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
 
 .claimOwner {
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   font-weight: 500;
   line-height: 18px;
@@ -68,7 +68,7 @@
 }
 
 .claimDirection {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 12px;
   line-height: 18px;
   min-width: 0;
@@ -76,14 +76,14 @@
 }
 
 .claimState {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 18px;
   white-space: nowrap;
 }
 
 .emptyClaims {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 18px;
   margin: 0;
@@ -92,7 +92,7 @@
 
 .activityRow {
   align-items: center;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   display: flex;
   font-size: 11px;
   gap: 8px;
@@ -110,7 +110,7 @@
 }
 
 .activityMark {
-  background: var(--dsw-alias-border-default);
+  background: var(--dsw-alias-border-l3);
   border-radius: 50%;
   flex: 0 0 5px;
   height: 5px;
@@ -118,14 +118,14 @@
 }
 
 .historySection {
-  border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   margin: 0 auto 12px;
   max-width: 100%;
   padding-bottom: 10px;
 }
 
 .historySection h2 {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -138,7 +138,7 @@
 
 .unreadBoundary {
   align-items: center;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   display: flex;
   font-size: 11px;
   gap: 10px;
@@ -148,7 +148,7 @@
 
 .unreadBoundary::before,
 .unreadBoundary::after {
-  background: var(--dsw-alias-border-default);
+  background: var(--dsw-alias-border-l3);
   content: '';
   flex: 1;
   height: 1px;
@@ -159,7 +159,7 @@
 /* Calendar-day anchor between rendered facts; quieter than the unread line. */
 .daySeparator {
   align-items: center;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   display: flex;
   font-size: 11px;
   gap: 10px;
@@ -170,7 +170,7 @@
 
 .daySeparator::before,
 .daySeparator::after {
-  background: var(--dsw-alias-border-subtle);
+  background: var(--dsw-alias-border-l2);
   content: '';
   flex: 1;
   height: 1px;
@@ -180,11 +180,11 @@
 
 .newUpdates {
   align-items: center;
-  background: var(--dsw-specific-input-major, var(--dsw-alias-surface-primary));
+  background: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1));
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
   box-shadow: var(--dsw-shadow-lv2);
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   display: flex;
   font-size: 12px;
   gap: 8px;
@@ -199,7 +199,7 @@
 }
 
 .taskTitle {
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
   margin: 2px 0 0;
@@ -217,7 +217,7 @@
 }
 .closedNotice {
   align-items: center;
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   display: flex;
   flex-wrap: wrap;
   font-size: 13px;

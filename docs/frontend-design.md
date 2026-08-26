@@ -5,7 +5,7 @@
 ## 设计原则
 
 1. **优先复用 Harness 公共原语**（`@deepseek-ai/dsh-client-ui-primitives`）：`MarkdownText`、`MessageText`、`Button`、`Pill`、`Modal`、`Tooltip`、`Input`、`StateDot`、图标，以及 `useDismissOnOutsidePointer`、`useAnchoredMaxHeight` 等 hook。Team 不重写这些能力；composer textarea 是唯一例外（`Input` 原语明确只做单行）。
-2. **只用 DSH alias token 取色**：`--dsw-alias-text-*`、`--dsw-alias-label-*`、`--dsw-alias-fill-*`、`--dsw-alias-border-*`、`--dsw-alias-state-error-primary`、`--dsw-shadow-lv2/lv3`、`--dsw-specific-input-major/menu` 等。Team 自有变量只允许派生值（见头像色相）。
+2. **只用 DSH alias token 取色**，且只允许主题实际定义的名字（`@deepseek-ai/dsh-client-ui-theme` 的 `design-platform.css` 与 `gradient-shadow-text.css` 是唯一定义处）：文字 `--dsw-alias-label-*`、边框 `--dsw-alias-border-l1..l4`（+`l2-darkmode-thin`/`inverted*`）、背景 `--dsw-alias-bg-*` 与 `--dsw-alias-interactive-bg-*`、状态 `--dsw-alias-state-*`、阴影 `--dsw-shadow-lv1..lv3`、具体值 `--dsw-specific-*`。禁止凭印象引用主题不存在的 token——`var()` 对未定义变量会静默回退 initial，边框/背景直接隐形（2026-08 教训：`border-subtle`/`border-default`/`text-*`/`fill-tertiary`/`surface-primary` 曾整批不存在，时间线全部发丝线与 loading 点从未渲染过）。Team 自有变量只允许派生值（见头像色相）。
 3. **聊天密度优先于 assistant 排版密度**：正文统一 14px 档；markdown 原语自带的标题/列表间距在本包内收紧。
 4. **渐进披露**：默认状态安静（细边框、无底色），hover/focus 才提升反馈；次要信息用 tertiary 文字色。
 5. **durable mutation 不做乐观更新**：提交失败保留输入并以 Host 报错为准；成功后从 Host 投影刷新（`mergeChannelView` 合并而非整体替换）。
@@ -58,9 +58,9 @@
 
 - 一个 run = 一次发言：同一 sender 连续的消息 + 其 Task 入口卡包进一个 `.messageRun` 块；活动行与未读边界打断 run。
 - 日界同样打断 run：跨天的相邻消息之间插入居中的日期锚（`.daySeparator`，`MM-DD`，跨年用完整 `YYYY-MM-DD`，与消息时间的数字风格一致）。活动没有自己的时钟 instant，继承前一条消息的日界、不触发锚；时间线的第一条消息不带头部锚。分块逻辑统一在 `team-separators.ts` 的 `chunkRunsWithDays`（单一权威实现）。
-- 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button)`），上方画一条 border-subtle 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
-- 回合分隔线（`TeamRunDivider`）：同一 sender 的相邻消息间隔 ≥5 分钟即视为两次独立发言（agent 长发布常间隔小时级，纯折叠会抹掉层次与时刻），run 保持一块，但两者之间渲染全宽 border-subtle 发丝线 + 线下首行标注后一条消息的时间（`formatMessageTime` 同款格式，`role="separator"`，缩进对齐正文列 38px=头像 28+间距 10）；该线替代其后折叠行自带的任务卡发丝线（相邻选择器覆盖），不叠双线。频道页与 Thread 页共用同一判断与组件。
-- hover 面合同：静止完全隐形（透明边框占位防抖动）；hover 只浮现一条细边框（border-default），无底色无阴影——避免与块内 Task 入口卡自身的 hover 底色叠层；圆角 10px；水平用等量 padding/负 margin 向文字列两侧外扩 10px（窄屏 6px），文字永不位移；垂直方向块间保留 2px 空隙（`margin: 2px` + `padding: 3px`），相邻块的 hover 边框互不接触，同时让消息间距稍大。120ms 过渡，reduced-motion 下关闭。
+- 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button)`），上方画一条 border-l2 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
+- 回合分隔线（`TeamRunDivider`）：同一 sender 的相邻消息间隔 ≥5 分钟即视为两次独立发言（agent 长发布常间隔小时级，纯折叠会抹掉层次与时刻），run 保持一块，但两者之间渲染全宽 border-l3 发丝线 + 线下首行标注后一条消息的时间（`formatMessageTime` 同款格式，`role="separator"`，缩进对齐正文列 38px=头像 28+间距 10）；该线替代其后折叠行自带的任务卡发丝线（相邻选择器覆盖），不叠双线。频道页与 Thread 页共用同一判断与组件。
+- hover 面合同：静止完全隐形（透明边框占位防抖动）；hover 只浮现一条细边框（border-l3），无底色无阴影——避免与块内 Task 入口卡自身的 hover 底色叠层；圆角 10px；水平用等量 padding/负 margin 向文字列两侧外扩 10px（窄屏 6px），文字永不位移；垂直方向块间保留 2px 空隙（`margin: 2px` + `padding: 3px`），相邻块的 hover 边框互不接触，同时让消息间距稍大。120ms 过渡，reduced-motion 下关闭。
 - 不做常驻卡片边框——消息边界感只在指针交互时出现，避免"给内容加笼子"的刻意感。
 
 ### Mention 强调

@@ -15,12 +15,12 @@
 }
 
 .group + .group {
-  border-top: 1px solid var(--dsw-alias-border-subtle);
+  border-top: 1px solid var(--dsw-alias-border-l2);
   padding-top: 10px;
 }
 
 .group h3 {
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   font-weight: 600;
   line-height: 18px;
@@ -45,7 +45,7 @@
 }
 
 .copy strong {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -55,7 +55,7 @@
 }
 
 .copy small {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 10px;
   line-height: 14px;
   overflow: hidden;
@@ -71,7 +71,7 @@
   padding: 6px 0;
 }
 
-.state { color: var(--dsw-alias-text-tertiary); }
+.state { color: var(--dsw-alias-label-tertiary); }
 .error { color: var(--dsw-alias-state-error-primary); }
 
 @media (max-width: 600px) {

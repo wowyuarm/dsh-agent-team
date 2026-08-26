@@ -8,7 +8,7 @@
 }
 
 .surfaceHeader {
-  border-bottom: 1px solid var(--dsw-alias-border-subtle);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   min-width: 0;
   padding: 14px clamp(18px, 3vw, 36px) 12px;
 }
@@ -25,7 +25,7 @@
 
 .headerCopy { min-width: 0; }
 .headerCopy h1 {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 20px;
   font-weight: 600;
   line-height: 28px;
@@ -33,7 +33,7 @@
   overflow-wrap: anywhere;
 }
 .headerCopy p {
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
   margin: 3px 0 0;
@@ -109,13 +109,13 @@
   gap: 8px;
 }
 .nameRow strong {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 13px;
   font-weight: 600;
   line-height: 20px;
 }
 .messageTime {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 20px;
 }
@@ -132,7 +132,7 @@
    font shorthand is reset so Agent and Human bodies share one text grid.
    Heading sizes are chat-tuned: the page h1 stays the loudest element. */
 .messageBody .messageMarkdown { font-size: 14px; line-height: 22px; }
-.messageBody > .messageMarkdown > div:first-child { color: var(--dsw-alias-text-primary); font: inherit; }
+.messageBody > .messageMarkdown > div:first-child { color: var(--dsw-alias-label-primary); font: inherit; }
 .messageBody .messageMarkdown p { margin: 6px 0; }
 .messageBody .messageMarkdown :where(ul, ol) { margin: 6px 0; padding-left: 22px; }
 .messageBody .messageMarkdown li + li { margin-top: 2px; }
@@ -146,7 +146,7 @@
 .messageBody .messageMarkdown :where(th, td) { padding-block: 5px; }
 .emptyState,
 .loadingState {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 13px;
   line-height: 20px;
   margin: 0;
@@ -157,7 +157,7 @@
   gap: 3px;
 }
 .emptyState strong {
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   font-weight: 500;
 }
 .emptyState span {
@@ -166,7 +166,7 @@
 .loadingState { align-items: center; display: flex; gap: 8px; }
 .loadingMark {
   animation: pulse 1.2s ease-in-out infinite;
-  background: var(--dsw-alias-fill-tertiary);
+  background: var(--dsw-alias-bg-skeleton);
   border-radius: 50%;
   height: 8px;
   width: 8px;
@@ -198,20 +198,20 @@
 }
 .welcome { max-width: 420px; text-align: center; }
 .welcomeEyebrow {
-  color: var(--dsw-alias-text-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
   text-transform: uppercase;
 }
 .welcome h1 {
-  color: var(--dsw-alias-text-primary);
+  color: var(--dsw-alias-label-primary);
   font-size: 24px;
   font-weight: 600;
   line-height: 32px;
   margin: 8px 0;
 }
 .welcome p {
-  color: var(--dsw-alias-text-secondary);
+  color: var(--dsw-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
   margin: 0;
@@ -250,13 +250,13 @@
   transition: border-color 120ms ease;
 }
 .messageRun:hover {
-  border-color: var(--dsw-alias-border-default);
+  border-color: var(--dsw-alias-border-l3);
 }
 
 /* Inside one run, consecutive messages that carry their own Task entry chip
    get a hairline separator; plain same-sender continuations stay seamless. */
 .messageRow[data-grouped]:has(.messageBody > button) {
-  border-top: 1px solid var(--dsw-alias-border-subtle);
+  border-top: 1px solid var(--dsw-alias-border-l2);
   margin-top: 3px;
   padding-top: 7px;
 }
@@ -266,10 +266,11 @@
    block boundary and the label below it shows the later message's instant,
    which the suppressed identity chrome would have carried. The label aligns
    with the text column (avatar 28px + gap 10px), and the divider replaces
-   the following row's own task-chip hairline so the lines never stack. */
+   the following row's own task-chip hairline so the lines never stack. The
+   line takes border-default: border-subtle vanishes against the surface. */
 .runDivider {
-  border-top: 1px solid var(--dsw-alias-border-subtle);
-  color: var(--dsw-alias-text-tertiary);
+  border-top: 1px solid var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
   margin: 2px 0 0;
@@ -332,7 +333,7 @@
   width: 128px;
 }
 .attachmentThumb:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-focus, currentColor);
+  outline: 2px solid var(--dsw-alias-state-business-primary, currentColor);
   outline-offset: 1px;
 }
 
