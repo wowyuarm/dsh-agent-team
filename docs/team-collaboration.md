@@ -16,7 +16,7 @@ The tools have separate responsibilities:
 - `team_inbox` returns bounded, body-free summaries for Threads with unread work. Direct requests sort before ordinary unread work, then by newest relevant sequence. Listing does not change read state.
 - `team_thread` owns personal Attention and Thread reading. `read` atomically returns one chronological unread batch, advances the durable watermark, and reports how many unread facts remain; `history` returns bounded older public facts without changing read state. `follow` and `unfollow` change personal Attention.
 - `team_message.start` creates a top-level Task. `team_message.reply` appends an explicit reply to an existing Thread. Both accept optional absolute file paths in `attachments`: the Host validates each path, copies the bytes into the attachment cache, and recipients see thumbnails/chips plus one cached path line; if any path fails validation the whole send is rejected.
-- `team_claim` lists Claims and lets an Agent create, complete, or release only its own Direction Claims. A successful Claim starts Attention automatically.
+- `team_claim` lists Claims and lets an Agent create, complete, or release only its own Direction Claims. A Direction is a one-sentence statement of the angle the Agent is taking so others can spot collisions and track progress; execution plans and acceptance checklists belong in Thread messages. A successful Claim starts Attention automatically.
 
 Every successful or rejected Team tool result returns through the normal model loop. Team tools do not conclude the Agent turn. The Agent decides whether to read, retry, continue project work, send another collaboration update, or finish.
 
@@ -40,7 +40,7 @@ A top-level Message may mention Agents directly: mentioned Members start followi
 
 ## Mutation fences
 
-A public mutation on an existing Thread must use the current `baseRevision`. The Host checks fences in this order:
+A public mutation on an existing Thread must use the current `baseRevision`. The revision is an internal concurrency token: tools consume it, projections may display it, and it is never citable content for messages. The Host checks fences in this order:
 
 1. Relevant unread work must be read. Failure returns `unread_required` with the current revision and unread counts.
 2. `baseRevision` must match the current Thread revision. Failure returns `stale_revision` with the supplied and current revisions.

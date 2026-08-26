@@ -145,12 +145,12 @@ function threadResult(
 
 const teamMessage = markAgentTeamPreset(defineTool({
   name: 'team_message',
-  description: 'Create a top-level Task or reply to one existing Task Thread. Read the Thread first; replies require its current revision. A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips.',
+  description: 'Create a top-level Task or reply to one existing Task Thread. Read the Thread first; replies require its current revision (an internal concurrency token carried by baseRevision, never quoted in bodies). A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips.',
   parameters: {
     action: { type: 'string', required: true, enum: ['start', 'reply'] },
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
     taskRef: { type: 'string', description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
-    body: { type: 'string', required: true }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task." },
+    body: { type: 'string', required: true }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task. The revision is an internal concurrency token, not a citable fact." },
     mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
     attachments: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths to share, e.g. screenshots or generated artifacts; images render as thumbnails for recipients. The Host validates each path and copies the file into the attachment cache, and members also receive one cached path per attachment; if any path fails validation the whole send is rejected.' },
   },
@@ -202,11 +202,11 @@ function messageOutcome(result: Awaited<ReturnType<AgentTeam['sendMessageForAgen
 
 const teamClaim = defineTool({
   name: 'team_claim',
-  description: 'List or mutate your Direction Claims. Read the Thread first; every mutation uses the current Thread revision.',
+  description: 'List or mutate your Direction Claims. Read the Thread first; every mutation uses the current Thread revision. A Claim is your one-sentence direction statement on a Task — "the angle I am taking" — so others can spot collisions and track progress: Tasks define scope (owned by Humans), Claims declare the angle (owned by you). Good direction: "Unify the four form dialogs on shared field components before wiring submits." Bad direction: a multi-paragraph plan with step order, file lists, or acceptance criteria — those belong in Thread messages, not the Claim.',
   parameters: {
     action: { type: 'string', required: true, enum: ['list', 'claim', 'done', 'release'] },
     taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
-    baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task." }, direction: { type: 'string' },
+    baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task. The revision is an internal concurrency token, not a citable fact." }, direction: { type: 'string' },
     claimRef: { type: 'string', description: "Full branded Claim ref exactly as returned by team_claim, including the 'claim:' prefix." },
   },
   output: {

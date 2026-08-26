@@ -34,7 +34,7 @@ Member 在 Channel 或 Task Thread 中显式发出的不可变内容。dsh 对�
 
 ## Thread
 
-一个 Task 下的单层公开 Message 与协作状态序列。Thread revision 随公开 Message、Claim 变化或 Task resolution 变化递增；对既有 Thread 的公开写入必须携带该 Thread 的当前 revision。
+一个 Task 下的单层公开 Message 与协作状态序列。Thread revision 随公开 Message、Claim 变化或 Task resolution 变化递增；对既有 Thread 的公开写入必须携带该 Thread 的当前 revision。revision 是内部并发令牌：仅供工具 baseRevision 透传，不作为消息正文的可引用事实。
 
 ## Claim
 

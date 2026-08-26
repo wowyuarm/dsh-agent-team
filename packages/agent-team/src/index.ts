@@ -1034,15 +1034,15 @@ export default class AgentTeam extends TypertRemoteService {
             ? 'human' : this.requireLedger().getMember(fact.message.sender)?.handle ?? fact.message.sender
           const detail = ['Direct Team mention', `From: ${sender}`, `Channel: ${item.channelRef}`,
             `Task: ${item.task.taskRef}`, `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
-            `Revision: ${item.thread.revision}`, `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
+            `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
           if (append(detail)) detailedFactCount += 1
         } else if (fact.kind === 'activity') {
-          const detail = `${this.activityNotification(fact.activity)}\nThread: ${item.thread.threadRef}\nRevision: ${item.thread.revision}`
+          const detail = `${this.activityNotification(fact.activity)}\nThread: ${item.thread.threadRef}`
           if (append(detail)) detailedFactCount += 1
         }
       }
       const ordinaryCount = facts.filter(entry => entry.fact.kind === 'message' && !entry.direct).length
-      if (ordinaryCount > 0) append(`Task ${item.task.taskRef}: ${ordinaryCount} unread update${ordinaryCount === 1 ? '' : 's'}; revision ${item.thread.revision}.`)
+      if (ordinaryCount > 0) append(`Task ${item.task.taskRef}: ${ordinaryCount} unread update${ordinaryCount === 1 ? '' : 's'}.`)
     }
     if (omitted) sections.push('More unread work remains in team_inbox; the automatic context is bounded.')
     sections.push('Use team_thread read with the relevant taskRef before acting or replying. Use team_inbox only when you need to triage the remaining Threads.')
