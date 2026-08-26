@@ -630,19 +630,6 @@ export interface AgentTeamRecoverMemberResult {
   readonly status: AgentTeamAgentMemberStatus
 }
 
-/** Human intent to restart one enabled Member's live Agent session in place. */
-export interface AgentTeamRestartMemberRequest {
-  readonly requestId: AgentTeamRequestId
-  readonly workspaceId: WorkspaceId
-  readonly memberId: AgentTeamMemberId
-}
-
-/** The Member keeps its identity, session transcript, and memory; only the handle is fresh. */
-export interface AgentTeamRestartMemberResult {
-  readonly receipt: AgentTeamOperationReceipt
-  readonly status: AgentTeamAgentMemberStatus
-}
-
 /** Human intent to remove one Agent Member from one Channel. */
 export interface AgentTeamRemoveChannelMemberRequest {
   readonly requestId: AgentTeamRequestId

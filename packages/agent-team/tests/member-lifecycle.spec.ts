@@ -208,35 +208,6 @@ describe('Agent Team Member lifecycle', () => {
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
   })
 
-  it('restarts an enabled Member in place, keeping the session identity and memory', async () => {
-    const { ctx, workspaceId } = await realHarness()
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
-    const liveBefore = ctx.agents.get(added.status.member.sessionId)
-    expect(liveBefore).toBeDefined()
-
-    // Restart keeps the published Agent and Session identity intact.
-    const restarted = await ctx.agentTeam.restartMember({ requestId: requestId('restart'), workspaceId, memberId: added.status.member.memberId })
-    expect(restarted.status.availability).toBe('active')
-    expect(restarted.status.member.sessionId).toBe(added.status.member.sessionId)
-    const liveAfter = ctx.agents.get(added.status.member.sessionId)
-    expect(liveAfter).toBe(liveBefore)
-    expect(liveAfter?.session.header.cwd).toBe(liveBefore?.session.header.cwd)
-
-    // Private memory survives: it is addressed by Member, not by handle.
-    await expect(access(join(added.status.member.privateMemoryPath, 'memory.md'))).resolves.toBeUndefined()
-
-    // The audit operation replays cleanly and dedupes by request.
-    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
-    const again = await ctx.agentTeam.restartMember({ requestId: requestId('restart'), workspaceId, memberId: added.status.member.memberId })
-    expect(again.receipt.operationId).toBe(restarted.receipt.operationId)
-
-    // Guards: unknown and suspended Members cannot restart.
-    await expect(ctx.agentTeam.restartMember({ requestId: requestId('unknown'), workspaceId, memberId: 'member:missing' as AgentTeamMemberId })).rejects.toThrow(/unknown Member/)
-    await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: added.status.member.memberId })
-    await expect(ctx.agentTeam.restartMember({ requestId: requestId('suspended'), workspaceId, memberId: added.status.member.memberId })).rejects.toThrow(/only enabled Members can be restarted/)
-  })
-
   it('creates a Member with no description and no Channels and lights delivery on join', async () => {
     const { ctx, workspaceId, teamFiber } = await realHarness()
     const bare = await ctx.agentTeam.addMember({ requestId: requestId('bare'), workspaceId, handle: 'bare', description: '', presetId: 'team-member', channelRefs: [] })
@@ -735,11 +706,6 @@ describe('Agent Team Member lifecycle', () => {
     })
     expect(edited.status.availability).toBe('active')
 
-    const restarted = await ctx.agentTeam.restartMember({
-      requestId: requestId('persisted-model-restart'), workspaceId, memberId: added.status.member.memberId,
-    })
-    expect(restarted.status.availability).toBe('active')
-    expect(restarted.status.diagnostic).toBeUndefined()
     expect(ctx.agents.get(added.status.member.sessionId)).toBeDefined()
   })
 

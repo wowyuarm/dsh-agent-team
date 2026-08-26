@@ -61,8 +61,6 @@ import type {
   AgentTeamPutAttachmentRequest,
   AgentTeamPutAttachmentResult,
   AgentTeamRecoverMemberRequest,
-  AgentTeamRestartMemberRequest,
-  AgentTeamRestartMemberResult,
   AgentTeamRecoverMemberResult,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -409,49 +407,6 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.logger.info(`agent-team: operator asked member '${member.handle}' to resume`)
     this.steerResume(member, this.resumeText(kind ?? 'unspecified failure', { operatorRequested: true }))
     return Object.freeze({ status: this.memberStatus(member) })
-  }
-
-  /**
-   * Reset one enabled Member without replacing its published Session. Replacing
-   * the handle emits session/disposed, which makes the Web Client mark this
-   * Session id unavailable even if Team recreates it immediately.
-   */
-  @Remote('restartMember')
-  async restartMember(request: AgentTeamRestartMemberRequest): Promise<AgentTeamRestartMemberResult> {
-    return this.enqueueLifecycle(async () => {
-      this.requireAccepting()
-      this.requireWorkspace(request.workspaceId)
-      const stored = this.requireLedger().getMember(request.memberId)
-      if (stored === undefined || stored.workspaceId !== request.workspaceId) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
-      if (stored.state !== 'enabled') throw new Error(`Agent Member '${stored.handle}' is ${stored.state}; only enabled Members can be restarted`)
-      const active = this.handles.get(request.memberId)
-      if (active !== undefined && this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before restarting`)
-      const result = await this.requireLedger().restartMember({ ...request, actor: agentTeamHumanActor() })
-      if (result.committed) this.emitCommitted(result.value.receipt)
-      // Preserve the published Agent and Session identity. Model changes and
-      // restart both update the live route; only a missing handle needs a new
-      // activation.
-      this.recovery.stopTracking(request.memberId)
-      if (active !== undefined) {
-        this.runtimeErrors.delete(active.agent.id)
-        this.notifiedInbox.delete(request.memberId)
-        this.diagnostics.delete(request.memberId)
-        const selection = this.modelSelections.get(request.memberId)
-        if (selection !== undefined) selection.current = stored.model ?? this.ctx.agentDefaultModel.currentSelection()
-        return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
-      }
-      this.notifiedInbox.delete(request.memberId)
-      this.modelSelections.delete(request.memberId)
-      this.diagnostics.delete(request.memberId)
-      await this.activateMember(stored)
-      const reactivated = this.handles.get(request.memberId)
-      if (reactivated === undefined) {
-        // Reactivation failed; the activation diagnostic carries the reason and
-        // the audit record stays honest about the attempt.
-        throw new Error(`Agent Member '${stored.handle}' failed to reactivate: ${this.diagnostics.get(request.memberId) ?? 'unknown error'}`)
-      }
-      return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
-    })
   }
 
   /** Ledger handle for log lines; falls back to the raw id when unknown. */

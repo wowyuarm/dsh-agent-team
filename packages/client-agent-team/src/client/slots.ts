@@ -14,8 +14,6 @@ import type {
   AgentTeamMemberResult,
   AgentTeamRecoverMemberRequest,
   AgentTeamRecoverMemberResult,
-  AgentTeamRestartMemberRequest,
-  AgentTeamRestartMemberResult,
   AgentTeamMembersRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
@@ -94,7 +92,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     updateChannel: (request: AgentTeamUpdateChannelRequest) => Promise<RemoteResult<AgentTeamUpdateChannelResult>>
     updateMember: (request: AgentTeamUpdateMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     recoverMember: (request: AgentTeamRecoverMemberRequest) => Promise<RemoteResult<AgentTeamRecoverMemberResult>>
-    restartMember: (request: AgentTeamRestartMemberRequest) => Promise<RemoteResult<AgentTeamRestartMemberResult>>
     joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
