@@ -243,6 +243,9 @@ describe('Agent Team Member lifecycle', () => {
     const bare = await ctx.agentTeam.addMember({ requestId: requestId('bare'), workspaceId, handle: 'bare', description: '', presetId: 'team-member', channelRefs: [] })
     expect(bare.status.availability).toBe('active')
     expect(bare.status.member.description).toBe('')
+    // The invariant companion replays the same durable record shape; an empty
+    // initial Channel list is valid and must not be rejected as divergent.
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
     const agent = ctx.agents.get(bare.status.member.sessionId)!
     expect(agent).toBeDefined()
 

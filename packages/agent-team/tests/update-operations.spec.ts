@@ -100,6 +100,7 @@ describe('Agent Team display-fact updates', () => {
     const created = await ctx.agentTeam.createChannel({ requestId: requestId('bare-channel'), workspaceId: alpha, name: 'ops', description: '' })
     expect(created.channel.description).toBe('')
     expect(created.memberIds).toEqual([])
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
   it('edits Member facts with handle uniqueness, model pinning, and replay validation', async () => {

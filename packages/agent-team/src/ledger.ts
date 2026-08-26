@@ -1203,7 +1203,7 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/member-added') {
       assertHuman()
       const { member, channelRefs } = operation.data
-      if (projection.members.has(member.memberId) || channelRefs.length === 0 || new Set(channelRefs).size !== channelRefs.length) throw new Error('invalid Member creation')
+      if (projection.members.has(member.memberId) || new Set(channelRefs).size !== channelRefs.length) throw new Error('invalid Member creation')
       this.addRef(refs, member.memberId)
       for (const channelRef of channelRefs) {
         const channel = projection.channels.get(channelRef)
