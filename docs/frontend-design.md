@@ -62,10 +62,12 @@
 - 回合分隔线（`TeamRunDivider`）：同一 sender 的相邻消息间隔 ≥5 分钟即视为两次独立发言（agent 长发布常间隔小时级，纯折叠会抹掉层次与时刻），run 保持一块，但两者之间渲染全宽 border-l2 发丝线 + 线下首行标注后一条消息的时间（`formatMessageTime` 同款格式，`role="separator"`，缩进对齐正文列 38px=头像 28+间距 10）；该线替代其后折叠行自带的任务卡发丝线（相邻选择器覆盖），不叠双线。频道页与 Thread 页共用同一判断与组件。
 - run 是纯分组块，无 hover 边框/底色/阴影、无常驻边框——回合分隔线、日界锚与未读线承担全部消息边界感，run 自身只保留块间 2px 垂直空隙（`margin: 2px` + `padding: 3px`），不给内容"加笼子"。
 
-### Mention 强调
+### Mention 与 Task ref 强调
 
 - 仅 Human 字面正文渲染 mention chip：`splitMentions(text, handles)` 按 Channel 已知 handle 分段（大小写不敏感；前置为词字符的不算，如邮箱），chip 为主题色浅底 + 极淡阴影 + 圆角。
 - Agent markdown 内 @handle 保持原样：markdown 原语无文本节点挂点，源级替换有破坏语法风险——已知限制，待原语提供钩子后再补。
+- 已知的 branded Task ref（`task:*`）在 Human 文本和 Agent plain-prose 中渲染为可点击链接；富 Markdown 无法安全内联时，在正文下方渲染为 fallback chip。链接通过 Host 的 `resolveTaskRefs` 批量解析，不把未知 ref 渲染成可点击目标；富 Markdown 中的 fallback chip 与 mention fallback 共用同一行。
+- 点击当前视图未加载的 Task ref 时，Client 解析其所属 Workspace、Channel 和 Thread 后跨频道跳转；解析失败的 ref 保留为带原始 ref tooltip 的非导航文本。Task number（如 `task#12`）只是当前 Workspace/Channel 投影中的展示编号，稳定导航身份始终是 branded Task ref。
 
 ### 时间线滚动（timeline-scroll）
 
@@ -85,7 +87,7 @@
 
 ### Task 入口卡（channel 时间线内）
 
-- 语义：top-level 频道消息进入其 Task Thread 的唯一入口，展示 `Task #N`、任务状态与消息计数，点击触发 `selectThread`。
+- 语义：top-level 频道消息进入其 Task Thread 的唯一入口，展示 `Task #N`、任务状态与消息计数，点击触发 `selectThread`。`Task #N` 是展示编号，不是稳定身份；跨视图导航使用 branded Task ref。
 - 形态合同：fit-content 紧凑胶囊（细边框 quiet 默认态），内容 `状态点` · `Task #N`(600) · 状态 · 计数 · chevron 图标；箭头位置由内容流构造保证一致，不使用全宽拉伸。状态点用 `taskStatusDot` 映射，五个状态全有点、8px 固定座位保证各卡同轴：in_progress=ongoing 蓝圈、in_review=warning 琥珀、done=done 绿（复用 DSH `StateDot`，与 presence 同语言）；todo=空心圆环（未开始的空位）、closed=tertiary 灰实心点带 10% 光晕（镜像 StateDot 几何的 `.taskDotQuiet`）。hover/focus 渐进反馈：底色与边框提升、箭头右移 2px（120ms 过渡，reduced-motion 下关闭）；focus-visible 用主题色 outline。状态与计数用 tertiary 弱化，`aria-label` 带 `openTask` 文案。
 
 ### 状态胶囊与弹层
@@ -101,7 +103,7 @@
 - 定位高亮单一化（对齐宿主会话树「父静叶亮」的惯例）：任一时刻侧栏只有一行携带 `aria-current='page'` 与 hover 底色——打开频道/Thread 时是频道行，成员会话视图打开时是被选 Agent 卡片（`.agentSelect[aria-current='page']`），否则是所选工作区的概览行；被浏览的工作区行其余时候保持安静，仅以 `data-selected` 让文件夹图标换成 open 形态并着 business 色（镜像宿主 `folderActive`），不再与叶子行同时点亮。
 - 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。菜单含「编辑」入口，打开对应编辑器；error 态成员额外出现「恢复」项，走 `recoverMember` Remote（Host 向该成员活跃会话 steer 续作 prompt，运行时动作、不落 ledger）。
 - 频道编辑器（`编辑频道`）：名称/说明输入框 + 成员增删字段集。保存钮无改动即禁用（dirty 门），提交走 `updateChannel` Remote（幂等 request 同载荷复用），成功后由投影刷新回填行文案——不做乐观行内改名；成员增删仍走既有 join/remove Remote（request 按 方向+成员+频道 键复用）。
-- Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择 + 成员字段集。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员立即生效（Host 静默 dispose + 重激活，同 sessionId），纯展示编辑不重启。
+- Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择 + 成员字段集。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员原地更新 live model selection，保持 Agent 与 Session 身份不变，后续请求使用新选择；纯展示编辑不重启。
 - Agent 卡片会话视图：Agent 行的头像与文案整体是选择按钮（`打开 {name} 的会话`），点击不再退出 Team 模式——导航快照保留当前 Channel/Thread，并叠加运行时字段 `memberSessionId`（附 `returnToSessionId`，均不持久化），再调用 `sessions.open(memberSessionId)`；`conversation` 影子此时让位，由 shipped 会话根在 Team 侧栏之间渲染该成员会话。任何显式 Team 导航（选工作区/频道/Thread）都会关闭成员视图并恢复该 Team 位置；页脚「对话」关闭成员视图、还原 `returnToSessionId` 后离开 Team，普通外壳不会停在成员会话里。
 - 窄屏 rail 保留两个图标按钮，点击请求展开侧栏并聚焦对应分区头部。
 

@@ -30,7 +30,7 @@ Member 在 Channel 或 Task Thread 中显式发出的不可变内容。dsh 对�
 
 ## Task
 
-由 Channel 顶层 Message 创建的可追踪承诺。Task 的工作状态从 claims 派生，human acceptance 与 closed 是显式覆盖事实。
+由 Channel 顶层 Message 创建的可追踪承诺。Task 的工作状态从 claims 派生，human acceptance 与 closed 是显式覆盖事实。面向 Human 的 `Task #N` 是当前 Workspace/Channel 投影中的展示编号，不是稳定身份；跨频道导航和持久引用必须使用 branded `taskRef`。
 
 ## Thread
 
