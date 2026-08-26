@@ -190,6 +190,22 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, anchorMentions: [], claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
   })
+  const resolveTaskRefs = vi.fn(async (request: { workspaceId: string; taskRefs: readonly string[] }) => {
+    const numbers = new Map(viewItems.map((item, index) => [(item.task as { taskRef: string }).taskRef, index + 1]))
+    // One Host-known Task lives outside the loaded channel timeline, so the
+    // click fallback path has something real to resolve.
+    const known = new Map(viewItems.map(item => [(item.task as { taskRef: string }).taskRef, item]))
+    known.set('task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c', {
+      task: { taskRef: 'task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c', channelRef: 'channel:engineering', threadRef: 'thread:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6d', status: 'todo', resolution: 'open' },
+    })
+    const resolved = request.taskRefs.flatMap(taskRef => {
+      const item = known.get(taskRef)
+      if (item === undefined) return []
+      const task = item.task as { taskRef: string; channelRef: string; threadRef: string }
+      return [{ taskRef: task.taskRef, channelRef: task.channelRef, threadRef: task.threadRef, taskNumber: numbers.get(task.taskRef) ?? 2 }]
+    })
+    return { ok: true as const, value: { resolved } }
+  })
   const changes = vi.fn((request: { afterVersion: number; scope?: unknown }, _signal?: AbortSignal) => changeVersion > request.afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
     : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
@@ -207,7 +223,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, restartMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, restartMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   runtime.provide('connection', { api: { llm: { models: loadModels } } })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
@@ -227,7 +243,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, restartMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, restartMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
 
 describe('rendered Team mode composition', () => {
@@ -689,6 +705,27 @@ describe('rendered Team mode composition', () => {
     const link = await b.view.findByRole('button', { name: taskRef })
     fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
+    await b.runtime.dispose()
+  })
+
+  it('resolves unknown task refs to task numbers and navigates on click', async () => {
+    const citedRef = 'task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e51', seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e52',
+      seededMessages: [{ body: `看 ${citedRef}`, occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    // The cited ref is not in the loaded timeline: it renders raw, resolves
+    // through the Host lookup, and relabels to the human-facing number.
+    const link = await b.view.findByRole('button', { name: citedRef })
+    await waitFor(() => { expect(b.resolveTaskRefs).toHaveBeenCalled() })
+    // The Host knows the cited Task: the label becomes the human-facing
+    // number with the full ref on hover.
+    await waitFor(() => { expect(link.textContent).toBe('task#2') })
+    expect(link.getAttribute('title')).toBe(citedRef)
+    fireEvent.click(link)
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef: citedRef })))
     await b.runtime.dispose()
   })
 

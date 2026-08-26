@@ -23,6 +23,7 @@ import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf } from './team-formatters.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
+import { rememberResolvedTaskRef } from './task-refs.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -45,6 +46,8 @@ interface TeamThreadPageProps {
   readonly changeTask: TeamConversationProps['changeTask']
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
+  readonly selectThread: TeamConversationProps['selectThread']
+  readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly t: TeamConversationProps['t']
 }
 
@@ -78,7 +81,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, putAttachment,
+    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, putAttachment,
     loadChannels, readThread, loadThreadHistory,
     subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, t,
   } = props
@@ -319,7 +322,23 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // are not resolvable from this surface, so they degrade to a no-op.
   const openRef = (ref: string): void => {
     if (ref.startsWith('channel:') && ref !== channelRef) selectChannel(ref as AgentTeamChannelRef)
+    if (ref.startsWith('task:') && ref !== taskRef) {
+      // Another Task cited here: resolve its home Channel and jump.
+      void resolveTaskRefs({ workspaceId, taskRefs: [ref as AgentTeamTaskRef] })
+        .then(result => {
+          if (!result.ok) return
+          const hit = result.value.resolved[0]
+          if (hit !== undefined) selectThread(hit.taskRef, hit.threadRef, hit.channelRef, hit.taskNumber)
+        })
+    }
   }
+
+  const lookupTaskRefs = (refs: readonly AgentTeamTaskRef[]) => resolveTaskRefs({ workspaceId, taskRefs: refs })
+    .then(result => {
+      if (!result.ok) return []
+      for (const entry of result.value.resolved) rememberResolvedTaskRef(entry)
+      return result.value.resolved
+    })
 
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
@@ -337,6 +356,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         occurredAt={fact.message.occurredAt}
         mentionNames={mentionNamesOf(fact.mentions, mentionHandlesMap)}
         onOpenRef={openRef}
+        onResolveTaskRefs={lookupTaskRefs}
         grouped={grouped}
         {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
       />

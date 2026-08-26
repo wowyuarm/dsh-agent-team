@@ -96,6 +96,24 @@ export interface AgentTeamMembersRequest {
   readonly workspaceId: WorkspaceId
 }
 
+/** Look up navigation facts for branded Task refs found in message bodies. */
+export interface AgentTeamResolveTaskRefsRequest {
+  readonly workspaceId: WorkspaceId
+  readonly taskRefs: readonly AgentTeamTaskRef[]
+}
+
+/** One resolved Task; refs that do not exist in the workspace are omitted. */
+export interface AgentTeamResolvedTaskRef {
+  readonly taskRef: AgentTeamTaskRef
+  readonly channelRef: AgentTeamChannelRef
+  readonly threadRef: AgentTeamThreadRef
+  readonly taskNumber: number
+}
+
+export interface AgentTeamResolveTaskRefsResult {
+  readonly resolved: readonly AgentTeamResolvedTaskRef[]
+}
+
 interface AgentTeamOperationBase {
   readonly sequence: number
   readonly operationId: AgentTeamOperationId

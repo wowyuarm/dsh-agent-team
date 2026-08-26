@@ -1,8 +1,9 @@
-import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { MarkdownText, MessageText, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AgentTeamGetAttachmentResult, AgentTeamMemberId, AgentTeamMessageAttachment } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamGetAttachmentResult, AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
+import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersion, type ResolvedTaskRef } from './task-refs.ts'
 import { formatMessageTime, isPlainTextBody, memberHue, splitBrandedRefs, splitMentionNames, stripAttachmentLines } from './team-formatters.ts'
 import css from './conversation.module.css'
 
@@ -24,11 +25,13 @@ export interface TeamMessageProps {
   readonly t?: TeamConversationProps['t'] | undefined
   /** Resolve a branded ref found in the body; absent surfaces render refs as plain text. */
   readonly onOpenRef?: ((ref: string) => void) | undefined
+  /** Host lookup turning task refs into human-facing numbers; absent keeps raw refs. */
+  readonly onResolveTaskRefs?: ((taskRefs: readonly AgentTeamTaskRef[]) => Promise<readonly ResolvedTaskRef[]>) | undefined
   readonly children?: ReactNode
 }
 
 /** One chat message row with identity chrome and sender-appropriate rendering. */
-export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, attachments, loadAttachment, t, onOpenRef, children }: TeamMessageProps) {
+export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
   // Literal bodies carry the chips inline — Human input always, and plain-
   // prose Agent bodies where literal rendering loses nothing. Rich Markdown
@@ -46,6 +49,17 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
   const fallbackRefs = !human && inline === undefined && onOpenRef !== undefined && !isPlainTextBody(displayBody)
     ? splitBrandedRefs(displayBody).filter(segment => segment.ref !== undefined).map(segment => segment.ref!)
     : []
+  // Resolved refs re-label from `task:<uuid>` to `task#<n>` once the Host
+  // lookup lands; the version token re-renders every rendered link.
+  const refVersion = useResolvedTaskRefVersion()
+  const bodyTaskRefs: readonly AgentTeamTaskRef[] = onOpenRef === undefined ? [] : splitBrandedRefs(displayBody)
+    .filter(segment => segment.ref !== undefined && segment.ref.startsWith('task:'))
+    .map(segment => segment.ref as AgentTeamTaskRef)
+  const bodyTaskRefKey = bodyTaskRefs.join(',')
+  useEffect(() => {
+    if (onResolveTaskRefs === undefined || bodyTaskRefKey === '') return
+    void resolveUnknownTaskRefs(bodyTaskRefs, onResolveTaskRefs)
+  }, [onResolveTaskRefs, bodyTaskRefKey, refVersion])
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
       <div className={css.messageIdentity} style={avatarStyle} aria-hidden="true">{senderName.replace('@', '').slice(0, 1).toUpperCase()}</div>
@@ -85,9 +99,12 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
 /** Render one literal text run, linkifying branded refs when navigation is available. */
 function renderRefs(text: string, onOpenRef: ((ref: string) => void) | undefined): ReactNode {
   if (onOpenRef === undefined) return text
-  return splitBrandedRefs(text).map((segment, index) => segment.ref === undefined
-    ? <Fragment key={index}>{segment.text}</Fragment>
-    : <button key={index} type="button" className={css.refLink} onClick={() => { onOpenRef(segment.ref!) }}>{segment.text}</button>)
+  return splitBrandedRefs(text).map((segment, index) => {
+    if (segment.ref === undefined) return <Fragment key={index}>{segment.text}</Fragment>
+    const resolved = cachedResolvedTaskRef(segment.ref as AgentTeamTaskRef)
+    const label = resolved !== undefined && segment.ref.startsWith('task:') ? `task#${resolved.taskNumber}` : segment.ref
+    return <button key={index} type="button" className={css.refLink} title={segment.ref} onClick={() => { onOpenRef(segment.ref!) }}>{label}</button>
+  })
 }
 
 /** One message's attachment strip: image thumbnails with a large view, or name chips when bytes are gone. */

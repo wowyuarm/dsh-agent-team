@@ -54,6 +54,9 @@ import type {
   AgentTeamMemberId,
   AgentTeamMemberResult,
   AgentTeamMembersRequest,
+  AgentTeamResolveTaskRefsRequest,
+  AgentTeamResolveTaskRefsResult,
+  AgentTeamTaskRef,
   AgentTeamOperationReceipt,
   AgentTeamPutAttachmentRequest,
   AgentTeamPutAttachmentResult,
@@ -252,6 +255,19 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Return only this Workspace's current Member projection to the Client. */
+  /** Read-only navigation lookup for branded Task refs found in message bodies. */
+  @Remote('resolveTaskRefs')
+  resolveTaskRefs(request: AgentTeamResolveTaskRefsRequest): AgentTeamResolveTaskRefsResult {
+    this.requireWorkspace(request.workspaceId)
+    const seen = new Set<AgentTeamTaskRef>()
+    const taskRefs = request.taskRefs.filter(taskRef => {
+      if (seen.has(taskRef)) return false
+      seen.add(taskRef)
+      return true
+    })
+    return Object.freeze({ resolved: Object.freeze(this.requireLedger().resolveTaskRefs(request.workspaceId, taskRefs)) })
+  }
+
   @Remote('members')
   membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamClientMemberStatus[] {
     this.requireWorkspace(request.workspaceId)

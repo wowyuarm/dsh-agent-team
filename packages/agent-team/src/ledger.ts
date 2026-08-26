@@ -58,6 +58,7 @@ import type {
   AgentTeamReplyRequest,
   AgentTeamReplyResult,
   AgentTeamRequestId,
+  AgentTeamResolvedTaskRef,
   AgentTeamMessageAttachment,
   AgentTeamSendMessageRequest,
   AgentTeamSendMessageResult,
@@ -968,6 +969,18 @@ export class AgentTeamLedger {
 
   getTask(taskRef: AgentTeamTaskRef): AgentTeamTask | undefined {
     return this.state.tasks.get(taskRef)
+  }
+
+  /** Navigation facts for message-body Task refs; unknown refs are omitted. */
+  resolveTaskRefs(workspaceId: WorkspaceId, taskRefs: readonly AgentTeamTaskRef[]): AgentTeamResolvedTaskRef[] {
+    const numbers = this.taskNumbers(workspaceId)
+    const resolved: AgentTeamResolvedTaskRef[] = []
+    for (const taskRef of taskRefs) {
+      const task = this.state.tasks.get(taskRef)
+      if (task === undefined || this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+      resolved.push(Object.freeze({ taskRef: task.taskRef, channelRef: task.channelRef, threadRef: task.threadRef, taskNumber: numbers.get(task.taskRef) ?? 0 }))
+    }
+    return resolved
   }
 
   view(request: AgentTeamViewRequest, memberId?: AgentTeamMemberId): AgentTeamView {

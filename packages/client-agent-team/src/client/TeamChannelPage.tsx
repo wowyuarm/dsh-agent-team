@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem,
+  AgentTeamTaskRef,
+} from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
@@ -13,6 +15,7 @@ import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
+import { rememberResolvedTaskRef } from './task-refs.ts'
 import { chunkRunsWithDays, isRunGap } from './team-separators.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
@@ -32,6 +35,7 @@ interface TeamChannelPageProps {
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
   readonly selectThread: TeamConversationProps['selectThread']
   readonly selectChannel: TeamConversationProps['selectChannel']
+  readonly resolveTaskRefs: TeamConversationProps['resolveTaskRefs']
   readonly backToChannels: TeamConversationProps['backToChannels']
   readonly t: TeamConversationProps['t']
 }
@@ -53,7 +57,7 @@ function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTe
   }
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, selectChannel, backToChannels, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, selectChannel, backToChannels, resolveTaskRefs, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [error, setError] = useState<string>()
@@ -82,9 +86,27 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     }
     if (ref.startsWith('task:')) {
       const match = view?.items.find(item => item.task.taskRef === ref)
-      if (match !== undefined) selectThread(match.task.taskRef, match.thread.threadRef, channelRef, match.taskNumber)
+      if (match !== undefined) {
+        selectThread(match.task.taskRef, match.thread.threadRef, channelRef, match.taskNumber)
+        return
+      }
+      // Not in the loaded timeline: resolve through the Host and jump to the
+      // Task's home Channel.
+      void resolveTaskRefs({ workspaceId, taskRefs: [ref as AgentTeamTaskRef] })
+        .then(result => {
+          if (!result.ok) return
+          const hit = result.value.resolved[0]
+          if (hit !== undefined) selectThread(hit.taskRef, hit.threadRef, hit.channelRef, hit.taskNumber)
+        })
     }
   }
+
+  const lookupTaskRefs = (taskRefs: readonly AgentTeamTaskRef[]) => resolveTaskRefs({ workspaceId, taskRefs })
+    .then(result => {
+      if (!result.ok) return []
+      for (const entry of result.value.resolved) rememberResolvedTaskRef(entry)
+      return result.value.resolved
+    })
 
   const timeline = useTimelineScroll(`${view?.items.length ?? 0}:${channelLastItem?.message.messageRef ?? ''}`)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
@@ -314,6 +336,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                 occurredAt={item.message.occurredAt}
                 mentionNames={mentionNamesOf(item.mentions, mentionHandlesMap)}
                 onOpenRef={openRef}
+                onResolveTaskRefs={lookupTaskRefs}
                 grouped={index > 0}
                 {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
               >

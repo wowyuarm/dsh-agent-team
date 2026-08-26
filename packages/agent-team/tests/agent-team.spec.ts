@@ -136,6 +136,20 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     await expect(test.ctx.agentTeam.changeAttention({ requestId: requestId('again'), workspaceId: alpha, taskRef: sent.task.taskRef, action: 'unfollow' })).rejects.toThrow(/already unfollowed/)
   })
 
+  it('resolves branded Task refs to navigation facts and omits unknown refs', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const first = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('first'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'first task' }))
+    const second = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('second'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'second task' }))
+    const resolved = test.ctx.agentTeam.resolveTaskRefs({ workspaceId: alpha, taskRefs: [first.task.taskRef, second.task.taskRef, 'task:00000000-0000-4000-8000-000000000000' as AgentTeamTaskRef] })
+    expect(resolved.resolved).toEqual([
+      { taskRef: first.task.taskRef, channelRef: channel.channel.channelRef, threadRef: first.thread.threadRef, taskNumber: 1 },
+      { taskRef: second.task.taskRef, channelRef: channel.channel.channelRef, threadRef: second.thread.threadRef, taskNumber: 2 },
+    ])
+    // An unregistered workspace is rejected before any lookup.
+    expect(() => test.ctx.agentTeam.resolveTaskRefs({ workspaceId: beta, taskRefs: [first.task.taskRef] })).toThrow(/unknown Workspace/)
+  })
+
   it('adds an Agent with initial Channel membership and persists no Inbox delivery facts', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

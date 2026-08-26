@@ -387,8 +387,14 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
   // Agent plain-prose bodies linkify branded refs too (regression: the agent
   // branch previously bypassed the ref renderer entirely).
-  const agentRefLink = page.locator('[data-team-thread] article').filter({ hasText: 'reviewer 已读取邀请' }).getByRole('button', { name: task.taskRef })
+  const agentRefLink = page.locator('[data-team-thread] article').filter({ hasText: 'reviewer 已读取邀请' }).getByRole('button', { name: /task#\d+/ })
   await agentRefLink.waitFor()
+  // The Host lookup relabels the raw UUID into the human-facing number; the
+  // full ref stays on hover.
+  await expect.poll(() => agentRefLink.textContent()).toBe('task#1')
+  expect(await agentRefLink.getAttribute('title')).toBe(task.taskRef)
+  await agentRefLink.click()
+  await page.getByRole('heading', { name: /Task #1/ }).waitFor()
 
   // Human reply with attachment inside the Task Thread: the reply composer
   // offers the same "+" upload chain as the Channel composer.
