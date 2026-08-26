@@ -438,6 +438,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByText('实现验收功能', { exact: true }).waitFor()
   await page.getByText(/认领了「实现验收功能」/).waitFor()
   await page.screenshot({ path: join(UI05_SHOTS, 'active-thread.png'), fullPage: true })
+
   const threadComposer = page.getByRole('textbox', { name: '消息内容' })
   await threadComposer.fill('@re')
   await page.getByRole('option', { name: /@reviewer/ }).click()
@@ -455,15 +456,17 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await scaffold.ctx.agentTeam.readThread({
     requestId: 'm2-06-human-review-read' as never, workspaceId: workspace.id, taskRef: task.taskRef,
   })
-  const acceptTask = page.getByRole('button', { name: '验收' })
-  await acceptTask.waitFor()
-  await expect.poll(() => page.evaluate(() => {
-    const current = [...document.querySelectorAll('button')].find(button => button.textContent === '验收')
-    if (current === undefined || current.disabled) return false
-    current.click()
-    return true
-  })).toBe(true)
+  // One self-healing loop: press the live 验收 control whenever the Task is
+  // still open, then wait for the ledger to show the committed acceptance.
+  const acceptButtonsState = (): Promise<readonly { readonly text: string | null; readonly disabled: boolean }[]> =>
+    page.evaluate(() => [...document.querySelectorAll('button')]
+      .map(button => ({ text: button.textContent?.trim(), disabled: button.disabled }))
+      .filter(entry => entry.text === '验收'))
+  await acceptButtonsState().then(buttons => expect(buttons.length).toBeGreaterThan(0))
   await expect.poll(async () => {
+    for (const state of await acceptButtonsState()) {
+      if (!state.disabled) await page.locator(`button:text-is("${state.text}")`).first().click()
+    }
     const currentProjection = scaffold!.ctx.agentTeam.view({ workspaceId: workspace.id })
     const currentTask = currentProjection.tasks.find(candidate => candidate.taskRef === task.taskRef)
     const currentClaims = currentProjection.claims.filter(candidate => candidate.taskRef === task.taskRef)
@@ -478,7 +481,66 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByText('验收后继续讨论', { exact: true }).waitFor()
   await page.screenshot({ path: join(UI01_SHOTS, 'desktop-thread.png'), fullPage: true })
   await page.screenshot({ path: join(UI05_SHOTS, 'accepted-thread.png'), fullPage: true })
+  // Early acceptance drill: reopen puts the Task back to in_progress; a fresh
+  // Agent Claim re-creates the exact precondition for accepting over open work.
   await page.getByRole('button', { name: '重新打开' }).click()
+  // Direct Host calls below must observe the committed open state, not the
+  // optimistic-free UI in flight.
+  await expect.poll(async () =>
+    JSON.stringify(scaffold!.ctx.agentTeam.view({ workspaceId: workspace.id }).tasks.find(candidate => candidate.taskRef === task.taskRef)))
+    .toContain('"resolution":"open"')
+  const reopenRead = await scaffold.ctx.agentTeam.readThreadForAgent(agent, {
+    requestId: 'm2-06-agent-reopen-read' as never, workspaceId: workspace.id, taskRef: task.taskRef,
+  })
+  const reclaim = await scaffold.ctx.agentTeam.changeClaimForAgent(agent, {
+    requestId: 'm2-06-agent-reclaim' as never, workspaceId: workspace.id,
+    taskRef: task.taskRef, action: 'claim', direction: '补齐回归清单', baseRevision: reopenRead.thread.revision,
+  })
+  if (reclaim.kind !== 'committed') throw new Error(`Agent re-Claim was rejected: ${reclaim.kind}`)
+  await page.getByRole('button', { name: '验收', exact: true }).click()
+  const acceptDialog = page.getByRole('dialog', { name: '提前验收任务' })
+  await expect.poll(() => acceptDialog.count()).toBe(1)
+  await expect.poll(() => acceptDialog.getByText(/将验收本 Task，并把以下 1 个未完成的 Claim 一并标记为完成/).count()).toBe(1)
+  await expect.poll(() => acceptDialog.getByText('@builder · 补齐回归清单').count()).toBe(1)
+  await page.screenshot({ path: join(UI05_SHOTS, 'accept-confirm-dialog.png'), fullPage: true })
+  // Snapshot before any interaction; compared after the Escape cancels below.
+  const tasksBeforeCancel = JSON.stringify(scaffold.ctx.agentTeam.view({ workspaceId: workspace.id }).tasks.find(candidate => candidate.taskRef === task.taskRef))
+
+  // Same confirm beat at phone size for the narrow layout.
+  const escapeDialog = async (): Promise<void> => {
+    await page.keyboard.press('Escape')
+    await expect.poll(() => page.getByRole('dialog', { name: '提前验收任务' }).count()).toBe(0)
+  }
+  await escapeDialog()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: '验收', exact: true }).click()
+  await expect.poll(() => acceptDialog.count()).toBe(1)
+  await page.screenshot({ path: join(UI05_SHOTS, 'narrow-accept-confirm-dialog.png'), fullPage: true })
+  await escapeDialog()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // The ledger stayed untouched through both Escape cancels.
+  expect(JSON.stringify(scaffold.ctx.agentTeam.view({ workspaceId: workspace.id }).tasks.find(candidate => candidate.taskRef === task.taskRef))).toBe(tasksBeforeCancel)
+
+  // Confirm completes the open Claim inside the same accept operation.
+  await page.getByRole('button', { name: '验收', exact: true }).click()
+  await expect.poll(() => acceptDialog.count()).toBe(1)
+  await acceptDialog.locator('button').filter({ hasText: '验收' }).last().click()
+  await expect.poll(async () =>
+    JSON.stringify(scaffold.ctx.agentTeam.view({ workspaceId: workspace.id }).claims.filter(candidate => candidate.taskRef === task.taskRef && candidate.direction === '补齐回归清单')))
+    .toContain('"state":"done"')
+  await expect.poll(async () =>
+    JSON.stringify(scaffold.ctx.agentTeam.view({ workspaceId: workspace.id }).tasks.find(candidate => candidate.taskRef === task.taskRef)))
+    .toContain('"resolution":"accepted"')
+  await page.screenshot({ path: join(UI05_SHOTS, 'early-accepted-thread.png'), fullPage: true })
+  // Restore the pre-drill state so the following closed-thread beats run as before.
+  await page.getByRole('button', { name: '重新打开' }).waitFor()
+
+  // The header offers exactly one of 打开/关闭 actions per resolution, so the
+  // restored open state comes from this reopen before the close beat.
+  await page.getByRole('button', { name: '重新打开' }).click()
+  await page.getByRole('button', { name: '关闭任务' }).waitFor()
   await page.getByRole('button', { name: '关闭任务' }).click()
   // The closed Thread swaps the composer for the explanatory notice with its reopen action.
   await page.getByText('任务已关闭，重新打开后可继续讨论').waitFor()
