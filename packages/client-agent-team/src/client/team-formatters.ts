@@ -42,6 +42,34 @@ export function memberHue(memberId: string): number {
   return hash
 }
 
+/** One branded-ref occurrence inside a literal body segment. */
+export interface RefSegment {
+  readonly text: string
+  /** The full `task:`/`channel:`/`thread:` ref when this segment is a link. */
+  readonly ref?: string
+}
+
+const BRANDED_REF_PATTERN = /\b(task|channel|thread):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
+
+/**
+ * Split a literal text run into plain and branded-ref segments. The pattern
+ * anchors on the fixed ref prefixes plus the UUID shape, so ordinary prose
+ * containing a colon never linkifies. Refs render as navigation links; text
+ * without any ref comes back as one untouched segment.
+ */
+export function splitBrandedRefs(text: string): readonly RefSegment[] {
+  const segments: RefSegment[] = []
+  let cursor = 0
+  for (const match of text.matchAll(BRANDED_REF_PATTERN)) {
+    const start = match.index ?? 0
+    if (start > cursor) segments.push({ text: text.slice(cursor, start) })
+    segments.push({ text: match[0], ref: match[0] })
+    cursor = start + match[0].length
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor) })
+  return segments
+}
+
 export interface MentionSegment {
   readonly text: string
   readonly mention: boolean

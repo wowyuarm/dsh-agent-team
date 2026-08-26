@@ -34,7 +34,7 @@ interface SeededMessage {
   readonly occurredAt: string
 }
 
-async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[] }) {
+async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -74,11 +74,13 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
     ? [{ channelRef: 'channel:engineering', workspaceId: 'w1', name: 'engineering', description: 'Engineering work', createdAtSequence: 1 }]
     : []
   let memberships: Array<Record<string, unknown>> = []
+  const seedTaskRef = options?.seedTaskRef ?? 'task:1'
+  const seedThreadRef = options?.seedThreadRef ?? 'thread:1'
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
-    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
+    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
     mentions: [],
-    task: { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: 'thread:1', status: 'todo', resolution: 'open' },
-    thread: { threadRef: 'thread:1', taskRef: 'task:1', revision: 2 },
+    task: { taskRef: seedTaskRef, channelRef: 'channel:engineering', threadRef: seedThreadRef, status: 'todo', resolution: 'open' },
+    thread: { threadRef: seedThreadRef, taskRef: seedTaskRef, revision: 2 },
     taskNumber: 1,
     messageCount: 1,
   }))
@@ -965,6 +967,24 @@ describe('rendered Team mode composition', () => {
     const threadDividers = b.view.getAllByRole('separator')
     expect(threadDividers).toHaveLength(1)
     expect(threadDividers[0]!.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-21T11:30:00.000Z')
+    await b.runtime.dispose()
+  })
+
+  it('linkifies branded refs in plain bodies and navigates on click', async () => {
+    const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e21'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: taskRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e22',
+      seededMessages: [{ body: `see ${taskRef} and channel:engineering for prose`, occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    // Only the fixed-prefix + UUID shape linkifies; `channel:engineering`
+    // stays literal prose.
+    expect(b.view.queryByText(taskRef)).toBeNull()
+    const link = await b.view.findByRole('button', { name: taskRef })
+    fireEvent.click(link)
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await b.runtime.dispose()
   })
 

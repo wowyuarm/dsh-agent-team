@@ -3,7 +3,7 @@ import { MarkdownText, MessageText, Modal } from '@deepseek-ai/dsh-client-ui-pri
 import type { AgentTeamGetAttachmentResult, AgentTeamMemberId, AgentTeamMessageAttachment } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
-import { formatMessageTime, isPlainTextBody, memberHue, splitMentionNames, stripAttachmentLines } from './team-formatters.ts'
+import { formatMessageTime, isPlainTextBody, memberHue, splitBrandedRefs, splitMentionNames, stripAttachmentLines } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -22,11 +22,13 @@ export interface TeamMessageProps {
   /** Cache readback for thumbnails; absent on surfaces without the remotes. */
   readonly loadAttachment?: TeamConversationProps['getAttachment'] | undefined
   readonly t?: TeamConversationProps['t'] | undefined
+  /** Resolve a branded ref found in the body; absent surfaces render refs as plain text. */
+  readonly onOpenRef?: ((ref: string) => void) | undefined
   readonly children?: ReactNode
 }
 
 /** One chat message row with identity chrome and sender-appropriate rendering. */
-export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, attachments, loadAttachment, t, children }: TeamMessageProps) {
+export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, attachments, loadAttachment, t, onOpenRef, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
   // Literal bodies carry the chips inline — Human input always, and plain-
   // prose Agent bodies where literal rendering loses nothing. Rich Markdown
@@ -53,10 +55,10 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
           ? <div className={css.messageText}>
               {inline.segments.map((segment, index) => segment.mention
                 ? <span key={index} className={css.mention}>{segment.text}</span>
-                : <Fragment key={index}>{segment.text}</Fragment>)}
+                : <Fragment key={index}>{renderRefs(segment.text, onOpenRef)}</Fragment>)}
             </div>
           : human
-            ? <div className={css.messageText}><MessageText text={displayBody} /></div>
+            ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef)}</div>
             : <div className={css.messageMarkdown}><MarkdownText text={displayBody} /></div>}
         {fallbackNames.length > 0 && (
           <div className={css.mentionsRow}>
@@ -72,6 +74,14 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
       </div>
     </article>
   )
+}
+
+/** Render one literal text run, linkifying branded refs when navigation is available. */
+function renderRefs(text: string, onOpenRef: ((ref: string) => void) | undefined): ReactNode {
+  if (onOpenRef === undefined) return text
+  return splitBrandedRefs(text).map((segment, index) => segment.ref === undefined
+    ? <Fragment key={index}>{segment.text}</Fragment>
+    : <button key={index} type="button" className={css.refLink} onClick={() => { onOpenRef(segment.ref!) }}>{segment.text}</button>)
 }
 
 /** One message's attachment strip: image thumbnails with a large view, or name chips when bytes are gone. */

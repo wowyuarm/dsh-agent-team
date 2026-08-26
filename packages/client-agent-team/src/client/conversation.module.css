@@ -322,6 +322,28 @@
   outline-offset: 1px;
 }
 
+.refLink {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--dsw-alias-state-business-primary);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.refLink:hover {
+  text-decoration-thickness: 2px;
+}
+
+.refLink:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
 /* The shared dialog card is form-sized (380px); the image preview needs a
    wide card so the zoomed screenshot stays readable. */
 .attachmentModal {

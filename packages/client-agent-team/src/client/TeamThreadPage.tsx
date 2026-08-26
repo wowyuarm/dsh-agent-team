@@ -41,6 +41,7 @@ interface TeamThreadPageProps {
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
+  readonly selectChannel: TeamConversationProps['selectChannel']
   readonly t: TeamConversationProps['t']
 }
 
@@ -74,7 +75,7 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
-    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace,
+    workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel,
     loadChannels, readThread, loadThreadHistory,
     subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, t,
   } = props
@@ -308,6 +309,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const messageSender = (fact: AgentTeamThreadFact): AgentTeamMemberId | undefined =>
     fact.kind === 'message' ? fact.message.sender : undefined
 
+  // Branded-ref navigation for message bodies: channel refs hop to the
+  // Channel; the open Task's own refs are already on screen, and other Tasks
+  // are not resolvable from this surface, so they degrade to a no-op.
+  const openRef = (ref: string): void => {
+    if (ref.startsWith('channel:') && ref !== channelRef) selectChannel(ref as AgentTeamChannelRef)
+  }
+
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
       const sender = memberName(fact.message.sender)
@@ -323,6 +331,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         t={t}
         occurredAt={fact.message.occurredAt}
         mentionNames={mentionNamesOf(fact.mentions, mentionHandlesMap)}
+        onOpenRef={openRef}
         grouped={grouped}
         {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
       />

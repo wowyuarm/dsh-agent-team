@@ -269,6 +269,20 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
   await page.getByRole('button', { name: '发送', exact: true }).waitFor()
 
+  // Branded-ref linkify: a UUID-shaped task ref in a plain body renders as a
+  // real link control (click-to-navigate is component-tested against the
+  // resolved selectThread call); non-UUID `channel:` prose stays literal.
+  await channelComposer.fill('请复核 task:c0ffee00-1234-4c05-8a9e-6f2b1c9d7e21 与 channel:engineering 的口径')
+  await page.getByRole('button', { name: '发送' }).click()
+  const refMessage = page.locator('[data-team-channel] article').filter({ hasText: '请复核' })
+  await refMessage.waitFor()
+  const refLink = refMessage.getByRole('button', { name: /task:c0ffee00/ })
+  await refLink.waitFor()
+  expect(await refMessage.getByRole('button', { name: /channel:engineering/ }).count()).toBe(0)
+  expect((await refMessage.textContent())?.includes('channel:engineering')).toBe(true)
+  expect(await refLink.evaluate(element => getComputedStyle(element).cursor)).toBe('pointer')
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-ref-linkify.png'), fullPage: true })
+
   // Attachment upload: the "+" picker takes real files, chips confirm the
   // selection, and the committed message renders the image thumbnail from the
   // Host cache — the full upload → ledger → display loop on the real app.
@@ -298,6 +312,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-zoom.png'), fullPage: true })
   await page.keyboard.press('Escape')
   await expect.poll(() => page.getByRole('dialog').count()).toBe(0)
+
+  // Narrow-viewport linkify row.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await refMessage.getByRole('button', { name: /task:c0ffee00/ }).waitFor()
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-ref-linkify-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'message-attachment-thumbnail-narrow.png'), fullPage: true })

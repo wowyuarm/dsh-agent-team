@@ -31,6 +31,7 @@ interface TeamChannelPageProps {
   readonly joinChannel: TeamConversationProps['joinChannel']
   readonly removeChannelMember: TeamConversationProps['removeChannelMember']
   readonly selectThread: TeamConversationProps['selectThread']
+  readonly selectChannel: TeamConversationProps['selectChannel']
   readonly backToChannels: TeamConversationProps['backToChannels']
   readonly t: TeamConversationProps['t']
 }
@@ -52,7 +53,7 @@ function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTe
   }
 }
 
-export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, backToChannels, t }: TeamChannelPageProps) {
+export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscribeChanges, loadMembers, drafts, putAttachment, getAttachment, sendMessage, joinChannel, removeChannelMember, selectThread, selectChannel, backToChannels, t }: TeamChannelPageProps) {
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [error, setError] = useState<string>()
@@ -71,6 +72,20 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const mountedRef = useRef(false)
   const refreshSequenceRef = useRef(0)
   const channelLastItem = view?.items[view.items.length - 1]
+  // Branded-ref navigation for message bodies: channel refs hop directly,
+  // task refs resolve against this Channel's loaded timeline and degrade to a
+  // no-op when the target is not reachable from here.
+  const openRef = (ref: string): void => {
+    if (ref.startsWith('channel:')) {
+      if (ref !== channelRef) selectChannel(ref as AgentTeamChannelRef)
+      return
+    }
+    if (ref.startsWith('task:')) {
+      const match = view?.items.find(item => item.task.taskRef === ref)
+      if (match !== undefined) selectThread(match.task.taskRef, match.thread.threadRef, channelRef, match.taskNumber)
+    }
+  }
+
   const timeline = useTimelineScroll(`${view?.items.length ?? 0}:${channelLastItem?.message.messageRef ?? ''}`)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
@@ -298,6 +313,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                 t={t}
                 occurredAt={item.message.occurredAt}
                 mentionNames={mentionNamesOf(item.mentions, mentionHandlesMap)}
+                onOpenRef={openRef}
                 grouped={index > 0}
                 {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
               >
