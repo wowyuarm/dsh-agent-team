@@ -136,6 +136,38 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     await expect(test.ctx.agentTeam.changeAttention({ requestId: requestId('again'), workspaceId: alpha, taskRef: sent.task.taskRef, action: 'unfollow' })).rejects.toThrow(/already unfollowed/)
   })
 
+  it('accepts a Task early and completes active Claims inside the same operation', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' }))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    expect(claimed.task.status).toBe('in_progress')
+
+    const afterClaimRead = (await ledger.readThread({ requestId: requestId('read1'), workspaceId: alpha, taskRef: started.task.taskRef,
+      actor: agentTeamHumanActor() })).value
+    const accepted = committed((await ledger.changeTask({ requestId: requestId('accept'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'accept', baseRevision: afterClaimRead.thread.revision, actor: agentTeamHumanActor() })).value)
+    expect(accepted.task).toMatchObject({ status: 'done', resolution: 'accepted' })
+    expect(accepted.claims).toHaveLength(1)
+    expect(accepted.claims[0]).toMatchObject({ claimRef: claimed.claim.claimRef, owner: member.memberId, state: 'done' })
+    expect(accepted.activity.kind).toBe('accept')
+    expect(accepted.activity.completedClaimRefs).toEqual([claimed.claim.claimRef])
+
+    // The completed Claim's owner wakes with an activity marker telling them
+    // the Human accepted over their open Claim.
+    const inbox = ledger.inbox(actor, { workspaceId: alpha })
+    expect(inbox.totalUnreadCount).toBeGreaterThan(0)
+
+    // Cold replay reproduces the same markers and validates the transition.
+    const cold = replayLedger(test)
+    expect(() => cold.validate()).not.toThrow()
+    const replayed = cold.inbox(actor, { workspaceId: alpha })
+    expect(replayed.items.map(item => item.thread.threadRef)).toEqual(inbox.items.map(item => item.thread.threadRef))
+  })
+
   it('resolves branded Task refs to navigation facts and omits unknown refs', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

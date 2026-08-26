@@ -13,7 +13,7 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
@@ -100,6 +100,12 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const draftKey: TeamDraftKey = `thread:${threadRef}`
   const { draft, recipients } = useSyncExternalStore(drafts.subscribe, () => drafts.getSnapshot(draftKey))
   const [claimsOpen, setClaimsOpen] = useState(false)
+  // Early acceptance: the Human may accept while Claims are still open; the
+  // confirm dialog lists exactly what will be completed with the Task.
+  const [confirmingAccept, setConfirmingAccept] = useState(false)
+  useEffect(() => {
+    if (confirmingAccept && projection?.task.resolution === 'accepted') setConfirmingAccept(false)
+  }, [confirmingAccept, projection?.task.resolution])
   const [replyRequestId, setReplyRequestId] = useState<AgentTeamRequestId>()
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
@@ -544,7 +550,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
             closed Thread lives only in the composer-slot closed notice. */}
         {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <div className={css.headerActions}>
-          {task.status === 'in_review' && task.resolution === 'open' && <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{t('acceptTask')}</Button>}
+          {(() => {
+            const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
+            const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
+            if (!(task.status === 'in_review' || earlyAccept) || task.resolution !== 'open') return null
+            return <Button size="sm" variant="primary" disabled={pending}
+              onClick={() => { if (earlyAccept) { setConfirmingAccept(true) } else { void mutateTask('accept') } }}>{t('acceptTask')}</Button>
+          })()}
           {task.resolution === 'open'
             ? <Button size="sm" variant="outline" disabled={pending} onClick={() => { void mutateTask('close') }}>{t('closeTask')}</Button>
             : <Button size="sm" variant="primary" disabled={pending} onClick={() => { void mutateTask('reopen') }}>{t('reopenTask')}</Button>}
@@ -554,6 +566,27 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         <h2>{t('runtimeRisk')}</h2>
         {risks.map(({ claim, status }) => <p className={threadCss.riskRow} key={claim.claimRef}><TeamPresenceDot status={status} t={t} /><span>{t('runtimeRiskDetail', { member: status.member.handle, diagnostic: status.diagnostic ?? t('statusError') })} · {claim.direction}</span></p>)}
       </section>}
+      {task !== undefined && thread !== undefined && (() => {
+        // Recomputed here so the confirm list never shows stale rows.
+        const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
+        return <Modal
+          open={confirmingAccept}
+          onClose={() => { if (!pending) setConfirmingAccept(false) }}
+          title={t('acceptEarlyTitle')}
+          closeLabel={t('cancel')}
+          footer={<>
+            <Button variant="outline" disabled={pending} onClick={() => { setConfirmingAccept(false) }}>{t('cancel')}</Button>
+            <Button variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{pending ? t('acceptingTask') : t('acceptTask')}</Button>
+          </>}
+        >
+          <p className={css.confirmBody}>{t('acceptEarlyBody', { count: activeClaims.length })}</p>
+          <ul className={css.confirmList}>
+            {activeClaims.map(claim => (
+              <li key={claim.claimRef}>{memberName(claim.owner)} · {claim.direction}</li>
+            ))}
+          </ul>
+        </Modal>
+      })()}
       {task !== undefined && thread !== undefined && <section className={threadCss.workSection} aria-label={t('claims')}>
         <DisclosureRow
           expandOnRowClick

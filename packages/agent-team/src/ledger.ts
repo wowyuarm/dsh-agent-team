@@ -678,12 +678,24 @@ export class AgentTeamLedger {
       if (request.baseRevision !== thread.revision) return this.resolved(this.staleRevision(task, thread, request.baseRevision))
       if (request.action === 'accept' && task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is already ${task.resolution}`)
       if (request.action === 'close' && task.resolution === 'closed') throw new Error(`Task '${task.taskRef}' is already closed`)
-      if (request.action === 'accept' && task.status !== 'in_review') throw new Error(`Task '${task.taskRef}' must be in_review before acceptance`)
+      // Acceptance normally waits for every Claim to finish (in_review);
+      // a Human may also accept early while work is in progress, which then
+      // completes the still-active Claims inside the same atomic operation.
+      if (request.action === 'accept' && task.status !== 'in_review' && task.status !== 'in_progress') {
+        throw new Error(`Task '${task.taskRef}' must be in_review or in_progress before acceptance`)
+      }
+      const priorActiveClaims = [...this.state.claims.values()].filter(claim => claim.taskRef === task.taskRef && claim.state === 'active')
+      if (request.action === 'accept' && task.status === 'in_progress' && priorActiveClaims.length === 0) {
+        throw new Error(`Task '${task.taskRef}' has no active Claims to complete for early acceptance`)
+      }
       if (request.action === 'reopen' && task.resolution === 'open') throw new Error(`Task '${task.taskRef}' is already open`)
       const sequence = this.nextSequence()
       const claims = [...this.state.claims.values()].filter(claim => claim.taskRef === task.taskRef).map(claim =>
-        request.action === 'close' && claim.state === 'active' ? Object.freeze({ ...claim, state: 'released' as const }) : claim)
+        request.action === 'close' && claim.state === 'active' ? Object.freeze({ ...claim, state: 'released' as const })
+          : request.action === 'accept' && claim.state === 'active' ? Object.freeze({ ...claim, state: 'done' as const })
+            : claim)
       const releasedClaims = claims.filter(claim => claim.state === 'released' && this.state.claims.get(claim.claimRef)?.state === 'active')
+      const completedClaims = claims.filter(claim => claim.state === 'done' && this.state.claims.get(claim.claimRef)?.state === 'active')
       const resolution = request.action === 'reopen' ? 'open' as const : request.action === 'accept' ? 'accepted' as const : 'closed' as const
       const status = resolution === 'accepted' ? 'done' as const : resolution === 'closed' ? 'closed' as const
         : this.deriveTaskStatus(task.taskRef, claims)
@@ -691,12 +703,13 @@ export class AgentTeamLedger {
       const nextThread: AgentTeamThread = Object.freeze({ ...thread, revision: sequence })
       const activity: AgentTeamTaskActivity = Object.freeze({ activityRef: this.ref('activity'), kind: request.action,
         taskRef: task.taskRef, threadRef: task.threadRef, actor: request.actor.memberId, sequence,
-        ...(releasedClaims.length === 0 ? {} : { releasedClaimRefs: Object.freeze(releasedClaims.map(claim => claim.claimRef)) }) })
+        ...(releasedClaims.length === 0 ? {} : { releasedClaimRefs: Object.freeze(releasedClaims.map(claim => claim.claimRef)) }),
+        ...(completedClaims.length === 0 ? {} : { completedClaimRefs: Object.freeze(completedClaims.map(claim => claim.claimRef)) }) })
       const inbox = request.action === 'close'
         ? this.closeThreadInbox(activity, thread.threadRef)
         : request.action === 'reopen'
           ? this.reopenThreadInbox(activity, thread.threadRef)
-          : this.inboxDelta()
+          : this.acceptThreadInbox(activity, thread.threadRef, completedClaims.map(claim => claim.owner))
       const operation: AgentTeamTaskChangedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/task-changed',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
@@ -939,6 +952,10 @@ export class AgentTeamLedger {
 
   getTask(taskRef: AgentTeamTaskRef): AgentTeamTask | undefined {
     return this.state.tasks.get(taskRef)
+  }
+
+  getClaim(claimRef: AgentTeamClaimRef): AgentTeamClaim | undefined {
+    return this.state.claims.get(claimRef)
   }
 
   /** Navigation facts for message-body Task refs; unknown refs are omitted. */
@@ -1356,11 +1373,18 @@ export class AgentTeamLedger {
       const expectedResolution = activity.kind === 'accept' ? 'accepted' : activity.kind === 'close' ? 'closed' : 'open'
       const expectedStatus = expectedResolution === 'accepted' ? 'done' : expectedResolution === 'closed' ? 'closed'
         : this.deriveTaskStatus(task.taskRef, operation.data.claims)
+      const expectedCompletedClaimRefs = operation.data.claims
+        .filter(claim => projection.claims.get(claim.claimRef)?.state === 'active' && claim.state === 'done')
+        .map(claim => claim.claimRef)
       if (task.resolution !== expectedResolution || task.status !== expectedStatus
         || (activity.kind !== 'close' && activity.releasedClaimRefs !== undefined)
+        || (activity.kind !== 'accept' && activity.completedClaimRefs !== undefined)
         || (activity.kind === 'close' && !this.sameList(activity.releasedClaimRefs ?? [], operation.data.claims
           .filter(claim => projection.claims.get(claim.claimRef)?.state === 'active' && claim.state === 'released')
-          .map(claim => claim.claimRef)))) throw new Error('invalid Task state transition')
+          .map(claim => claim.claimRef)))
+        || !this.sameList(activity.completedClaimRefs ?? [], expectedCompletedClaimRefs)) {
+        throw new Error('invalid Task state transition')
+      }
       const priorClaims = [...projection.claims.values()].filter(claim => claim.taskRef === task.taskRef).sort((left, right) => left.claimRef.localeCompare(right.claimRef))
       const operationClaims = [...operation.data.claims].sort((left, right) => left.claimRef.localeCompare(right.claimRef))
       if (priorClaims.length !== operationClaims.length || priorClaims.some((claim, index) => claim.claimRef !== operationClaims[index]?.claimRef)) throw new Error('invalid Task Claim set')
@@ -1369,7 +1393,9 @@ export class AgentTeamLedger {
         if (previousClaim === undefined || !this.sameClaimIdentity(previousClaim, claim)) throw new Error('invalid Task Claim identity')
         const legal = activity.kind === 'close'
           ? (previousClaim.state === 'active' ? claim.state === 'released' : claim.state === previousClaim.state)
-          : claim.state === previousClaim.state
+          : activity.kind === 'accept'
+            ? (previousClaim.state === 'active' ? claim.state === 'done' : claim.state === previousClaim.state)
+            : claim.state === previousClaim.state
         if (!legal) throw new Error('invalid Task Claim transition')
       }
       this.addRef(refs, activity.activityRef)
@@ -1377,7 +1403,7 @@ export class AgentTeamLedger {
         ? this.closeThreadInboxFrom(projection, activity, thread.threadRef)
         : activity.kind === 'reopen'
           ? this.reopenThreadInboxFrom(projection, activity, thread.threadRef)
-          : this.inboxDelta()
+          : this.acceptThreadInboxFrom(projection, activity, thread.threadRef, expectedCompletedClaimRefs)
       if (!isDeepStrictEqual(operation.data.inbox, expectedInbox)) throw new Error('invalid Task inbox projection')
       this.validateInboxDelta(operation.data.inbox, projection, refs, [], [], [activity])
       return
@@ -1808,6 +1834,25 @@ export class AgentTeamLedger {
       activityRef: activity.activityRef, sequence: activity.sequence }))
     return this.inboxDelta([], removed, [], [...projection.directMarkers.values()].filter(marker => marker.threadRef === threadRef),
       activityMarkers, [...projection.activityMarkers.values()].filter(marker => marker.threadRef === threadRef))
+  }
+
+  /**
+   * Early acceptance completes open Claims inside the accept operation; their
+   * owners learn about it through activity markers regardless of whether they
+   * still follow the Thread. Plain accepts (no completed Claims) stay silent.
+   */
+  private acceptThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef, completedOwners: readonly AgentTeamMemberId[]): AgentTeamInboxDelta {
+    if (completedOwners.length === 0) return this.inboxDelta()
+    const recipients = [...new Set(completedOwners)].filter(memberId => memberId !== activity.actor)
+    const markers = recipients.map(memberId => Object.freeze({ memberId, threadRef,
+      activityRef: activity.activityRef, sequence: activity.sequence }))
+    return this.inboxDelta([], [], [], [], markers)
+  }
+
+  private acceptThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef, completedClaimRefs: readonly AgentTeamClaimRef[]): AgentTeamInboxDelta {
+    if (completedClaimRefs.length === 0) return this.inboxDelta()
+    const owners = completedClaimRefs.map(claimRef => projection.claims.get(claimRef)?.owner).filter(owner => owner !== undefined)
+    return this.acceptThreadInbox(activity, threadRef, owners)
   }
 
   private reopenThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {

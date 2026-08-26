@@ -156,7 +156,11 @@ export function formatActivity(activity: AgentTeamActivity, options: {
   readonly claims: readonly AgentTeamClaim[]
 }): string {
   const actor = options.actorName(activity.actor)
-  if (activity.kind === 'accept') return options.t('activityAccepted', { actor })
+  if (activity.kind === 'accept') {
+    return activity.completedClaimRefs !== undefined && activity.completedClaimRefs.length > 0
+      ? options.t('activityAcceptedWithClaims', { actor, count: activity.completedClaimRefs.length })
+      : options.t('activityAccepted', { actor })
+  }
   if (activity.kind === 'close') return options.t('activityClosed', { actor })
   if (activity.kind === 'reopen') return options.t('activityReopened', { actor })
   const direction = 'claimRef' in activity

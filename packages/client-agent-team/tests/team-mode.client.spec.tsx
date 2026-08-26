@@ -35,7 +35,7 @@ interface SeededMessage {
   readonly sender?: 'human' | 'agent'
 }
 
-async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string }) {
+async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: 'in_progress' }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -80,7 +80,8 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
     message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: seed.sender === 'agent' ? 'member:builder' : 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
     mentions: [],
-    task: { taskRef: seedTaskRef, channelRef: 'channel:engineering', threadRef: seedThreadRef, status: 'todo', resolution: 'open' },
+    task: { taskRef: seedTaskRef, channelRef: 'channel:engineering', threadRef: seedThreadRef,
+      status: options?.seedTaskStatus ?? 'todo', resolution: 'open' },
     thread: { threadRef: seedThreadRef, taskRef: seedTaskRef, revision: 2 },
     taskNumber: 1,
     messageCount: 1,
@@ -715,6 +716,41 @@ describe('rendered Team mode composition', () => {
     expect(link.getAttribute('title')).toBe(citedRef)
     fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef: citedRef })))
+    await b.runtime.dispose()
+  })
+
+  it('confirms early acceptance and lists the Claims completed with it', async () => {
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskStatus: 'in_progress',
+      seededMessages: [{ body: '开工任务', occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    // The active Claim arrives with the agent activity refresh.
+    b.publishAgentReply()
+    fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+
+    // An in_progress Task with an open Claim offers acceptance behind a
+    // confirm dialog that lists exactly what will be completed.
+    const acceptButton = await b.view.findByRole('button', { name: '验收' })
+    fireEvent.click(acceptButton)
+    const dialog = b.view.getByRole('dialog', { name: '提前验收任务' })
+    expect(within(dialog).getByText(/将验收本 Task/)).toBeTruthy()
+    expect(within(dialog).getByText('@builder · Implement API')).toBeTruthy()
+
+    // Cancel closes without any remote call. Two controls share the label
+    // (the dialog X and the footer action); the text-bearing one is ours.
+    const cancelButton = within(dialog).getAllByRole('button', { name: '取消' }).find(button => button.textContent === '取消')
+    fireEvent.click(cancelButton!)
+    await waitFor(() => expect(b.view.queryByRole('dialog', { name: '提前验收任务' })).toBeNull())
+    expect(b.changeTask).not.toHaveBeenCalled()
+
+    // Confirm runs exactly one accept.
+    fireEvent.click(b.view.getByRole('button', { name: '验收' }))
+    fireEvent.click(within(b.view.getByRole('dialog', { name: '提前验收任务' })).getByRole('button', { name: '验收' }))
+    await waitFor(() => expect(b.changeTask).toHaveBeenCalledTimes(1))
+    expect(b.changeTask).toHaveBeenCalledWith(expect.objectContaining({ action: 'accept' }))
     await b.runtime.dispose()
   })
 

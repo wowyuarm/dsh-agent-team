@@ -259,6 +259,8 @@ export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
   readonly kind: 'accept' | 'close' | 'reopen'
   /** Claims atomically released by close; absent for other Task transitions. */
   readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
+  /** Active claims the Human acceptance completed alongside the Task; absent for plain accepts. */
+  readonly completedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
 }
 
 /** One automatic, public release summary caused by a membership lifecycle action. */

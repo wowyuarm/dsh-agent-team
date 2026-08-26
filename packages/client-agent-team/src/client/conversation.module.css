@@ -322,6 +322,17 @@
   outline-offset: 1px;
 }
 
+.confirmBody {
+  margin: 0 0 8px;
+}
+
+.confirmList {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
 .refLink {
   background: none;
   border: none;

@@ -460,7 +460,7 @@ export default class AgentTeam extends TypertRemoteService {
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) throw new Error(`member '${member.handle}' has no active session`)
     const notifications = this.requireLedger().notificationFacts(member.memberId, { workspaceId: member.workspaceId })
-    const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications)}`
+    const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
     const hint = createUserMessage({
       content: [{ type: 'text', text: body }],
       source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Recovery: continue your interrupted work.' },
@@ -982,7 +982,7 @@ export default class AgentTeam extends TypertRemoteService {
       message.source.kind === 'plugin' && message.source.plugin === '@wowyuarm/dsh-agent-team')
     if (existingHint !== undefined) agent.inbox.remove(existingHint.id)
     const hint = createUserMessage({
-      content: [{ type: 'text', text: this.notificationText(notifications) }],
+      content: [{ type: 'text', text: this.notificationText(notifications, member.memberId) }],
       source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' },
     })
     this.notifiedInbox.set(member.memberId, signature)
@@ -994,7 +994,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  private notificationText(notifications: ReturnType<AgentTeamLedger['notificationFacts']>): string {
+  private notificationText(notifications: ReturnType<AgentTeamLedger['notificationFacts']>, readerId?: AgentTeamMemberId): string {
     const maxCharacters = 32 * 1024
     const sections: string[] = ['Team Inbox has unread work.']
     let characterCount = sections[0]!.length
@@ -1023,7 +1023,7 @@ export default class AgentTeam extends TypertRemoteService {
             `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
           if (append(detail)) detailedFactCount += 1
         } else if (fact.kind === 'activity') {
-          const detail = `${this.activityNotification(fact.activity)}\nThread: ${item.thread.threadRef}`
+          const detail = `${this.activityNotification(fact.activity, readerId)}\nThread: ${item.thread.threadRef}`
           if (append(detail)) detailedFactCount += 1
         }
       }
@@ -1040,9 +1040,15 @@ export default class AgentTeam extends TypertRemoteService {
     return body.length <= limit ? body : `${body.slice(0, limit)}\n[Message body truncated; use team_thread read for the full Message.]`
   }
 
-  private activityNotification(activity: AgentTeamActivity): string {
+  private activityNotification(activity: AgentTeamActivity, readerId?: AgentTeamMemberId): string {
     const actor = activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID
       ? 'human' : this.requireLedger().getMember(activity.actor)?.handle ?? activity.actor
+    // Early acceptance completes the reader's own open Claim inside the accept
+    // operation: say so plainly, or the owner keeps working on a done Task.
+    if (activity.kind === 'accept' && activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID && readerId !== undefined
+      && activity.completedClaimRefs?.some(claimRef => this.requireLedger().getClaim(claimRef)?.owner === readerId)) {
+      return `Team Task update\n${actor} accepted Task ${activity.taskRef} and your open Claim was completed with it. No further work is needed.`
+    }
     if (activity.kind === 'claim' || activity.kind === 'done' || activity.kind === 'release') {
       return `Team Task update\n${actor} ${activity.kind} Claim ${activity.claimRef} on Task ${activity.taskRef}.`
     }
