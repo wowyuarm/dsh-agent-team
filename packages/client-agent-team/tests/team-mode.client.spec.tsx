@@ -32,6 +32,7 @@ function BaselineConversation() { return <div data-baseline-conversation>普通�
 interface SeededMessage {
   readonly body: string
   readonly occurredAt: string
+  readonly sender?: 'human' | 'agent'
 }
 
 async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string }) {
@@ -77,7 +78,7 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   const seedTaskRef = options?.seedTaskRef ?? 'task:1'
   const seedThreadRef = options?.seedThreadRef ?? 'thread:1'
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
-    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
+    message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: seed.sender === 'agent' ? 'member:builder' : 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
     mentions: [],
     task: { taskRef: seedTaskRef, channelRef: 'channel:engineering', threadRef: seedThreadRef, status: 'todo', resolution: 'open' },
     thread: { threadRef: seedThreadRef, taskRef: seedTaskRef, revision: 2 },
@@ -665,6 +666,24 @@ describe('rendered Team mode composition', () => {
     fireEvent.click(b.view.getByRole('button', { name: '返回频道' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
     await waitFor(() => expect(b.view.queryByText('agent reply')).toBeNull())
+    await b.runtime.dispose()
+  })
+
+  it('linkifies branded refs in agent plain-prose bodies that skip the mention path', async () => {
+    const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e31'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: taskRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e32',
+      seededMessages: [
+        { body: `ref 样本：本 Task 是 ${taskRef}，对照散文 channel:engineering 应保持纯文本。`, occurredAt: '2026-08-21T09:00:00.000Z', sender: 'agent' },
+      ],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    // The Agent body has no mentions, so it previously fell through to the
+    // Markdown renderer and dropped the ref link entirely.
+    const link = await b.view.findByRole('button', { name: taskRef })
+    fireEvent.click(link)
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
     await b.runtime.dispose()
   })
 

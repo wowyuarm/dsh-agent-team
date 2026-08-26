@@ -57,7 +57,7 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
                 ? <span key={index} className={css.mention}>{segment.text}</span>
                 : <Fragment key={index}>{renderRefs(segment.text, onOpenRef)}</Fragment>)}
             </div>
-          : human
+          : human || (onOpenRef !== undefined && isPlainTextBody(displayBody) && splitBrandedRefs(displayBody).some(segment => segment.ref !== undefined))
             ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef)}</div>
             : <div className={css.messageMarkdown}><MarkdownText text={displayBody} /></div>}
         {fallbackNames.length > 0 && (
