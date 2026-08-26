@@ -41,6 +41,11 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     ? splitMentionNames(displayBody, mentionNames)
     : undefined
   const fallbackNames = inline === undefined ? (mentionNames ?? []) : inline.unmatched
+  // Rich Markdown bodies cannot interleave inline links, so refs found there
+  // fall back to a chip row under the message — the mention fallback precedent.
+  const fallbackRefs = !human && inline === undefined && onOpenRef !== undefined && !isPlainTextBody(displayBody)
+    ? splitBrandedRefs(displayBody).filter(segment => segment.ref !== undefined).map(segment => segment.ref!)
+    : []
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
       <div className={css.messageIdentity} style={avatarStyle} aria-hidden="true">{senderName.replace('@', '').slice(0, 1).toUpperCase()}</div>
@@ -63,6 +68,11 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
         {fallbackNames.length > 0 && (
           <div className={css.mentionsRow}>
             {fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}
+          </div>
+        )}
+        {fallbackRefs.length > 0 && (
+          <div className={css.mentionsRow}>
+            {fallbackRefs.map(ref => <button key={ref} type="button" className={css.refLink} onClick={() => { onOpenRef!(ref) }}>{ref}</button>)}
           </div>
         )}
         {attachments !== undefined && attachments.length > 0 && <TeamAttachmentStrip

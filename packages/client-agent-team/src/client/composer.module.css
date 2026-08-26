@@ -165,6 +165,19 @@
   padding: 2px 4px 2px 8px;
 }
 
+.imageChip {
+  align-items: center;
+  display: flex;
+}
+
+.imageChipPreview {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  height: 40px;
+  object-fit: cover;
+  width: 56px;
+}
+
 .fileChipName {
   font-size: 11px;
   line-height: 16px;

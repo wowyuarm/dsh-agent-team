@@ -230,11 +230,16 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
       {recipients.size > 0 && <p className={css.notifyRow} data-team-notify>{t('composerNotify', { ids: [...recipients].sort().map(memberId => `@${members.find(candidate => candidate.member.memberId === memberId)?.member.handle ?? memberId}`).join(', ') })}</p>}
       {onFilesChange !== undefined && pendingFiles !== undefined && pendingFiles.length > 0 && (
         <ul className={css.fileChips} aria-label={t('attachFiles')}>
-          {pendingFiles.map((file, index) => <li key={`${file.name}-${index}`} className={css.fileChip}>
-            <span className={css.fileChipName} title={file.name}>{file.name}</span>
-            <button type="button" className={css.fileChipRemove} aria-label={t('removeFile', { name: file.name })} disabled={pending}
-              onClick={() => { onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index)) }}>×</button>
-          </li>)}
+          {pendingFiles.map((file, index) => {
+            const image = file.type.startsWith('image/')
+            const previewUrl = image ? URL.createObjectURL(file) : undefined
+            return <li key={`${file.name}-${index}`} className={`${css.fileChip} ${image ? css.imageChip! : ''}`}>
+              {previewUrl !== undefined && <img src={previewUrl} alt="" className={css.imageChipPreview} onLoad={() => URL.revokeObjectURL(previewUrl)} />}
+              <span className={css.fileChipName} title={file.name}>{file.name}</span>
+              <button type="button" className={css.fileChipRemove} aria-label={t('removeFile', { name: file.name })} disabled={pending}
+                onClick={() => { onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index)) }}>×</button>
+            </li>
+          })}
         </ul>
       )}
       <div className={css.toolbar}>

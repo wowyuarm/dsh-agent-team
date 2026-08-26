@@ -439,6 +439,10 @@ describe('rendered Team mode composition', () => {
     const pdf = new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })
     await waitFor(() => { fireEvent.change(input, { target: { files: [png, pdf] } }) })
     await waitFor(() => { expect(chipCount()).toBe(2) })
+    // Image drafts render an inline preview card; documents stay text cards.
+    const chips = [...composer.querySelectorAll('ul[aria-label="添加附件"] > li')]
+    expect(chips.find(chip => chip.textContent?.includes('shot.png'))?.querySelector('img')).toBeTruthy()
+    expect(chips.find(chip => chip.textContent?.includes('spec.pdf'))?.querySelector('img')).toBeNull()
     fireEvent.click(composer.querySelector('[class*="fileChipRemove"]') as HTMLButtonElement)
     await waitFor(() => { expect(chipCount()).toBe(1) })
     expect(composer.querySelector('[class*="fileChipName"]')?.textContent).toBe('spec.pdf')
@@ -683,6 +687,25 @@ describe('rendered Team mode composition', () => {
     // Markdown renderer and dropped the ref link entirely.
     const link = await b.view.findByRole('button', { name: taskRef })
     fireEvent.click(link)
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
+    await b.runtime.dispose()
+  })
+
+  it('falls back to a ref chip row when a rich Agent body cannot inline links', async () => {
+    const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e41'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: taskRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e42',
+      seededMessages: [
+        { body: `看 **这个**：${taskRef}\n\n- 第一条`, occurredAt: '2026-08-21T09:00:00.000Z', sender: 'agent' },
+      ],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    // The Markdown body keeps its rich rendering; the ref drops to the chip row.
+    await b.view.findByText('第一条')
+    expect(b.view.container.querySelector('strong')).toBeTruthy()
+    const chipLink = await b.view.findByRole('button', { name: taskRef })
+    fireEvent.click(chipLink)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
     await b.runtime.dispose()
   })

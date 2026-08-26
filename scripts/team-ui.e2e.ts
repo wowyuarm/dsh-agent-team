@@ -379,11 +379,16 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     requestId: 'm2-06-reviewer-reply' as never,
     workspaceId: workspace.id,
     taskRef: task.taskRef,
-    body: 'reviewer 已读取邀请并回复 Human',
+    body: `reviewer 已读取邀请并回复 Human，关联 ${task.taskRef}`,
     baseRevision: reviewerRead.thread.revision,
     recipients: [scaffold.ctx.agentTeam.status().humanMemberId],
   })
   expect(reviewerReply.kind).toBe('committed')
+
+  // Agent plain-prose bodies linkify branded refs too (regression: the agent
+  // branch previously bypassed the ref renderer entirely).
+  const agentRefLink = page.locator('[data-team-thread] article').filter({ hasText: 'reviewer 已读取邀请' }).getByRole('button', { name: task.taskRef })
+  await agentRefLink.waitFor()
 
   // Human reply with attachment inside the Task Thread: the reply composer
   // offers the same "+" upload chain as the Channel composer.
@@ -405,7 +410,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.reload()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByRole('button', { name: /Task #1/ }).click()
-  await page.getByText('reviewer 已读取邀请并回复 Human', { exact: true }).waitFor()
+  await page.getByText('reviewer 已读取邀请并回复 Human，关联', { exact: false }).waitFor()
 
   const replayedThread = scaffold.ctx.agentTeam.threadHistory({ workspaceId: workspace.id, taskRef: task.taskRef, limit: 100 })
   expect(JSON.stringify(replayedThread)).toContain('请 reviewer 加入这个已有 Thread 并回复 Human @reviewer')
