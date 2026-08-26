@@ -742,7 +742,9 @@ describe('rendered Team mode composition', () => {
     // The Markdown body keeps its rich rendering; the ref drops to the chip row.
     await b.view.findByText('第一条')
     expect(b.view.container.querySelector('strong')).toBeTruthy()
-    const chipLink = await b.view.findByRole('button', { name: taskRef })
+    // The chip relabels to the human-facing number once the Host lookup lands.
+    const chipLink = await b.view.findByRole('button', { name: 'task#1' })
+    expect(chipLink.getAttribute('title')).toBe(taskRef)
     fireEvent.click(chipLink)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
     await b.runtime.dispose()

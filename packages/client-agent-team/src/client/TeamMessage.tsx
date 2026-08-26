@@ -82,7 +82,11 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
         {(fallbackNames.length > 0 || fallbackRefs.length > 0) && (
           <div className={css.mentionsRow}>
             {fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}
-            {fallbackRefs.map(ref => <button key={ref} type="button" className={css.refLink} onClick={() => { onOpenRef!(ref) }}>{ref}</button>)}
+            {fallbackRefs.map(ref => {
+              const resolved = cachedResolvedTaskRef(ref as AgentTeamTaskRef)
+              const label = resolved !== undefined && ref.startsWith('task:') ? `task#${resolved.taskNumber}` : ref
+              return <button key={ref} type="button" className={css.refLink} title={ref} onClick={() => { onOpenRef!(ref) }}>{label}</button>
+            })}
           </div>
         )}
         {attachments !== undefined && attachments.length > 0 && <TeamAttachmentStrip

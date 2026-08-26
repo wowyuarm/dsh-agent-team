@@ -20,7 +20,7 @@ let version = 0
 
 const emit = (): void => {
   version += 1
-  for (const listener of [...listeners]) listener()
+  for (const listener of listeners) listener()
 }
 
 const subscribe = (listener: Listener): (() => void) => {
