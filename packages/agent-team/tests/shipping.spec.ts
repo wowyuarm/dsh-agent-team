@@ -45,6 +45,7 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain("name: '@deepseek-ai/dsh-agent-tool-presentation'")
     expect(preset).toContain('mode: native')
     expect(preset).toContain("name: '@wowyuarm/dsh-agent-team/member-context'")
+    expect(preset).toContain("name: '@deepseek-ai/dsh-command-compact'")
     for (const capability of [
       '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
       '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-skill-filesystem',
@@ -56,6 +57,7 @@ describe('Agent Team shipping contract', () => {
       dsh: { client: { platform: string; inject: string[] } }
     }
     expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.1-rc.2 <0.2.0')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-command-compact']).toBe('>=0.1.1-rc.2 <0.2.0')
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')

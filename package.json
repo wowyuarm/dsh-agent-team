@@ -41,6 +41,7 @@
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-settings-general",
         "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-input-trigger",
         "@deepseek-ai/dsh-client-ui-workspace",
         "@deepseek-ai/dsh-client-locale"
       ]
@@ -120,7 +121,10 @@
     "@deepseek-ai/dsh-brand": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-locale": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-runtime": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-command-compact": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-compaction": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-input-trigger": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-ui-layout": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-client-ui-settings-general": ">=0.1.1-rc.2 <0.2.0",
@@ -144,6 +148,7 @@
     "@deepseek-ai/dsh-tool-skill": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-tool-todo": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-tool-web": ">=0.1.1-rc.2 <0.2.0",
+    "@deepseek-ai/dsh-token-meter": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-tools": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-typert-protocol": ">=0.1.1-rc.2 <0.2.0",
     "@deepseek-ai/dsh-workspace": ">=0.1.1-rc.2 <0.2.0",

@@ -81,6 +81,11 @@
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
 
+    # The Team composer exposes this command as its only slash action; the
+    # shipped command owns lifecycle, result classification and persistence.
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
     - id: tool-result-pruner
       name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
       config:

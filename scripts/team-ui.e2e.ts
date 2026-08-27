@@ -255,6 +255,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-edit-modal.png'), fullPage: true })
   await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
 
+  const memberWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
+  const memberStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
+  const builderMember = memberStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
+  const reviewerMember = memberStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'reviewer')!
+  const builderAgent = scaffold.ctx.agents.get(builderMember.member.sessionId)!
+
   // Clicking the Agent card keeps Team mode mounted and swaps only the right
   // pane: the conversation shadow stands down so the shipped root renders the
   // Member Session between the Team sidebars. A Member session has no human
@@ -263,7 +269,43 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await builderRow.getByRole('button', { name: '打开 builder 的会话' }).click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.agentTeamMode ?? null)).toBe('team')
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
-  await expect.poll(() => page.locator('textarea:enabled').count()).toBeGreaterThanOrEqual(1)
+  const memberComposer = page.locator('[data-team-member-composer="true"]')
+  await expect.poll(() => memberComposer.count()).toBe(1)
+  const memberInput = memberComposer.getByRole('textbox')
+  await expect.poll(() => memberInput.isEnabled()).toBe(true)
+  // This restricted Member composer intentionally has no attachment seam or
+  // fake "+" control; Channel/Thread attachment flows stay separate.
+  await expect.poll(() => memberComposer.getByRole('button', { name: '添加附件' }).count()).toBe(0)
+  const compactEventsBefore = builderAgent.session.events.filter(event => event.type === 'command/run' || event.type === 'command/done').length
+  await memberInput.fill('/co')
+  await page.getByRole('option', { name: '/compact' }).waitFor()
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-compact-menu.png'), fullPage: true })
+  await page.getByRole('option', { name: '/compact' }).click()
+  await memberInput.press('Enter')
+  await expect.poll(() => builderAgent.session.events.filter(event => event.type === 'command/run' || event.type === 'command/done').length).toBe(compactEventsBefore + 2)
+  const compactLifecycle = builderAgent.session.events.filter(event => event.type === 'command/run' || event.type === 'command/done').slice(-2)
+  expect(compactLifecycle[0]).toMatchObject({ type: 'command/run', data: { name: 'compact', source: { kind: 'user' } } })
+  expect(compactLifecycle[1]).toMatchObject({ type: 'command/done', data: { commandId: (compactLifecycle[0] as { data: { commandId: string } }).data.commandId } })
+  // The Host lifecycle acknowledgment and Client InputMachine settlement arrive
+  // independently. Do not begin the next DOM edit until the compact claim has
+  // consumed its own draft, or its late success could clear that next draft.
+  await expect.poll(() => memberInput.inputValue()).toBe('')
+
+  await memberInput.fill('@rev')
+  await page.getByRole('option', { name: '@reviewer' }).waitFor()
+  await page.getByRole('option', { name: '@reviewer' }).click()
+  await expect.poll(() => memberInput.inputValue()).toBe('@reviewer ')
+  await memberInput.press('Enter')
+  const isStructuredReviewerPrompt = (event: (typeof builderAgent.session.events)[number]): boolean => event.type === 'user/message'
+    && event.data.source.kind === 'user'
+    && event.data.content.some(block => block.type === 'text' && block.text === `<team-member ref="${reviewerMember.member.memberId}">@reviewer</team-member>`)
+  await expect.poll(() => builderAgent.session.events.some(isStructuredReviewerPrompt)).toBe(true)
+  await builderAgent.whenIdle()
+  const mentionPrompt = builderAgent.session.events.findLast(isStructuredReviewerPrompt)
+  expect(mentionPrompt).toBeDefined()
+  await memberInput.fill('newline')
+  await memberInput.press('Shift+Enter')
+  expect(await memberInput.inputValue()).toBe('newline\n')
   await expect.poll(() => page.getByText('team-member', { exact: true }).count()).toBe(1)
   await expect.poll(() => page.locator('[class*="agentRow"]').count()).toBeGreaterThan(0)
   // The single positioning highlight sits on the selected Agent card; the
@@ -274,6 +316,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm.png'), fullPage: true })
   // Opening the row menu on the selected card must show ONE seamless full-row
   // fill: the leaf's resident fill is suppressed while the row paints its own.
+  await builderRow.hover()
   await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
   await page.getByRole('menuitem', { name: '编辑 Agent' }).waitFor()
   await expect.poll(() => page.evaluate(() => {
@@ -628,8 +671,16 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // Leaving Team closes any embedded Member Session view and restores the
   // session the Human came from, so the ordinary shell shows an ordinary
   // conversation composer rather than a stranded Member Session.
-  await page.locator('textarea:enabled').first().waitFor({ timeout: 20_000 })
+  const restoredComposer = page.locator('textarea:enabled').first()
+  await restoredComposer.waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
+  await expect.poll(() => page.locator('[data-team-member-composer="true"]').count()).toBe(0)
+  // Team's globally registered sources return no ordinary candidates; shipped
+  // command/skill discovery takes the restored ordinary Session back over.
+  await restoredComposer.fill('/')
+  await expect.poll(() => page.getByRole('option').count()).toBeGreaterThan(0)
+  expect(await page.getByRole('option', { name: '@reviewer' }).count()).toBe(0)
+  await restoredComposer.fill('')
   await page.screenshot({ path: join(UI01_SHOTS, 'restored-conversations.png'), fullPage: true })
 
   const enterTeamKeyboard = page.getByRole('button', { name: '团队' })

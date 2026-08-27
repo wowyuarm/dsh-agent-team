@@ -49,6 +49,70 @@
   color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary));
 }
 
+/* Member Session is a restricted capability, not a different visual system.
+   These modifiers deliberately leave Channel/Thread's shared composer alone. */
+.memberSessionRoot {
+  padding: 0 var(--dsh-composer-side-clearance) 8px;
+}
+
+.memberSessionCard {
+  /* Match the compact Channel/Thread vertical rhythm, rather than hero height. */
+  gap: 6px;
+  padding-top: 10px;
+  font-family: var(--dsw-font-family);
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.memberSessionInputArea textarea {
+  min-height: 28px;
+  padding: 4px 12px 0 16px;
+  color: var(--dsw-alias-label-primary);
+  caret-color: var(--dsw-alias-state-business-primary);
+  font-family: var(--dsw-font-family);
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.memberSessionStatus {
+  width: 100%;
+  max-width: var(--dsh-composer-card-max-width);
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.memberSessionToolbar {
+  min-width: 0;
+  padding: 2px 8px 6px;
+}
+
+.memberSessionPrimary {
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-info-fill);
+  transform: translateY(-2px);
+}
+
+.memberSessionPrimary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.memberSessionPrimary:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.memberSessionPrimary:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .inputArea textarea:disabled {
   cursor: not-allowed;
   opacity: 0.55;

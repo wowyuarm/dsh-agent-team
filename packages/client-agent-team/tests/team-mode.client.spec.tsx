@@ -222,6 +222,11 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
   }
   runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
+  runtime.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
+  runtime.provide('inputTriggers', {
+    registerSource: () => () => {},
+    sessionOf: () => ({ menu: { getSnapshot: () => ({ open: false }) }, dismiss() {}, toggleSource() {}, arbitrate: () => 'pass' }),
+  } as never)
   runtime.provide('connection', { api: { llm: { models: loadModels } } })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {

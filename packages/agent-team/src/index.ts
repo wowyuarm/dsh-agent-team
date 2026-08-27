@@ -24,6 +24,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
+import { acceptedTaskCompactionMembers, AutoCompactionCoordinator } from './auto-compaction.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_ATTEMPTS, type RecoverableErrorKind } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
@@ -160,6 +161,9 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
   private readonly diagnostics = new Map<AgentTeamMemberId, string>()
   private readonly runtimeErrors = new Map<SessionId, string>()
+  /** Last non-busy automatic-compaction failure; entered transactions retain additional Session history. */
+  private readonly autoCompactionErrors = new Map<SessionId, string>()
+  private readonly autoCompaction: AutoCompactionCoordinator
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
   private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
@@ -181,6 +185,18 @@ export default class AgentTeam extends TypertRemoteService {
 
   constructor(ctx: Context) {
     super(ctx, 'agentTeam')
+    this.autoCompaction = new AutoCompactionCoordinator({
+      agentForMember: memberId => this.handles.get(memberId)?.agent,
+      failed: (memberId, sessionId, diagnostic) => {
+        this.autoCompactionErrors.set(sessionId, diagnostic)
+        this.emitAutoCompactionChanged(memberId)
+      },
+      cleared: (memberId, sessionId) => {
+        if (!this.autoCompactionErrors.delete(sessionId)) return
+        this.emitAutoCompactionChanged(memberId)
+      },
+      log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
+    })
   }
 
   /** Open the durable ledger and restore every enabled Member independently. */
@@ -214,6 +230,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.effect(() => async () => {
       this.accepting = false
       this.recovery.dispose()
+      await this.autoCompaction.dispose()
       if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
       this.attachmentGcTimer = undefined
       this.emitChanged()
@@ -866,6 +883,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.diagnostics.delete(member.memberId)
       this.nameMemberSession(member, created.agent)
       this.notifyMember(created.agent)
+      this.autoCompaction.activated(member.memberId)
     } catch (error) {
       await created?.dispose()
       this.modelSelections.delete(member.memberId)
@@ -930,7 +948,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (diagnostic !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic })
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable' })
-    const runtimeError = this.runtimeErrors.get(handle.agent.id)
+    const runtimeError = this.runtimeErrors.get(handle.agent.id) ?? this.autoCompactionErrors.get(handle.agent.id)
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
     return Object.freeze({ member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available' })
   }
@@ -963,6 +981,13 @@ export default class AgentTeam extends TypertRemoteService {
       const handle = this.handles.get(memberId)
       if (handle !== undefined) this.notifyMember(handle.agent)
     }
+    const compactionMembers = acceptedTaskCompactionMembers(operation)
+    if (compactionMembers !== undefined) this.autoCompaction.schedule(compactionMembers)
+  }
+
+  private emitAutoCompactionChanged(memberId: AgentTeamMemberId): void {
+    const workspaceId = this.ledger?.getMember(memberId)?.workspaceId
+    this.emitChanged(workspaceId === undefined ? undefined : [{ kind: 'workspace', workspaceId }])
   }
 
   /** Wake from durable unread state with bounded facts for direct and state-changing work. */

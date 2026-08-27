@@ -1,5 +1,6 @@
 import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
+import type { InputTriggerServiceContract } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamClientMemberStatus,
@@ -35,6 +36,8 @@ import { TeamFooterAction } from './TeamFooterAction.tsx'
 import { TeamSettings } from './TeamSettings.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
+import { TeamMemberSessionComposer } from './TeamMemberSessionComposer.tsx'
+import { admitTeamCompact, createTeamMemberSessionSources } from './member-session-input.ts'
 import { en, zh, type TeamKey } from './locales.ts'
 
 export type { TeamMode, TeamNavigationActions, TeamNavigationSnapshot } from './navigation.ts'
@@ -44,7 +47,7 @@ export { TeamNavigation } from './navigation.ts'
 const NS = 'team'
 
 export const inject = [
-  'slots', 'workspaces', 'locale', 'remote', 'sessions', 'connection',
+  'slots', 'workspaces', 'locale', 'remote', 'sessions', 'connection', 'conversation', 'inputTriggers',
 ]
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -149,6 +152,49 @@ function registerModeShadow<T extends object>(
   })
 }
 
+function registerMemberSessionComposer(ctx: ClientContext, navigation: TeamNavigation): void {
+  ctx.slots.inject('conversation.composer.bar', () => {
+    let dispose: (() => void) | undefined
+    let registeredSessionId: AgentTeamClientMemberStatus['member']['sessionId'] | undefined
+    const reconcile = (): void => {
+      const memberSessionId = navigation.getSnapshot().memberSessionId
+      const active = navigation.getSnapshot().mode === 'team' && memberSessionId !== undefined
+      if (dispose !== undefined && (!active || registeredSessionId !== memberSessionId)) {
+        dispose()
+        dispose = undefined
+        registeredSessionId = undefined
+      }
+      if (active && dispose === undefined) {
+        registeredSessionId = memberSessionId
+        dispose = ctx.slots.register({
+          name: 'conversation.composer.bar',
+          priority: -100,
+          // The registration may remain live during a session transition, but
+          // it elects only when the shell's current Session is the embedded
+          // Member. This avoids taking an ordinary Session if selection races.
+          select: () => (ctx.sessions as unknown as ISessions).list.getSnapshot().current === memberSessionId ? {} : null,
+          inject: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => {
+            const actx = (ctx.sessions as unknown as ISessions).scope(sessionId)
+            if (actx === undefined) throw new Error(`agent-team: Member session ${String(sessionId)} has no client scope`)
+            const sessions = ctx.sessions as unknown as ISessions
+            return {
+              controller: (ctx.get('inputTriggers') as InputTriggerServiceContract).sessionOf(actx),
+              stop: () => { void sessions.sessionOf(actx)?.cancel() },
+              submitInput: (mode: 'queue' | 'steer') => ctx.conversation.input.for(actx).submit(mode),
+            }
+          },
+        } as never, TeamMemberSessionComposer as never)
+      }
+    }
+    const offNavigation = navigation.subscribe(reconcile)
+    reconcile()
+    return () => {
+      offNavigation()
+      dispose?.()
+    }
+  })
+}
+
 function applyUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agent-team: dictionaries')
 
@@ -164,6 +210,29 @@ function applyUi(ctx: ClientContext): void {
   }, 'agent-team: navigation service')
 
   const changes = new TeamChangeStream((request, signal) => ctx.remote.agentTeam.changes(request, signal))
+
+  const triggerSources = createTeamMemberSessionSources({
+    isEmbeddedMemberSession: sessionId => {
+      const snapshot = navigation.getSnapshot()
+      return snapshot.mode === 'team' && snapshot.memberSessionId === sessionId && snapshot.workspaceId !== undefined
+    },
+    members: async () => {
+      const workspaceId = navigation.getSnapshot().workspaceId
+      if (workspaceId === undefined) return []
+      const result = await ctx.remote.agentTeam.members({ workspaceId })
+      return result.ok ? result.value : []
+    },
+    executeCompact: async sessionId => {
+      const actx = (ctx.sessions as unknown as ISessions).scope(sessionId)
+      const session = actx === undefined ? undefined : (ctx.sessions as unknown as ISessions).sessionOf(actx)
+      return session === undefined ? { kind: 'error', text: 'current Member Session is unavailable' } : admitTeamCompact(session)
+    },
+  })
+  const inputTriggers = ctx.get('inputTriggers') as InputTriggerServiceContract
+  ctx.effect(() => {
+    const disposers = triggerSources.map(source => inputTriggers.registerSource(source))
+    return () => { for (const dispose of disposers) dispose() }
+  }, 'agent-team: Member session trigger sources')
 
   const loadMemberGroups = async () => {
     const workspaces = ctx.workspaces.list.getSnapshot().items
@@ -203,6 +272,7 @@ function applyUi(ctx: ClientContext): void {
 
   registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
   registerModeShadow(ctx, navigation, changes, drafts, 'conversation', TeamConversation as never)
+  registerMemberSessionComposer(ctx, navigation)
   registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 
