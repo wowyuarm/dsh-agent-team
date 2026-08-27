@@ -169,10 +169,17 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     const box = await locator.boundingBox()
     if (box === null) throw new Error('drop target vanished')
     const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
-    await page.getByRole('button', { name: '# engineering' }).dispatchEvent('dragstart', { dataTransfer })
+    const draggingRow = page.getByRole('button', { name: '# engineering' })
+    await draggingRow.dispatchEvent('dragstart', { dataTransfer })
     await locator.dispatchEvent('dragover', { dataTransfer, clientY: box.y + box.height * 0.75 })
+    // The insertion marker is part of the contract: the lower half of the
+    // target row must paint the drop-after line before anything commits.
+    const deliveryWrapper = locator.locator('xpath=ancestor::div[1]')
+    await expect.poll(async () =>
+      await deliveryWrapper.evaluate(element => element.className.includes('sidebarRowDropAfter'))).toBe(true)
+    await page.screenshot({ path: join(UI02_SHOTS, 'channel-drop-marker.png'), fullPage: true })
     await locator.dispatchEvent('drop', { dataTransfer, clientY: box.y + box.height * 0.75 })
-    await page.getByRole('button', { name: '# engineering' }).dispatchEvent('dragend', { dataTransfer })
+    await draggingRow.dispatchEvent('dragend', { dataTransfer })
   }
   await dropBelowTopHalfOf(deliveryRow)
   await expect.poll(channelOrder).toEqual(['delivery', 'engineering'])
@@ -278,7 +285,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm-narrow.png'), fullPage: true })
-  await page.setViewportSize({ width: 1440, height: 960 })
   await page.setViewportSize({ width: 1440, height: 960 })
   // Explicit Team navigation closes the embedded Member view again.
   await page.getByRole('button', { name: '# delivery' }).click()

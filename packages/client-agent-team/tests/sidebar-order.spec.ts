@@ -45,14 +45,16 @@ describe('moveSidebarItem persistence semantics', () => {
     expect(after).toEqual(refs)
   })
 
-  it('isolates workspaces and list kinds; corrupted storage degrades to default', () => {
+  it('isolates workspaces and list kinds; corrupted storage falls back to default order', () => {
     moveSidebarItem('w1' as never, 'channels', refs, 'c', 'a', 'before')
     moveSidebarItem('w2' as never, 'agents', ['x', 'y'], 'y', 'x', 'before')
     expect(renderHook(() => useSidebarOrder<Ref>('w1' as never, 'channels', refs)).result.current).toEqual(['c', 'a', 'b'])
     expect(renderHook(() => useSidebarOrder<Ref>('w1' as never, 'agents', refs)).result.current).toEqual(refs)
+    // A payload written behind this module's back replaces everything it can
+    // no longer parse: the exact corruption semantics are "no preference".
     localStorage.setItem('dsh.agent-team.sidebar-order', '{oops')
-    // In-memory copy still serves the last good orders.
-    expect(renderHook(() => useSidebarOrder<Ref>('w2' as never, 'agents', ['x', 'y'] as never[])).result.current).toBeTruthy()
+    const corrupted = renderHook(() => useSidebarOrder<'x' | 'y'>('w2' as never, 'agents', ['x', 'y'] as ('x' | 'y')[])).result.current
+    expect(corrupted).toEqual(['x', 'y'])
   })
 
   it('presence-style data changes keep the personal relative order stable', () => {

@@ -1,10 +1,10 @@
 /**
- * Native whole-row drag for the Team sidebar lists, reusing the interaction
- * model proven by the Harness workspace list (document-level move semantics,
- * per-row before/after hit-testing, one commit per gesture) on Team's own row
- * wrappers. Drop targets are scoped to the owning panel instance through its
- * own state, so a Channel can never land inside the Agents list or vice
- * versa; a release outside any row simply cancels without committing.
+ * Native whole-row drag for the Team sidebar lists. Unlike the Harness
+ * workspace list there is no document-level acceptance here: hovering another
+ * row shows the before/after insertion marker and releasing on a row commits
+ * exactly once per gesture, while a release outside any row — including over
+ * the other sidebar list, whose panel never responds — just cancels without
+ * committing.
  */
 import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'

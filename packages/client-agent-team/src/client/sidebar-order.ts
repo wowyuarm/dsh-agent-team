@@ -6,8 +6,8 @@
  * One deep module owns the whole concern: storage, reconcile against the
  * current Remote order (drop removed refs, keep the user's relative order,
  * append newcomers in default order), the single `moveSidebarItem` mutation
- * shared by the drag and the row-menu paths, and a small subscription hook
- * with snapshot-stable results for `useSyncExternalStore`.
+ * behind whole-row drag, and a small subscription hook with snapshot-stable
+ * results for `useSyncExternalStore`.
  */
 import { useCallback, useSyncExternalStore } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -15,7 +15,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 /** Which sidebar list an order belongs to; the two ledgers are independent. */
 export type TeamSidebarListKind = 'channels' | 'agents'
 
-/** Insert side of a drop or of one menu step relative to the target row. */
+/** Insert side of a drop relative to the row under the pointer. */
 export type SidebarDropMarker = 'before' | 'after'
 
 const STORAGE_KEY = 'dsh.agent-team.sidebar-order'
@@ -169,8 +169,7 @@ export function useSidebarOrder<R extends string>(workspaceId: WorkspaceId | und
  * inside the list's current effective order. Returns the new order, or
  * `undefined` when the request cannot change anything (unknown refs, dropping
  * a row onto itself, or an adjacent marker that would put it right back).
- * Caller decides what an announcement says; persistence and notification of
- * subscribers happen here.
+ * Persistence and subscriber notification happen here.
  */
 export function moveSidebarItem<R extends string>(
   workspaceId: WorkspaceId | undefined,
