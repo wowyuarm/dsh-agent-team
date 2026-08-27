@@ -17,78 +17,76 @@ export function classifyRecoverableError(message: string): RecoverableErrorKind 
 }
 
 export interface RecoveryCoordinatorOptions {
-  /** Performs the injection; throwing means the Member is gone and tracking stops. */
-  readonly inject: (memberId: AgentTeamMemberId, attempt: number, kind: RecoverableErrorKind) => void
-  /** Called once when an episode exhausts its attempts and tracking stands down. */
-  readonly onStandDown?: (memberId: AgentTeamMemberId, attempts: number) => void
-  /** Delay between an error and its automatic recovery injection. */
+  /** Performs a delayed recovery wakeup; throwing means the Member is gone and tracking stops. */
+  readonly wake: (memberId: AgentTeamMemberId) => void
+  /** Called once when an episode reaches its failure limit and tracking stands down. */
+  readonly onStandDown?: (memberId: AgentTeamMemberId, consecutiveFailures: number) => void
+  /** Delay between a recoverable error and its automatic recovery wakeup. */
   readonly delayMs?: number
-  /** Automatic attempts per episode before standing down for the operator. */
-  readonly maxAttempts?: number
+  /** Consecutive recoverable errors allowed before automatic recovery stands down. */
+  readonly maxConsecutiveErrors?: number
 }
 
 interface EpisodeState {
-  kind: RecoverableErrorKind
-  lastError: string
-  attempts: number
-  timer?: ReturnType<typeof setTimeout> | undefined
+  consecutiveFailures: number
+  timers: Set<ReturnType<typeof setTimeout>>
   stoodDown?: boolean | undefined
 }
 
 export const RECOVERY_DELAY_MS = 120_000
-export const RECOVERY_MAX_ATTEMPTS = 3
+export const RECOVERY_MAX_CONSECUTIVE_ERRORS = 3
 
 /**
- * Per-member automatic recovery episodes. One episode covers a run of
- * identical errors; a changed error string starts a fresh one, and any clean
- * turn end clears the slate. After `maxAttempts` injections of the same error
- * the coordinator stands down and leaves the Member in error for the operator.
+ * Per-member automatic recovery episodes. An episode is every recoverable
+ * `agent/error` occurrence until a clean turn end, regardless of error text
+ * or family. Each of the first two occurrences schedules its own wakeup.
  */
 export class RecoveryCoordinator {
   private readonly episodes = new Map<AgentTeamMemberId, EpisodeState>()
-  private readonly inject: RecoveryCoordinatorOptions['inject']
+  private readonly wake: RecoveryCoordinatorOptions['wake']
   private readonly onStandDown: RecoveryCoordinatorOptions['onStandDown']
   private readonly delayMs: number
-  private readonly maxAttempts: number
+  private readonly maxConsecutiveErrors: number
 
   constructor(options: RecoveryCoordinatorOptions) {
-    this.inject = options.inject
+    this.wake = options.wake
     this.onStandDown = options.onStandDown
     this.delayMs = options.delayMs ?? RECOVERY_DELAY_MS
-    this.maxAttempts = options.maxAttempts ?? RECOVERY_MAX_ATTEMPTS
+    this.maxConsecutiveErrors = options.maxConsecutiveErrors ?? RECOVERY_MAX_CONSECUTIVE_ERRORS
   }
 
-  /** Observe one error occurrence for a Member. */
+  /** Observe one `agent/error` occurrence for a Member. */
   onError(memberId: AgentTeamMemberId, errorMessage: string): void {
-    const kind = classifyRecoverableError(errorMessage)
-    if (kind === undefined) {
-      // A non-retryable failure cancels anything pending: retrying cannot help.
+    if (classifyRecoverableError(errorMessage) === undefined) {
+      // A non-recoverable failure cancels anything pending: retrying cannot help.
       this.stopTracking(memberId)
       return
     }
+
     let episode = this.episodes.get(memberId)
-    if (episode === undefined || episode.lastError !== errorMessage) {
-      this.cancelTimer(episode)
-      episode = { kind, lastError: errorMessage, attempts: 0 }
+    if (episode === undefined) {
+      episode = { consecutiveFailures: 0, timers: new Set() }
       this.episodes.set(memberId, episode)
-    } else if (episode.attempts >= this.maxAttempts) {
-      // The same error survived every allowed injection — stand down once.
-      if (episode.stoodDown !== true) {
-        episode.stoodDown = true
-        this.onStandDown?.(memberId, episode.attempts)
-      }
+    }
+    if (episode.stoodDown === true) return
+
+    episode.consecutiveFailures += 1
+    if (episode.consecutiveFailures >= this.maxConsecutiveErrors) {
+      this.cancelTimers(episode)
+      episode.stoodDown = true
+      this.onStandDown?.(memberId, episode.consecutiveFailures)
       return
     }
-    if (episode.timer !== undefined) return
-    episode.timer = setTimeout(() => {
-      episode!.timer = undefined
-      episode!.attempts += 1
+
+    const timer = setTimeout(() => {
+      episode!.timers.delete(timer)
       try {
-        this.inject(memberId, episode!.attempts, kind)
+        this.wake(memberId)
       } catch {
         this.stopTracking(memberId)
       }
     }, this.delayMs)
+    episode.timers.add(timer)
   }
 
   /** A turn ended cleanly (running→idle without an error): the episode is over. */
@@ -99,18 +97,17 @@ export class RecoveryCoordinator {
   stopTracking(memberId: AgentTeamMemberId): void {
     const episode = this.episodes.get(memberId)
     if (episode === undefined) return
-    this.cancelTimer(episode)
+    this.cancelTimers(episode)
     this.episodes.delete(memberId)
   }
 
   dispose(): void {
-    for (const episode of this.episodes.values()) this.cancelTimer(episode)
+    for (const episode of this.episodes.values()) this.cancelTimers(episode)
     this.episodes.clear()
   }
 
-  private cancelTimer(episode: EpisodeState | undefined): void {
-    if (episode?.timer === undefined) return
-    clearTimeout(episode.timer)
-    episode.timer = undefined
+  private cancelTimers(episode: EpisodeState): void {
+    for (const timer of episode.timers) clearTimeout(timer)
+    episode.timers.clear()
   }
 }

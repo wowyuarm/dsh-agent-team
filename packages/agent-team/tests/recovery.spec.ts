@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_DELAY_MS, RECOVERY_MAX_ATTEMPTS } from '../src/recovery.ts'
+import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_DELAY_MS, RECOVERY_MAX_CONSECUTIVE_ERRORS } from '../src/recovery.ts'
 import type { AgentTeamMemberId } from '../src/types.ts'
 
 describe('recoverable error classification', () => {
@@ -37,110 +37,104 @@ describe('RecoveryCoordinator', () => {
   const memberId = 'member:builder' as AgentTeamMemberId
 
   function harness() {
-    const injections: Array<{ memberId: AgentTeamMemberId; attempt: number; kind: string }> = []
+    const wakeups: AgentTeamMemberId[] = []
     const coordinator = new RecoveryCoordinator({
-      inject: (id, attempt, kind) => { injections.push({ memberId: id, attempt, kind }) },
+      wake: id => { wakeups.push(id) },
     })
-    return { coordinator, injections }
+    return { coordinator, wakeups }
   }
 
-  it('injects once per error after the delay, then again on recurrence', () => {
-    const { coordinator, injections } = harness()
-    coordinator.onError(memberId, 'fetch failed')
-    expect(injections).toEqual([])
-    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    expect(injections).toEqual([{ memberId, attempt: 1, kind: 'transient network' }])
-    // Same error recurs → second attempt on the next delay.
+  it('wakes once after each of the first two consecutive recoverable errors', () => {
+    const { coordinator, wakeups } = harness()
     coordinator.onError(memberId, 'fetch failed')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    expect(injections).toHaveLength(2)
-    expect(injections[1]!.attempt).toBe(2)
-  })
-
-  it('stands down after the maximum attempts of one identical error', () => {
-    const { coordinator, injections } = harness()
-    for (let round = 0; round <= RECOVERY_MAX_ATTEMPTS; round += 1) {
-      coordinator.onError(memberId, 'HTTP 429')
-      vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    }
-    expect(injections).toHaveLength(RECOVERY_MAX_ATTEMPTS)
-    // A further identical error schedules nothing: presence stays error for the operator.
     coordinator.onError(memberId, 'HTTP 429')
-    vi.advanceTimersByTime(RECOVERY_DELAY_MS * 5)
-    expect(injections).toHaveLength(RECOVERY_MAX_ATTEMPTS)
-  })
-
-  it('clears the episode when a turn ends cleanly', () => {
-    const { coordinator, injections } = harness()
-    coordinator.onError(memberId, 'ETIMEDOUT')
-    coordinator.onCleanTurnEnd(memberId)
-    vi.advanceTimersByTime(RECOVERY_DELAY_MS * 3)
-    expect(injections).toEqual([])
-    // And a fresh error starts a brand-new episode with attempt 1.
-    coordinator.onError(memberId, 'ETIMEDOUT')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    expect(injections).toEqual([{ memberId, attempt: 1, kind: 'transient network' }])
+
+    expect(wakeups).toEqual([memberId, memberId])
   })
 
-  it('starts a new episode when the error string changes', () => {
-    const { coordinator, injections } = harness()
+  it('counts every agent/error occurrence, including repeated equal errors', () => {
+    const standDowns: Array<{ memberId: AgentTeamMemberId; failures: number }> = []
+    const coordinator = new RecoveryCoordinator({
+      wake: () => {},
+      onStandDown: (id, failures) => { standDowns.push({ memberId: id, failures }) },
+    })
+    coordinator.onError(memberId, 'fetch failed')
+    coordinator.onError(memberId, 'fetch failed')
+    expect(vi.getTimerCount()).toBe(2)
+
+    coordinator.onError(memberId, 'fetch failed')
+    expect(standDowns).toEqual([{ memberId, failures: RECOVERY_MAX_CONSECUTIVE_ERRORS }])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('stands down immediately on the third consecutive recoverable error', () => {
+    const { coordinator, wakeups } = harness()
+    coordinator.onError(memberId, 'fetch failed')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
+    coordinator.onError(memberId, 'HTTP 429')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
+
+    coordinator.onError(memberId, 'socket hang up')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS * 2)
+    expect(wakeups).toEqual([memberId, memberId])
+  })
+
+  it('counts changing messages and recoverable kinds as one uninterrupted error run', () => {
+    const { coordinator, wakeups } = harness()
     coordinator.onError(memberId, 'ECONNRESET')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    coordinator.onError(memberId, 'socket hang up') // changed string → fresh episode
-    coordinator.onError(memberId, 'socket hang up')
+    coordinator.onError(memberId, 'HTTP 429')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    expect(injections).toEqual([
-      { memberId, attempt: 1, kind: 'transient network' },
-      { memberId, attempt: 1, kind: 'transient network' },
-    ])
+    coordinator.onError(memberId, 'socket hang up')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS * 2)
+
+    expect(wakeups).toEqual([memberId, memberId])
   })
 
-  it('cancels pending retries when a non-retryable error arrives', () => {
-    const { coordinator, injections } = harness()
+  it('clears the consecutive error count when a turn ends cleanly', () => {
+    const { coordinator, wakeups } = harness()
+    coordinator.onError(memberId, 'ETIMEDOUT')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
+    coordinator.onCleanTurnEnd(memberId)
+
+    coordinator.onError(memberId, 'ETIMEDOUT')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
+    expect(wakeups).toEqual([memberId, memberId])
+  })
+
+  it('cancels automatic recovery tracking when a non-recoverable error arrives', () => {
+    const { coordinator, wakeups } = harness()
     coordinator.onError(memberId, 'fetch failed')
     coordinator.onError(memberId, 'context length exceeded')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS * 3)
-    expect(injections).toEqual([])
+    expect(wakeups).toEqual([])
   })
 
-  it('stops tracking when the injection target is gone', () => {
-    const injections: unknown[] = []
+  it('stops tracking when the wake target is gone', () => {
     const coordinator = new RecoveryCoordinator({
-      inject: () => { throw new Error('member disposed') },
+      wake: () => { throw new Error('member disposed') },
     })
     coordinator.onError(memberId, 'fetch failed')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    expect(injections).toEqual([])
     coordinator.onError(memberId, 'fetch failed')
     vi.advanceTimersByTime(RECOVERY_DELAY_MS)
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('does not double-schedule while an injection is already pending', () => {
-    const { coordinator, injections } = harness()
-    coordinator.onError(memberId, 'fetch failed')
-    coordinator.onError(memberId, 'fetch failed')
-    coordinator.onError(memberId, 'fetch failed')
-    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    expect(injections).toEqual([{ memberId, attempt: 1, kind: 'transient network' }])
-  })
-
-  it('notifies stand-down exactly once per episode', () => {
-    const standDowns: Array<{ memberId: AgentTeamMemberId; attempts: number }> = []
+  it('notifies stand-down exactly once per error run', () => {
+    const standDowns: Array<{ memberId: AgentTeamMemberId; failures: number }> = []
     const coordinator = new RecoveryCoordinator({
-      inject: () => {},
-      onStandDown: (id, attempts) => { standDowns.push({ memberId: id, attempts }) },
-      maxAttempts: 2,
+      wake: () => {},
+      onStandDown: (id, failures) => { standDowns.push({ memberId: id, failures }) },
+      maxConsecutiveErrors: 2,
     })
-    for (let round = 0; round <= 3; round += 1) {
-      coordinator.onError(memberId, 'HTTP 429')
-      vi.advanceTimersByTime(RECOVERY_DELAY_MS)
-    }
-    expect(standDowns).toEqual([{ memberId, attempts: 2 }])
-    // A changed error string opens a fresh episode that can stand down again.
-    coordinator.onError(memberId, 'ETIMEDOUT')
-    vi.advanceTimersByTime(RECOVERY_DELAY_MS * 4)
-    expect(standDowns).toHaveLength(1)
+    coordinator.onError(memberId, 'HTTP 429')
+    vi.advanceTimersByTime(RECOVERY_DELAY_MS)
+    coordinator.onError(memberId, 'HTTP 429')
+    coordinator.onError(memberId, 'HTTP 429')
+    expect(standDowns).toEqual([{ memberId, failures: 2 }])
   })
 
   it('dispose cancels every pending timer', () => {

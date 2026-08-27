@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
@@ -26,7 +26,7 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { acceptedTaskCompactionMembers, AutoCompactionCoordinator } from './auto-compaction.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
-import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_ATTEMPTS, type RecoverableErrorKind } from './recovery.ts'
+import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
   AgentTeamAddMemberRequest,
@@ -99,6 +99,10 @@ export { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './
 /** Process-stable marker carried by the final Team message tool definition. */
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
 
+const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
+const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
+
 /** One parked long-poll, restricted to one change scope when it declares one. */
 interface ChangeWaiter {
   readonly scope: AgentTeamChangeScope | undefined
@@ -170,12 +174,12 @@ export default class AgentTeam extends TypertRemoteService {
   private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
 
   private readonly recovery = new RecoveryCoordinator({
-    inject: (memberId, attempt, kind) => {
-      this.ctx.logger.info(`agent-team: automatic recovery steering member '${this.memberLabel(memberId)}' (attempt ${attempt}/${RECOVERY_MAX_ATTEMPTS}, ${kind})`)
-      this.injectRecovery(memberId, attempt, kind)
+    wake: memberId => {
+      this.ctx.logger.info(`agent-team: automatic recovery wakeup for member '${this.memberLabel(memberId)}' after consecutive recoverable failures`)
+      this.injectRecovery(memberId)
     },
-    onStandDown: (memberId, attempts) => {
-      this.ctx.logger.warn(`agent-team: member '${this.memberLabel(memberId)}' still failing after ${attempts} automatic recovery attempts; leaving it in error for the operator`)
+    onStandDown: (memberId, consecutiveFailures) => {
+      this.ctx.logger.warn(`agent-team: member '${this.memberLabel(memberId)}' reached ${consecutiveFailures}/${RECOVERY_MAX_CONSECUTIVE_ERRORS} consecutive recoverable failures; leaving it in error for the operator`)
     },
   })
   private lifecycleTail: Promise<void> = Promise.resolve()
@@ -207,7 +211,7 @@ export default class AgentTeam extends TypertRemoteService {
       const message = error instanceof Error ? error.message : String(error)
       this.runtimeErrors.set(agent.id, message)
       const kind = classifyRecoverableError(message)
-      if (kind !== undefined) this.ctx.logger.warn(`agent-team: member '${member.handle}' hit a recoverable error (${kind}); automatic recovery scheduled`)
+      if (kind !== undefined) this.ctx.logger.warn(`agent-team: member '${member.handle}' hit a recoverable ${kind} error; recording a consecutive error occurrence`)
       this.recovery.onError(member.memberId, message)
       this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
     })
@@ -385,6 +389,7 @@ export default class AgentTeam extends TypertRemoteService {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().suspendMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
+      this.clearMemberRecoveryState(result.value.member)
       const handle = this.handles.get(request.memberId)
       if (handle !== undefined) {
         await handle.dispose()
@@ -392,7 +397,6 @@ export default class AgentTeam extends TypertRemoteService {
       }
       this.modelSelections.delete(request.memberId)
       this.diagnostics.delete(request.memberId)
-      this.clearMemberNotificationState(request.memberId)
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
   }
@@ -418,11 +422,9 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireAccepting()
     const member = this.requireLedger().getMember(request.memberId)
     if (member === undefined || member.workspaceId !== request.workspaceId) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
-    const storedError = this.storedErrorFor(member.memberId)
     this.recovery.stopTracking(request.memberId)
-    const kind = classifyRecoverableError(storedError ?? '')
     this.ctx.logger.info(`agent-team: operator asked member '${member.handle}' to resume`)
-    this.steerResume(member, this.resumeText(kind ?? 'unspecified failure', { operatorRequested: true }))
+    this.steerResume(member, this.manualResumeText())
     return Object.freeze({ status: this.memberStatus(member) })
   }
 
@@ -446,26 +448,12 @@ export default class AgentTeam extends TypertRemoteService {
     this.attachmentGcTimer.unref?.()
   }
 
-  /** Latest runtime error summary for a Member's live session, if any. */
-  private storedErrorFor(memberId: AgentTeamMemberId): string | undefined {
-    const handle = this.handles.get(memberId)
-    if (handle === undefined) return undefined
-    return this.runtimeErrors.get(handle.agent.id)
+  private automaticResumeText(): string {
+    return 'Your previous turn ended early due to a temporary service error. Please continue the work you were doing before the error.'
   }
 
-  /**
-   * Continuation prompt per the recovery design: name the error family,
-   * annotate automatic attempts, and on the final attempt ask for a graceful
-   * handoff instead of another crash.
-   */
-  private resumeText(kindLabel: string, options?: { operatorRequested?: boolean; attempt?: number }): string {
-    const opening = options?.operatorRequested === true ? 'The operator asked you to resume. ' : ''
-    const attemptNote = options?.attempt === undefined ? '' : ` (automatic recovery, attempt ${options.attempt}/${RECOVERY_MAX_ATTEMPTS})`
-    let text = `${opening}Your previous turn ended early due to an error (${kindLabel})${attemptNote}. Please continue your work from where it stopped.`
-    if (options?.attempt === RECOVERY_MAX_ATTEMPTS) {
-      text += ' If the same error recurs, stop and leave a short handoff note for the operator.'
-    }
-    return text
+  private manualResumeText(): string {
+    return 'The operator asked you to resume after the previous turn ended early. Please continue the work you were doing before the error.'
   }
 
   /**
@@ -480,18 +468,21 @@ export default class AgentTeam extends TypertRemoteService {
     const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
     const hint = createUserMessage({
       content: [{ type: 'text', text: body }],
-      source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Recovery: continue your interrupted work.' },
+      source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: RECOVERY_NOTICE_SUMMARY },
     })
+    for (const pending of [...handle.agent.inbox.nextStep, ...handle.agent.inbox.nextTurn]) {
+      if (this.isInboxNotice(pending)) handle.agent.inbox.remove(pending.id)
+    }
     handle.agent.steer(hint)
   }
 
-  /** Automatic-recovery injection; throwing tells the coordinator the target is gone. */
-  private injectRecovery(memberId: AgentTeamMemberId, attempt: number, kind: RecoverableErrorKind): void {
+  /** Automatic-recovery wakeup; throwing tells the coordinator the target is gone. */
+  private injectRecovery(memberId: AgentTeamMemberId): void {
     const handle = this.handles.get(memberId)
     const agent = handle?.agent
     const member = agent !== undefined ? this.memberForAgent(agent) : undefined
     if (agent === undefined || member === undefined || member.state !== 'enabled') throw new Error(`member '${memberId}' cannot be recovered automatically`)
-    this.steerResume(member, this.resumeText(kind, { attempt }))
+    this.steerResume(member, this.automaticResumeText())
   }
 
   /**
@@ -523,6 +514,7 @@ export default class AgentTeam extends TypertRemoteService {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().removeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
+      this.clearMemberRecoveryState(result.value.member)
       const handle = this.handles.get(request.memberId)
       if (handle !== undefined) {
         await handle.dispose()
@@ -530,7 +522,6 @@ export default class AgentTeam extends TypertRemoteService {
       }
       this.modelSelections.delete(request.memberId)
       this.diagnostics.delete(request.memberId)
-      this.clearMemberNotificationState(request.memberId)
       await this.cleanupRemovedMember(result.value.member)
       return result.value
     })
@@ -1003,12 +994,18 @@ export default class AgentTeam extends TypertRemoteService {
       item.thread.threadRef, item.thread.revision, item.unreadCount, item.directCount, item.newestSequence,
     ]))
     if (this.notifiedInbox.get(member.memberId) === signature) return
-    const existingHint = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message =>
-      message.source.kind === 'plugin' && message.source.plugin === '@wowyuarm/dsh-agent-team')
-    if (existingHint !== undefined) agent.inbox.remove(existingHint.id)
+    const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
+    // steerResume already combines the recovery instruction and these durable
+    // facts. Its synchronous running transition must not replace that notice.
+    if (pending.some(message => this.isRecoveryNotice(message))) {
+      this.notifiedInbox.set(member.memberId, signature)
+      return
+    }
+    const existingInboxHint = pending.find(message => this.isInboxNotice(message))
+    if (existingInboxHint !== undefined) agent.inbox.remove(existingInboxHint.id)
     const hint = createUserMessage({
       content: [{ type: 'text', text: this.notificationText(notifications, member.memberId) }],
-      source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' },
+      source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
     })
     this.notifiedInbox.set(member.memberId, signature)
     try {
@@ -1017,6 +1014,18 @@ export default class AgentTeam extends TypertRemoteService {
       this.clearMemberNotificationState(member.memberId)
       throw error
     }
+  }
+
+  private isInboxNotice(message: UserMessage): boolean {
+    const source = message.source
+    return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+      && source.form === 'notice' && source.summary === INBOX_NOTICE_SUMMARY
+  }
+
+  private isRecoveryNotice(message: UserMessage): boolean {
+    const source = message.source
+    return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+      && source.form === 'notice' && source.summary === RECOVERY_NOTICE_SUMMARY
   }
 
   private notificationText(notifications: ReturnType<AgentTeamLedger['notificationFacts']>, readerId?: AgentTeamMemberId): string {
@@ -1083,6 +1092,12 @@ export default class AgentTeam extends TypertRemoteService {
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''
     return `Team Task update\n${actor} ${activity.kind} Task ${activity.taskRef}.${released}`
+  }
+
+  private clearMemberRecoveryState(member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): void {
+    this.recovery.stopTracking(member.memberId)
+    this.runtimeErrors.delete(member.sessionId)
+    this.clearMemberNotificationState(member.memberId)
   }
 
   private clearMemberNotificationState(memberId: AgentTeamMemberId): void {

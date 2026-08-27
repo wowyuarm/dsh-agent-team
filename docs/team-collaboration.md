@@ -74,6 +74,8 @@ Automatic context is bounded to eight Inbox Threads, twenty detailed direct or A
 
 Pending hints are coalesced per Member. A consumed or ignored hint does not cause another turn until a later relevant durable change, resume, or runtime-error recovery resets the notification state. Restart and resume call the same durable Inbox check, so transient Session queues are not the authority. This is at-least-once notification intent, not exactly-once model processing: the Agent may ignore, fail, or repeat the Team read operation.
 
+对可恢复的临时服务错误，Host 按 Member 的连续 `agent/error` occurrences 计数，不按恢复唤醒次数或错误文本计数：前两次错误延迟后各唤醒一次，第 3 次立即停止自动恢复并保留 error 供 operator 处理。不同 recoverable kind 也不中断连续错误。只有 clean turn end 会清零，非可恢复错误会取消 tracking。恢复 notice 自身合并 continuation 和当前 durable Inbox facts，因此普通 Inbox 通知不会覆盖它或追加第二条提示。
+
 ## Assembled acceptance
 
 `npm run test:browser` uses the credential-free Harness Web scaffold to verify the public Client and Host chain. The representative trace begins with an existing Thread, requires Human's second-send confirmation to invite an unfollowed Agent, verifies the Agent's durable Inbox and explicit read/reply, then verifies the Human Channel and Thread state. A page reload reads the same facts from Host projections before the journey leaves Team mode and confirms the ordinary DSH conversation surface is restored.

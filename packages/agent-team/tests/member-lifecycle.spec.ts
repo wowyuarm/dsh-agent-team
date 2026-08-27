@@ -22,6 +22,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
+import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
 import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
 import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
@@ -630,6 +631,92 @@ describe('Agent Team Member lifecycle', () => {
     const request = JSON.stringify(adapter.requests[0]!.messages)
     expect(request).toContain('Team Inbox has unread work')
     expect(request).not.toContain('Unread while suspended')
+  })
+
+  it('keeps the automatic recovery instruction with durable Inbox routing', async () => {
+    vi.useFakeTimers()
+    try {
+      const adapter = new ScriptedAdapter()
+      const { ctx, workspaceId } = await realHarness(adapter)
+      const channel = await ctx.agentTeam.createChannel({ requestId: requestId('automatic-recovery-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+      const builder = await ctx.agentTeam.addMember({ requestId: requestId('automatic-recovery-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+      const agent = ctx.agents.get(builder.status.member.sessionId)!
+      const started = await ctx.agentTeam.sendMessage({ requestId: requestId('automatic-recovery-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate automatic recovery' })
+      if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+      await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('automatic-recovery-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+      const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('automatic-recovery-read'), workspaceId, taskRef: started.task.taskRef })
+      const update = await ctx.agentTeam.reply({ requestId: requestId('automatic-recovery-update'), workspaceId, taskRef: started.task.taskRef, body: 'Unread through automatic recovery', baseRevision: humanRead.thread.revision })
+      if (update.kind !== 'committed') throw new Error(`expected committed update, received ${update.kind}`)
+      await agent.whenIdle()
+      ctx.emit('agent/error', { agent, turn: 2, step: 1, error: new Error('fetch failed') })
+
+      adapter.enqueue(textResponse('I will continue the interrupted work.'))
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_MS)
+      await agent.whenIdle()
+
+      const request = JSON.stringify(adapter.requests.at(-1)!.messages)
+      expect(request).toContain('temporary service error')
+      expect(request).toContain('Please continue the work you were doing before the error.')
+      expect(request).toContain('Team Inbox has unread work')
+      expect(request).toContain(started.task.taskRef)
+      expect(request).not.toContain('Unread through automatic recovery')
+      expect(request).not.toMatch(/operator asked|automatic recovery|attempt|stop|handoff/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels an automatic wakeup when a Member is suspended before the delay', async () => {
+    vi.useFakeTimers()
+    try {
+      const adapter = new ScriptedAdapter()
+      const { ctx, workspaceId } = await realHarness(adapter)
+      const builder = await ctx.agentTeam.addMember({ requestId: requestId('suspend-recovery-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [] })
+      const agent = ctx.agents.get(builder.status.member.sessionId)!
+
+      ctx.emit('agent/error', { agent, turn: 1, step: 1, error: new Error('fetch failed') })
+      await ctx.agentTeam.suspendMember({ requestId: requestId('suspend-recovery'), memberId: builder.status.member.memberId })
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_MS)
+
+      expect(adapter.requests).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the manual recovery instruction with durable Inbox routing and cancels the pending wakeup', async () => {
+    vi.useFakeTimers()
+    try {
+      const adapter = new ScriptedAdapter()
+      const { ctx, workspaceId } = await realHarness(adapter)
+      const channel = await ctx.agentTeam.createChannel({ requestId: requestId('manual-recovery-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+      const builder = await ctx.agentTeam.addMember({ requestId: requestId('manual-recovery-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+      const agent = ctx.agents.get(builder.status.member.sessionId)!
+      const started = await ctx.agentTeam.sendMessage({ requestId: requestId('manual-recovery-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate manual recovery' })
+      if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+      await ctx.agentTeam.changeAttentionForAgent(agent, { requestId: requestId('manual-recovery-follow'), workspaceId, taskRef: started.task.taskRef, action: 'follow' })
+      const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('manual-recovery-read'), workspaceId, taskRef: started.task.taskRef })
+      const update = await ctx.agentTeam.reply({ requestId: requestId('manual-recovery-update'), workspaceId, taskRef: started.task.taskRef, body: 'Unread through manual recovery', baseRevision: humanRead.thread.revision })
+      if (update.kind !== 'committed') throw new Error(`expected committed update, received ${update.kind}`)
+      await agent.whenIdle()
+
+      adapter.enqueue(textResponse('I will continue the interrupted work.'))
+      await ctx.agentTeam.recoverMember({ requestId: requestId('manual-recovery'), workspaceId, memberId: builder.status.member.memberId })
+      await agent.whenIdle()
+      await vi.advanceTimersByTimeAsync(RECOVERY_DELAY_MS)
+
+      expect(adapter.requests).toHaveLength(2)
+      const request = JSON.stringify(adapter.requests.at(-1)!.messages)
+      expect(request).toContain('The operator asked you to resume after the previous turn ended early.')
+      expect(request).not.toContain('temporary service error')
+      expect(request).toContain('Please continue the work you were doing before the error.')
+      expect(request).toContain('Team Inbox has unread work')
+      expect(request).toContain(started.task.taskRef)
+      expect(request).not.toContain('Unread through manual recovery')
+      expect(request).not.toMatch(/automatic recovery|attempt|stop|handoff/i)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reissues a durable hint when a failed Member starts recovery work', async () => {
