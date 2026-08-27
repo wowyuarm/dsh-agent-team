@@ -158,6 +158,39 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByText('还没有消息', { exact: true }).waitFor()
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
 
+  // Sidebar ordering: whole-row native drag reuses the Harness list model —
+  // a before/after insertion marker, one commit per gesture — and the personal
+  // order lives in this browser only, folded over the Remote default on load.
+  const channelOrder = (): Promise<string[]> => page.evaluate(() =>
+    [...document.querySelectorAll('[class*="channelSelect"] strong')].map(node => node.textContent?.trim().replace(/^#\s*/, '') ?? ''))
+  await expect.poll(channelOrder).toEqual(['engineering', 'delivery'])
+  const deliveryRow = page.getByRole('button', { name: '# delivery' })
+  const dropBelowTopHalfOf = async (locator: ReturnType<typeof page.getByRole>): Promise<void> => {
+    const box = await locator.boundingBox()
+    if (box === null) throw new Error('drop target vanished')
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
+    await page.getByRole('button', { name: '# engineering' }).dispatchEvent('dragstart', { dataTransfer })
+    await locator.dispatchEvent('dragover', { dataTransfer, clientY: box.y + box.height * 0.75 })
+    await locator.dispatchEvent('drop', { dataTransfer, clientY: box.y + box.height * 0.75 })
+    await page.getByRole('button', { name: '# engineering' }).dispatchEvent('dragend', { dataTransfer })
+  }
+  await dropBelowTopHalfOf(deliveryRow)
+  await expect.poll(channelOrder).toEqual(['delivery', 'engineering'])
+  // The committed order survives a full reload: boot restore folds the saved
+  // preference over the freshly loaded Remote default order.
+  await page.reload()
+  // Boot restore lands on the persisted Thread route; the channel list is one
+  // explicit step back.
+  await page.getByRole('heading', { name: '# delivery' }).waitFor({ timeout: 20_000 })
+  await page.getByRole('button', { name: '返回频道列表' }).click()
+  await expect.poll(channelOrder, { timeout: 20_000 }).toEqual(['delivery', 'engineering'])
+  // A brand-new channel appends after the user's saved entries.
+  await page.getByRole('button', { name: '新建频道' }).click()
+  const rampDialog = page.getByRole('dialog', { name: '新建频道' })
+  await rampDialog.getByLabel('名称').fill('ramp')
+  await rampDialog.getByRole('button', { name: '创建频道' }).click()
+  await expect.poll(channelOrder).toEqual(['delivery', 'engineering', 'ramp'])
+
   // Sidebar row menus: the ⋯ entry opens the M2 editors — display facts plus
   // membership. 保存 stays disabled until a field actually changes, and the
   // committed rename reaches the row through the refreshed projection.
@@ -245,6 +278,15 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+  // Narrow screens keep reordering reachable through the row menu; the
+  // status region announces the new position for keyboard/touch users.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'builder 的操作' }).click()
+  await page.getByRole('menuitem', { name: '下移' }).click()
+  await page.getByRole('status').filter({ hasText: '已移动到第' }).waitFor()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agents-reorder-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   // Explicit Team navigation closes the embedded Member view again.
   await page.getByRole('button', { name: '# delivery' }).click()

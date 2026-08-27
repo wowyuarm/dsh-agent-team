@@ -11,10 +11,12 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconChevronUpOutline14, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { MultiMenuField } from './multi-menu-field.tsx'
+import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
+import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { useChannelMembership } from './team-membership.ts'
@@ -51,6 +53,20 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   const [pendingCreate, setPendingCreate] = useState<AgentTeamCreateChannelRequest>()
   const previousCreatingKey = useRef(creatingAgents.map(request => request.requestId).join(','))
   const triggerRef = useRef<HTMLButtonElement>(null)
+  // Row order is this browser's presentation preference; both the drag and
+  // the row-menu steps funnel through the single shared mutation below.
+  const [announcement, setAnnouncement] = useState<string>()
+  const channelRefs = useMemo(() => view?.channels.map(channel => channel.channelRef) ?? [], [view])
+  const orderedChannelRefs = useSidebarOrder(workspaceId, 'channels', channelRefs)
+  const orderedChannels = useMemo(() => {
+    const byRef = new Map((view?.channels ?? []).map(channel => [channel.channelRef, channel]))
+    return orderedChannelRefs.map(channelRef => byRef.get(channelRef)).filter(channel => channel !== undefined)
+  }, [orderedChannelRefs, view])
+  const applyMove = (movedRef: AgentTeamChannelRef, targetRef: AgentTeamChannelRef, marker: 'before' | 'after'): void => {
+    const next = moveSidebarItem(workspaceId, 'channels', orderedChannelRefs, movedRef, targetRef, marker)
+    if (next !== undefined) setAnnouncement(t('movedToPosition', { position: (next.indexOf(movedRef) ?? 0) + 1 }))
+  }
+  const drag = useSidebarRowDrag({ refs: orderedChannelRefs, onCommit: applyMove })
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -188,26 +204,35 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
         {loading && view === undefined && <p className={css.emptyState}>{t('loadingChannels')}</p>}
         {!loading && (view?.channels.length ?? 0) === 0 && <p className={css.emptyState}>{t('emptyChannels')}</p>}
         <div className={css.channelList}>
-          {view?.channels.map(channel => {
+          {orderedChannels.map((channel, index) => {
             const joined = membership.get(channel.channelRef) ?? new Set<AgentTeamMemberId>()
             return (
-              <ChannelRow
-                key={channel.channelRef}
-                channel={channel}
-                members={members}
-                joinedIds={joined}
-                selected={selectedChannelRef === channel.channelRef}
-                updateChannel={updateChannel}
-                joinChannel={props.joinChannel}
-                removeChannelMember={props.removeChannelMember}
-                onCommitted={() => { void refresh() }}
-                selectChannel={selectChannel}
-                t={t}
-              />
+              <SortableRow key={channel.channelRef} drag={drag} orderKey={channel.channelRef}>
+                <ChannelRow
+                  channel={channel}
+                  members={members}
+                  joinedIds={joined}
+                  selected={selectedChannelRef === channel.channelRef}
+                  updateChannel={updateChannel}
+                  joinChannel={props.joinChannel}
+                  removeChannelMember={props.removeChannelMember}
+                  onCommitted={() => { void refresh() }}
+                  selectChannel={selectChannel}
+                  index={index}
+                  count={orderedChannels.length}
+                  onMoveStep={(marker): void => {
+                    const position = orderedChannelRefs.indexOf(channel.channelRef)
+                    const neighbor = marker === 'before' ? orderedChannelRefs[position - 1] : orderedChannelRefs[position + 1]
+                    if (neighbor !== undefined) applyMove(channel.channelRef, neighbor, marker)
+                  }}
+                  t={t}
+                />
+              </SortableRow>
             )
           })}
         </div>
       </TeamSidebarSection>
+      {announcement !== undefined && <p className={css.statusLine} role="status">{announcement}</p>}
       {!formOpen && error !== undefined && <p className={css.error} role="alert">{error}</p>}
     </div>
   )
@@ -217,7 +242,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
  * One sidebar Channel row: the select button keeps the `#` identity while the
  * row menu carries the entry point; editing covers display facts and membership.
  */
-function ChannelRow({ channel, members, joinedIds, selected, updateChannel, joinChannel, removeChannelMember, onCommitted, selectChannel, t }: {
+function ChannelRow({ channel, members, joinedIds, selected, updateChannel, joinChannel, removeChannelMember, onCommitted, selectChannel, index, count, onMoveStep, t }: {
   readonly channel: AgentTeamChannel
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly joinedIds: ReadonlySet<AgentTeamMemberId>
@@ -227,6 +252,10 @@ function ChannelRow({ channel, members, joinedIds, selected, updateChannel, join
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly onCommitted: () => Promise<void> | void
   readonly selectChannel: TeamSidebarProps['selectChannel']
+  /** Position inside the current personal order; drives keyboard reordering. */
+  readonly index: number
+  readonly count: number
+  readonly onMoveStep: (marker: 'before' | 'after') => void
   readonly t: TeamSidebarProps['t']
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -240,8 +269,16 @@ function ChannelRow({ channel, members, joinedIds, selected, updateChannel, join
         <span className={css.rowMenu}>
           <TeamRowMenu
             label={t('actionsChannel', { name: channel.name })}
-            items={[{ id: 'edit', label: t('editChannel'), icon: <IconEditOutline16 /> }]}
-            onSelect={() => { setEditing(true) }}
+            items={[
+              { id: 'up', label: t('moveUp'), icon: <IconChevronUpOutline14 />, disabled: index === 0 },
+              { id: 'down', label: t('moveDown'), icon: <IconChevronDownOutline14 />, disabled: index === count - 1 },
+              { id: 'edit', label: t('editChannel'), icon: <IconEditOutline16 /> },
+            ]}
+            onSelect={(id) => {
+              if (id === 'up') return onMoveStep('before')
+              if (id === 'down') return onMoveStep('after')
+              setEditing(true)
+            }}
             onOpenChange={setMenuOpen}
           />
         </span>

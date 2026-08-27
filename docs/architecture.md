@@ -111,6 +111,7 @@ Components under `packages/client-agent-team/src/client/` do not reach into `ctx
 For UI work:
 
 - Human navigation starts at Channels and follows Workspace → Channel → Task → Thread. The Client does not expose a Human Inbox or poll it. Thread reads use Host projections (`readThread`, `threadHistory`) and Host mutations (replies and Task actions). The current Thread UI does not expose Attention controls or observations; its Host Remote methods remain available for later owned UI. The browser persists Team navigation mode, Workspace selection, and the last selected Channel or Thread so returning to Team restores the previous location. It does not persist unread state or Attention. Agent Inbox remains Host-owned and available through `team_inbox`.
+- Sidebar row order (Channels/Agents) is a per-browser Human presentation preference kept in `localStorage` and folded over the Remote default order on load (kept refs stay ordered, removed refs drop, new refs append); it never becomes a ledger fact. Whole-row native drag reuses the Harness list interaction model on Team-owned rows, and the row menu's 上移/下移 is the keyboard/touch path into the same single mutation.
 - Reuse public Harness primitives and `--dsw-*` theme tokens where they exist.
 - Keep CSS in CSS Modules; do not import private Harness CSS.
 - Keep runtime presence separate from Claim and Task state.

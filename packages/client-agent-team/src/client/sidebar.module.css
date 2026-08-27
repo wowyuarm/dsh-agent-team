@@ -223,6 +223,62 @@
   padding: 0 4px 4px;
 }
 
+.sidebarRowDragging {
+  opacity: 0.5;
+}
+
+.sidebarRowDropBefore,
+.sidebarRowDropAfter {
+  position: relative;
+}
+
+.sidebarRowDropBefore::before,
+.sidebarRowDropAfter::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 4px;
+  height: 12px;
+  background:
+    linear-gradient(
+      55deg,
+      transparent calc(50% - 1px),
+      var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ) 0 0 / 5px 7px no-repeat,
+    linear-gradient(
+      125deg,
+      transparent calc(50% - 1px),
+      var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    ) 0 5px / 5px 7px no-repeat,
+    linear-gradient(
+      var(--dsw-alias-state-business-primary) 0 0
+    ) 4px 5px / calc(100% - 4px) 2px no-repeat;
+  pointer-events: none;
+}
+
+.sidebarRowDropBefore::before {
+  top: -7px;
+}
+
+.sidebarRowDropAfter::after {
+  bottom: -7px;
+}
+
+.statusLine {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .channelRow {
   align-items: center;
   border-radius: 8px;
