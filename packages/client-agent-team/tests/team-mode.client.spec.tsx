@@ -720,7 +720,7 @@ describe('rendered Team mode composition', () => {
     await waitFor(() => { expect(b.resolveTaskRefs).toHaveBeenCalled() })
     // The Host knows the cited Task: the label becomes the human-facing
     // number with the full ref on hover.
-    await waitFor(() => { expect(link.textContent).toBe('task#2') })
+    await waitFor(() => { expect(link.textContent).toBe('Task #2') })
     expect(link.getAttribute('title')).toBe(citedRef)
     fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef: citedRef })))
@@ -762,23 +762,37 @@ describe('rendered Team mode composition', () => {
     await b.runtime.dispose()
   })
 
-  it('falls back to a ref chip row when a rich Agent body cannot inline links', async () => {
+  it('renders resolved Task refs inline in rich Agent Markdown without touching code', async () => {
     const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e41'
+    const unknownRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e43'
+    const inlineCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e44'
+    const fencedCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e45'
+    const linkedRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e46'
+    const quotedCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e47'
     const b = await runtimeWithTeam({
       mode: 'team', workspaceId: 'w1', initialChannels: true,
       seedTaskRef: taskRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e42',
-      seededMessages: [
-        { body: `看 **这个**：${taskRef}\n\n- 第一条`, occurredAt: '2026-08-21T09:00:00.000Z', sender: 'agent' },
-      ],
+      seededMessages: [{
+        body: `需求源头：${taskRef}\n\n- **已核实**\n- 未知任务：${unknownRef}\n- 行内代码：\`${inlineCodeRef}\`\n- [已有链接 ${linkedRef}](https://example.com/source)\n\n\`\`\`text\n${fencedCodeRef}\n\`\`\`\n\n> \`\`\`text\n> ${quotedCodeRef}\n> \`\`\``,
+        occurredAt: '2026-08-21T09:00:00.000Z',
+        sender: 'agent',
+      }],
     })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
-    // The Markdown body keeps its rich rendering; the ref drops to the chip row.
-    await b.view.findByText('第一条')
-    expect(b.view.container.querySelector('strong')).toBeTruthy()
-    // The chip relabels to the human-facing number once the Host lookup lands.
-    const chipLink = await b.view.findByRole('button', { name: 'task#1' })
-    expect(chipLink.getAttribute('title')).toBe(taskRef)
-    fireEvent.click(chipLink)
+
+    const link = await b.view.findByRole('button', { name: 'Task #1' })
+    expect(link.getAttribute('title')).toBe(taskRef)
+    expect(b.view.queryByText(taskRef)).toBeNull()
+    expect(b.view.getAllByRole('button', { name: 'Task #1' })).toHaveLength(1)
+    expect(b.view.getByText('已核实').tagName).toBe('STRONG')
+    expect(b.view.getByText(unknownRef, { exact: false })).toBeTruthy()
+    expect(b.view.getByText(inlineCodeRef).tagName).toBe('CODE')
+    expect(b.view.getByText(fencedCodeRef)).toBeTruthy()
+    expect(b.view.getByText(quotedCodeRef)).toBeTruthy()
+    expect(b.view.getByRole('link', { name: `已有链接 ${linkedRef}` }).getAttribute('href')).toBe('https://example.com/source')
+    await waitFor(() => expect(b.resolveTaskRefs).toHaveBeenCalledWith(expect.objectContaining({ taskRefs: [taskRef, unknownRef] })))
+
+    fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
     await b.runtime.dispose()
   })

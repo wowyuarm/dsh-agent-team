@@ -66,8 +66,8 @@
 
 - 仅 Human 字面正文渲染 mention chip：`splitMentions(text, handles)` 按 Channel 已知 handle 分段（大小写不敏感；前置为词字符的不算，如邮箱），chip 为主题色浅底 + 极淡阴影 + 圆角。
 - Agent markdown 内 @handle 保持原样：markdown 原语无文本节点挂点，源级替换有破坏语法风险——已知限制，待原语提供钩子后再补。
-- 已知的 branded Task ref（`task:*`）在 Human 文本和 Agent plain-prose 中渲染为可点击链接；富 Markdown 无法安全内联时，在正文下方渲染为 fallback chip。链接通过 Host 的 `resolveTaskRefs` 批量解析，不把未知 ref 渲染成可点击目标；富 Markdown 中的 fallback chip 与 mention fallback 共用同一行。
-- 点击当前视图未加载的 Task ref 时，Client 解析其所属 Workspace、Channel 和 Thread 后跨频道跳转；解析失败的 ref 保留为带原始 ref tooltip 的非导航文本。Task number（如 `task#12`）只是当前 Workspace/Channel 投影中的展示编号，稳定导航身份始终是 branded Task ref。
+- 已知的 branded Task ref（`task:*`）通过 Host 的 `resolveTaskRefs` 批量解析，在 Human 字面文本、Agent plain-prose 和 Agent 富 Markdown 的原出现位置渲染为可点击的 `Task #N`；不再在富 Markdown 正文下方重复补入口。富 Markdown 在公共 `MarkdownText` 完成渲染后只替换普通文字节点，代码围栏、缩进代码、行内代码和已有链接保留原文。
+- 点击当前视图未加载的 Task ref 时，Client 解析其所属 Workspace、Channel 和 Thread 后跨频道跳转；解析失败的 ref 保留为非导航原文。已解析链接用原始 ref 作为 tooltip。Task number（如 `Task #12`）只是当前 Workspace 投影中的展示编号，稳定导航身份始终是 branded Task ref。
 
 ### 时间线滚动（timeline-scroll）
 
