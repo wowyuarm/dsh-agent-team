@@ -279,14 +279,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-dm-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
-  // Narrow screens keep reordering reachable through the row menu; the
-  // status region announces the new position for keyboard/touch users.
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.getByRole('button', { name: 'builder 的操作' }).click()
-  await page.getByRole('menuitem', { name: '下移' }).click()
-  await page.getByRole('status').filter({ hasText: '已移动到第' }).waitFor()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
-  await page.screenshot({ path: join(UI04_SHOTS, 'agents-reorder-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   // Explicit Team navigation closes the embedded Member view again.
   await page.getByRole('button', { name: '# delivery' }).click()

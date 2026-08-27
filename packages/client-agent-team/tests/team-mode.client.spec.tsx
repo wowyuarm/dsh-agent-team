@@ -244,23 +244,12 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
 }
 
 describe('rendered Team mode composition', () => {
-  it('reorders Agents from the row menu and announces the new position', async () => {
+  it('renders agent rows draggable with the saved personal order folded in', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
-    const agentList = await b.view.findByTestId((content, element) => element?.className.includes('agentList') ?? false).catch(() => null)
-    const listElement = agentList ?? document.querySelector('[class*="agentList"]')!
-    const handlesBefore = [...listElement.querySelectorAll('strong')].map(node => node.textContent)
-    expect(handlesBefore.slice(0, 3)).toEqual(['builder', 'worker', 'failed'])
-
-    // Edge rows expose exactly one direction.
-    const builderMenu = b.view.getByRole('button', { name: 'builder 的操作' })
-    fireEvent.click(builderMenu)
-    const menu = await b.view.findByRole('menu')
-    expect(within(menu).getByRole('menuitem', { name: '上移' }).hasAttribute('disabled')).toBe(true)
-    expect(within(menu).getByRole('menuitem', { name: '下移' }).hasAttribute('disabled')).toBe(false)
-    fireEvent.click(within(menu).getByRole('menuitem', { name: '下移' }))
-    await waitFor(() => expect(b.view.getByRole('status').textContent).toContain('已移动到第 2 位'))
-    const handlesAfter = [...listElement.querySelectorAll('strong')].map(node => node.textContent)
-    expect(handlesAfter.slice(0, 2)).toEqual(['worker', 'builder'])
+    await waitFor(() => expect(document.querySelectorAll('[draggable="true"]').length).toBeGreaterThanOrEqual(4))
+    const rows = document.querySelectorAll('[draggable="true"]')
+    expect(rows.length).toBeGreaterThanOrEqual(4)
+    for (const row of rows) expect(row.querySelector('[class*="agentSelect"]')).not.toBeNull()
   })
 
   it('enters Team with existing Workspaces and restores the shipped seats', async () => {

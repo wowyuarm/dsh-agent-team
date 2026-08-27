@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentTeamAddMemberRequest,
-  AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
   AgentTeamModelSelection,
   AgentTeamChannel,
@@ -10,7 +9,7 @@ import type {
   AgentTeamUpdateMemberRequest,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconChevronDownOutline14, IconChevronUpOutline14, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, Input, Menu, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
@@ -54,9 +53,8 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
   const [creating, setCreating] = useState(false)
   const [retryRequest, setRetryRequest] = useState<AgentTeamAddMemberRequest>()
   const triggerRef = useRef<HTMLButtonElement>(null)
-  // Same presentation-preference ordering as the Channels list; both the drag
-  // and the row-menu steps funnel through one shared mutation.
-  const [announcement, setAnnouncement] = useState<string>()
+  // Same presentation-preference ordering as the Channels list; the drag
+  // commits through one shared mutation.
   const agentRefs = useMemo(() => members.map(status => status.member.memberId), [members])
   const orderedAgentRefs = useSidebarOrder(workspaceId, 'agents', agentRefs)
   const orderedMembers = useMemo(() => {
@@ -64,8 +62,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
     return orderedAgentRefs.map(memberId => byId.get(memberId)).filter(status => status !== undefined)
   }, [orderedAgentRefs, members])
   const applyMove = (movedRef: typeof agentRefs[number], targetRef: typeof agentRefs[number], marker: 'before' | 'after'): void => {
-    const next = moveSidebarItem(workspaceId, 'agents', orderedAgentRefs, movedRef, targetRef, marker)
-    if (next !== undefined) setAnnouncement(t('movedToPosition', { position: (next.indexOf(movedRef) ?? 0) + 1 }))
+    void moveSidebarItem(workspaceId, 'agents', orderedAgentRefs, movedRef, targetRef, marker)
   }
   const drag = useSidebarRowDrag({ refs: orderedAgentRefs, onCommit: applyMove })
 
@@ -205,19 +202,13 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         {loading && members.length === 0 && <p className={css.emptyState}>{t('loadingAgents')}</p>}
         {!loading && members.length === 0 && <p className={css.emptyState}>{t('emptyAgents')}</p>}
         <div className={css.agentList}>
-          {orderedMembers.map((status, index) => (
+          {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} index={index} count={orderedMembers.length}
-                onMoveStep={(marker): void => {
-                  const position = orderedAgentRefs.indexOf(status.member.memberId)
-                  const neighbor = marker === 'before' ? orderedAgentRefs[position - 1] : orderedAgentRefs[position + 1]
-                  if (neighbor !== undefined) applyMove(status.member.memberId, neighbor, marker)
-                }} t={t} />
+              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
             </SortableRow>
           ))}
         </div>
       </TeamSidebarSection>
-      {announcement !== undefined && <p className={css.statusLine} role="status">{announcement}</p>}
       {!formOpen && error !== undefined && (
         <div className={css.retryError} role="alert">
           <span>{error}</span>
@@ -233,7 +224,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, index, count, onMoveStep, t }: {
+function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
@@ -246,10 +237,6 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onUpdated: () => Promise<void> | void
-  /** Position inside the current personal order; drives keyboard reordering. */
-  readonly index: number
-  readonly count: number
-  readonly onMoveStep: (marker: 'before' | 'after') => void
   readonly t: TeamSidebarProps['t']
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -276,14 +263,10 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
           <TeamRowMenu
             label={t('actionsAgent', { name: status.member.handle })}
             items={[
-              { id: 'up', label: t('moveUp'), icon: <IconChevronUpOutline14 />, disabled: index === 0 },
-              { id: 'down', label: t('moveDown'), icon: <IconChevronDownOutline14 />, disabled: index === count - 1 },
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
             ]}
             onSelect={(id) => {
-              if (id === 'up') return onMoveStep('before')
-              if (id === 'down') return onMoveStep('after')
               if (id === 'resume') void resume()
               else setEditing(true)
             }}
