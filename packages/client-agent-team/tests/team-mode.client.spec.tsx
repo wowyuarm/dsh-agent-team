@@ -246,10 +246,10 @@ async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; 
 describe('rendered Team mode composition', () => {
   it('renders agent rows draggable with the saved personal order folded in', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
-    await waitFor(() => expect(document.querySelectorAll('[draggable="true"]').length).toBeGreaterThanOrEqual(4))
-    const rows = document.querySelectorAll('[draggable="true"]')
-    expect(rows.length).toBeGreaterThanOrEqual(4)
+    await waitFor(() => expect(b.view.container.querySelectorAll('[draggable="true"]').length).toBeGreaterThanOrEqual(4))
+    const rows = b.view.container.querySelectorAll('[draggable="true"]')
     for (const row of rows) expect(row.querySelector('[class*="agentSelect"]')).not.toBeNull()
+    await b.runtime.dispose()
   })
 
   it('enters Team with existing Workspaces and restores the shipped seats', async () => {
