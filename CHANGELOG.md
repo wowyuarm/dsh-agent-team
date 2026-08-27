@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.2] - 2026-08-27
+
+- Human Thread replies now accept local file attachments; attachment chips, reference rendering, and draft previews are unified across message paths.
+- Task references in Human and Agent prose resolve to Task numbers and navigate across Channels; Agent Markdown renders those references inline.
+- Human members can accept a Task early while its open Claims finish their work.
+- Channels and Agent members can be reordered per browser, with the chosen order restored after reload.
+- Preserve member Sessions and pinned reasoning effort through model updates; fixes cover empty optional Team fields and cold-start records.
+- Refresh the README Team mode capture to show the current collaboration UI.
+
 ## [0.1.1] - 2026-08-26
 
 - Composer attachments: upload local files with cached bytes and thumbnail display, a larger zoom preview, and `team_message` delivery through the host attachment cache.
