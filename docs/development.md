@@ -127,10 +127,12 @@ dsh web
 
 日常自用与开发验收使用两个并存 profile，互不干扰：
 
-- **稳定模式**（`--profile web`）：依赖 npm 发布版（`^0.1.0`），升级跟随 release。
+- **稳定模式**（`--profile web`）：依赖 npm 发布版（`^0.1.x` 语义化范围），pnpm lockfile 锁定已装版本；发布后需手动 `dsh plugin --profile web update @wowyuarm/dsh-agent-team` 才会跟进新版。
 - **开发模式**（`--profile web-dev`）：依赖 `link:` 本地检出，rebuild + 重启即用最新代码。注意宿主加载的是构建产物 `packages/*/lib/`：改完源码只重启而不 `npm run build`，成员会话仍会拿到旧工具清单（工具清单在激活时从当前运行代码派生）——先 build 再重启才生效。
 
 发布节奏是批量的：两次发布之间，操作者将本地构建日常自用，作为轻量验收渠道——日常使用反馈等同有效验证。agent 与贡献者按检查梯度选择最窄检查即可，不必为每个小改动要求完整验收；累积若干修复与优化、在日常使用中稳定后，再批量发新版。
+
+每次发布后随即在稳定 profile 执行上述 update 命令。稳定 profile 与开发 profile 共享全局 ledger 存储（`$DSH_HOME/storages/`）：稳定 profile 停留在旧版而 ledger 已被新版写入时，启动会因记录 schema 校验失败而崩溃（2026-08 的 0.1.1 即是这种"写得出、读不回"的中间版本）。
 
 本 bundle 的最低兼容版本是 DSH `0.1.1-rc.2`。当前 DSH SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
