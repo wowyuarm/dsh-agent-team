@@ -4,7 +4,7 @@ import type { AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } 
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
 import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersion, type ResolvedTaskRef } from './task-refs.ts'
-import { formatMessageTime, isPlainTextBody, memberHue, splitBrandedRefs, splitMentionNames, stripAttachmentLines } from './team-formatters.ts'
+import { formatMessageTime, isPlainTextBody, isSingleBrandedRef, memberHue, splitBrandedRefs, splitMentionNames, stripAttachmentLines } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -42,8 +42,14 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
   const inline = (human || isPlainTextBody(displayBody)) && mentionNames !== undefined && mentionNames.length > 0
     ? splitMentionNames(displayBody, mentionNames)
     : undefined
-  const fallbackNames = inline === undefined ? (mentionNames ?? []) : inline.unmatched
   const richAgentBody = !human && !isPlainTextBody(displayBody)
+  // Rich Markdown chipifies body mentions through the post-render pass, so
+  // only names absent from the body need the trailing fallback row; surfaces
+  // without ref navigation render nothing inline and keep the full row.
+  const fallbackNames = inline !== undefined ? inline.unmatched
+    : richAgentBody && onOpenRef !== undefined && mentionNames !== undefined
+      ? splitMentionNames(displayBody, mentionNames).unmatched
+      : mentionNames ?? []
   // Non-Task branded refs retain the legacy fallback row. Task refs instead
   // stay at their authored prose position; unresolved refs remain literal.
   const fallbackRefs = richAgentBody && onOpenRef !== undefined
@@ -66,17 +72,20 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     const root = markdownRef.current
     if (!richAgentBody || root === null || onOpenRef === undefined) return
     const textNodes = markdownProseTextNodes(root)
-    const taskRefs = [...new Set(textNodes.flatMap(node => splitBrandedRefs(node.data)
-      .filter(segment => segment.ref?.startsWith('task:') === true)
-      .map(segment => segment.ref as AgentTeamTaskRef)))]
+    const styledRefCodes = markdownStyledRefCodeElements(root)
+    const taskRefs = [...new Set([...textNodes.map(node => node.data), ...styledRefCodes.map(code => code.textContent ?? '')]
+      .flatMap(text => splitBrandedRefs(text)
+        .filter(segment => segment.ref?.startsWith('task:') === true)
+        .map(segment => segment.ref as AgentTeamTaskRef)))]
     if (onResolveTaskRefs !== undefined && taskRefs.length > 0) void resolveUnknownTaskRefs(taskRefs, onResolveTaskRefs)
-    for (const node of textNodes) renderResolvedMarkdownTaskRefs(node, taskLabel)
+    for (const code of styledRefCodes) renderResolvedMarkdownCodeRef(code, taskLabel)
+    for (const node of textNodes) renderResolvedMarkdownText(node, mentionNames ?? [], taskLabel)
     for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-task-ref]')) {
       const taskRef = button.dataset.taskRef as AgentTeamTaskRef | undefined
       const hit = taskRef === undefined ? undefined : cachedResolvedTaskRef(taskRef)
       if (taskRef !== undefined && hit !== undefined) button.textContent = taskLabel(hit.taskNumber)
     }
-  }, [richAgentBody, onOpenRef, onResolveTaskRefs, refVersion, taskLabel])
+  }, [richAgentBody, onOpenRef, onResolveTaskRefs, refVersion, taskLabel, mentionNames])
   useEffect(() => {
     const root = markdownRef.current
     if (!richAgentBody || root === null || onOpenRef === undefined) return
@@ -137,36 +146,77 @@ function markdownProseTextNodes(root: HTMLElement): Text[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     const parent = node.parentElement
-    if (parent !== null && parent.closest('code, pre, a, button') === null) nodes.push(node as Text)
+    if (parent === null) continue
+    if (parent.closest('code, pre, a, button') !== null) continue
+    // Mention chips from an earlier pass stay untouched, or each effect rerun
+    // would wrap another chip around the last one.
+    if (css.mention !== undefined && parent.closest(`[class~="${css.mention}"]`) !== null) continue
+    nodes.push(node as Text)
   }
   return nodes
 }
 
-/** Replace resolved refs in one prose text node without changing Markdown structure. */
-function renderResolvedMarkdownTaskRefs(node: Text, taskLabel: (taskNumber: number) => string): void {
-  const segments = splitBrandedRefs(node.data)
-  if (!segments.some(segment => segment.ref?.startsWith('task:') === true && cachedResolvedTaskRef(segment.ref as AgentTeamTaskRef) !== undefined)) return
-  const fragment = document.createDocumentFragment()
-  for (const segment of segments) {
-    const taskRef = segment.ref?.startsWith('task:') === true ? segment.ref as AgentTeamTaskRef : undefined
-    if (taskRef === undefined) {
-      fragment.append(segment.text)
-      continue
-    }
-    const resolved = cachedResolvedTaskRef(taskRef)
-    if (resolved === undefined) {
-      fragment.append(segment.text)
-      continue
-    }
-    const button = document.createElement('button')
-    button.type = 'button'
-    if (css.refLink !== undefined) button.className = css.refLink
-    button.dataset.taskRef = taskRef
-    button.title = taskRef
-    button.textContent = taskLabel(resolved.taskNumber)
-    fragment.append(button)
+/** Code spans whose entire content is one branded ref: model styling around a ref, not code. */
+function markdownStyledRefCodeElements(root: HTMLElement): HTMLElement[] {
+  const elements: HTMLElement[] = []
+  for (const code of root.querySelectorAll<HTMLElement>('code')) {
+    if (code.closest('pre, a, button') !== null) continue
+    if (!isSingleBrandedRef(code.textContent ?? '')) continue
+    elements.push(code)
   }
-  node.replaceWith(fragment)
+  return elements
+}
+
+/** One resolved Task-ref chip built outside React, matching the styled ref link. */
+function resolvedTaskRefButton(taskRef: AgentTeamTaskRef, label: string): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  if (css.refLink !== undefined) button.className = css.refLink
+  button.dataset.taskRef = taskRef
+  button.title = taskRef
+  button.textContent = label
+  return button
+}
+
+/** Replace a whole-ref code span with its resolved Task chip once known. */
+function renderResolvedMarkdownCodeRef(code: HTMLElement, taskLabel: (taskNumber: number) => string): void {
+  const segments = splitBrandedRefs((code.textContent ?? '').trim())
+  const segment = segments.length === 1 ? segments[0]! : undefined
+  const taskRef = segment?.ref?.startsWith('task:') === true ? segment.ref as AgentTeamTaskRef : undefined
+  const resolved = taskRef === undefined ? undefined : cachedResolvedTaskRef(taskRef)
+  if (taskRef === undefined || resolved === undefined) return
+  code.replaceWith(resolvedTaskRefButton(taskRef, taskLabel(resolved.taskNumber)))
+}
+
+/** Replace resolved Task refs and structured mention handles in one prose text node without changing Markdown structure. */
+function renderResolvedMarkdownText(node: Text, mentionNames: readonly string[], taskLabel: (taskNumber: number) => string): void {
+  let changed = false
+  const fragment = document.createDocumentFragment()
+  for (const refSegment of splitBrandedRefs(node.data)) {
+    if (refSegment.ref === undefined) {
+      for (const mentionSegment of splitMentionNames(refSegment.text, mentionNames).segments) {
+        if (!mentionSegment.mention) {
+          fragment.append(mentionSegment.text)
+          continue
+        }
+        changed = true
+        const chip = document.createElement('span')
+        if (css.mention !== undefined) chip.className = css.mention
+        chip.textContent = mentionSegment.text
+        fragment.append(chip)
+      }
+      continue
+    }
+    const taskRef = refSegment.ref.startsWith('task:') === true ? refSegment.ref as AgentTeamTaskRef : undefined
+    const resolved = taskRef === undefined ? undefined : cachedResolvedTaskRef(taskRef)
+    if (resolved === undefined) {
+      fragment.append(refSegment.text)
+      continue
+    }
+    changed = true
+    fragment.append(resolvedTaskRefButton(taskRef!, taskLabel(resolved.taskNumber)))
+  }
+  if (changed) node.replaceWith(fragment)
 }
 
 /** Render one literal text run, linkifying branded refs when navigation is available. */

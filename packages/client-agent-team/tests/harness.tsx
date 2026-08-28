@@ -24,6 +24,7 @@ interface SeededMessage {
   readonly body: string
   readonly occurredAt: string
   readonly sender?: 'human' | 'agent'
+  readonly mentions?: readonly string[]
 }
 
 export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: 'in_progress' }) {
@@ -70,7 +71,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const seedThreadRef = options?.seedThreadRef ?? 'thread:1'
   let viewItems: Array<Record<string, unknown>> = (options?.seededMessages ?? []).map((seed, index) => ({
     message: { messageRef: `message:seed-${index}`, channelRef: 'channel:engineering', threadRef: seedThreadRef, taskRef: seedTaskRef, sender: seed.sender === 'agent' ? 'member:builder' : 'member:human', body: seed.body, topLevel: true, sequence: index + 1, occurredAt: seed.occurredAt },
-    mentions: [],
+    mentions: seed.mentions ?? [],
     task: { taskRef: seedTaskRef, channelRef: 'channel:engineering', threadRef: seedThreadRef,
       status: options?.seedTaskStatus ?? 'todo', resolution: 'open' },
     thread: { threadRef: seedThreadRef, taskRef: seedTaskRef, revision: 2 },

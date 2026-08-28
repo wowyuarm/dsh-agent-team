@@ -177,38 +177,79 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('renders resolved Task refs inline in rich Agent Markdown without touching code', async () => {
+  it('renders resolved Task refs inline in rich Agent Markdown, styled code spans included', async () => {
     const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e41'
     const unknownRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e43'
     const inlineCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e44'
     const fencedCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e45'
     const linkedRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e46'
-    const quotedCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e47'
+    const mixedCodeRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e47'
     const b = await runtimeWithTeam({
       mode: 'team', workspaceId: 'w1', initialChannels: true,
       seedTaskRef: taskRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e42',
       seededMessages: [{
-        body: `需求源头：${taskRef}\n\n- **已核实**\n- 未知任务：${unknownRef}\n- 行内代码：\`${inlineCodeRef}\`\n- [已有链接 ${linkedRef}](https://example.com/source)\n\n\`\`\`text\n${fencedCodeRef}\n\`\`\`\n\n> \`\`\`text\n> ${quotedCodeRef}\n> \`\`\``,
+        body: `需求源头：${taskRef} 与 \`${taskRef}\`\n\n- **已核实**\n- 未知任务：${unknownRef}\n- 行内代码：\`${inlineCodeRef}\`\n- 混合代码：\`编号 ${mixedCodeRef}\`\n- [已有链接 ${linkedRef}](https://example.com/source)\n\n\`\`\`text\n${fencedCodeRef}\n\`\`\``,
         occurredAt: '2026-08-21T09:00:00.000Z',
         sender: 'agent',
       }],
     })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
 
-    const link = await b.view.findByRole('button', { name: 'Task #1' })
-    expect(link.getAttribute('title')).toBe(taskRef)
+    // Prose refs and code spans holding exactly one ref resolve to the
+    // human-facing number; fenced blocks, mixed-content code spans, and
+    // existing links stay exactly as Markdown rendered them.
+    const links = await b.view.findAllByRole('button', { name: 'Task #1' })
+    expect(links).toHaveLength(2)
+    expect(links.map(link => link.getAttribute('title'))).toEqual([taskRef, taskRef])
     expect(b.view.queryByText(taskRef)).toBeNull()
-    expect(b.view.getAllByRole('button', { name: 'Task #1' })).toHaveLength(1)
     expect(b.view.getByText('已核实').tagName).toBe('STRONG')
     expect(b.view.getByText(unknownRef, { exact: false })).toBeTruthy()
     expect(b.view.getByText(inlineCodeRef).tagName).toBe('CODE')
-    expect(b.view.getByText(fencedCodeRef)).toBeTruthy()
-    expect(b.view.getByText(quotedCodeRef)).toBeTruthy()
+    const mixedCode = [...b.view.container.querySelectorAll('code')].filter(code => code.textContent?.includes(mixedCodeRef))
+    expect(mixedCode).toHaveLength(1)
+    expect(mixedCode[0]!.closest('pre')).toBeNull()
+    expect(b.view.getByText(fencedCodeRef).closest('pre')).not.toBeNull()
     expect(b.view.getByRole('link', { name: `已有链接 ${linkedRef}` }).getAttribute('href')).toBe('https://example.com/source')
-    await waitFor(() => expect(b.resolveTaskRefs).toHaveBeenCalledWith(expect.objectContaining({ taskRefs: [taskRef, unknownRef] })))
+    await waitFor(() => expect(b.resolveTaskRefs).toHaveBeenCalledWith(expect.objectContaining({ taskRefs: [taskRef, unknownRef, inlineCodeRef] })))
 
-    fireEvent.click(link)
+    fireEvent.click(links[0]!)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
+    await b.runtime.dispose()
+  })
+
+  it('renders a Lead-style dispatch: doubled-colon ref resolves and the spelled mention chipifies inline', async () => {
+    const auditRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e61'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: auditRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e62',
+      seededMessages: [{
+        body: '@builder 实施 Client 的结构重构，来源于审计 Task `task::0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e61`：\n\n1. 先读 audit scratch 与现有 tests\n2. 回复边界后再 Claim\n\n完成后由 Lead 复核。',
+        occurredAt: '2026-08-28T11:00:00.000Z',
+        sender: 'agent',
+        mentions: ['member:builder'],
+      }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+
+    // The message is rich Markdown: the spelled handle chipifies at its
+    // prose position and the trailing fallback row stays empty entirely.
+    const messageRow = await waitFor(() => {
+      const row = [...b.view.container.querySelectorAll('[data-team-channel] article')]
+        .find(article => article.textContent?.includes('实施 Client 的结构重构'))
+      expect(row).toBeTruthy()
+      return row!
+    })
+    const chips = [...messageRow.querySelectorAll('span')]
+      .filter(span => span.textContent === '@builder' && [...span.classList].some(className => className.includes('mention')))
+    expect(chips).toHaveLength(1)
+    expect([...messageRow.querySelectorAll('div')].some(div => [...div.classList].some(className => className.includes('mentionsRow')))).toBe(false)
+
+    // The model's doubled-colon spelling resolves to the same Task: the
+    // chip shows the human-facing number and navigates with the canonical ref.
+    const link = await b.view.findByRole('button', { name: 'Task #1' })
+    expect(link.getAttribute('title')).toBe(auditRef)
+    fireEvent.click(link)
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef: auditRef })))
     await b.runtime.dispose()
   })
 

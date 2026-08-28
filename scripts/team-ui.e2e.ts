@@ -462,27 +462,33 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     requestId: 'm2-06-reviewer-reply' as never,
     workspaceId: workspace.id,
     taskRef: task.taskRef,
-    body: `reviewer 已读取邀请并回复 Human，关联 **${task.taskRef}**\n\n- 已核实邀请`,
+    body: `reviewer 已读取邀请并回复 Human，关联 **${task.taskRef}**；风格记录 \`task::${task.taskRef.slice('task:'.length)}\`\n\n- 已核实邀请`,
     baseRevision: reviewerRead.thread.revision,
     recipients: [scaffold.ctx.agentTeam.status().humanMemberId],
   })
   expect(reviewerReply.kind).toBe('committed')
 
-  // Rich Agent Markdown keeps its structure while the branded ref becomes
-  // one inline Task link instead of a raw UUID plus a trailing fallback.
-  const agentRefLink = page.locator('[data-team-thread] article').filter({ hasText: 'reviewer 已读取邀请' }).getByRole('button', { name: /Task #\d+/ })
-  await agentRefLink.waitFor()
+  // Rich Agent Markdown keeps its structure while branded refs become inline
+  // Task links: the bold prose ref and the model-style backticked doubled
+  // colon both relabel to the human-facing number with the canonical full ref
+  // on hover, and no doubled colon survives into the rendered DOM.
+  const agentRefLinks = page.locator('[data-team-thread] article').filter({ hasText: 'reviewer 已读取邀请' }).getByRole('button', { name: /Task #\d+/ })
+  await agentRefLinks.first().waitFor()
+  expect(await agentRefLinks.count()).toBe(2)
   // The Host lookup relabels the raw UUID into the human-facing number; the
   // full ref stays on hover.
-  await expect.poll(() => agentRefLink.textContent()).toBe('Task #1')
-  expect(await agentRefLink.getAttribute('title')).toBe(task.taskRef)
-  expect(await agentRefLink.locator('xpath=ancestor::strong').count()).toBe(1)
+  await expect.poll(() => agentRefLinks.first().textContent()).toBe('Task #1')
+  await expect.poll(() => agentRefLinks.nth(1).textContent()).toBe('Task #1')
+  expect(await agentRefLinks.first().getAttribute('title')).toBe(task.taskRef)
+  expect(await agentRefLinks.nth(1).getAttribute('title')).toBe(task.taskRef)
+  expect(await page.getByText(`task::${task.taskRef.slice('task:'.length)}`).count()).toBe(0)
+  expect(await agentRefLinks.first().locator('xpath=ancestor::strong').count()).toBe(1)
   expect(await page.getByText('已核实邀请', { exact: true }).count()).toBe(1)
-  await agentRefLink.click()
+  await agentRefLinks.first().click()
   await page.getByRole('heading', { name: /Task #1/ }).waitFor()
   await page.setViewportSize({ width: 390, height: 844 })
   await page.locator('[data-sidebar-collapsed="true"]').waitFor()
-  await agentRefLink.scrollIntoViewIfNeeded()
+  await agentRefLinks.first().scrollIntoViewIfNeeded()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await page.screenshot({ path: join(UI04_SHOTS, 'message-ref-inline-markdown-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, mentionNamesOf, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -79,6 +79,35 @@ describe('Team presentation formatters', () => {
       { text: 'ping ', mention: false },
       { text: '@builder2', mention: true, name: 'builder2' },
     ])
+  })
+
+  it('splits branded refs, tolerating doubled colons and canonicalizing them', () => {
+    const refText = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01'
+    expect(splitBrandedRefs(`源头 ${refText} 结束`)).toEqual([
+      { text: '源头 ' },
+      { text: refText, ref: refText },
+      { text: ' 结束' },
+    ])
+    // A doubled colon or uppercase UUID from model output still resolves,
+    // canonicalized to the lowercase single-colon ref the Host mints.
+    expect(splitBrandedRefs('见 TASK::0F0AD7CE-11D3-4C05-8A9E-6F2B1C9D7E01 即可')).toEqual([
+      { text: '见 ' },
+      { text: 'TASK::0F0AD7CE-11D3-4C05-8A9E-6F2B1C9D7E01', ref: refText },
+      { text: ' 即可' },
+    ])
+    // A tripled colon is not a ref, and prose colons never linkify.
+    expect(splitBrandedRefs('task:::0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01')).toEqual([
+      { text: 'task:::0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01' },
+    ])
+  })
+
+  it('detects strings whose whole content is one branded ref', () => {
+    expect(isSingleBrandedRef(' task::0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01 ')).toBe(true)
+    expect(isSingleBrandedRef('thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01')).toBe(true)
+    expect(isSingleBrandedRef('编号 task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01')).toBe(false)
+    expect(isSingleBrandedRef('task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01 task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e02')).toBe(false)
+    expect(isSingleBrandedRef('')).toBe(false)
+    expect(isSingleBrandedRef('task:0f0ad7ce')).toBe(false)
   })
 
   it('maps mention refs to canonical handles through the member table', () => {

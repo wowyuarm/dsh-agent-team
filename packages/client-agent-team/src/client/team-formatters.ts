@@ -49,13 +49,24 @@ export interface RefSegment {
   readonly ref?: string
 }
 
-const BRANDED_REF_PATTERN = /\b(task|channel|thread):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
+const BRANDED_REF_PATTERN = /\b(task|channel|thread):{1,2}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
+
+/**
+ * Canonical form of one matched ref: models occasionally double the colon or
+ * uppercase the UUID when citing a ref in prose, while Host lookups and
+ * navigation only accept the lowercase single-colon ref the ledger mints.
+ */
+function canonicalBrandedRef(match: string): string {
+  return match.replace('::', ':').toLowerCase()
+}
 
 /**
  * Split a literal text run into plain and branded-ref segments. The pattern
  * anchors on the fixed ref prefixes plus the UUID shape, so ordinary prose
- * containing a colon never linkifies. Refs render as navigation links; text
- * without any ref comes back as one untouched segment.
+ * containing a colon never linkifies; a doubled colon from model output is
+ * tolerated. Segment refs are always canonical, so resolution and navigation
+ * work regardless of how the ref was spelled; text without any ref comes
+ * back as one untouched segment.
  */
 export function splitBrandedRefs(text: string): readonly RefSegment[] {
   const segments: RefSegment[] = []
@@ -63,11 +74,23 @@ export function splitBrandedRefs(text: string): readonly RefSegment[] {
   for (const match of text.matchAll(BRANDED_REF_PATTERN)) {
     const start = match.index ?? 0
     if (start > cursor) segments.push({ text: text.slice(cursor, start) })
-    segments.push({ text: match[0], ref: match[0] })
+    segments.push({ text: match[0], ref: canonicalBrandedRef(match[0]) })
     cursor = start + match[0].length
   }
   if (cursor < text.length) segments.push({ text: text.slice(cursor) })
   return segments
+}
+
+/**
+ * Whether one string's whole content is exactly one branded ref. A code span
+ * like this is the model styling a ref as an identifier, not publishing code,
+ * so the Markdown pass may linkify it; anything larger stays literal.
+ */
+export function isSingleBrandedRef(text: string): boolean {
+  const trimmed = text.trim()
+  if (trimmed === '') return false
+  const matches = [...trimmed.matchAll(BRANDED_REF_PATTERN)]
+  return matches.length === 1 && matches[0]![0] === trimmed
 }
 
 export interface MentionSegment {
