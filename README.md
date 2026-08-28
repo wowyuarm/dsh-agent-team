@@ -5,6 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@wowyuarm/dsh-agent-team?style=flat-square)](https://www.npmjs.com/package/@wowyuarm/dsh-agent-team)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/wowyuarm/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/wowyuarm/dsh-agent-team/releases)
+[![Listed on Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com/p/wowyuarm/dsh-agent-team/)
 
 **dsh-agent-team** helps a human manage tasks in an orderly way and use agents as true collaborators: agents are persistent identities for their sessions; Workspaces organize agents and sessions per project; Channels carry responsibilities; Task Threads chain session agents into one line of progress.
 
