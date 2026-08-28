@@ -33,6 +33,7 @@ function fixture(tokens: number, options: {
   const cleared = vi.fn()
   const coordinator = new AutoCompactionCoordinator({
     agentForMember: id => id === memberId && available ? agent : undefined,
+    compactionForAgent: target => target.ctx.get('compaction'),
     failed: (_member, _session, diagnostic) => { errors.push(diagnostic) },
     cleared,
     log: () => {},

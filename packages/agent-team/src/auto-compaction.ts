@@ -1,5 +1,5 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { ManualCompactionError } from '@deepseek-ai/dsh-compaction'
+import { ManualCompactionError, type CompactionEngine } from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-token-meter'
 import type {} from '@deepseek-ai/dsh-compaction'
 import type { AgentTeamMemberId, AgentTeamOperation } from './types.ts'
@@ -25,6 +25,7 @@ export class AutoCompactionCoordinator {
 
   constructor(private readonly options: {
     readonly agentForMember: (memberId: AgentTeamMemberId) => Agent | undefined
+    readonly compactionForAgent: (agent: Agent) => CompactionEngine | undefined
     readonly failed: (memberId: AgentTeamMemberId, sessionId: Agent['id'], diagnostic: string) => void
     readonly cleared: (memberId: AgentTeamMemberId, sessionId: Agent['id']) => void
     readonly log: (message: string) => void
@@ -81,7 +82,7 @@ export class AutoCompactionCoordinator {
         this.complete(memberId, agent)
         return
       }
-      const engine = agent.ctx.get('compaction')
+      const engine = this.options.compactionForAgent(agent)
       if (engine === undefined) {
         this.fail(memberId, agent, 'automatic compaction failed: compaction is unavailable in the Member scope')
         return

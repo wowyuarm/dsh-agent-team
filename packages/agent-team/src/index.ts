@@ -191,6 +191,7 @@ export default class AgentTeam extends TypertRemoteService {
     super(ctx, 'agentTeam')
     this.autoCompaction = new AutoCompactionCoordinator({
       agentForMember: memberId => this.handles.get(memberId)?.agent,
+      compactionForAgent: agent => this.ctx.agentPresets.serviceFor(agent, 'compaction'),
       failed: (memberId, sessionId, diagnostic) => {
         this.autoCompactionErrors.set(sessionId, diagnostic)
         this.emitAutoCompactionChanged(memberId)
