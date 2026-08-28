@@ -39,8 +39,8 @@ npm pack --dry-run
 
 - `npm run generate:typert`：从 `packages/agent-team/src/` 的 Host face 生成 Typert Host/Remote artifacts。
 - `npm run typecheck`：先生成 Typert，再检查 Host、tools 和 Client 三个源码目录。
-- `npm test`：先生成 Typert，再运行 Vitest。Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一个一次性的 `DSH_HOME`：Agent Team 插件启动时会清理账本不认识的 `member:*` 目录，未隔离的测试会把真实 `~/.dsh/agent-team/members/` 当孤儿清掉。需要特定 home 的测试自行设置并保存/恢复该变量（见 `member-lifecycle.spec.ts`）。孤儿目录无害（只是几 KB 的 markdown），介质重置后如需清理，手动删除对应 `member:` 目录即可——启动流程不再自动清理。
-- `npm run build`：先生成 Typert，构建 Host、tools 和 Client 三个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle；最终发布物仍是一个根 npm 包。
+- `npm test`：先生成 Typert，再运行 Vitest。Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一个一次性的 `DSH_HOME`，隔离 Member activation 创建或复用的 `$DSH_HOME/agent-team/members/member:*` 私有 memory。需要特定 home 的测试自行设置并保存/恢复该变量（见 `member-lifecycle.spec.ts`）。启动不会自动清理账本不认识的 Member 目录；显式 Member remove 才删除该 Member 的私有 memory，因此介质重置后如需清理旧目录，由操作者手动删除对应 `member:` 目录。
+- `npm run build`：先由受限 Node cleaner 清空 Host、tools 与 Client 三个 package 的 `lib/`，再生成 Typert、构建三个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle；这样删除源码后遗留的旧产物不会进入 pack。最终发布物仍是一个根 npm 包。
 - `npm run lint`：运行 oxlint。
 - `npm pack --dry-run`：检查根 bundle 的发布内容。
 

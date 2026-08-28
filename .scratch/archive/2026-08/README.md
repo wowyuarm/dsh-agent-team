@@ -14,5 +14,6 @@
 | UI loading investigation | 收口 scoped invalidation、共享可取消 long-poll 与 Host 投影索引优化 | [`team-ui-loading-investigation/`](team-ui-loading-investigation/) |
 | Ledger storage | 以 v1 域版本重置与公开组合路由把 Team ledger 切到 SQLite，移除随历史增长的 JSON 整文件重写成本；checkpoint/log 方向显式延后并记录在案 | [`agent-team-storage-architecture/`](agent-team-storage-architecture/) |
 | README positioning | 以价值优先的产品定位更新 README 与 package 元数据，保留 opt-in 与单主机边界表述 | [`readme-positioning/`](readme-positioning/) |
+| Quality audit | 收口无用 attachment helper、fake Thread anchor、Member editor owner 与 Client test surface 拆分；保留有证据的依赖/投影边界，记录 deferred 结论 | [`agent-team-quality-audit/`](agent-team-quality-audit/) |
 
 代表性浏览器图在 [`validation/browser/`](validation/browser/)。它们是已确认的里程碑证据；日常测试输出不写入此目录。
