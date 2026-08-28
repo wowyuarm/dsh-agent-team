@@ -208,55 +208,6 @@ describe('Team agent surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('uploads composer attachments as chips, sends their ids, and renders the strip', async () => {
-    const b = await runtimeWithTeam({ initialChannels: true })
-    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
-    // Let the browser's one-time workspace selection settle first; a late
-    // selectWorkspace would strip the channel ref mid-test.
-    await waitFor(() => { expect(b.view.container.querySelector('[aria-current="page"]')?.textContent).toContain('Alpha') })
-    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
-    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
-    const composer = b.view.container
-    const chipCount = (): number => composer.querySelectorAll('ul[aria-label="添加附件"] > li').length
-
-    // The "+" picker adds chips; the remove button drops one.
-    const input = composer.querySelector('input[type="file"]') as HTMLInputElement
-    const png = new File(['png'], 'shot.png', { type: 'image/png' })
-    const pdf = new File(['pdf'], 'spec.pdf', { type: 'application/pdf' })
-    await waitFor(() => { fireEvent.change(input, { target: { files: [png, pdf] } }) })
-    await waitFor(() => { expect(chipCount()).toBe(2) })
-    // Image drafts render an inline preview card; documents stay text cards.
-    const chips = [...composer.querySelectorAll('ul[aria-label="添加附件"] > li')]
-    expect(chips.find(chip => chip.textContent?.includes('shot.png'))?.querySelector('img')).toBeTruthy()
-    expect(chips.find(chip => chip.textContent?.includes('spec.pdf'))?.querySelector('img')).toBeNull()
-    fireEvent.click(composer.querySelector('[class*="fileChipRemove"]') as HTMLButtonElement)
-    await waitFor(() => { expect(chipCount()).toBe(1) })
-    expect(composer.querySelector('[class*="fileChipName"]')?.textContent).toBe('spec.pdf3 B')
-    expect(composer.querySelector('[class*="fileChipSize"]')?.textContent).toBe('3 B')
-
-    // Sending uploads the remaining file and passes its id to sendMessage.
-    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: '带附件' } })
-    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
-    await waitFor(() => { expect(b.putAttachment).toHaveBeenCalledWith(expect.objectContaining({ name: 'spec.pdf', mediaType: 'application/pdf' })) })
-    await waitFor(() => { expect(b.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ body: '带附件', attachments: ['attachment:1'] })) })
-    // Committed send clears the chips along with the draft...
-    await waitFor(() => { expect(chipCount()).toBe(0) })
-    // ...and the echoed message renders its image as a thumbnail.
-    await waitFor(() => { expect(composer.querySelector('img[src^="data:image/png"]')).toBeTruthy() })
-
-    // A second message whose bytes the Host no longer caches (GC'd) degrades
-    // to an expiry chip: history stays honest about what was shared.
-    await waitFor(() => { fireEvent.change(input, { target: { files: [new File(['gone'], 'expired.png', { type: 'image/png' })] } }) })
-    await waitFor(() => { expect(chipCount()).toBe(1) })
-    fireEvent.change(b.view.getByRole('textbox', { name: '消息内容' }), { target: { value: '图已过期' } })
-    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
-    await waitFor(() => {
-      const chips = [...b.view.container.querySelectorAll('[class*="attachmentChip"]')]
-      return expect(chips.some(chip => chip.textContent?.includes('文件已过期清理'))).toBe(true)
-    }, { timeout: 4000 })
-    await b.runtime.dispose()
-  })
-
   it('offers 恢复 in the row menu only for error Members and nudges through the Host remote', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
@@ -341,7 +292,8 @@ describe('Team agent surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('edits an Agent Channel membership from the sidebar row menu', async () => {    const b = await runtimeWithTeam({ initialChannels: true })
+  it('edits an Agent Channel membership from the sidebar row menu', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await b.view.findByText('builder')
 

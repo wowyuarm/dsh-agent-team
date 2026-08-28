@@ -46,9 +46,14 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('mode: native')
     expect(preset).toContain("name: '@wowyuarm/dsh-agent-team/member-context'")
     expect(preset).toContain("name: '@deepseek-ai/dsh-command-compact'")
+    // Every lib directory that can enter the pack must be cleaned, so a
+    // deleted source module cannot leave stale output behind.
     const cleanScript = await readFile(resolve(root, 'scripts/clean-build-outputs.mjs'), 'utf8')
-    const cleanTargets = [...cleanScript.matchAll(/'packages\/[^']+\/lib'/g)].map(match => match[0].slice(1, -1))
-    expect(cleanTargets).toEqual(['packages/agent-team/lib', 'packages/tool-agent-team/lib', 'packages/client-agent-team/lib'])
+    const cleanTargets = [...cleanScript.matchAll(/['"](packages\/[^'"]+\/lib)['"]/g)].map(match => match[1])
+    const shippedLibDirs = (JSON.parse(manifestText) as { files: string[] }).files
+      .filter(pattern => pattern.startsWith('packages/') && pattern.endsWith('/lib/**/*'))
+      .map(pattern => pattern.slice(0, -'/**/*'.length))
+    expect(cleanTargets).toEqual(shippedLibDirs)
     const buildCommand = (JSON.parse(manifestText) as { scripts: { build: string } }).scripts.build
     expect(buildCommand.indexOf('npm run clean:build-outputs')).toBeGreaterThanOrEqual(0)
     expect(buildCommand.indexOf('npm run generate:typert')).toBeGreaterThan(buildCommand.indexOf('npm run clean:build-outputs'))
