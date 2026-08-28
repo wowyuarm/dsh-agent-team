@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
+import Group from '@deepseek-ai/cordis-plugin-group'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
@@ -110,6 +111,20 @@ function waitForIdle(ctx: Context, agent: NonNullable<ReturnType<Context['agents
 
 type PersistenceBackend = 'jsonl' | 'sqlite'
 
+/**
+ * The real roster with one test seam: agents armed here resolve no preset
+ * composition, exactly as members composed before a bundle-row reload do.
+ * Agents composed after arming resolve normally, so a re-activation heals.
+ */
+class TestablePresets extends AgentPresets {
+  readonly orphaned = new WeakSet<Context>()
+
+  override composedPreset(agentCtx: Context): string | undefined {
+    if (this.orphaned.has(agentCtx)) return undefined
+    return super.composedPreset(agentCtx)
+  }
+}
+
 async function realHarness(
   adapter: LlmAdapter = new EmptyAdapter(),
   persistenceBackend: PersistenceBackend = 'jsonl',
@@ -119,6 +134,7 @@ async function realHarness(
   readonly root: string
   readonly project: string
   readonly teamFiber: Awaited<ReturnType<Context['plugin']>>
+  readonly presets: TestablePresets
 }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
@@ -128,16 +144,37 @@ async function realHarness(
   const presetDir = join(presetRoot, 'team-member')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
   process.env.DSH_HOME = join(root, 'dsh-home')
-  await writeFile(join(presetDir, 'agent.cordis.yml'), "- id: member-context\n  name: 'test-member-context'\n- id: team-tools\n  name: 'test-team-tools'\n")
+  await writeFile(join(presetDir, 'agent.cordis.yml'), [
+    "- id: member-context",
+    "  name: 'test-member-context'",
+    "- id: team-tools",
+    "  name: 'test-team-tools'",
+    "- id: compaction",
+    "  name: cordis:group",
+    "  group: true",
+    "  isolate:",
+    "    compaction: true",
+    "  config:",
+    "    - id: compaction-stub",
+    "      name: 'test-compaction'",
+    '',
+  ].join('\n'))
 
   const ctx = new Context()
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
+  ctx.loader.builtins.group = Group
   ctx.loader.internal = {
     version: 'v2',
     async import(specifier: string) {
       if (specifier === 'test-member-context') return memberContext
+      if (specifier === 'test-compaction') {
+        return {
+          name: 'test-compaction',
+          apply(scope: Context) { scope.provide('compaction', { compactNow: async () => null }) },
+        }
+      }
       if (specifier === 'test-team-tools') return {
         name: 'test-team-tools', inject: ['tools'], apply(scope: Context) {
           applyAgentTeamTools(scope)
@@ -158,7 +195,10 @@ async function realHarness(
   if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   else await ctx.plugin(SqliteSessionPersistence, { path: sqlite, journalMode: 'delete' })
   await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
-  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false })
+  const presetsConfig = (): { default: string; roots: { path: string; trust: 'system' }[]; includeUserRoot: boolean } => ({
+    default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false,
+  })
+  await ctx.plugin(TestablePresets, presetsConfig())
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
@@ -173,7 +213,7 @@ async function realHarness(
   })
   const teamFiber = await ctx.plugin(AgentTeam)
   cleanups.push(async () => { await ctx.fiber.dispose(); await facility.closeAll(); await rm(root, { recursive: true, force: true }) })
-  return { ctx, workspaceId, root, project, teamFiber }
+  return { ctx, workspaceId, root, project, teamFiber, presets: ctx.agentPresets as TestablePresets }
 }
 
 describe('Agent Team Member lifecycle', () => {
@@ -206,6 +246,28 @@ describe('Agent Team Member lifecycle', () => {
     expect(removed.member.state).toBe('inactive')
     expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
+  })
+
+  it('surfaces an orphaned preset composition and rebuilds the Member on resume', async () => {
+    const { ctx, workspaceId, presets } = await realHarness()
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [] })
+    expect(added.status.presence).toBe('available')
+    const live = ctx.agents.get(added.status.member.sessionId)!
+    expect(ctx.agentPresets.serviceFor(live, 'compaction')).toBeDefined()
+
+    // Arm the orphan seam: this agent now resolves no preset composition,
+    // as members composed before a bundle-row reload do after it.
+    presets.orphaned.add(live.ctx)
+    const orphaned = ctx.agentTeam.members().find(member => member.member.memberId === added.status.member.memberId)!
+    expect(orphaned.presence).toBe('error')
+    expect(orphaned.diagnostic).toContain('preset composition was lost')
+
+    const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('recover'), workspaceId, memberId: added.status.member.memberId })
+    expect(recovered.status.presence).toBe('available')
+    const rebuilt = ctx.agents.get(added.status.member.sessionId)!
+    expect(rebuilt).not.toBe(live)
+    expect(ctx.agentPresets.serviceFor(rebuilt, 'compaction')).toBeDefined()
+    expect(ctx.tools.schemas(rebuilt).length).toBeGreaterThan(0)
   })
 
   it('creates a Member with no description and no Channels and lights delivery on join', async () => {

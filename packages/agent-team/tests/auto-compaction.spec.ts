@@ -14,6 +14,7 @@ function fixture(tokens: number, options: {
   readonly meter?: boolean
   readonly engine?: boolean
   readonly available?: boolean
+  readonly reactivate?: () => Promise<boolean>
 } = {}) {
   let available = options.available ?? true
   const measure = vi.fn(() => ({ totalTokens: tokens }))
@@ -29,16 +30,23 @@ function fixture(tokens: number, options: {
     whenIdle: options.whenIdle ?? (async () => {}),
     cancel,
   } as unknown as Agent
+  let current = agent
   const errors: string[] = []
   const cleared = vi.fn()
   const coordinator = new AutoCompactionCoordinator({
-    agentForMember: id => id === memberId && available ? agent : undefined,
+    agentForMember: id => id === memberId && available ? current : undefined,
     compactionForAgent: target => target.ctx.get('compaction'),
+    reactivate: options.reactivate ?? (async () => false),
     failed: (_member, _session, diagnostic) => { errors.push(diagnostic) },
     cleared,
     log: () => {},
   })
-  return { agent, cancel, cleared, compactNow, coordinator, errors, measure, setAvailable: (next: boolean) => { available = next }, setTokens: (next: number) => { tokens = next } }
+  return {
+    agent, cancel, cleared, compactNow, coordinator, errors, measure,
+    setAvailable: (next: boolean) => { available = next },
+    setTokens: (next: number) => { tokens = next },
+    setAgent: (next: Agent) => { current = next },
+  }
 }
 
 describe('accepted-task auto compaction coordinator', () => {
@@ -108,6 +116,40 @@ describe('accepted-task auto compaction coordinator', () => {
       await vi.waitFor(() => expect(tested.errors[0]).toContain(diagnostic))
       await tested.coordinator.dispose()
     }
+  })
+
+  it('heals an orphaned engine resolution through one in-place re-activation', async () => {
+    const healed = fixture(AUTO_COMPACTION_TOKEN_LIMIT + 1, { compact: async () => { healed.setTokens(100) } })
+    const reactivate = vi.fn(async () => {
+      tested.setAgent(healed.agent)
+      return true
+    })
+    const tested = fixture(AUTO_COMPACTION_TOKEN_LIMIT + 1, { engine: false, reactivate })
+    tested.coordinator.schedule([memberId])
+    await vi.waitFor(() => expect(healed.compactNow).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(tested.cleared).toHaveBeenCalled())
+    expect(reactivate).toHaveBeenCalledOnce()
+    expect(tested.errors).toEqual([])
+    await tested.coordinator.dispose()
+    await healed.coordinator.dispose()
+  })
+
+  it('fails terminally when re-activation cannot restore the engine, without retry loops', async () => {
+    const reactivate = vi.fn(async () => true)
+    const tested = fixture(AUTO_COMPACTION_TOKEN_LIMIT + 1, { engine: false, reactivate })
+    tested.coordinator.schedule([memberId])
+    await vi.waitFor(() => expect(tested.errors[0]).toContain('compaction is unavailable'))
+    expect(reactivate).toHaveBeenCalledOnce()
+    await tested.coordinator.dispose()
+  })
+
+  it('fails terminally when the member cannot be rebuilt', async () => {
+    const reactivate = vi.fn(async () => false)
+    const tested = fixture(AUTO_COMPACTION_TOKEN_LIMIT + 1, { engine: false, reactivate })
+    tested.coordinator.schedule([memberId])
+    await vi.waitFor(() => expect(tested.errors[0]).toContain('compaction is unavailable'))
+    expect(reactivate).toHaveBeenCalledOnce()
+    await tested.coordinator.dispose()
   })
 
   it('keeps an unavailable Member pending until activation', async () => {

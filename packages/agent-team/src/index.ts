@@ -102,6 +102,7 @@ export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.pre
 const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
 const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
+const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
 
 /** One parked long-poll, restricted to one change scope when it declares one. */
 interface ChangeWaiter {
@@ -192,6 +193,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.autoCompaction = new AutoCompactionCoordinator({
       agentForMember: memberId => this.handles.get(memberId)?.agent,
       compactionForAgent: agent => this.ctx.agentPresets.serviceFor(agent, 'compaction'),
+      reactivate: memberId => this.reactivateMember(memberId),
       failed: (memberId, sessionId, diagnostic) => {
         this.autoCompactionErrors.set(sessionId, diagnostic)
         this.emitAutoCompactionChanged(memberId)
@@ -424,6 +426,14 @@ export default class AgentTeam extends TypertRemoteService {
     const member = this.requireLedger().getMember(request.memberId)
     if (member === undefined || member.workspaceId !== request.workspaceId) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
     this.recovery.stopTracking(request.memberId)
+    // An orphaned composition cannot be steered: its tools are gone, so a
+    // continuation prompt reaches an inert Member. Rebuild the Agent in place.
+    const handle = this.handles.get(request.memberId)
+    if (handle !== undefined && this.ctx.agentPresets.composedPreset(handle.agent.ctx) === undefined) {
+      this.ctx.logger.info(`agent-team: rebuilding member '${member.handle}' after its preset composition was orphaned by a reload`)
+      await this.reactivateMember(request.memberId)
+      return Object.freeze({ status: this.memberStatus(member) })
+    }
     this.ctx.logger.info(`agent-team: operator asked member '${member.handle}' to resume`)
     this.steerResume(member, this.manualResumeText())
     return Object.freeze({ status: this.memberStatus(member) })
@@ -888,6 +898,35 @@ export default class AgentTeam extends TypertRemoteService {
 
 
   /**
+   * Rebuild one enabled Member in place from its persisted Session.
+   *
+   * A bundle-row reload tears down the preset roster subtree, which prunes the
+   * standing mount while live agents keep their dead scope bindings: the
+   * Member keeps its session but loses its composed tools and services.
+   * Re-running the preset composition requires a fresh Agent, and disposal is
+   * the cost — the Web Client marks the recreated Session unavailable until it
+   * is reopened, the same trade the shipped suspend/resume cycle makes.
+   */
+  private reactivateMember(memberId: AgentTeamMemberId): Promise<boolean> {
+    return this.enqueueLifecycle(async () => {
+      const member = this.requireLedger().getMember(memberId)
+      if (member === undefined || member.state !== 'enabled') return false
+      const stale = this.handles.get(memberId)
+      if (stale !== undefined) {
+        this.handles.delete(memberId)
+        this.modelSelections.delete(memberId)
+        // The composition-loss diagnostic this heal answers is stale once the
+        // rebuild starts; a later activation must not resurface it.
+        this.autoCompactionErrors.delete(stale.agent.id)
+        this.emitAutoCompactionChanged(memberId)
+        await stale.dispose()
+      }
+      await this.activateMember(member)
+      return this.handles.has(memberId)
+    })
+  }
+
+  /**
    * Default an untitled Member Session to its handle so the ordinary Session
    * list names it. An explicit rename or any earlier title always wins; the
    * cosmetic default never fails Member activation.
@@ -940,6 +979,9 @@ export default class AgentTeam extends TypertRemoteService {
     if (diagnostic !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic })
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable' })
+    if (this.ctx.agentPresets.composedPreset(handle.agent.ctx) === undefined) {
+      return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: ORPHANED_MEMBER_DIAGNOSTIC })
+    }
     const runtimeError = this.runtimeErrors.get(handle.agent.id) ?? this.autoCompactionErrors.get(handle.agent.id)
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
     return Object.freeze({ member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available' })

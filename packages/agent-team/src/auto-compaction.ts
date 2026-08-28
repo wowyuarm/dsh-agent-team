@@ -26,6 +26,8 @@ export class AutoCompactionCoordinator {
   constructor(private readonly options: {
     readonly agentForMember: (memberId: AgentTeamMemberId) => Agent | undefined
     readonly compactionForAgent: (agent: Agent) => CompactionEngine | undefined
+    /** Rebuild one enabled Member in place from its persisted Session; false when it stays unusable. */
+    readonly reactivate: (memberId: AgentTeamMemberId) => Promise<boolean>
     readonly failed: (memberId: AgentTeamMemberId, sessionId: Agent['id'], diagnostic: string) => void
     readonly cleared: (memberId: AgentTeamMemberId, sessionId: Agent['id']) => void
     readonly log: (message: string) => void
@@ -60,6 +62,7 @@ export class AutoCompactionCoordinator {
   }
 
   private async work(memberId: AgentTeamMemberId): Promise<void> {
+    let reactivated = false
     while (!this.controller.signal.aborted && this.pending.has(memberId)) {
       const agent = this.options.agentForMember(memberId)
       if (agent === undefined) return
@@ -84,6 +87,16 @@ export class AutoCompactionCoordinator {
       }
       const engine = this.options.compactionForAgent(agent)
       if (engine === undefined) {
+        // A roster-subtree teardown (bundle-row reload, config hot-apply)
+        // prunes the standing mount while this agent's scope binding still
+        // names the dead key, so resolution can never succeed again for this
+        // handle. One in-place re-activation rebuilds the binding from the
+        // live roster; a preset that mounts no compaction row keeps failing
+        // and lands in the terminal diagnostic below.
+        if (!reactivated && await this.tryReactivate(memberId)) {
+          reactivated = true
+          continue
+        }
         this.fail(memberId, agent, 'automatic compaction failed: compaction is unavailable in the Member scope')
         return
       }
@@ -114,6 +127,13 @@ export class AutoCompactionCoordinator {
   private complete(memberId: AgentTeamMemberId, agent: Agent): void {
     this.pending.delete(memberId)
     this.options.cleared(memberId, agent.id)
+  }
+
+  private tryReactivate(memberId: AgentTeamMemberId): Promise<boolean> {
+    return this.options.reactivate(memberId).catch(error => {
+      this.options.log(`automatic compaction re-activation failed: ${describe(error)} (member ${memberId})`)
+      return false
+    })
   }
 
   private fail(memberId: AgentTeamMemberId, agent: Agent, diagnostic: string): void {
