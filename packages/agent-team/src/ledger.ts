@@ -1007,7 +1007,7 @@ export class AgentTeamLedger {
     const visibleTasks = [...this.state.tasks.values()].filter(task => channelRefs.has(task.channelRef)
       && (request.channelRef === undefined || task.channelRef === request.channelRef)
       && (request.threadRef === undefined || task.threadRef === request.threadRef))
-    const taskNumbers = this.taskNumbers(request.workspaceId, request.channelRef)
+    const taskNumbers = this.taskNumbers(request.workspaceId)
     const items = selected.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'message' }> => fact.kind === 'message').map(fact => {
       const message = fact.message
       const task = this.requireTask(request.workspaceId, message.taskRef)
@@ -2065,14 +2065,20 @@ export class AgentTeamLedger {
     return fact.kind === 'message' ? `message:${fact.message.messageRef}` : `activity:${fact.activity.activityRef}`
   }
 
-  private taskNumbers(workspaceId: WorkspaceId, channelRef?: AgentTeamChannelRef): Map<AgentTeamTaskRef, number> {
+  /**
+   * Display numbers for Tasks: one counter per home Channel, in creation
+   * order. This is the single numbering authority — Channel cards, Thread
+   * headings, cross-channel ref resolution, and inbox renders all show the
+   * ordinal the Task holds inside its own Channel.
+   */
+  private taskNumbers(workspaceId: WorkspaceId): Map<AgentTeamTaskRef, number> {
     const numbers = new Map<AgentTeamTaskRef, number>()
-    let next = 1
+    const next = new Map<AgentTeamChannelRef, number>()
     for (const message of this.state.topLevelMessages) {
       if (this.state.channels.get(message.channelRef)?.workspaceId !== workspaceId) continue
-      if (channelRef !== undefined && message.channelRef !== channelRef) continue
-      numbers.set(message.taskRef, next)
-      next += 1
+      const ordinal = (next.get(message.channelRef) ?? 0) + 1
+      next.set(message.channelRef, ordinal)
+      numbers.set(message.taskRef, ordinal)
     }
     return numbers
   }

@@ -178,6 +178,19 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       { taskRef: first.task.taskRef, channelRef: channel.channel.channelRef, threadRef: first.thread.threadRef, taskNumber: 1 },
       { taskRef: second.task.taskRef, channelRef: channel.channel.channelRef, threadRef: second.thread.threadRef, taskNumber: 2 },
     ])
+    // Display numbers are per home Channel: a second Channel's first Task
+    // resolves as #1 even though it is the workspace's third Task, and a
+    // Channel-less view (inbox renders) numbers it the same way.
+    const other = await test.ctx.agentTeam.createChannel({ requestId: requestId('other'), workspaceId: alpha, name: 'audit', description: 'Audit trail' })
+    const audit = committed(await test.ctx.agentTeam.sendMessage({ requestId: requestId('audit'), workspaceId: alpha, channelRef: other.channel.channelRef, body: 'audit task' }))
+    const crossChannel = test.ctx.agentTeam.resolveTaskRefs({ workspaceId: alpha, taskRefs: [audit.task.taskRef, second.task.taskRef] })
+    expect(crossChannel.resolved).toEqual([
+      { taskRef: audit.task.taskRef, channelRef: other.channel.channelRef, threadRef: audit.thread.threadRef, taskNumber: 1 },
+      { taskRef: second.task.taskRef, channelRef: channel.channel.channelRef, threadRef: second.thread.threadRef, taskNumber: 2 },
+    ])
+    const channelless = test.ctx.agentTeam.view({ workspaceId: alpha })
+    expect(channelless.taskNumbers).toContainEqual({ taskRef: audit.task.taskRef, taskNumber: 1 })
+    expect(channelless.taskNumbers).toContainEqual({ taskRef: second.task.taskRef, taskNumber: 2 })
     // An unregistered workspace is rejected before any lookup.
     expect(() => test.ctx.agentTeam.resolveTaskRefs({ workspaceId: beta, taskRefs: [first.task.taskRef] })).toThrow(/unknown Workspace/)
   })
