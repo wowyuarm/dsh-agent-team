@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`rendered Team mode composition > restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly 1`] = `
+exports[`Team conversation surfaces > restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly 1`] = `
 <div>
   <div
     data-slot="root"

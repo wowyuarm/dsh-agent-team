@@ -20,7 +20,6 @@ import type {
   AgentTeamReplyRequest,
   AgentTeamResolveTaskRefsRequest,
   AgentTeamResolveTaskRefsResult,
-  AgentTeamTaskRef,
   AgentTeamReplyResult,
   AgentTeamConfirmationRequired,
   AgentTeamThreadHistory,

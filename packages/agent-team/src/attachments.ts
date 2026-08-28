@@ -27,6 +27,7 @@ export function newAttachmentId(): AgentTeamAttachmentId {
 
 /** Strip path separators, control characters, and leading dots from one client-supplied name. */
 export function sanitizeFileName(raw: string): string {
+  // oxlint-disable-next-line no-control-regex -- strip ASCII control characters from client filenames.
   const cleaned = raw.replaceAll(/[\\/\u0000-\u001f\u007f]/g, '').replaceAll(/^\.+/g, '').trim()
   return cleaned === '' ? 'attachment' : cleaned.slice(0, 180)
 }
@@ -115,16 +116,6 @@ export async function readAttachment(root: string, attachmentId: AgentTeamAttach
   if (payload === undefined) return undefined
   const bytes = await readFile(join(dir, payload))
   return { name: meta.name, mediaType: meta.mediaType, byteSize: bytes.byteLength, uploadedAt: meta.uploadedAt, bytes }
-}
-
-/** Whether an upload with this id still has bytes on disk. */
-export async function attachmentExists(root: string, attachmentId: AgentTeamAttachmentId): Promise<boolean> {
-  try {
-    await stat(attachmentDir(root, attachmentId))
-    return true
-  } catch {
-    return false
-  }
 }
 
 export interface CacheEntryScan {

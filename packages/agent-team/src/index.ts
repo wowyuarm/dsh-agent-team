@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'

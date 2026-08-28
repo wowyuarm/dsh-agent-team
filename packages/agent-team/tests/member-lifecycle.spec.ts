@@ -1,5 +1,4 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -25,7 +24,7 @@ import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgent
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
 import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
-import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
+import type { AgentTeamChannelRef, AgentTeamRequestId, AgentTeamTaskRef } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const cleanups: Array<() => Promise<void>> = []

@@ -20,13 +20,14 @@
   "scripts": {
     "generate:typert": "cd ../deepseek-harness && node --import tsx ../dsh-agent-team/scripts/generate-typert.mjs",
     "prepack": "npm run build",
+    "clean:build-outputs": "node scripts/clean-build-outputs.mjs",
     "test": "npm run generate:typert && vitest run",
     "test:browser": "npm run build && node scripts/run-browser-test.mjs",
     "preview": "node scripts/check-preview-credentials.mjs && npm run build && node scripts/run-preview.mjs",
     "preview:ui": "npm run build && node scripts/run-ui-preview.mjs",
     "lint": "corepack pnpm dlx oxlint@1.76.0 --disable-typescript-plugin packages scripts",
     "typecheck": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.json && tsc -p packages/tool-agent-team/tsconfig.json && tsc -p packages/client-agent-team/tsconfig.json",
-    "build": "npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && node scripts/build-client.mjs"
+    "build": "npm run clean:build-outputs && npm run generate:typert && tsc -p packages/agent-team/tsconfig.build.json && tsc -p packages/tool-agent-team/tsconfig.build.json && tsc -p packages/client-agent-team/tsconfig.build.json && node scripts/build-client.mjs"
   },
   "dsh": {
     "bundle": {

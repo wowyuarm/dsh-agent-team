@@ -308,7 +308,11 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const mentionHandlesMap = useMemo(() => new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')])), [members])
   const metadata = useMemo(() => readMeta(readFacts), [readFacts])
   const unreadIndex = useMemo(() => {
-    const all = mergeFacts([messageFact(activeProjection?.anchor ?? ({ messageRef: 'missing', sequence: 0 } as never), activeProjection?.anchorMentions), ...readFacts.map(fact => fact.fact), ...currentFacts])
+    const all = mergeFacts(
+      ...(activeProjection === undefined ? [] : [[messageFact(activeProjection.anchor, activeProjection.anchorMentions)]]),
+      readFacts.map(fact => fact.fact),
+      currentFacts,
+    )
     return all.findIndex(fact => metadata.get(factKey(fact))?.unread === true)
   }, [activeProjection?.anchor, readFacts, currentFacts, metadata])
 

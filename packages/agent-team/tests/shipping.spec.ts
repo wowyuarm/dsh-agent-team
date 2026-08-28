@@ -46,6 +46,12 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('mode: native')
     expect(preset).toContain("name: '@wowyuarm/dsh-agent-team/member-context'")
     expect(preset).toContain("name: '@deepseek-ai/dsh-command-compact'")
+    const cleanScript = await readFile(resolve(root, 'scripts/clean-build-outputs.mjs'), 'utf8')
+    const cleanTargets = [...cleanScript.matchAll(/'packages\/[^']+\/lib'/g)].map(match => match[0].slice(1, -1))
+    expect(cleanTargets).toEqual(['packages/agent-team/lib', 'packages/tool-agent-team/lib', 'packages/client-agent-team/lib'])
+    const buildCommand = (JSON.parse(manifestText) as { scripts: { build: string } }).scripts.build
+    expect(buildCommand.indexOf('npm run clean:build-outputs')).toBeGreaterThanOrEqual(0)
+    expect(buildCommand.indexOf('npm run generate:typert')).toBeGreaterThan(buildCommand.indexOf('npm run clean:build-outputs'))
     for (const capability of [
       '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
       '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-skill-filesystem',

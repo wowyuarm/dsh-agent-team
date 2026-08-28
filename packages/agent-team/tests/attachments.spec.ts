@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -9,11 +9,11 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
-import { ATTACHMENT_MAX_BYTES, attachmentsRoot, copyPathAttachment, mediaTypeForPath, newAttachmentId, readAttachment, sanitizeFileName, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from '../src/attachments.ts'
+import { ATTACHMENT_MAX_BYTES, attachmentsRoot, mediaTypeForPath, newAttachmentId, readAttachment, sanitizeFileName, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from '../src/attachments.ts'
 import AgentTeam from '../src/index.ts'
 import { AgentTeamLedger } from '../src/ledger.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
-import type { AgentTeamAttachmentId, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId } from '../src/types.ts'
+import type { AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId } from '../src/types.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 const alpha = WorkspaceId('workspace:alpha')
