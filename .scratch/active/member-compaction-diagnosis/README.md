@@ -1,7 +1,28 @@
 # Member auto-compaction 复发诊断(1127012 后仍报 "compaction is unavailable in the Member scope")
 
-- 状态:**根因已定位并复现**;修复待实施
+- 状态:**修复已实施**(commit 2aa5130),待 operator 在 web-dev 验收
 - 最后核对:2026-08-28
+
+## 修复内容(全部在 packages/agent-team)
+
+1. `auto-compaction.ts`:coordinator 新增 `reactivate` 依赖;`compactionForAgent` 返回 undefined 时先做一次原地重新激活并重试,仍失败才落终态诊断(至多一次,无重试风暴)。
+2. `index.ts`:
+   - `reactivateMember`:dispose 旧 handle(清掉过期的 compaction 错误)→ `activateMember` 同 session resume,重建绑定与工具;全程走 `enqueueLifecycle` 串行化。
+   - `memberStatus` 用 `agentPresets.composedPreset()` 探测孤儿成员,呈现 `error` presence 与可行动的诊断文案。
+   - `recoverMember` 遇到孤儿成员时执行完整重建(旧逻辑只是 steer 一条消息,对工具已丢失的成员无效)。
+3. 测试:coordinator 自愈/失败边界 ×3(单测);member-lifecycle 集成用例(孤儿探测 + recoverMember 重建,真实 preset 挂载与 resume)。已知代价:重新激活会 dispose agent,Web Client 会把同 id Session 标记为不可用直到重新打开——与已上线的 suspend/resume 循环相同。
+
+## 验收方式
+
+- `npm test`、`npm run typecheck`、`npm run lint`、`npm run build` 全绿(commit 2aa5130)。
+- web-dev:`npm run build` 后重启 Host;对报错成员点"恢复"应原地重建(工具与 compaction 解析恢复)。之后再发生 bundle 行热重载,成员下次越过 200K 阈值时会自动自愈而不是终态报错。
+
+## 遗留(未纳入本次)
+
+- 非 compaction 路径的孤儿成员(未越过阈值)只能靠状态提示 + 人工恢复;可选后续:宿主在投递/激活等触点做更普遍的孤儿自愈。
+- 生产触发器的精确定位(20:10 lib 重建后 HMR 对 bundle 行的 reload 选择)需要 Host stdout 日志才能重构;机制本身已由本目录脚本复现,不再阻塞。
+
+## 根因(已复现验证)
 
 ## 根因
 
