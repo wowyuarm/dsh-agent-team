@@ -1,4 +1,4 @@
-import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId, AgentTeamTask } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId, AgentTeamTask, AgentTeamTaskRef } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
 
 export function formatTaskStatus(status: AgentTeamTask['status'], t: TeamConversationProps['t']): string {
@@ -199,4 +199,65 @@ export function formatActivity(activity: AgentTeamActivity, options: {
 /** Remove the machine-facing `[attachment] <path>` prompt lines from a body before display. */
 export function stripAttachmentLines(body: string): string {
   return body.replaceAll(/^\[attachment\] .*$(\n)?/gm, '').replace(/\n+$/, '')
+}
+
+/** How one Message body renders: mention-chip segments, literal text, or Markdown. */
+export type MessageBodyRender = 'inline' | 'literal' | 'markdown'
+
+/** Rendering decision for one Message body, resolved once from its stored form. */
+export interface PlannedMessageBody {
+  /** Stored body without machine-facing attachment prompt lines; the raw body when stripping would empty it. */
+  readonly displayBody: string
+  /** Rich Agent Markdown: only such bodies get the post-render chipify pass. */
+  readonly richAgentBody: boolean
+  /** Which rendering branch the body takes. */
+  readonly render: MessageBodyRender
+  /** Mention-chip segments for literal bodies; absent on the Markdown branch. */
+  readonly inline?: ReturnType<typeof splitMentionNames>
+  /** Mention handles that did not render as chips; the trailing row shows them. */
+  readonly fallbackNames: readonly string[]
+  /** Non-Task branded refs for the trailing fallback row; rich Agent bodies keep the legacy row. */
+  readonly fallbackRefs: readonly string[]
+  /** Task refs authored in a literal body; resolved labels replace them in place. */
+  readonly taskRefs: readonly AgentTeamTaskRef[]
+}
+
+/**
+ * Decide how one Message body renders. Human input and plain-prose Agent
+ * bodies stay literal, with structured mention chips inline where possible;
+ * rich Agent Markdown keeps unmatched mentions and non-Task refs in the
+ * trailing fallback row while the post-render pass handles Task refs at their
+ * authored position. Surfaces without ref navigation render everything
+ * literally and keep the full fallback row.
+ */
+export function planMessageBody(body: string, options: {
+  readonly human: boolean
+  readonly mentionNames?: readonly string[]
+  readonly canOpenRefs: boolean
+}): PlannedMessageBody {
+  const stripped = stripAttachmentLines(body)
+  const displayBody = stripped === '' ? body : stripped
+  const richAgentBody = !options.human && !isPlainTextBody(displayBody)
+  const inline = (options.human || isPlainTextBody(displayBody)) && options.mentionNames !== undefined && options.mentionNames.length > 0
+    ? splitMentionNames(displayBody, options.mentionNames)
+    : undefined
+  const fallbackNames = inline !== undefined ? inline.unmatched
+    : richAgentBody && options.canOpenRefs && options.mentionNames !== undefined
+      ? splitMentionNames(displayBody, options.mentionNames).unmatched
+      : options.mentionNames ?? []
+  const refs = splitBrandedRefs(displayBody).flatMap(segment => segment.ref === undefined ? [] : [segment.ref])
+  const render: MessageBodyRender = inline !== undefined ? 'inline'
+    : options.human || (options.canOpenRefs && !richAgentBody && refs.length > 0) ? 'literal'
+    : 'markdown'
+  return {
+    displayBody,
+    richAgentBody,
+    render,
+    ...(inline === undefined ? {} : { inline }),
+    fallbackNames,
+    fallbackRefs: richAgentBody && options.canOpenRefs ? refs.filter(ref => !ref.startsWith('task:')) : [],
+    taskRefs: options.canOpenRefs && !richAgentBody
+      ? refs.filter(ref => ref.startsWith('task:')).map(ref => ref as AgentTeamTaskRef)
+      : [],
+  }
 }

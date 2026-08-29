@@ -4,7 +4,7 @@ import type { AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } 
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
 import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersion, type ResolvedTaskRef } from './task-refs.ts'
-import { formatMessageTime, isPlainTextBody, isSingleBrandedRef, memberHue, splitBrandedRefs, splitMentionNames, stripAttachmentLines } from './team-formatters.ts'
+import { formatMessageTime, isPlainTextBody, isSingleBrandedRef, memberHue, planMessageBody, splitBrandedRefs, splitMentionNames } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -38,29 +38,15 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
   // Markdown keeps unmatched structured mentions in the trailing row.
   // The stored body carries machine-facing `[attachment] <path>` prompt lines;
   // humans see the attachment strip rendered from the message metadata instead.
-  const displayBody = stripAttachmentLines(body) === '' ? body : stripAttachmentLines(body)
-  const inline = (human || isPlainTextBody(displayBody)) && mentionNames !== undefined && mentionNames.length > 0
-    ? splitMentionNames(displayBody, mentionNames)
-    : undefined
-  const richAgentBody = !human && !isPlainTextBody(displayBody)
-  // Rich Markdown chipifies body mentions through the post-render pass, so
-  // only names absent from the body need the trailing fallback row; surfaces
-  // without ref navigation render nothing inline and keep the full row.
-  const fallbackNames = inline !== undefined ? inline.unmatched
-    : richAgentBody && onOpenRef !== undefined && mentionNames !== undefined
-      ? splitMentionNames(displayBody, mentionNames).unmatched
-      : mentionNames ?? []
-  // Non-Task branded refs retain the legacy fallback row. Task refs instead
-  // stay at their authored prose position; unresolved refs remain literal.
-  const fallbackRefs = richAgentBody && onOpenRef !== undefined
-    ? splitBrandedRefs(displayBody).filter(segment => segment.ref !== undefined && !segment.ref.startsWith('task:')).map(segment => segment.ref!)
-    : []
+  // One pure plan resolves the stored body into the rendering branch, the
+  // trailing fallback rows, and the literal Task refs that resolve in place.
+  const plan = planMessageBody(body, { human, ...(mentionNames === undefined ? {} : { mentionNames }), canOpenRefs: onOpenRef !== undefined })
+  const displayBody = plan.displayBody
+  const { richAgentBody } = plan
   // Resolved refs re-label once the Host lookup lands; the version token
   // refreshes literal links and rendered Markdown prose.
   const refVersion = useResolvedTaskRefVersion()
-  const bodyTaskRefs: readonly AgentTeamTaskRef[] = onOpenRef === undefined || richAgentBody ? [] : splitBrandedRefs(displayBody)
-    .filter(segment => segment.ref !== undefined && segment.ref.startsWith('task:'))
-    .map(segment => segment.ref as AgentTeamTaskRef)
+  const bodyTaskRefs = plan.taskRefs
   const bodyTaskRefKey = bodyTaskRefs.join(',')
   useEffect(() => {
     if (onResolveTaskRefs === undefined || bodyTaskRefKey === '') return
@@ -110,19 +96,19 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
             {occurredAt !== undefined && <span className={css.messageTime}>{formatMessageTime(occurredAt)}</span>}
           </div>
         )}
-        {inline !== undefined
+        {plan.render === 'inline' && plan.inline !== undefined
           ? <div className={css.messageText}>
-              {inline.segments.map((segment, index) => segment.mention
+              {plan.inline.segments.map((segment, index) => segment.mention
                 ? <span key={index} className={css.mention}>{segment.text}</span>
                 : <Fragment key={index}>{renderRefs(segment.text, onOpenRef, taskLabel)}</Fragment>)}
             </div>
-          : human || (onOpenRef !== undefined && isPlainTextBody(displayBody) && splitBrandedRefs(displayBody).some(segment => segment.ref !== undefined))
+          : plan.render === 'literal'
             ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel)}</div>
             : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} /></div>}
-        {(fallbackNames.length > 0 || fallbackRefs.length > 0) && (
+        {(plan.fallbackNames.length > 0 || plan.fallbackRefs.length > 0) && (
           <div className={css.mentionsRow}>
-            {fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}
-            {fallbackRefs.map(ref => {
+            {plan.fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}
+            {plan.fallbackRefs.map(ref => {
               const resolved = cachedResolvedTaskRef(ref as AgentTeamTaskRef)
               const label = resolved !== undefined && ref.startsWith('task:') ? taskLabel(resolved.taskNumber) : ref
               return <button key={ref} type="button" className={css.refLink} title={ref} onClick={() => { onOpenRef!(ref) }}>{label}</button>

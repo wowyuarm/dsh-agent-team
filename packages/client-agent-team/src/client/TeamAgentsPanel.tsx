@@ -4,7 +4,6 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamModelSelection,
   AgentTeamChannel,
-  AgentTeamRequestId,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -12,6 +11,7 @@ import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
 import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
+import { mintRequestId } from './requests.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { MultiMenuField } from './multi-menu-field.tsx'
@@ -143,7 +143,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
       && sameModel(retryRequest.model, model)
       && retryRequest.channelRefs.length === channelRefs.length && retryRequest.channelRefs.every(ref => channelRefs.includes(ref))
     void provision(sameRequest ? retryRequest : {
-      requestId: crypto.randomUUID() as AgentTeamRequestId,
+      requestId: mintRequestId(),
       workspaceId,
       handle: normalizedHandle,
       description: normalizedDescription,
@@ -240,7 +240,7 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
   const [editing, setEditing] = useState(false)
   const resume = async (): Promise<void> => {
     await recoverMember({
-      requestId: crypto.randomUUID() as AgentTeamRequestId,
+      requestId: mintRequestId(),
       workspaceId: status.member.workspaceId,
       memberId: status.member.memberId,
     })

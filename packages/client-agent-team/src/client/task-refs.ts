@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from 'react'
-import type { AgentTeamChannelRef, AgentTeamTaskRef, AgentTeamThreadRef } from '@wowyuarm/dsh-agent-team/types'
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type {
+  AgentTeamChannelRef, AgentTeamResolveTaskRefsRequest, AgentTeamResolveTaskRefsResult, AgentTeamTaskRef, AgentTeamThreadRef,
+} from '@wowyuarm/dsh-agent-team/types'
 
 /** Navigation facts for one branded Task ref, resolved once per session. */
 export interface ResolvedTaskRef {
@@ -41,6 +44,32 @@ export const rememberResolvedTaskRef = (entry: ResolvedTaskRef): void => {
   resolved.set(entry.taskRef, entry)
   pending.delete(entry.taskRef)
   emit()
+}
+
+/** Click-path Host lookup: remember every resolved entry and hand them back for immediate navigation. */
+export const hostTaskRefLookup = (
+  resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>,
+  workspaceId: AgentTeamResolveTaskRefsRequest['workspaceId'],
+): ((taskRefs: readonly AgentTeamTaskRef[]) => Promise<readonly ResolvedTaskRef[]>) =>
+  async taskRefs => {
+    const result = await resolveTaskRefs({ workspaceId, taskRefs })
+    if (!result.ok) return []
+    for (const entry of result.value.resolved) rememberResolvedTaskRef(entry)
+    return result.value.resolved
+  }
+
+/** Resolve one Task ref through the Host and jump to its home Channel Thread. */
+export const jumpToTaskThread = (
+  resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>,
+  workspaceId: AgentTeamResolveTaskRefsRequest['workspaceId'],
+  taskRef: AgentTeamTaskRef,
+  selectThread: (taskRef: AgentTeamTaskRef, threadRef: AgentTeamThreadRef, channelRef: AgentTeamChannelRef, taskNumber: number) => void,
+): void => {
+  void resolveTaskRefs({ workspaceId, taskRefs: [taskRef] }).then(result => {
+    if (!result.ok) return
+    const hit = result.value.resolved[0]
+    if (hit !== undefined) selectThread(hit.taskRef, hit.threadRef, hit.channelRef, hit.taskNumber)
+  })
 }
 
 /**

@@ -6,7 +6,8 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
-import type { AgentTeamAttachmentId, AgentTeamRequestId } from '@wowyuarm/dsh-agent-team/types'
+import { mintRequestId } from './requests.ts'
+import type { AgentTeamAttachmentId } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -15,7 +16,7 @@ import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
-import { rememberResolvedTaskRef } from './task-refs.ts'
+import { hostTaskRefLookup, jumpToTaskThread } from './task-refs.ts'
 import { chunkRunsWithDays, isRunGap } from './team-separators.ts'
 import channelCss from './channel.module.css'
 import css from './conversation.module.css'
@@ -92,21 +93,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       }
       // Not in the loaded timeline: resolve through the Host and jump to the
       // Task's home Channel.
-      void resolveTaskRefs({ workspaceId, taskRefs: [ref as AgentTeamTaskRef] })
-        .then(result => {
-          if (!result.ok) return
-          const hit = result.value.resolved[0]
-          if (hit !== undefined) selectThread(hit.taskRef, hit.threadRef, hit.channelRef, hit.taskNumber)
-        })
+      jumpToTaskThread(resolveTaskRefs, workspaceId, ref as AgentTeamTaskRef, selectThread)
     }
   }
 
-  const lookupTaskRefs = (taskRefs: readonly AgentTeamTaskRef[]) => resolveTaskRefs({ workspaceId, taskRefs })
-    .then(result => {
-      if (!result.ok) return []
-      for (const entry of result.value.resolved) rememberResolvedTaskRef(entry)
-      return result.value.resolved
-    })
+  const lookupTaskRefs = hostTaskRefLookup(resolveTaskRefs, workspaceId)
 
   const timeline = useTimelineScroll(`${view?.items.length ?? 0}:${channelLastItem?.message.messageRef ?? ''}`)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
@@ -218,10 +209,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const pendingSendId = useRef<AgentTeamSendMessageRequest['requestId']>()
 
   const send = async () => {
-    console.log('DBG send entry pending=%s draft=%j files=%d', pending, draft, pendingFiles.length)
     if (pending || draft.trim() === '') return
     const recipientIds = [...recipients].sort()
-    const requestId = pendingSendId.current ?? crypto.randomUUID() as AgentTeamSendMessageRequest['requestId']
+    const requestId = pendingSendId.current ?? mintRequestId()
     pendingSendId.current = requestId
     setPending(true); setError(undefined); setStatusMessage(undefined)
     try {
@@ -230,7 +220,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       const attachmentIds: AgentTeamAttachmentId[] = []
       for (const file of pendingFiles) {
         const uploaded = await putAttachment({
-          requestId: crypto.randomUUID() as AgentTeamRequestId,
+          requestId: mintRequestId(),
           workspaceId,
           name: file.name,
           mediaType: file.type === '' ? undefined : file.type,

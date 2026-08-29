@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { mintRequestId } from './requests.ts'
 import type {
   AgentTeamChannelRef,
   AgentTeamJoinChannelRequest,
@@ -48,7 +49,7 @@ export function useChannelMembership(
     setPending(current => new Set(current).add(rowKey))
     setErrors(current => { const next = new Map(current); next.delete(rowKey); return next })
     const key = `${membership.joined ? 'remove' : 'join'}:${membership.memberId}:${membership.channelRef}`
-    const requestId = requestIds.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
+    const requestId = requestIds.current.get(key) ?? mintRequestId()
     requestIds.current.set(key, requestId)
     const request = { requestId, workspaceId: membership.workspaceId, channelRef: membership.channelRef, memberId: membership.memberId }
     try {

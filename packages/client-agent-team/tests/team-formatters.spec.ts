@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, planMessageBody, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -131,6 +131,55 @@ describe('Team presentation formatters', () => {
     expect(isPlainTextBody('see [docs](https://example.com) now')).toBe(false)
     expect(isPlainTextBody('bold **word** inside')).toBe(false)
     expect(isPlainTextBody('snake_case_word')).toBe(false)
+  })
+
+  it('plans Human bodies as inline mentions with the unmatched fallback row', () => {
+    const plan = planMessageBody('你好 @builder 请看', { human: true, mentionNames: ['builder', 'tester'], canOpenRefs: true })
+    expect(plan.render).toBe('inline')
+    expect(plan.inline?.segments).toEqual([
+      { text: '你好 ', mention: false },
+      { text: '@builder', mention: true, name: 'builder' },
+      { text: ' 请看', mention: false },
+    ])
+    expect(plan.fallbackNames).toEqual(['tester'])
+    expect(plan.fallbackRefs).toEqual([])
+    expect(plan.taskRefs).toEqual([])
+  })
+
+  it('keeps a plain Agent body literal only when it carries navigable refs', () => {
+    const plain = planMessageBody('纯文本回复', { human: false, canOpenRefs: true })
+    expect(plain.render).toBe('markdown')
+    const task = planMessageBody('请看 task:0123abcd-0000-0000-0000-000000000000', { human: false, canOpenRefs: true })
+    expect(task.render).toBe('literal')
+    expect(task.taskRefs).toEqual(['task:0123abcd-0000-0000-0000-000000000000'])
+  })
+
+  it('keeps rich Agent bodies on Markdown with the legacy fallback rows', () => {
+    const body = '# 标题\n\n见 channel:0123abcd-0000-0000-0000-000000000000'
+    const plan = planMessageBody(body, { human: false, mentionNames: ['tester'], canOpenRefs: true })
+    expect(plan.render).toBe('markdown')
+    expect(plan.richAgentBody).toBe(true)
+    expect(plan.fallbackRefs).toEqual(['channel:0123abcd-0000-0000-0000-000000000000'])
+    expect(plan.fallbackNames).toEqual(['tester'])
+    expect(plan.taskRefs).toEqual([])
+  })
+
+  it('keeps the full mention row and no ref links on surfaces without navigation', () => {
+    const plan = planMessageBody('你好 @builder', { human: true, mentionNames: ['builder'], canOpenRefs: false })
+    expect(plan.render).toBe('inline')
+    expect(plan.fallbackNames).toEqual([])
+    const rich = planMessageBody('**粗体** @builder', { human: false, mentionNames: ['builder'], canOpenRefs: false })
+    expect(rich.render).toBe('markdown')
+    expect(rich.fallbackNames).toEqual(['builder'])
+    expect(rich.fallbackRefs).toEqual([])
+    expect(rich.taskRefs).toEqual([])
+  })
+
+  it('strips attachment prompt lines and keeps the raw body when stripping empties it', () => {
+    const plan = planMessageBody('[attachment] /tmp/a.png\n看图', { human: true, canOpenRefs: false })
+    expect(plan.displayBody).toBe('看图')
+    const raw = planMessageBody('[attachment] /tmp/a.png', { human: true, canOpenRefs: false })
+    expect(raw.displayBody).toBe('[attachment] /tmp/a.png')
   })
 
   it('maps every task status to a status dot variant', () => {

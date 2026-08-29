@@ -196,7 +196,6 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   }
 
   return <form ref={rootRef} className={css.root} onSubmit={event => {
-    console.log('DBG composer submit pending=%s draft=%j', pending, draft)
     event.preventDefault()
     if (!pending && draft.trim() !== '') onSubmit()
   }}>

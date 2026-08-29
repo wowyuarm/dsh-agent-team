@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamChannel, AgentTeamChannelMembership, AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamRequestId, AgentTeamUpdateMemberRequest } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamChannel, AgentTeamChannelMembership, AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { Button, IconChevronDownOutline14, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useChannelMembership } from './team-membership.ts'
+import { mintRequestId } from './requests.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -208,7 +209,7 @@ export function AgentEditorDialog({ status, channels, loadChannels, updateMember
       && pendingRequest.current.handle === payload.handle && pendingRequest.current.description === payload.description
       && sameModel(pendingRequest.current.model, model)
     const request: AgentTeamUpdateMemberRequest = samePending ? pendingRequest.current! : {
-      requestId: crypto.randomUUID() as AgentTeamRequestId,
+      requestId: mintRequestId(),
       ...payload,
     }
     pendingRequest.current = request

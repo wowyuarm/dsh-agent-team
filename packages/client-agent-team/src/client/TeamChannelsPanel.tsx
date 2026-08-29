@@ -6,7 +6,6 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamCreateChannelRequest,
   AgentTeamMemberId,
-  AgentTeamRequestId,
   AgentTeamUpdateChannelRequest,
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
@@ -17,6 +16,7 @@ import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { MultiMenuField } from './multi-menu-field.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
 import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
+import { mintRequestId } from './requests.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { useChannelMembership } from './team-membership.ts'
@@ -127,7 +127,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
       && pendingCreate.name === payload.name && pendingCreate.description === payload.description
       && JSON.stringify(pendingCreate.memberIds) === JSON.stringify(payload.memberIds)
     const request: AgentTeamCreateChannelRequest = samePending ? pendingCreate : {
-      requestId: crypto.randomUUID() as AgentTeamRequestId, ...payload,
+      requestId: mintRequestId(), ...payload,
     }
     setPendingCreate(request)
     setMutating(true)
@@ -314,7 +314,7 @@ function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinC
     const samePending = pendingRequest.current !== undefined && pendingRequest.current.channelRef === channel.channelRef
       && pendingRequest.current.name === normalizedName && pendingRequest.current.description === normalizedDescription
     const request: AgentTeamUpdateChannelRequest = samePending ? pendingRequest.current! : {
-      requestId: crypto.randomUUID() as AgentTeamRequestId,
+      requestId: mintRequestId(),
       workspaceId: channel.workspaceId,
       channelRef: channel.channelRef,
       name: normalizedName,

@@ -21,9 +21,10 @@ import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf } from './team-formatters.ts'
+import { mintRequestId } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
-import { rememberResolvedTaskRef } from './task-refs.ts'
+import { hostTaskRefLookup, jumpToTaskThread } from './task-refs.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
@@ -115,7 +116,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const mountedRef = useRef(false)
   const currentFactsRef = useRef<readonly AgentTeamThreadFact[]>([])
   const sequenceRef = useRef(0)
-  const readRequestIdRef = useRef<AgentTeamRequestId>(crypto.randomUUID() as AgentTeamRequestId)
+  const readRequestIdRef = useRef<AgentTeamRequestId>(mintRequestId())
   const mutationRequests = useRef(new Map<string, AgentTeamRequestId>())
   const threadLastFact = currentFacts[currentFacts.length - 1]
   const timeline = useTimelineScroll(`${currentFacts.length}:${olderFacts.length}:${threadLastFact === undefined ? '' : factKey(threadLastFact)}`)
@@ -136,7 +137,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const readCurrent = async (newRequest = false): Promise<boolean> => {
     if (!mountedRef.current) return false
-    if (newRequest) readRequestIdRef.current = crypto.randomUUID() as AgentTeamRequestId
+    if (newRequest) readRequestIdRef.current = mintRequestId()
     const sequence = sequenceRef.current + 1
     sequenceRef.current = sequence
     setLoading(true)
@@ -334,21 +335,11 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     if (ref.startsWith('channel:') && ref !== channelRef) selectChannel(ref as AgentTeamChannelRef)
     if (ref.startsWith('task:') && ref !== taskRef) {
       // Another Task cited here: resolve its home Channel and jump.
-      void resolveTaskRefs({ workspaceId, taskRefs: [ref as AgentTeamTaskRef] })
-        .then(result => {
-          if (!result.ok) return
-          const hit = result.value.resolved[0]
-          if (hit !== undefined) selectThread(hit.taskRef, hit.threadRef, hit.channelRef, hit.taskNumber)
-        })
+      jumpToTaskThread(resolveTaskRefs, workspaceId, ref as AgentTeamTaskRef, selectThread)
     }
   }
 
-  const lookupTaskRefs = (refs: readonly AgentTeamTaskRef[]) => resolveTaskRefs({ workspaceId, taskRefs: refs })
-    .then(result => {
-      if (!result.ok) return []
-      for (const entry of result.value.resolved) rememberResolvedTaskRef(entry)
-      return result.value.resolved
-    })
+  const lookupTaskRefs = hostTaskRefLookup(resolveTaskRefs, workspaceId)
 
   const renderFact = (fact: AgentTeamThreadFact, grouped = false) => {
     if (fact.kind === 'message') {
@@ -431,7 +422,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setPending(true)
     setError(undefined)
     const key = `task:${action}`
-    const requestId = mutationRequests.current.get(key) ?? crypto.randomUUID() as AgentTeamRequestId
+    const requestId = mutationRequests.current.get(key) ?? mintRequestId()
     mutationRequests.current.set(key, requestId)
     try {
       const result = await changeTask({ requestId, workspaceId, taskRef: task.taskRef, action, baseRevision: thread.revision })
@@ -463,7 +454,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const sendReply = async (): Promise<void> => {
     if (pending || task === undefined || thread === undefined || draft.trim() === '') return
-    const id = replyRequestId ?? crypto.randomUUID() as AgentTeamRequestId
+    const id = replyRequestId ?? mintRequestId()
     setReplyRequestId(id)
     setPending(true)
     setError(undefined)
@@ -473,7 +464,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       const attachmentIds: AgentTeamAttachmentId[] = []
       for (const file of pendingFiles) {
         const uploaded = await putAttachment({
-          requestId: crypto.randomUUID() as AgentTeamRequestId,
+          requestId: mintRequestId(),
           workspaceId,
           name: file.name,
           mediaType: file.type === '' ? undefined : file.type,
