@@ -23,7 +23,7 @@ import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-p
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { ATTACHMENT_MAX_BYTES, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
+import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { acceptedTaskCompactionMembers, AutoCompactionCoordinator } from './auto-compaction.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
@@ -50,6 +50,7 @@ import type {
   AgentTeamInboxRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
+  AgentTeamHumanActor,
   AgentTeamMemberActor,
   AgentTeamMessageAttachment,
   AgentTeamMemberId,
@@ -164,10 +165,21 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   /** Live selection refs let model edits take effect without disposing the Session. */
   private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
-  private readonly diagnostics = new Map<AgentTeamMemberId, string>()
-  private readonly runtimeErrors = new Map<SessionId, string>()
-  /** Last non-busy automatic-compaction failure; entered transactions retain additional Session history. */
-  private readonly autoCompactionErrors = new Map<SessionId, string>()
+  /**
+   * Why one Member shows error presence, per failure source. Reads prefer
+   * activation, then runtime, then compaction; slots clear independently, so
+   * a recovered runtime error re-reveals an outstanding compaction failure.
+   * Keyed by Member rather than Session so a restarted Session cannot leak
+   * stale keys.
+   */
+  private readonly memberFailures = new Map<AgentTeamMemberId, {
+    /** Activation failed; the Member has no live Session to recover into. */
+    activation?: string
+    /** The Member Session reported agent/error. */
+    runtime?: string
+    /** Last non-busy automatic-compaction failure; entered transactions retain additional Session history. */
+    compaction?: string
+  }>()
   private readonly autoCompaction: AutoCompactionCoordinator
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
@@ -194,12 +206,12 @@ export default class AgentTeam extends TypertRemoteService {
       agentForMember: memberId => this.handles.get(memberId)?.agent,
       compactionForAgent: agent => this.ctx.agentPresets.serviceFor(agent, 'compaction'),
       reactivate: memberId => this.reactivateMember(memberId),
-      failed: (memberId, sessionId, diagnostic) => {
-        this.autoCompactionErrors.set(sessionId, diagnostic)
+      failed: (memberId, _sessionId, diagnostic) => {
+        this.setMemberFailure(memberId, 'compaction', diagnostic)
         this.emitAutoCompactionChanged(memberId)
       },
-      cleared: (memberId, sessionId) => {
-        if (!this.autoCompactionErrors.delete(sessionId)) return
+      cleared: memberId => {
+        if (!this.clearMemberFailure(memberId, 'compaction')) return
         this.emitAutoCompactionChanged(memberId)
       },
       log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
@@ -212,7 +224,7 @@ export default class AgentTeam extends TypertRemoteService {
       const member = this.memberForAgent(agent)
       if (member === undefined) return
       const message = error instanceof Error ? error.message : String(error)
-      this.runtimeErrors.set(agent.id, message)
+      this.setMemberFailure(member.memberId, 'runtime', message)
       const kind = classifyRecoverableError(message)
       if (kind !== undefined) this.ctx.logger.warn(`agent-team: member '${member.handle}' hit a recoverable ${kind} error; recording a consecutive error occurrence`)
       this.recovery.onError(member.memberId, message)
@@ -223,13 +235,13 @@ export default class AgentTeam extends TypertRemoteService {
       if (status === 'running') this.runningAgents.add(agent.id)
       else this.runningAgents.delete(agent.id)
       if (status === 'running' && member !== undefined) {
-        const recovered = this.runtimeErrors.delete(agent.id)
+        const recovered = this.clearMemberFailure(member.memberId, 'runtime')
         if (recovered) this.notifiedInbox.delete(member.memberId)
         this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
         this.notifyMember(agent)
       }
       // A turn that ends without an error closes any automatic recovery episode.
-      if (status === 'idle' && member !== undefined && !this.runtimeErrors.has(agent.id)) {
+      if (status === 'idle' && member !== undefined && this.memberFailures.get(member.memberId)?.runtime === undefined) {
         this.recovery.onCleanTurnEnd(member.memberId)
       }
     })
@@ -276,7 +288,6 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
   }
 
-  /** Return only this Workspace's current Member projection to the Client. */
   /** Read-only navigation lookup for branded Task refs found in message bodies. */
   @Remote('resolveTaskRefs')
   resolveTaskRefs(request: AgentTeamResolveTaskRefsRequest): AgentTeamResolveTaskRefsResult {
@@ -290,6 +301,7 @@ export default class AgentTeam extends TypertRemoteService {
     return Object.freeze({ resolved: Object.freeze(this.requireLedger().resolveTaskRefs(request.workspaceId, taskRefs)) })
   }
 
+  /** Return only this Workspace's current Member projection to the Client. */
   @Remote('members')
   membersForClient(request: AgentTeamMembersRequest): readonly AgentTeamClientMemberStatus[] {
     this.requireWorkspace(request.workspaceId)
@@ -392,14 +404,7 @@ export default class AgentTeam extends TypertRemoteService {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().suspendMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
-      this.clearMemberRecoveryState(result.value.member)
-      const handle = this.handles.get(request.memberId)
-      if (handle !== undefined) {
-        await handle.dispose()
-        this.handles.delete(request.memberId)
-      }
-      this.modelSelections.delete(request.memberId)
-      this.diagnostics.delete(request.memberId)
+      await this.disposeMemberSession(request.memberId, result.value.member)
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
   }
@@ -525,14 +530,7 @@ export default class AgentTeam extends TypertRemoteService {
     return this.enqueueLifecycle(async () => {
       const result = await this.requireLedger().removeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
-      this.clearMemberRecoveryState(result.value.member)
-      const handle = this.handles.get(request.memberId)
-      if (handle !== undefined) {
-        await handle.dispose()
-        this.handles.delete(request.memberId)
-      }
-      this.modelSelections.delete(request.memberId)
-      this.diagnostics.delete(request.memberId)
+      await this.disposeMemberSession(request.memberId, result.value.member)
       await this.cleanupRemovedMember(result.value.member)
       return result.value
     })
@@ -551,11 +549,10 @@ export default class AgentTeam extends TypertRemoteService {
   /** Human-only Channel membership grant; it never injects historical Thread bodies. */
   @Remote('joinChannel')
   async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
+    const actor = this.humanCall(request.workspaceId)
     const ledger = this.requireLedger()
     if (!ledger.hasCommitted(request.requestId)) this.assertChannelMembersAvailable([request.memberId])
-    const result = await ledger.joinChannel({ ...request, actor: agentTeamHumanActor() })
+    const result = await ledger.joinChannel({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
@@ -563,9 +560,8 @@ export default class AgentTeam extends TypertRemoteService {
   /** Human-only Channel membership removal and Channel-scoped cleanup. */
   @Remote('removeChannelMember')
   async removeChannelMember(request: AgentTeamRemoveChannelMemberRequest): Promise<AgentTeamRemoveChannelMemberResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().removeChannelMember({ ...request, actor: agentTeamHumanActor() })
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().removeChannelMember({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
@@ -573,16 +569,7 @@ export default class AgentTeam extends TypertRemoteService {
   /** Human top-level Task creation; unfollowed Agent mentions use the two-send result. */
   @Remote('sendMessage')
   async sendMessage(request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const metadata = await this.resolveMessageAttachments(request)
-    const result = await this.requireLedger().sendMessage({
-      ...request, body: this.appendAttachmentLines(request.body, metadata),
-      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
-      actor: agentTeamHumanActor(),
-    })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.sendMessageAs(this.humanCall(request.workspaceId), request)
   }
 
   /**
@@ -618,7 +605,7 @@ export default class AgentTeam extends TypertRemoteService {
   private appendAttachmentLines(body: string, metadata: readonly AgentTeamMessageAttachment[]): string {
     const trimmed = body.trim()
     if (metadata.length === 0) return trimmed
-    const lines = metadata.map(attachment => `[attachment] ${dshHomePath('agent-team', 'attachments', 'v1', attachment.attachmentId, attachment.name)}`)
+    const lines = metadata.map(attachment => `[attachment] ${attachmentPayloadPath(attachment.attachmentId, attachment.name)}`)
     return `${trimmed}\n${lines.join('\n')}`
   }
 
@@ -646,24 +633,14 @@ export default class AgentTeam extends TypertRemoteService {
   /** Human existing-Thread reply; unread and revision conflicts are business outcomes. */
   @Remote('reply')
   async reply(request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const metadata = await this.resolveMessageAttachments(request)
-    const result = await this.requireLedger().reply({
-      ...request, body: this.appendAttachmentLines(request.body, metadata),
-      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
-      actor: agentTeamHumanActor(),
-    })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.replyAs(this.humanCall(request.workspaceId), request)
   }
 
   /** Human's personal Attention operation. */
   @Remote('changeAttention')
   async changeAttention(request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().changeAttention({ ...request, actor: agentTeamHumanActor() })
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().changeAttention({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
@@ -678,9 +655,8 @@ export default class AgentTeam extends TypertRemoteService {
   /** Human's durable, atomically acknowledged Thread read. */
   @Remote('readThread')
   async readThread(request: AgentTeamThreadReadRequest): Promise<AgentTeamThreadReadResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().readThread({ ...request, actor: agentTeamHumanActor() })
+    const actor = this.humanCall(request.workspaceId)
+    const result = await this.requireLedger().readThread({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }
@@ -708,39 +684,17 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only top-level Task creation. Workspace identity is verified against the live binding. */
   async sendMessageForAgent(agent: Agent, request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
-    this.requireAccepting()
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
-    const metadata = await this.resolveMessageAttachments(request)
-    const result = await this.requireLedger().sendMessage({
-      ...request, body: this.appendAttachmentLines(request.body, metadata),
-      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
-      actor,
-    })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.sendMessageAs(this.memberCall(agent, request.workspaceId), request)
   }
 
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
-    this.requireAccepting()
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
-    const metadata = await this.resolveMessageAttachments(request)
-    const result = await this.requireLedger().reply({
-      ...request, body: this.appendAttachmentLines(request.body, metadata),
-      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
-      actor,
-    })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.replyAs(this.memberCall(agent, request.workspaceId), request)
   }
 
   /** Agent-only personal Attention change. */
   async changeAttentionForAgent(agent: Agent, request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult> {
-    this.requireAccepting()
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
+    const actor = this.memberCall(agent, request.workspaceId)
     const result = await this.requireLedger().changeAttention({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
@@ -754,9 +708,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only Claim mutation. */
   async changeClaimForAgent(agent: Agent, request: AgentTeamClaimRequest): Promise<AgentTeamClaimResult> {
-    this.requireAccepting()
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
+    const actor = this.memberCall(agent, request.workspaceId)
     const result = await this.requireLedger().changeClaim({ ...request, actor })
     this.emitCommittedOutcome(result)
     return result.value
@@ -775,9 +727,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async readThreadForAgent(agent: Agent, request: AgentTeamThreadReadRequest): Promise<AgentTeamThreadReadResult> {
-    this.requireAccepting()
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
+    const actor = this.memberCall(agent, request.workspaceId)
     const result = await this.requireLedger().readThread({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
@@ -814,6 +764,45 @@ export default class AgentTeam extends TypertRemoteService {
       if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
       if (this.memberStatus(member).availability !== 'active') throw new Error(`Agent Member '${memberId}' is not available for Channel membership`)
     }
+  }
+
+  /** Shared Task-creation commit: resolve uploads into metadata lines and append through the ledger. */
+  private async sendMessageAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
+    const metadata = await this.resolveMessageAttachments(request)
+    const result = await this.requireLedger().sendMessage({
+      ...request, body: this.appendAttachmentLines(request.body, metadata),
+      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+      actor,
+    })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Shared existing-Thread reply commit: same upload resolution and outcome emission. */
+  private async replyAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
+    const metadata = await this.resolveMessageAttachments(request)
+    const result = await this.requireLedger().reply({
+      ...request, body: this.appendAttachmentLines(request.body, metadata),
+      ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
+      actor,
+    })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  /** Fence one Human Remote call: accepting Host, known Workspace, Human actor. */
+  private humanCall(workspaceId: AgentTeamViewRequest['workspaceId']): AgentTeamHumanActor {
+    this.requireAccepting()
+    this.requireWorkspace(workspaceId)
+    return agentTeamHumanActor()
+  }
+
+  /** Fence one Member call: accepting Host, live Member binding, matching Workspace. */
+  private memberCall(agent: Agent, workspaceId: AgentTeamViewRequest['workspaceId']): AgentTeamMemberActor {
+    this.requireAccepting()
+    const actor = this.memberActor(agent)
+    this.requireAgentWorkspace(actor, workspaceId)
+    return actor
   }
 
   private memberActor(agent: Agent): AgentTeamMemberActor {
@@ -882,14 +871,14 @@ export default class AgentTeam extends TypertRemoteService {
       await workspace.attachSession(member.sessionId)
       this.handles.set(member.memberId, created)
       this.modelSelections.set(member.memberId, selected)
-      this.diagnostics.delete(member.memberId)
+      this.clearMemberFailure(member.memberId, 'activation')
       this.nameMemberSession(member, created.agent)
       this.notifyMember(created.agent)
       this.autoCompaction.activated(member.memberId)
     } catch (error) {
       await created?.dispose()
       this.modelSelections.delete(member.memberId)
-      this.diagnostics.set(member.memberId, error instanceof Error ? error.message : String(error))
+      this.setMemberFailure(member.memberId, 'activation', error instanceof Error ? error.message : String(error))
     } finally {
       // Activation only changes this Workspace's presence projection.
       this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
@@ -917,7 +906,7 @@ export default class AgentTeam extends TypertRemoteService {
         this.modelSelections.delete(memberId)
         // The composition-loss diagnostic this heal answers is stale once the
         // rebuild starts; a later activation must not resurface it.
-        this.autoCompactionErrors.delete(stale.agent.id)
+        this.clearMemberFailure(memberId, 'compaction')
         this.emitAutoCompactionChanged(memberId)
         await stale.dispose()
       }
@@ -975,16 +964,30 @@ export default class AgentTeam extends TypertRemoteService {
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
     if (member.state === 'inactive') return Object.freeze({ member, availability: 'inactive', presence: 'unavailable' })
     if (member.state === 'suspended') return Object.freeze({ member, availability: 'suspended', presence: 'unavailable' })
-    const diagnostic = this.diagnostics.get(member.memberId)
-    if (diagnostic !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic })
+    const failures = this.memberFailures.get(member.memberId)
+    if (failures?.activation !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic: failures.activation })
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable' })
     if (this.ctx.agentPresets.composedPreset(handle.agent.ctx) === undefined) {
       return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: ORPHANED_MEMBER_DIAGNOSTIC })
     }
-    const runtimeError = this.runtimeErrors.get(handle.agent.id) ?? this.autoCompactionErrors.get(handle.agent.id)
+    const runtimeError = failures?.runtime ?? failures?.compaction
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
     return Object.freeze({ member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available' })
+  }
+
+  private setMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction', message: string): void {
+    const failures = this.memberFailures.get(memberId) ?? {}
+    failures[slot] = message
+    this.memberFailures.set(memberId, failures)
+  }
+
+  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction'): boolean {
+    const failures = this.memberFailures.get(memberId)
+    if (failures === undefined || failures[slot] === undefined) return false
+    if (Object.keys(failures).length === 1) this.memberFailures.delete(memberId)
+    else delete failures[slot]
+    return true
   }
 
   private requireWorkspace(workspaceId: AgentTeamViewRequest['workspaceId']) {
@@ -1137,9 +1140,21 @@ export default class AgentTeam extends TypertRemoteService {
     return `Team Task update\n${actor} ${activity.kind} Task ${activity.taskRef}.${released}`
   }
 
+  /** Dispose one live Member Session and drop its per-Member runtime state. */
+  private async disposeMemberSession(memberId: AgentTeamMemberId, member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): Promise<void> {
+    this.clearMemberRecoveryState(member)
+    const handle = this.handles.get(memberId)
+    if (handle !== undefined) {
+      await handle.dispose()
+      this.handles.delete(memberId)
+    }
+    this.modelSelections.delete(memberId)
+    this.clearMemberFailure(memberId, 'activation')
+  }
+
   private clearMemberRecoveryState(member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): void {
     this.recovery.stopTracking(member.memberId)
-    this.runtimeErrors.delete(member.sessionId)
+    this.clearMemberFailure(member.memberId, 'runtime')
     this.clearMemberNotificationState(member.memberId)
   }
 
