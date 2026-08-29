@@ -1,0 +1,24 @@
+{
+  "minTokens": 60,
+  "minLines": 6,
+  "mode": "mild",
+  "threshold": 1,
+  "format": [
+    "typescript",
+    "tsx"
+  ],
+  "pattern": "**/*.{ts,tsx}",
+  "ignore": [
+    "**/tests/**",
+    "**/tsdown.config.ts",
+    "**/lib/**"
+  ],
+  "ignorePattern": [
+    "(?s)/\\* jscpd:ignore-start \\*/.*?/\\* jscpd:ignore-end \\*/"
+  ],
+  "reporters": [
+    "console"
+  ],
+  "noColors": true,
+  "noTips": true
+}
