@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.3] - 2026-08-29
+
+- Member sessions now support direct Human editing and messaging, including session controls and a dedicated embedded composer.
+- Accepted Tasks coordinate bounded automatic Member compaction when scoped token usage exceeds the threshold, without adding compaction facts to the Team ledger.
+- Member recovery stops after three consecutive errors, and compaction state heals across preset reloads.
+- Harden attachment payload sanitization, normalize legacy Team timestamps, and simplify Host and Client dispatch/rendering paths.
+- Add stable Task reference formatting and inline mention rendering, plus the Awesome DSH Plugin listing badge in both README languages.
+- Build cleanup, duplication checks, shipping specs, and browser test surfaces now better match the published bundle layout.
+
 ## [0.1.2] - 2026-08-27
 
 - Human Thread replies now accept local file attachments; attachment chips, reference rendering, and draft previews are unified across message paths.

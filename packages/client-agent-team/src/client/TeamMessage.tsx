@@ -4,7 +4,7 @@ import type { AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } 
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
 import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersion, type ResolvedTaskRef } from './task-refs.ts'
-import { formatMessageTime, isPlainTextBody, isSingleBrandedRef, memberHue, planMessageBody, splitBrandedRefs, splitMentionNames } from './team-formatters.ts'
+import { formatMessageTime, isSingleBrandedRef, memberHue, planMessageBody, splitBrandedRefs, splitMentionNames } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
