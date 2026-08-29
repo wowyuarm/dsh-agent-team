@@ -21,6 +21,11 @@ export function attachmentsRoot(): string {
   return dshHomePath('agent-team', 'attachments', 'v1')
 }
 
+/** Absolute payload path of one stored attachment, as offered to Member agents. */
+export function attachmentPayloadPath(attachmentId: AgentTeamAttachmentId, name: string): string {
+  return join(attachmentsRoot(), attachmentId, name)
+}
+
 export function newAttachmentId(): AgentTeamAttachmentId {
   return randomUUID() as AgentTeamAttachmentId
 }
@@ -28,8 +33,11 @@ export function newAttachmentId(): AgentTeamAttachmentId {
 /** Strip path separators, control characters, and leading dots from one client-supplied name. */
 export function sanitizeFileName(raw: string): string {
   // oxlint-disable-next-line no-control-regex -- strip ASCII control characters from client filenames.
-  const cleaned = raw.replaceAll(/[\\/\u0000-\u001f\u007f]/g, '').replaceAll(/^\.+/g, '').trim()
-  return cleaned === '' ? 'attachment' : cleaned.slice(0, 180)
+  const cleaned = raw.replaceAll(/[\\/\u0000-\u001f\u007f]/g, '').replaceAll(/^\.+/g, '').trim().slice(0, 180)
+  if (cleaned === '') return 'attachment'
+  // The metadata sidecar owns 'meta.json' inside every entry directory; a
+  // payload with that name would be clobbered by the sidecar and unreadable.
+  return /^meta\.json$/i.test(cleaned) ? `_${cleaned}` : cleaned
 }
 
 /** Extension-derived media types for agent-supplied files; unknown types stay generic. */

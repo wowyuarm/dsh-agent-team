@@ -59,6 +59,8 @@ describe('attachment file hygiene', () => {
     expect(sanitizeFileName('...hidden')).toBe('hidden')
     expect(sanitizeFileName('   ')).toBe('attachment')
     expect(sanitizeFileName(`${'x'.repeat(400)}.pdf`)).toHaveLength(180)
+    expect(sanitizeFileName('meta.json')).toBe('_meta.json')
+    expect(sanitizeFileName('META.JSON')).toBe('_META.JSON')
   })
 
   it('accepts well-formed media types and falls back for anything else', () => {
@@ -84,6 +86,18 @@ describe('attachment cache', () => {
     expect(readBack?.mediaType).toBe('application/pdf')
     expect(readBack?.bytes.toString('utf8')).toBe('payload')
     expect(await readFile(join(root, id, 'meta.json'), 'utf8')).toContain('uploadedAt')
+  })
+
+  it('keeps a payload named meta.json readable by reserving the sidecar name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-attachments-'))
+    cleanups.push(async () => { await rm(root, { recursive: true, force: true }) })
+    const id = newAttachmentId()
+    const stored = await writeAttachment(root, id, 'meta.json', 'application/json', Buffer.from('payload'))
+    expect(stored.name).toBe('_meta.json')
+    const readBack = await readAttachment(root, id)
+    expect(readBack?.name).toBe('_meta.json')
+    expect(readBack?.bytes.toString('utf8')).toBe('payload')
+    expect(JSON.parse(await readFile(join(root, id, 'meta.json'), 'utf8'))).toMatchObject({ name: '_meta.json' })
   })
 
   it('sweeps orphans after 24h and referenced uploads only after 72h', async () => {
