@@ -130,6 +130,8 @@ dsh web
 - **稳定模式**（`--profile web`）：依赖 npm 发布版（`^0.1.x` 语义化范围），pnpm lockfile 锁定已装版本；发布后需手动 `dsh plugin --profile web update @wowyuarm/dsh-agent-team` 才会跟进新版。
 - **开发模式**（`--profile web-dev`）：依赖 `link:` 本地检出，rebuild + 重启即用最新代码。注意宿主加载的是构建产物 `packages/*/lib/`：改完源码只重启而不 `npm run build`，成员会话仍会拿到旧工具清单（工具清单在激活时从当前运行代码派生）——先 build 再重启才生效。
 
+启动运行时必须与安装形态匹配。稳定 profile 由发布版 dsh（全局安装的 `@deepseek-ai/dsh`，宿主全程运行 `lib/` 构建产物）启动；checkout 里的 `pnpm dsh`（tsx + tsconfig paths，宿主运行 `src/` 源码）只能启动 `link:` 安装的 profile。npm 安装的 bundle 周围没有 tsconfig paths，其 harness 依赖会解析到各包的 `lib/`，与宿主的 `src/` 实例形成两份模块——`dsh-scope` 的 scope 标签是模块内 Symbol，跨实例不一致，成员激活的 preset 校验会以 `selected preset is not team-enabled` 失败，表现为稳定 profile 全体 Agent 不可用（2026-08 诊断确认）。见到该症状时，先核对启动用的 `dsh` 是发布版还是 checkout 的 `pnpm dsh`。
+
 发布节奏是批量的：两次发布之间，操作者将本地构建日常自用，作为轻量验收渠道——日常使用反馈等同有效验证。agent 与贡献者按检查梯度选择最窄检查即可，不必为每个小改动要求完整验收；累积若干修复与优化、在日常使用中稳定后，再批量发新版。
 
 每次发布后随即在稳定 profile 执行上述 update 命令。稳定 profile 与开发 profile 共享全局 ledger 存储（`$DSH_HOME/storages/`）：稳定 profile 停留在旧版而 ledger 已被新版写入时，启动会因记录 schema 校验失败而崩溃（2026-08 的 0.1.1 即是这种"写得出、读不回"的中间版本）。
