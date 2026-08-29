@@ -18,7 +18,7 @@
     "README.zh.md"
   ],
   "scripts": {
-    "generate:typert": "cd ../deepseek-harness && node --import tsx ../dsh-agent-team/scripts/generate-typert.mjs",
+    "generate:typert": "node --import tsx scripts/generate-typert.mjs",
     "prepack": "npm run build",
     "clean:build-outputs": "node scripts/clean-build-outputs.mjs",
     "test": "npm run generate:typert && vitest run",
@@ -60,6 +60,7 @@
     "@types/react-dom": "~18.3.7",
     "jsdom": "^30.0.1",
     "react": "^18.3.1",
+    "tsx": "^4.22.4",
     "react-dom": "^18.3.1",
     "typescript": "^5.8.3",
     "use-sync-external-store": "1.2.0",
