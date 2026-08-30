@@ -253,7 +253,8 @@ interface Projection {
   /** Derived read indexes; rebuilt by replay, never a second durable authority. */
   readonly orderedFacts: AgentTeamThreadFact[]
   readonly factsByThread: Map<AgentTeamThreadRef, AgentTeamThreadFact[]>
-  readonly topLevelMessages: AgentTeamMessage[]
+  /** Owning Channel of each Thread, established by the anchor Message and immutable afterwards. */
+  readonly channelRefByThread: Map<AgentTeamThreadRef, AgentTeamChannelRef>
   /** Structured mention refs per Message, derived from the originating send operations. */
   readonly mentionsByMessage: Map<AgentTeamMessageRef, readonly AgentTeamMemberId[]>
   readonly messageCountByThread: Map<AgentTeamThreadRef, number>
@@ -263,7 +264,7 @@ interface Projection {
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
     claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
-    orderedFacts: [], factsByThread: new Map(), topLevelMessages: [], mentionsByMessage: new Map(), messageCountByThread: new Map(),
+    orderedFacts: [], factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     attentionByThread: new Map() }
 }
 
@@ -616,8 +617,6 @@ export class AgentTeamLedger {
       }
       this.assertHumanActor(request.actor)
       const { task: existingTask, thread, channelRef } = this.threadContextForActor(request.actor, request.workspaceId, request)
-      const body = request.body.trim()
-      if (body === '') throw new Error('message body must not be empty')
       if (existingTask !== undefined) throw new Error(`Thread '${thread.threadRef}' already has Task '${existingTask.taskRef}'`)
       const deferred = this.deferredThreadWrite(request.actor.memberId, undefined, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
@@ -626,15 +625,13 @@ export class AgentTeamLedger {
       const taskRef = this.ref('task')
       const task: AgentTeamTask = Object.freeze({ taskRef, channelRef, threadRef: thread.threadRef, status: 'todo', resolution: 'open' })
       const nextThread: AgentTeamThread = Object.freeze({ threadRef: thread.threadRef, taskRef, revision: sequence })
-      const message: AgentTeamMessage = Object.freeze({
-        messageRef: this.ref('message'), channelRef, threadRef: thread.threadRef, taskRef,
-        sender: request.actor.memberId, body, topLevel: false, sequence, occurredAt: base.occurredAt,
-      })
-      const inbox = this.inboxDelta()
+      const activity: AgentTeamTaskActivity = Object.freeze({ activityRef: this.ref('activity'), kind: 'promote',
+        taskRef, threadRef: thread.threadRef, actor: request.actor.memberId, sequence })
+      const inbox = this.promoteThreadInbox(activity, thread.threadRef)
       const operation: AgentTeamThreadPromotedOperation = Object.freeze({
         ...base, kind: 'team/thread-promoted',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
-          mentions: Object.freeze([] as AgentTeamMemberId[]), message, task, thread: nextThread, inbox }),
+          activity, task, thread: nextThread, inbox }),
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
@@ -1117,8 +1114,9 @@ export class AgentTeamLedger {
       }
       case 'team/message-sent':
       case 'team/thread-replied':
-      case 'team/thread-promoted':
         return [{ kind: 'channel', channelRef: operation.data.message.channelRef }, { kind: 'thread', threadRef: operation.data.message.threadRef }]
+      case 'team/thread-promoted':
+        return [{ kind: 'channel', channelRef: operation.data.task.channelRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/claim-created':
       case 'team/claim-done':
       case 'team/claim-released':
@@ -1158,8 +1156,9 @@ export class AgentTeamLedger {
     switch (operation.kind) {
       case 'team/message-sent':
       case 'team/thread-replied':
-      case 'team/thread-promoted':
         return [operation.data.message.threadRef]
+      case 'team/thread-promoted':
+        return [operation.data.activity.threadRef]
       case 'team/claim-created':
       case 'team/claim-done':
       case 'team/claim-released':
@@ -1357,7 +1356,28 @@ export class AgentTeamLedger {
       this.validateInboxDelta(operation.data.inbox, projection, refs)
       return
     }
-    if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied' || operation.kind === 'team/thread-promoted') {
+    if (operation.kind === 'team/thread-promoted') {
+      assertHuman()
+      const { activity, task, thread } = operation.data
+      const priorThread = projection.threads.get(thread.threadRef)
+      const channelRef = priorThread === undefined ? undefined : this.channelRefForThreadFrom(projection, thread.threadRef)
+      if (priorThread === undefined || priorThread.taskRef !== undefined || projection.tasks.has(task.taskRef)
+        || channelRef === undefined || task.channelRef !== channelRef
+        || projection.channels.get(channelRef)?.workspaceId !== operation.data.workspaceId
+        || operation.data.baseRevision !== priorThread.revision
+        || task.status !== 'todo' || task.resolution !== 'open'
+        || thread.revision !== operation.sequence || task.threadRef !== thread.threadRef || thread.taskRef !== task.taskRef
+        || !this.sameThread(thread, { ...priorThread, taskRef: task.taskRef, revision: operation.sequence })
+        || activity.kind !== 'promote' || activity.sequence !== operation.sequence || activity.actor !== operation.actor.memberId
+        || activity.taskRef !== task.taskRef || activity.threadRef !== thread.threadRef) throw new Error('invalid Thread promotion')
+      this.addRef(refs, task.taskRef)
+      this.addRef(refs, activity.activityRef)
+      const expectedInbox = this.promoteThreadInboxFrom(projection, activity, thread.threadRef)
+      if (!isDeepStrictEqual(operation.data.inbox, expectedInbox)) throw new Error('invalid Promotion inbox projection')
+      this.validateInboxDelta(operation.data.inbox, projection, refs, [], [], [activity])
+      return
+    }
+    if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
       const actor = operation.actor.kind === 'member' ? assertMember() : (assertHuman(), undefined)
       const { message, task, thread } = operation.data
       const channel = projection.channels.get(message.channelRef)
@@ -1373,7 +1393,7 @@ export class AgentTeamLedger {
         }
         this.addRef(refs, thread.threadRef)
         if (task !== undefined) this.addRef(refs, task.taskRef)
-      } else if (operation.kind === 'team/thread-replied') {
+      } else {
         const priorThread = projection.threads.get(thread.threadRef)
         const priorTask = task === undefined ? undefined : projection.tasks.get(task.taskRef)
         if (message.topLevel || priorThread === undefined || operation.data.baseRevision !== priorThread.revision
@@ -1381,22 +1401,11 @@ export class AgentTeamLedger {
           || (task === undefined ? priorTask !== undefined : priorTask === undefined || !this.sameTask(priorTask, task))) {
           throw new Error('invalid Thread reply')
         }
-      } else {
-        assertHuman()
-        const priorThread = projection.threads.get(thread.threadRef)
-        if (actor !== undefined || task === undefined || message.topLevel || message.taskRef !== task.taskRef
-          || priorThread === undefined || priorThread.taskRef !== undefined || projection.tasks.has(task.taskRef)
-          || operation.data.baseRevision !== priorThread.revision || operation.data.mentions.length !== 0
-          || task.status !== 'todo' || task.resolution !== 'open') {
-          throw new Error('invalid Thread promotion')
-        }
-        this.addRef(refs, task.taskRef)
       }
       this.addRef(refs, message.messageRef)
       this.validateMentions(operation.data.mentions, message, projection)
       this.validateInboxDelta(operation.data.inbox, projection, refs, [thread.threadRef], [message])
-      if (operation.kind !== 'team/thread-promoted') this.validateMessageInbox(operation, projection)
-      else if (!isDeepStrictEqual(operation.data.inbox, this.inboxDelta())) throw new Error('invalid Message inbox projection')
+      this.validateMessageInbox(operation, projection)
       return
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
@@ -1696,13 +1705,21 @@ export class AgentTeamLedger {
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
-    if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied' || operation.kind === 'team/thread-promoted') {
+    if (operation.kind === 'team/thread-promoted') {
+      this.appendActivityFact(target, operation.data.activity)
+      target.tasks.set(operation.data.task.taskRef, operation.data.task)
+      target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
       const { message, mentions } = operation.data
       target.messages.push(message)
       target.mentionsByMessage.set(message.messageRef, Object.freeze([...mentions]))
       this.appendMessageFact(target, message, mentions)
       if (operation.data.task !== undefined) target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      if (message.topLevel) target.channelRefByThread.set(message.threadRef, message.channelRef)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
@@ -1731,7 +1748,7 @@ export class AgentTeamLedger {
 
   /** Facts arrive in ledger sequence order, so global and per-thread lists stay sorted by append only. */
   private appendMessageFact(
-    target: Pick<Projection, 'orderedFacts' | 'factsByThread' | 'topLevelMessages' | 'messageCountByThread'>,
+    target: Pick<Projection, 'orderedFacts' | 'factsByThread' | 'messageCountByThread'>,
     message: AgentTeamMessage,
     mentions: readonly AgentTeamMemberId[],
   ): void {
@@ -1740,7 +1757,6 @@ export class AgentTeamLedger {
     const facts = target.factsByThread.get(message.threadRef) ?? []
     facts.push(fact)
     target.factsByThread.set(message.threadRef, facts)
-    if (message.topLevel) target.topLevelMessages.push(message)
     target.messageCountByThread.set(message.threadRef, (target.messageCountByThread.get(message.threadRef) ?? 0) + 1)
   }
 
@@ -1931,6 +1947,19 @@ export class AgentTeamLedger {
       .filter(marker => marker.threadRef === threadRef).map(marker => marker.memberId))
     const markers = [...recipients].map(memberId => Object.freeze({ memberId, threadRef,
       activityRef: activity.activityRef, sequence: activity.sequence }))
+    return this.inboxDelta([], [], [], [], markers)
+  }
+
+  /** Promotion wakes every current follower; the Human actor never follows, so no recipient filter is needed. */
+  private promoteThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+    return this.promoteThreadInboxFrom(this.state, activity, threadRef)
+  }
+
+  private promoteThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef): AgentTeamInboxDelta {
+    const markers = [...projection.attention.values()]
+      .filter(attention => attention.threadRef === threadRef && attention.memberId !== activity.actor)
+      .map(attention => Object.freeze({ memberId: attention.memberId, threadRef,
+        activityRef: activity.activityRef, sequence: activity.sequence }))
     return this.inboxDelta([], [], [], [], markers)
   }
 
@@ -2263,8 +2292,7 @@ export class AgentTeamLedger {
   }
 
   private channelRefForThreadFrom(projection: Projection, threadRef: AgentTeamThreadRef): AgentTeamChannelRef | undefined {
-    const message = projection.messages.find(candidate => candidate.threadRef === threadRef)
-    return message?.channelRef
+    return projection.channelRefByThread.get(threadRef)
   }
 
   private threadContextForActor(
@@ -2455,7 +2483,7 @@ export class AgentTeamLedger {
     if (operation.kind !== 'team/thread-promoted' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId
       || operation.data.thread.threadRef !== request.threadRef
-      || operation.data.message.body !== request.body.trim() || operation.data.baseRevision !== request.baseRevision) {
+      || operation.data.baseRevision !== request.baseRevision) {
       this.throwRequestCollision(request.requestId)
     }
   }
@@ -2605,7 +2633,7 @@ export class AgentTeamLedger {
   }
 
   private promotionResult(operation: AgentTeamThreadPromotedOperation): Extract<AgentTeamPromoteThreadResult, { kind: 'committed' }> {
-    return Object.freeze({ kind: 'committed', receipt: this.receipt(operation), message: operation.data.message,
+    return Object.freeze({ kind: 'committed', receipt: this.receipt(operation), activity: operation.data.activity,
       task: operation.data.task, thread: operation.data.thread })
   }
 

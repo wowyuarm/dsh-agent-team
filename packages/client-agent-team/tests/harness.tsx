@@ -154,14 +154,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     viewItems = [{ ...top, thread, mentions: [], messageCount: 2 }, { ...top, message, thread, mentions: [], messageCount: 2 }]
     return { ok: true as const, value: { kind: 'committed', receipt: {}, message, task: top.task, thread, attention: [], directMarkers: [] } }
   })
-  const promoteThread = vi.fn(async (request: { requestId: string; workspaceId: string; threadRef: string; body: string; baseRevision: number }) => {
+  const promoteThread = vi.fn(async (request: { requestId: string; workspaceId: string; threadRef: string; baseRevision: number }) => {
     const top = viewItems.find(item => (item.thread as { threadRef: string }).threadRef === request.threadRef) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     const task = { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: request.threadRef, status: 'todo', resolution: 'open' }
     const thread = { ...(top.thread as object), taskRef: task.taskRef, revision: request.baseRevision + 1 }
-    const message = { messageRef: 'message:promoted', channelRef: 'channel:engineering', threadRef: request.threadRef, taskRef: task.taskRef, sender: 'member:human', body: request.body, topLevel: false, sequence: request.baseRevision + 1, occurredAt: '2026-08-21T10:01:00.000Z' }
+    const activity = { activityRef: 'activity:promoted', kind: 'promote' as const, taskRef: task.taskRef, threadRef: request.threadRef, actor: 'member:human', sequence: request.baseRevision + 1 }
     viewItems = viewItems.map(item => ({ ...item, task, thread, taskNumber: 1 }))
-    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread } }
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, activity, task, thread } }
   })
   const changeTask = vi.fn(async (request: { action: 'accept' | 'close' | 'reopen' }) => {
     const top = viewItems[0]!

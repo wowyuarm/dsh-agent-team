@@ -503,7 +503,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await promote.focus()
   await page.keyboard.press('Enter')
   await page.getByRole('heading', { name: 'Task #2' }).waitFor()
-  await page.getByText('该 Thread 已创建 Task，现在可以合理 claim').waitFor()
+  await page.getByText('Human 为此讨论创建了 Task').waitFor()
   expect(await page.getByRole('button', { name: '转为 Task' }).count()).toBe(0)
   await page.getByRole('button', { name: '返回频道' }).click()
   await page.getByRole('heading', { name: '# delivery' }).waitFor()

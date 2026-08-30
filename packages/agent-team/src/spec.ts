@@ -117,9 +117,6 @@ function stampOperationMessages(operation: z.output<typeof storedAgentTeamOperat
   if (operation.kind === 'team/thread-replied') {
     return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } } as AgentTeamOperation
   }
-  if (operation.kind === 'team/thread-promoted') {
-    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } } as AgentTeamOperation
-  }
   return operation as AgentTeamOperation
 }
 
@@ -204,7 +201,7 @@ const claimActivitySchema = z.object({
 
 const taskActivitySchema = z.object({
   ...activityBase,
-  kind: z.union([z.literal('accept'), z.literal('close'), z.literal('reopen')]),
+  kind: z.union([z.literal('promote'), z.literal('accept'), z.literal('close'), z.literal('reopen')]),
   releasedClaimRefs: z.array(claimRefSchema).min(1).optional(),
   completedClaimRefs: z.array(claimRefSchema).min(1).optional(),
 }).strict()
@@ -353,8 +350,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     data: z.object({
       workspaceId: workspaceIdSchema,
       baseRevision: z.number().int().positive(),
-      mentions: z.array(memberIdSchema),
-      message: messageSchema,
+      activity: taskActivitySchema,
       task: taskSchema,
       thread: threadSchema,
       inbox: inboxDeltaSchema,

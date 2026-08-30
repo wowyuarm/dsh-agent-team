@@ -258,7 +258,7 @@ export interface AgentTeamClaimActivity extends AgentTeamActivityBase {
 }
 
 export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
-  readonly kind: 'accept' | 'close' | 'reopen'
+  readonly kind: 'promote' | 'accept' | 'close' | 'reopen'
   /** Claims atomically released by close; absent for other Task transitions. */
   readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
   /** Active claims the Human acceptance completed alongside the Task; absent for plain accepts. */
@@ -429,14 +429,13 @@ export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase 
   }
 }
 
-/** Durable Human promotion of a taskless Thread into a real Task plus public Message. */
+/** Durable Human promotion of a taskless Thread into a real Task, announced by a structured Task activity. */
 export interface AgentTeamThreadPromotedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/thread-promoted'
   readonly data: {
     readonly workspaceId: WorkspaceId
     readonly baseRevision: number
-    readonly mentions: readonly AgentTeamMemberId[]
-    readonly message: AgentTeamMessage
+    readonly activity: AgentTeamTaskActivity
     readonly task: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta
@@ -850,14 +849,13 @@ export interface AgentTeamPromoteThreadRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly threadRef: AgentTeamThreadRef
-  readonly body: string
   readonly baseRevision: number
 }
 
 export interface AgentTeamPromoteThreadCommittedResult {
   readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
-  readonly message: AgentTeamMessage
+  readonly activity: AgentTeamTaskActivity
   readonly task: AgentTeamTask
   readonly thread: AgentTeamThread
 }

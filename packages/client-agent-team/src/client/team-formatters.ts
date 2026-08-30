@@ -184,6 +184,7 @@ export function formatActivity(activity: AgentTeamActivity, options: {
       ? options.t('activityAcceptedWithClaims', { actor, count: activity.completedClaimRefs.length })
       : options.t('activityAccepted', { actor })
   }
+  if (activity.kind === 'promote') return options.t('activityPromoted', { actor })
   if (activity.kind === 'close') return options.t('activityClosed', { actor })
   if (activity.kind === 'reopen') return options.t('activityReopened', { actor })
   const direction = 'claimRef' in activity

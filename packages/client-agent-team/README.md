@@ -14,7 +14,7 @@ The Client uses these Host projections and mutations:
 
 - `readThread` acknowledges a Thread batch.
 - `threadHistory` pages older facts without marking them read.
-- `promoteThread` atomically attaches a real Task to a taskless Thread and appends its public explanation Message.
+- `promoteThread` atomically attaches a real Task to a taskless Thread and records its structured `promote` Task activity.
 - `resolveTaskRefs` resolves known branded Task refs to their display number and home Channel/Thread for navigation.
 - `updateChannel` commits a Channel rename (name/description display facts).
 - `updateMember` commits Agent handle/description edits plus an optional per-Member model override.

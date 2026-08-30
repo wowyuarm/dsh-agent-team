@@ -1162,6 +1162,9 @@ export default class AgentTeam extends TypertRemoteService {
     if (activity.kind === 'claims_released') {
       return `Team Task update\n${actor}'s Claims ${activity.claimRefs.join(', ')} were released on Task ${activity.taskRef}.`
     }
+    if (activity.kind === 'promote') {
+      return `Team Task update\n${actor} created Task ${activity.taskRef} from Thread ${activity.threadRef}; it is open for claims.`
+    }
     const released = 'releasedClaimRefs' in activity && activity.releasedClaimRefs !== undefined && activity.releasedClaimRefs.length > 0
       ? ` Released Claims: ${activity.releasedClaimRefs.join(', ')}.` : ''
     return `Team Task update\n${actor} ${activity.kind} Task ${activity.taskRef}.${released}`

@@ -692,7 +692,7 @@ describe('Team conversation surfaces', () => {
     expect(b.view.getByRole('button', { name: '转为 Task' })).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: '转为 Task' }))
     await waitFor(() => expect(b.promoteThread).toHaveBeenCalledWith(expect.objectContaining({
-      threadRef: 'thread:1', body: '该 Thread 已创建 Task，现在可以合理 claim',
+      threadRef: 'thread:1',
     })))
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ threadRef: 'thread:1' })))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()

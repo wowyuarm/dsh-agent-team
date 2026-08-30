@@ -428,10 +428,18 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     const requestId = mutationRequests.current.get(key) ?? mintRequestId()
     mutationRequests.current.set(key, requestId)
     try {
-      const result = await promoteThread({ requestId, workspaceId, threadRef, body: t('promoteToTaskNotice'), baseRevision: thread.revision })
+      const result = await promoteThread({ requestId, workspaceId, threadRef, baseRevision: thread.revision })
       if (!result.ok) { setError(result.error.message); return }
       if (result.value.kind === 'committed') {
         mutationRequests.current.delete(key)
+        const committed = result.value as Extract<typeof result.value, { kind: 'committed' }>
+        setProjection(current => current === undefined ? current
+          : { ...current, task: committed.task, thread: committed.thread })
+        setCurrentFacts(current => {
+          const merged = mergeFacts(current, [{ kind: 'activity', sequence: committed.activity.sequence, activity: committed.activity }])
+          currentFactsRef.current = merged
+          return merged
+        })
         await readCurrent(true)
         await refreshSupplemental()
       } else if (result.value.kind === 'unread_required') {

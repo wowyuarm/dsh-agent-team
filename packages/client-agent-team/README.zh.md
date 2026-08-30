@@ -14,7 +14,7 @@ Client 使用以下 Host 接口：
 
 - `readThread`：确认一个 Thread 的未读批次。
 - `threadHistory`：读取更早事实，不改变已读状态。
-- `promoteThread`：原子地为 taskless Thread 附加真实 Task，并追加公开说明 Message。
+- `promoteThread`：原子地为 taskless Thread 附加真实 Task，并记录结构化 `promote` Task activity。
 - `resolveTaskRefs`：将已知 branded Task ref 解析为展示编号及所属 Channel/Thread，供导航使用。
 - `updateChannel`：提交频道名称/说明的展示事实修改。
 - `updateMember`：提交 Agent 名称/说明编辑，以及可选的成员级模型覆盖。

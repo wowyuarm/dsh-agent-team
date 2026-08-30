@@ -610,7 +610,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef })).resolves.toBeDefined()
   })
 
-  it('creates a taskless Thread, keeps Inbox visible, and promotes with a public Message', async () => {
+  it('creates a taskless Thread, keeps Inbox visible, and promotes with a Task activity', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
     const ledger = replayLedger(test)
@@ -633,17 +633,20 @@ describe('AgentTeam durable Thread Attention ledger', () => {
       workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'later Task', actor: agentTeamHumanActor() })).value))
     const promoted = committed((await ledger.promoteThread({
       requestId: requestId('promote'), workspaceId: alpha, threadRef: sent.thread.threadRef,
-      body: 'This Thread is now a Task; you may claim it.', baseRevision: sent.thread.revision, actor: agentTeamHumanActor(),
+      baseRevision: sent.thread.revision, actor: agentTeamHumanActor(),
     })).value)
     expect(promoted.task.status).toBe('todo')
     expect(promoted.thread.taskRef).toBe(promoted.task.taskRef)
-    expect(promoted.message).toMatchObject({ topLevel: false, taskRef: promoted.task.taskRef, sender: AGENT_TEAM_HUMAN_MEMBER_ID })
+    expect(promoted.activity).toMatchObject({ kind: 'promote', taskRef: promoted.task.taskRef, threadRef: sent.thread.threadRef, actor: AGENT_TEAM_HUMAN_MEMBER_ID })
     const after = ledger.inbox(actor, { workspaceId: alpha })
     expect(after.items[0]!.task?.taskRef).toBe(promoted.task.taskRef)
+    const notificationFacts = ledger.notificationFacts(actor.memberId, { workspaceId: alpha })
+    const promotedNotification = notificationFacts.find(entry => entry.item.thread.threadRef === sent.thread.threadRef)
+    expect(promotedNotification?.facts.some(entry => entry.fact.kind === 'activity' && entry.fact.activity.kind === 'promote')).toBe(true)
     const history = ledger.threadHistory(actor, { workspaceId: alpha, threadRef: sent.thread.threadRef })
     expect(history.anchor.messageRef).toBe(sent.message.messageRef)
     expect(history.facts.map(fact => fact.kind === 'message' ? fact.message.body : fact.activity.kind)).toEqual([
-      'plain conversation', 'This Thread is now a Task; you may claim it.',
+      'plain conversation', 'promote',
     ])
     const view = ledger.view({ workspaceId: alpha, channelRef: channel.channel.channelRef, topLevelOnly: true, includeActivities: false })
     const promotedItem = view.items.find(item => item.thread.threadRef === sent.thread.threadRef)
