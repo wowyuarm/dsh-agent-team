@@ -76,6 +76,8 @@ Pending hints are coalesced per Member. A consumed or ignored hint does not caus
 
 对可恢复的临时服务错误，Host 按 Member 的连续 `agent/error` occurrences 计数，不按恢复唤醒次数或错误文本计数：前两次错误延迟后各唤醒一次，第 3 次立即停止自动恢复并保留 error 供 operator 处理。不同 recoverable kind 也不中断连续错误。只有 clean turn end 会清零，非可恢复错误会取消 tracking。恢复 notice 自身合并 continuation 和当前 durable Inbox facts，因此普通 Inbox 通知不会覆盖它或追加第二条提示。
 
+Web Client 的 Agent 行菜单提供两个 runtime 恢复入口（均不写 ledger）：有 live session 的 error Member 显示「恢复」，由 Host 向其 session 注入 continuation 提示（孤儿组合则原地重建）；激活失败的 Member 显示「重启」，由 Host 重新执行该 Member 的激活，再次失败仍以 diagnostic 形式呈现在侧栏。
+
 ## Assembled acceptance
 
 `npm run test:browser` uses the credential-free Harness Web scaffold to verify the public Client and Host chain. The representative trace exercises a default taskless top-level Thread, the default-off Human 「作为任务」 control, Human promotion with Host reread, and taskless header/Claim gating; it also requires Human's second-send confirmation to invite an unfollowed Agent, verifies the Agent's durable Inbox and explicit read/reply, then verifies the Human Channel and Thread state. Desktop, 390×844, and keyboard paths are part of the assembled acceptance. A page reload reads the same facts from Host projections before the journey leaves Team mode and confirms the ordinary DSH conversation surface is restored.

@@ -6,7 +6,7 @@ import type {
   AgentTeamChannel,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
@@ -238,13 +238,18 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
-  const resume = async (): Promise<void> => {
+  // Both row actions ride the same runtime remote: the Host steers a live
+  // session, rebuilds an orphaned composition, or re-runs a failed activation.
+  const recover = async (): Promise<void> => {
     await recoverMember({
       requestId: mintRequestId(),
       workspaceId: status.member.workspaceId,
       memberId: status.member.memberId,
     })
     await onUpdated()
+    // A page opened while the Member was down predates the live Session;
+    // re-selecting is a no-op when already bound and rebinds when stale.
+    if (current === true) openMemberSession(status.member.sessionId)
   }
   return (
     <>
@@ -262,10 +267,11 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
             items={[
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
+              ...(status.availability === 'unavailable' ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
             ]}
             onSelect={(id) => {
-              if (id === 'resume') void resume()
-              else setEditing(true)
+              if (id === 'edit') setEditing(true)
+              else void recover()
             }}
             onOpenChange={setMenuOpen}
           />

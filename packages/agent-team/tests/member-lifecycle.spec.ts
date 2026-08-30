@@ -9,7 +9,7 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import Group from '@deepseek-ai/cordis-plugin-group'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import AgentPresets, { type AgentPreset } from '@deepseek-ai/dsh-agent-presets'
 import LlmRuntime, { CallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -115,13 +115,21 @@ type PersistenceBackend = 'jsonl' | 'sqlite'
  * The real roster with one test seam: agents armed here resolve no preset
  * composition, exactly as members composed before a bundle-row reload do.
  * Agents composed after arming resolve normally, so a re-activation heals.
+ * While `failingMount` is set, preset mounts throw, as a Host restart against
+ * a broken preset would, leaving an enabled Member without a live session.
  */
 class TestablePresets extends AgentPresets {
   readonly orphaned = new WeakSet<Context>()
+  failingMount = false
 
   override composedPreset(agentCtx: Context): string | undefined {
     if (this.orphaned.has(agentCtx)) return undefined
     return super.composedPreset(agentCtx)
+  }
+
+  override async mount(agentCtx: Context, id?: string): Promise<AgentPreset> {
+    if (this.failingMount) throw new Error(`preset '${id ?? 'default'}' failed to load (test seam)`)
+    return super.mount(agentCtx, id)
   }
 }
 
@@ -268,6 +276,29 @@ describe('Agent Team Member lifecycle', () => {
     expect(rebuilt).not.toBe(live)
     expect(ctx.agentPresets.serviceFor(rebuilt, 'compaction')).toBeDefined()
     expect(ctx.tools.schemas(rebuilt).length).toBeGreaterThan(0)
+  })
+
+  it('restarts a Member whose activation failed and rejects restart for suspended Members', async () => {
+    const { ctx, workspaceId, presets } = await realHarness()
+    presets.failingMount = true
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [] })
+    expect(added.status.availability).toBe('unavailable')
+    expect(added.status.presence).toBe('unavailable')
+    expect(added.status.diagnostic).toContain('failed to load')
+    expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
+
+    presets.failingMount = false
+    const restarted = await ctx.agentTeam.recoverMember({ requestId: requestId('restart'), workspaceId, memberId: added.status.member.memberId })
+    expect(restarted.status.availability).toBe('active')
+    expect(restarted.status.member.sessionId).toBe(added.status.member.sessionId)
+    const live = ctx.agents.get(restarted.status.member.sessionId)!
+    expect(ctx.tools.schemas(live).length).toBeGreaterThan(0)
+    // Restart is runtime-only: the durable ledger stays replay-consistent.
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+
+    await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: added.status.member.memberId })
+    await expect(ctx.agentTeam.recoverMember({ requestId: requestId('restart-suspended'), workspaceId, memberId: added.status.member.memberId }))
+      .rejects.toThrow('only enabled Members can be restarted')
   })
 
   it('creates a Member with no description and no Channels and lights delivery on join', async () => {

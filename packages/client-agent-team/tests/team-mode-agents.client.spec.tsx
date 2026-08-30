@@ -208,7 +208,7 @@ describe('Team agent surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('offers 恢复 in the row menu only for error Members and nudges through the Host remote', async () => {
+  it('offers 恢复 and 重启 in the row menu only where they apply and routes both through the Host remote', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await b.view.findByText('builder')
@@ -218,11 +218,18 @@ describe('Team agent surfaces', () => {
     const healthyMenu = await within(document.body).findByRole('menu')
     expect(within(healthyMenu).getByRole('menuitem', { name: '编辑 Agent' })).toBeTruthy()
     expect(within(healthyMenu).queryAllByRole('menuitem', { name: '恢复' })).toEqual([])
+    expect(within(healthyMenu).queryAllByRole('menuitem', { name: '重启' })).toEqual([])
     // The error Member additionally gets the recovery entry.
     fireEvent.click(b.view.getByRole('button', { name: 'failed 的操作' }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: '恢复' }))
     await waitFor(() => {
       expect(b.recoverMember).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:failed' }))
+    })
+    // The unavailable Member gets the restart entry for a failed activation.
+    fireEvent.click(b.view.getByRole('button', { name: 'offline 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '重启' }))
+    await waitFor(() => {
+      expect(b.recoverMember).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:offline' }))
     })
     await b.runtime.dispose()
   })
