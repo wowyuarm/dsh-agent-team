@@ -53,13 +53,13 @@
 - Props：`senderName`、`memberId`、`human`、`body`、可选 `occurredAt`（名字行时间元信息）、可选 `mentionHandles`（Human 正文中的 mention chip 集合）、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
 - 分组规则：相邻两条同为消息且 sender 相同才折叠；活动行会打断 run。折叠行隐藏头像与名字（`visibility:hidden` 保持栅格对齐），padding 收紧为 `2px`。
 - 头像首字母取 senderName 去掉 `@` 后首个字符大写。
-- 超长正文折叠：display 字符数超过 `MESSAGE_COLLAPSE_CHARS`（`team-formatters.ts` 单一权威，600）的正文默认收进限高预览（约 8 行 / 176px，底部 alpha 渐隐遮罩，不涂主题底色），预览下方「展开全文」安静文本钮展开，展开后同位置「收起」收回（`aria-expanded` 翻转）。是否折叠只由正文本身决定——确定性默认，无需持久化，也不构成 Host 事实；夹具只包正文分支，run 分组、附件条、兜底 chip 行与 children 都在夹具外照常渲染，预览内 ref/mention 照常可点。
+- 超长正文折叠：display 字符数超过 `MESSAGE_COLLAPSE_CHARS`（`team-formatters.ts` 单一权威，600）的正文默认收进限高预览（约 8 行 / 176px，底部 alpha 渐隐遮罩，不涂主题底色），预览下方「展开全文」安静文本钮展开，展开后同位置「收起」收回（`aria-expanded` 翻转）。按钮独占一行，反馈是文字级的（变色 + 下划线，无底色框）；markdown 根节点的 `font: inherit` 重置选择器按后代匹配（`.messageBody .messageMarkdown > div:first-child`），夹具容器不得隔断它，否则预览字号会大于展开态。夹具容器对可折叠正文**常驻**、展开/收起只切换类名——不能出现/消失式包裹，那会重挂载 Markdown 子树并丢掉渲染后注入的 ref 链接与 mention chip。是否折叠只由正文本身决定——确定性默认，无需持久化，也不构成 Host 事实；夹具只包正文分支，run 分组、附件条、兜底 chip 行与 children 都在夹具外照常渲染，预览内 ref/mention 照常可点。
 
 ### 消息块（messageRun）
 
 - 一个 run = 一次发言：同一 sender 连续的消息 + 其 Task 入口卡包进一个 `.messageRun` 块；活动行与未读边界打断 run。
 - 日界同样打断 run：跨天的相邻消息之间插入居中的日期锚（`.daySeparator`，`MM-DD`，跨年用完整 `YYYY-MM-DD`，与消息时间的数字风格一致）。活动没有自己的时钟 instant，继承前一条消息的日界、不触发锚；时间线的第一条消息不带头部锚。分块逻辑统一在 `team-separators.ts` 的 `chunkRunsWithDays`（单一权威实现）。
-- 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button)`），上方画一条 border-l2 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
+- 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button:not([data-message-expand]))`，长文折叠的展开/收起钮不算入口），上方画一条 border-l2 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
 - 回合分隔线（`TeamRunDivider`）：同一 sender 的相邻消息间隔 ≥5 分钟即视为两次独立发言（agent 长发布常间隔小时级，纯折叠会抹掉层次与时刻），run 保持一块，但两者之间渲染全宽 border-l2 发丝线 + 线下首行标注后一条消息的时间（`formatMessageTime` 同款格式，`role="separator"`，缩进对齐正文列 38px=头像 28+间距 10）；该线替代其后折叠行自带的任务卡发丝线（相邻选择器覆盖），不叠双线。频道页与 Thread 页共用同一判断与组件。
 - run 是纯分组块，无 hover 边框/底色/阴影、无常驻边框——回合分隔线、日界锚与未读线承担全部消息边界感，run 自身只保留块间 2px 垂直空隙（`margin: 2px` + `padding: 3px`），不给内容"加笼子"。
 

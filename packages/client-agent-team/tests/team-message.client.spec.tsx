@@ -124,4 +124,28 @@ describe('TeamMessage long-body clamp', () => {
     expect(clampDivs(container)).toHaveLength(0)
     expect(container.querySelector('button')).toBeNull()
   })
+
+  it('keeps the post-render mention chips across expand and collapse', () => {
+    // Rich Markdown bodies get mention chips painted into the DOM after
+    // render. Toggling the clamp must not remount that subtree, or the
+    // imperatively inserted chips vanish.
+    const longRichBody = `**计划**\n\n${'折叠回归验证段落，足够长以触发限高预览。'.repeat(40)}\n\n请 @lead 关注 \`task:0123abcd-0000-0000-0000-000000000000\`。`
+    const { container, getByRole } = render(
+      <TeamMessage
+        senderName="Builder"
+        memberId={'member:builder' as AgentTeamMemberId}
+        human={false}
+        body={longRichBody}
+        mentionNames={['lead']}
+        onOpenRef={() => {}}
+        t={t}
+      />,
+    )
+    const chipCount = (): number => spansWithText(container, '@lead').length
+    expect(chipCount()).toBe(1)
+    fireEvent.click(getByRole('button', { name: '展开全文' }))
+    expect(chipCount()).toBe(1)
+    fireEvent.click(getByRole('button', { name: '收起' }))
+    expect(chipCount()).toBe(1)
+  })
 })

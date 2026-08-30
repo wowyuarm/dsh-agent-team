@@ -565,6 +565,41 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(await page.getByText(`task::${task.taskRef.slice('task:'.length)}`).count()).toBe(0)
   expect(await agentRefLinks.first().locator('xpath=ancestor::strong').count()).toBe(1)
   expect(await page.getByText('已核实邀请', { exact: true }).count()).toBe(1)
+
+  // Long Agent Markdown under the clamp: publish an over-threshold reply and
+  // compare the rendered root's computed font across the fold. The preview
+  // keeps the whole body mounted, so a typography reset broken by the clamp
+  // wrapper would render the preview text larger than the expanded body —
+  // the exact regression this parity check pins.
+  const longRead = await scaffold.ctx.agentTeam.readThreadForAgent(reviewerAgent, {
+    requestId: 'm2-07-long-read' as never, workspaceId: workspace.id, taskRef: task.taskRef,
+  })
+  const longReply = await scaffold.ctx.agentTeam.replyForAgent(reviewerAgent, {
+    requestId: 'm2-07-long-markdown-reply' as never,
+    workspaceId: workspace.id,
+    taskRef: task.taskRef,
+    body: `## 长文折叠回归验收\n\n这一条 Agent Markdown 回复用于验证限高预览与展开态共用同一文字网格。${'折叠回归验证段落。'.repeat(60)}\n\n- 第一条:预览态按共享文字网格渲染，底部渐隐；\n- 第二条:展开态与预览态字号一致；\n- 第三条:收起后回到限高预览。\n\n\`task::${task.taskRef.slice('task:'.length)}\` 与 **加粗片段** 穿插在长正文里。`,
+    baseRevision: longRead.thread.revision,
+    recipients: [scaffold.ctx.agentTeam.status().humanMemberId],
+  })
+  expect(longReply.kind).toBe('committed')
+  const longMarkdownRow = page.locator('[data-team-thread] article').filter({ hasText: '长文折叠回归验收' })
+  await longMarkdownRow.waitFor()
+  const markdownClamp = longMarkdownRow.locator('[class*="messageClamp"]')
+  await markdownClamp.waitFor()
+  const markdownRootFont = async (): Promise<string> =>
+    await longMarkdownRow.locator('[class*="messageMarkdown"] > div').first().evaluate(node => getComputedStyle(node).fontSize)
+  await expect.poll(markdownRootFont).toBe('14px')
+  await longMarkdownRow.getByRole('button', { name: '展开全文' }).click()
+  await expect.poll(async () => await longMarkdownRow.locator('[class*="messageClamp"]').count()).toBe(0)
+  await expect.poll(markdownRootFont).toBe('14px')
+  // The doubled-colon ref inside the long body still resolves to its chip
+  // while the row is expanded — clamping must not break the post-render pass.
+  await expect.poll(async () => await longMarkdownRow.getByRole('button', { name: /Task #\d+/ }).count()).toBeGreaterThanOrEqual(1)
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-clamp-markdown-expanded.png'), fullPage: true })
+  await longMarkdownRow.getByRole('button', { name: '收起' }).click()
+  await expect.poll(async () => await longMarkdownRow.locator('[class*="messageClamp"]').count()).toBe(1)
+
   await agentRefLinks.first().click()
   await page.getByRole('heading', { name: /Task #1/ }).waitFor()
   await page.setViewportSize({ width: 390, height: 844 })

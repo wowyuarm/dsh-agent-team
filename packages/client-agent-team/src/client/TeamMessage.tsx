@@ -114,9 +114,13 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
             {occurredAt !== undefined && <span className={css.messageTime}>{formatMessageTime(occurredAt)}</span>}
           </div>
         )}
-        {clamped ? <div className={css.messageClamp}>{bodyNode}</div> : bodyNode}
+        {/* The wrapper stays mounted for every clampable body and only swaps
+            its class: appearing/disappearing around bodyNode would remount the
+            Markdown subtree and wipe the post-render ref/mention chips that the
+            layout effects painted into it. */}
+        {clampable ? <div className={clamped ? css.messageClamp : undefined}>{bodyNode}</div> : bodyNode}
         {clampable && (
-          <button type="button" className={css.messageExpand} aria-expanded={expanded} onClick={() => { setExpanded(value => !value) }}>
+          <button type="button" className={css.messageExpand} data-message-expand="true" aria-expanded={expanded} onClick={() => { setExpanded(value => !value) }}>
             {expanded ? (t?.('collapseMessage') ?? 'Show less') : (t?.('expandMessage') ?? 'Show more')}
           </button>
         )}

@@ -84,7 +84,8 @@
 
 .messageRow { display: flex; gap: 10px; padding: 10px 0; }
 .messageRow[data-grouped] { padding-top: 2px; }
-.messageRow[data-grouped] .messageBody > :first-child { margin-top: 0; }
+.messageRow[data-grouped] .messageBody > :first-child,
+.messageRow[data-grouped] .messageBody > :first-child > :first-child { margin-top: 0; }
 .messageIdentity {
   align-items: center;
   background: hsl(var(--team-avatar-hue, 212) 42% 46%);
@@ -137,33 +138,37 @@
   max-height: 176px;
   overflow: hidden;
 }
-/* The clamp's expand/collapse toggle: quiet text link under the preview,
-   mirroring the sidebar text buttons. Block-level and shrink-wrapped so the
-   control owns its line instead of flowing beside a trailing entry card. */
+/* The clamp's expand/collapse toggle: quiet text link under the preview.
+   Block-level and shrink-wrapped so the control owns its line instead of
+   flowing beside a trailing entry card; feedback stays text-scoped — color
+   and underline only, no background box past the characters. */
 .messageExpand {
   background: transparent;
   border: 0;
-  border-radius: 4px;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
   display: block;
   font-size: 12px;
   line-height: 20px;
   margin-top: 4px;
-  padding: 0 4px;
+  padding: 0;
   width: fit-content;
 }
 .messageExpand:hover,
 .messageExpand:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
   outline: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 /* Compact timeline typography over the shared Markdown primitive; the root
    font shorthand is reset so Agent and Human bodies share one text grid.
    Heading sizes are chat-tuned: the page h1 stays the loudest element. */
 .messageBody .messageMarkdown { font-size: 14px; line-height: 22px; }
-.messageBody > .messageMarkdown > div:first-child { color: var(--dsw-alias-label-primary); font: inherit; }
+/* Descendant (not child) on .messageBody: the clamp wrapper may sit between
+   them, and a broken reset would let the primitive's own root font shorthand
+   render the clamped preview larger than the expanded body. */
+.messageBody .messageMarkdown > div:first-child { color: var(--dsw-alias-label-primary); font: inherit; }
 .messageBody .messageMarkdown p { margin: 6px 0; }
 .messageBody .messageMarkdown :where(ul, ol) { margin: 6px 0; padding-left: 22px; }
 .messageBody .messageMarkdown li + li { margin-top: 2px; }
@@ -277,17 +282,19 @@
 
 /* Inside one run, consecutive messages that carry their own Task entry chip
    get a hairline separator; plain same-sender continuations stay seamless.
+   The expand/collapse control is excluded by data attribute — its presence
+   must not read as an entry boundary.
    The line hugs the text column — inset past the hidden avatar (28px + 10px
    gap, level with the run divider label) and flush with the body's right
    edge — because it separates entries inside a run; structural boundaries
    (turn divider, day anchor, unread line) stay full-width. */
-.messageRow[data-grouped]:has(.messageBody > button) {
+.messageRow[data-grouped]:has(.messageBody > button:not([data-message-expand])) {
   margin-top: 3px;
   padding-top: 7px;
   position: relative;
 }
 
-.messageRow[data-grouped]:has(.messageBody > button)::before {
+.messageRow[data-grouped]:has(.messageBody > button:not([data-message-expand]))::before {
   background: var(--dsw-alias-border-l2);
   content: '';
   height: 1px;
@@ -313,11 +320,11 @@
   margin: 2px 0 0 38px;
   padding: 5px 0 0;
 }
-.runDivider + .messageRow[data-grouped]:has(.messageBody > button) {
+.runDivider + .messageRow[data-grouped]:has(.messageBody > button:not([data-message-expand])) {
   margin-top: 0;
 }
 
-.runDivider + .messageRow[data-grouped]:has(.messageBody > button)::before {
+.runDivider + .messageRow[data-grouped]:has(.messageBody > button:not([data-message-expand]))::before {
   content: none;
 }
 
