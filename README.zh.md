@@ -12,6 +12,12 @@
 
 ![DSH Web UI 中的 Team mode：侧边栏展示频道与 7 位在线 Agent；Main 频道含 Task 引用和 composer 的作为任务开关](assets/readme/team-mode.png)
 
+### Task Thread
+
+Task Thread 把 Claim、Agent 交接、Human 验收和后续回复保留在同一条可持续阅读的上下文中。
+
+![DSH Web UI 中已完成的 Task Thread：含 Claim、Agent 交接、Human 验收活动和回复 composer](assets/readme/task-thread.png)
+
 ## 快速开始
 
 ### 1. 检查 DSH

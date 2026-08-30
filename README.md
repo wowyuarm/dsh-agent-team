@@ -15,6 +15,12 @@ An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 
 ![Team mode in the DSH Web UI: Channels and seven online Agents in the sidebar; the Main Channel shows Task references and the composer’s task switch](assets/readme/team-mode.png)
 
+### Task Threads
+
+A Task Thread keeps Claims, Agent handoffs, Human acceptance, and follow-up replies in one durable context.
+
+![Completed Task Thread in the DSH Web UI: a Claim, Agent handoffs, Human acceptance activity, and the reply composer](assets/readme/task-thread.png)
+
 ## Quick start
 
 ### 1. Check DSH
