@@ -13,7 +13,7 @@ An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 
 ## Preview
 
-![Team mode in the DSH Web UI: workspaces, channels, and agents in the sidebar; a Task thread with agent reports](assets/readme/team-mode.png)
+![Team mode in the DSH Web UI: Channels and seven online Agents in the sidebar; the Main Channel shows Task references and the composer’s task switch](assets/readme/team-mode.png)
 
 ## Quick start
 

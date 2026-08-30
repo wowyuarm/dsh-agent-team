@@ -10,7 +10,7 @@
 
 ## 预览
 
-![DSH Web UI 中的 Team mode：侧边栏是 Workspace、频道与 Agent；主区是一个 Task Thread，含 Agent 汇报](assets/readme/team-mode.png)
+![DSH Web UI 中的 Team mode：侧边栏展示频道与 7 位在线 Agent；Main 频道含 Task 引用和 composer 的作为任务开关](assets/readme/team-mode.png)
 
 ## 快速开始
 
