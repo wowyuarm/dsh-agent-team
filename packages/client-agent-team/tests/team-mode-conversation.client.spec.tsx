@@ -480,6 +480,25 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
+  it('folds the workspace list behind the same section header as the panels', async () => {
+    const b = await runtimeWithTeam({ mode: 'team' })
+    expect(await b.view.findByRole('heading', { name: '频道' })).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
+    await waitFor(() => { expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy() })
+    const workspaceToggle = b.view.getByRole('button', { name: '工作区' })
+    expect(workspaceToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(b.view.getByRole('button', { name: 'Alpha' })).toBeTruthy()
+    fireEvent.click(workspaceToggle)
+    expect(workspaceToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(b.view.queryByRole('button', { name: 'Alpha' })).toBeNull()
+    expect(b.view.queryByRole('button', { name: 'Beta' })).toBeNull()
+    // Collapsing the list leaves the Workspace content sections in place.
+    expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy()
+    fireEvent.click(workspaceToggle)
+    expect(b.view.getByRole('button', { name: 'Alpha' })).toBeTruthy()
+    await b.runtime.dispose()
+  })
+
   it('counts only facts newer than the shown timeline as new updates on change wakes', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))

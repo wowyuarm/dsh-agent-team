@@ -111,67 +111,90 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
               aria-label="工作区"
               class="workspaceBrowser"
             >
-              <div
-                class="workspaceHeader"
+              <section
+                class="section"
               >
-                工作区
-              </div>
-              <div
-                class="workspaceList"
-              >
-                <button
-                  aria-current="page"
-                  class="workspaceRow"
-                  data-selected="true"
-                  title="Alpha · /work/alpha"
-                  type="button"
+                <div
+                  class="sectionHeader"
                 >
-                  <span
-                    aria-hidden="true"
-                    class="workspaceIcon"
+                  <button
+                    aria-expanded="true"
+                    class="sectionToggle"
+                    type="button"
                   >
                     <svg
-                      data-content="34102cd0"
+                      class="sectionChevron"
+                      data-content="6506c885"
                       fill="none"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      width="16"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      width="14"
+                      xmlns="http://www.w3.org/2000/svg"
                     />
-                  </span>
-                  <span
-                    class="workspaceCopy"
-                  >
-                    <strong>
-                      Alpha
-                    </strong>
-                  </span>
-                </button>
-                <button
-                  class="workspaceRow"
-                  title="Beta · /work/beta"
-                  type="button"
+                    <span
+                      class="sectionTitle"
+                    >
+                      工作区
+                    </span>
+                  </button>
+                </div>
+                <div
+                  class="workspaceList"
                 >
-                  <span
-                    aria-hidden="true"
-                    class="workspaceIcon"
+                  <button
+                    aria-current="page"
+                    class="workspaceRow"
+                    data-selected="true"
+                    title="Alpha · /work/alpha"
+                    type="button"
                   >
-                    <svg
-                      data-content="6bfefcb5"
-                      fill="none"
-                      height="16"
-                      viewBox="0 0 16 16"
-                      width="16"
-                    />
-                  </span>
-                  <span
-                    class="workspaceCopy"
+                    <span
+                      aria-hidden="true"
+                      class="workspaceIcon"
+                    >
+                      <svg
+                        data-content="34102cd0"
+                        fill="none"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        width="16"
+                      />
+                    </span>
+                    <span
+                      class="workspaceCopy"
+                    >
+                      <strong>
+                        Alpha
+                      </strong>
+                    </span>
+                  </button>
+                  <button
+                    class="workspaceRow"
+                    title="Beta · /work/beta"
+                    type="button"
                   >
-                    <strong>
-                      Beta
-                    </strong>
-                  </span>
-                </button>
-              </div>
+                    <span
+                      aria-hidden="true"
+                      class="workspaceIcon"
+                    >
+                      <svg
+                        data-content="6bfefcb5"
+                        fill="none"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        width="16"
+                      />
+                    </span>
+                    <span
+                      class="workspaceCopy"
+                    >
+                      <strong>
+                        Beta
+                      </strong>
+                    </span>
+                  </button>
+                </div>
+              </section>
               <div
                 class="workspaceSection"
               >

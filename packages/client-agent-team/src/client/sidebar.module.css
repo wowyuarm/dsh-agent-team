@@ -10,18 +10,6 @@
   padding: 0 8px 8px;
 }
 
-.workspaceHeader {
-  align-items: center;
-  color: var(--dsw-alias-label-tertiary);
-  display: flex;
-  font-size: 13px;
-  font-weight: 600;
-  justify-content: space-between;
-  line-height: 20px;
-  min-height: 28px;
-  padding: 0 4px 0 8px;
-}
-
 .railButton {
   align-items: center;
   background: transparent;

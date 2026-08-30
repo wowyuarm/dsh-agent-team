@@ -229,6 +229,14 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await channelsToggle.click()
   await page.getByRole('button', { name: '# engineering' }).waitFor()
 
+  // The workspace list folds behind the same quiet section header as the
+  // panels: rows vanish on collapse and return on the second toggle.
+  const workspacesToggle = page.getByRole('button', { name: '工作区', exact: true })
+  await workspacesToggle.click()
+  await expect.poll(() => page.getByRole('button', { name: 'team-workspace' }).count()).toBe(0)
+  await workspacesToggle.click()
+  await page.getByRole('button', { name: 'team-workspace' }).waitFor()
+
   const builderRow = page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).first()
   await builderRow.hover()
   await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
