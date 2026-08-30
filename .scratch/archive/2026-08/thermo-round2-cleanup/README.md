@@ -1,6 +1,6 @@
 # Thermo round 2 cleanup
 
-- Status: executed 2026-08-28 in a worktree, squashed onto master 2026-08-29 as six commits.
+- Status: closed and archived 2026-08-30 — executed 2026-08-28 in a worktree, squashed onto master 2026-08-29 as six commits; all recorded checks passed.
 - Scope: second quality round informed by the sibling Harness engineering standards (AGENTS.md, development.md, testing.md, defensive-patterns.md) and the thermo-nuclear review skill. Successor to the closed 2026-08-28 audit (`.scratch/archive/2026-08/agent-team-quality-audit/`).
 - Method: hygiene sweep + Host/Client package reviews + full `ledger.ts` read; every finding was re-verified against source before implementation. Two review claims failed verification and were dropped (see "Retrained findings").
 

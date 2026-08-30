@@ -1,7 +1,7 @@
 # Member auto-compaction 复发诊断(1127012 后仍报 "compaction is unavailable in the Member scope")
 
-- 状态:**修复已实施**(commit 2aa5130),待 operator 在 web-dev 验收
-- 最后核对:2026-08-28
+- 状态:**关闭归档**(2026-08-30)——修复已实施(commit 2aa5130)并经 operator 日常使用验收确认
+- 最后核对:2026-08-30
 
 ## 修复内容(全部在 packages/agent-team)
 

@@ -1,9 +1,9 @@
 # Community outreach
 
-Status: active
-Last checked: 2026-08-24
-Current frontier: official showcase discussion is live (#4303); the awesome-dsh-plugin registry PR (`wowyuarm:add-wowyuarm-dsh-agent-team`) waits out the repo age gate, eligible from 2026-08-24T16:05:44Z.
-Exit condition: merged registry entries plus a stable release-comment cadence; archive this item once links and cadence are settled in maintained docs.
+Status: closed and archived 2026-08-30 — outreach steps confirmed settled by the operator at archive time
+Last checked: 2026-08-30
+Current frontier: none — release cadence and product links live in maintained docs
+Exit condition: met — merged registry entries and the release-comment cadence are owned by the root READMEs and `docs/development.md`
 Formal document exit: release cadence is owned by `docs/development.md`; product links are owned by the root READMEs — this work item only tracks the outreach operations themselves.
 
 ## Contents
