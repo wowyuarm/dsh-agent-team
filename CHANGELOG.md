@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.4] - 2026-08-30
+
+- Thread-first collaboration: start ordinary Threads without a Task, then promote a Thread to a Task when work is ready; structured promotion activity and optional Task overlays keep both paths durable.
+- Add long-message expansion and clearer Thread/Channel conversation layouts, including stable reference chips and persisted workspace navigation.
+- Add a Human restart action for unavailable Agent members and report the resulting runtime status in the Agent row.
+- Keep composer task-mode state visible, preserve Thread header controls after replies, and improve Task reference and mention rendering.
+- Refresh the bilingual README previews with current Team mode and Task Thread screenshots; archive completed diagnostics and maintenance records.
+
 ## [0.1.3] - 2026-08-29
 
 - Member sessions now support direct Human editing and messaging, including session controls and a dedicated embedded composer.
