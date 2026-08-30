@@ -26,19 +26,19 @@ Workspace 内的持久协作场所。Agent Member 必须显式加入 Channel 才
 
 ## Message
 
-Member 在 Channel 或 Task Thread 中显式发出的不可变内容。dsh 对每条 Channel 顶层 Message 自动创建 Task；这是本地可追踪性策略，Raft 只把显式标记为 task 的顶层消息放入 task board。Thread Message 只延续已有 Task。
+Member 在 Channel 或已有 Thread 中显式发出的不可变内容。每条 Channel 顶层 Message 原子创建一个 Thread；新 Client/tool 默认创建 taskless Thread，显式选择「作为任务」才在同一次提交中附加真实 Task。Thread Message 只延续已有 Thread。
 
 ## Task
 
-由 Channel 顶层 Message 创建的可追踪承诺。Task 的工作状态从 claims 派生，human acceptance 与 closed 是显式覆盖事实：常规验收要求全部 Claim 完成（in_review）；Human 也可在 in_progress 时提前验收，accept 操作随之把当时仍 active 的 Claims 投影为 done 并在 activity 记录 `completedClaimRefs`（owner 各自收到通知），不伪造 owner 的 claim-done 事件。面向 Human 的 `Task #N` 是当前 Workspace/Channel 投影中的展示编号，不是稳定身份；跨频道导航和持久引用必须使用 branded `taskRef`。
+附着在既有 Thread 上的可选 work-tracking overlay，而不是 Thread 存在的前提。它可由顶层 Message 的显式「作为任务」意图原子创建，或由 Human promotion 原子附加；promotion 同时追加一条公开说明 Message。Task 的工作状态从 Claims 派生，Human acceptance 与 closed 是显式覆盖事实：常规验收要求全部 Claim 完成（in_review）；Human 也可在 in_progress 时提前验收，accept 操作随之把当时仍 active 的 Claims 投影为 done 并在 activity 记录 `completedClaimRefs`（owner 各自收到通知），不伪造 owner 的 claim-done 事件。面向 Human 的 `Task #N` 是 Task 在 home Channel 内的 durable 创建序号：taskful 顶层发送和后续 promotion 均参与排序，taskless anchor 最初在时间线的位置不参与；既有 ledger 的编号保持不变。它不是稳定身份；跨频道导航和持久引用必须使用 branded `taskRef`。
 
 ## Thread
 
-一个 Task 下的单层公开 Message 与协作状态序列。Thread revision 随公开 Message、Claim 变化或 Task resolution 变化递增；对既有 Thread 的公开写入必须携带该 Thread 的当前 revision。revision 是内部并发令牌：仅供工具 baseRevision 透传，不作为消息正文的可引用事实。
+Channel 内独立的单层公开协作 aggregate：它总有 `threadRef`、anchor Message 和 revision，但可不带 Task。Thread revision 随公开 Message 递增；Taskful Thread 的 Claim 变化和 Task resolution 也递增。对既有 Thread 的公开写入必须携带该 Thread 的当前 revision。taskless Thread 仍支持 reply、follow、structured mention、Inbox、read 与 history，但没有 Claims、Task status 或 accept/close/reopen。协作读写优先以 `threadRef` 定位；released task-only Client 可以用 `taskRef` 作为仅限 taskful Thread 的 Host compatibility alias，而 Task/Claim 操作仍以 `taskRef` 为身份。revision 是内部并发令牌：仅供工具 baseRevision 透传，不作为消息正文的可引用事实。
 
 ## Claim
 
-Member 对一个 Task 中某个 Direction 的工作承诺。Claim 的状态为 active、done 或 released；同一 Task 中规范化后相同的 Direction 最多有一个 active Claim。多 Claims 是 dsh 对 Raft 单 owner 的有意偏离，不同文本仍可能表达重复工作。
+Member 对 Task overlay 中某个 Direction 的工作承诺。taskless Thread 没有 Claim。Claim 的状态为 active、done 或 released；同一 Task 中规范化后相同的 Direction 最多有一个 active Claim。多 Claims 是 dsh 对 Raft 单 owner 的有意偏离，不同文本仍可能表达重复工作。
 
 ## Direction
 
@@ -46,7 +46,7 @@ Claim 的自由文本工作方向。比较时执行 Unicode 规范化、首尾�
 
 ## Thread Attention
 
-一个 Member 对一个 Thread 的私有、持久关注周期。Attention 记录 follow 状态、开始位置和连续 read watermark；它是 Member × Thread 的个人状态，不进入公开 Thread revision，也不因 read/follow 产生其他成员的 Agent Inbox 工作。创建 Task、成功 Claim、显式 follow 或 Human 确认邀请可开始 Attention；unfollow 在没有 active Claim 时结束当前周期并放弃该周期的未读，之后重新 follow 从当时 Thread 尾部开始。
+一个 Member 对一个 Thread 的私有、持久关注周期。Attention 记录 follow 状态、开始位置和连续 read watermark；它是 Member × Thread 的个人状态，不进入公开 Thread revision，也不因 read/follow 产生其他成员的 Agent Inbox 工作。创建顶层 Thread、成功 Claim、显式 follow 或 Human 确认邀请可开始 Attention；taskless Thread 可直接 unfollow，taskful Thread 仅在该 Member 没有 active Claim 时可 unfollow；两者都会结束当前周期并放弃该周期的未读，之后重新 follow 从当时 Thread 尾部开始。
 
 ## Thread Inbox
 
