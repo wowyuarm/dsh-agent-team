@@ -268,6 +268,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
           <Button
             size="sm"
             variant="outline"
+            className={asTask === true ? css.asTaskOn : undefined}
             aria-pressed={asTask === true}
             disabled={pending}
             onClick={() => { onAsTaskChange(asTask !== true) }}

@@ -179,6 +179,22 @@
   padding: 2px 8px 6px;
 }
 
+/* The Harness Button atom renders no pressed visual for aria-pressed, so the
+   as-task toggle owns its on-state with primary fill. The hover rule needs to
+   out-specify the outline variant's `.outline:hover:not(:disabled)` (0,3,0),
+   or hovering a pressed toggle would swap the fill back to the hover wash. */
+.asTaskOn[aria-pressed='true'] {
+  background: var(--dsw-alias-button-primary-fill);
+  border-color: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.asTaskOn[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-fill);
+  border-color: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
 /* Attach circle — mirrors the base composer's 28px "+" control so both
    composers read as one design language (figma + control). */
 .attachButton {

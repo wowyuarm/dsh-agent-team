@@ -358,6 +358,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await asTaskToggle.focus()
   await page.keyboard.press('Space')
   await expect.poll(() => asTaskToggle.getAttribute('aria-pressed')).toBe('true')
+  // The pressed state must be visible on its own: primary fill, unchanged by hover.
+  const pressedFill = await asTaskToggle.evaluate(element => getComputedStyle(element).backgroundColor)
+  await asTaskToggle.hover()
+  expect(await asTaskToggle.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(pressedFill)
+  await page.screenshot({ path: join(UI04_SHOTS, 'as-task-pressed.png'), fullPage: true })
   await page.getByRole('button', { name: '发送' }).click()
   const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
   await committedMessage.waitFor()

@@ -23,7 +23,7 @@
 - 关闭任务是终态：composer 槽位换成解释性提示条（`.closedBar/.closedNotice`，文案 + 唯一的重新打开动作），不再渲染禁用的输入框。taskless Thread 保持普通 reply composer。
 - 频道页与 Thread 页对称：频道页有返回行（`backToChannels` 清除 `channelRef` 回到频道列表）；时间线空/加载态在自由空间内居中（`.emptySurface` + `margin:auto`）。
 - 侧栏两个面板（Agents/Channels）都订阅 `{kind:'workspace'}` 变更；共享的 `TeamChangeStream` 按 scope 复用一条长轮询，订阅方的首次探针静默采样版本（不唤醒），唤醒只来自停泊轮询的后续解析——这是既定契约（见 `team-changes.client.spec.ts`）。
-- 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。Channel composer 的「作为任务」是默认关闭的原生 pressed control；新发送显式携带 taskless 意图，选中时才原子创建 Task。`committed` 与确定性拒绝（如 `member_not_following`）后换新 id；`confirmation_required` 保留同 id 续发同一操作；传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。成功发送后「作为任务」复位为关闭。
+- 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。Channel composer 的「作为任务」是默认关闭的原生 pressed control：Harness Button 原子不渲染按压视觉，选中态由本包 CSS 补 primary 底色，hover 不改变按压底色；新发送显式携带 taskless 意图，选中时才原子创建 Task。`committed` 与确定性拒绝（如 `member_not_following`）后换新 id；`confirmation_required` 保留同 id 续发同一操作；传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。成功发送后「作为任务」复位为关闭。
 
 ## 排版体系
 
