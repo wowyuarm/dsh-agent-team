@@ -57,9 +57,9 @@ async function staysPending(promise: Promise<unknown>, ms = 15): Promise<boolean
 
 async function startThread(ctx: Context, label: string): Promise<{ readonly threadRef: AgentTeamThreadRef; readonly taskRef: AgentTeamTaskRef; readonly channelRef: AgentTeamChannelRef; readonly revision: number }> {
   const channel = await ctx.agentTeam.createChannel({ requestId: requestId(`channel-${label}`), workspaceId: alpha, name: label, description: `${label} work` })
-  const started = await ctx.agentTeam.sendMessage({ requestId: requestId(`start-${label}`), workspaceId: alpha, channelRef: channel.channel.channelRef, body: `Task ${label}` })
+  const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId(`start-${label}`), workspaceId: alpha, channelRef: channel.channel.channelRef, body: `Task ${label}` })
   if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
-  return { threadRef: started.thread.threadRef, taskRef: started.task.taskRef, channelRef: channel.channel.channelRef, revision: started.thread.revision }
+  return { threadRef: started.thread.threadRef, taskRef: started.task!.taskRef, channelRef: channel.channel.channelRef, revision: started.thread.revision }
 }
 
 describe('scoped Team change notifications', () => {
@@ -184,7 +184,7 @@ describe('ledger change scope and affected member derivation', () => {
       requestId: requestId('iso-channel'), workspaceId: alpha, name: 'isolated', description: 'Isolated work',
       memberIds: [], actor: agentTeamHumanActor(),
     })).value
-    const started = (await ledger.sendMessage({
+    const started = (await ledger.sendMessage({ asTask: true,
       requestId: requestId('iso-start'), workspaceId: alpha, channelRef: created.channel.channelRef, body: 'Task', actor: agentTeamHumanActor(),
     }))
     if (started.value.kind !== 'committed') throw new Error('expected committed start')
@@ -197,11 +197,11 @@ describe('ledger change scope and affected member derivation', () => {
         description: 'Follows work', presetId: 'team-member', privateMemoryPath: '/tmp/follower', state: 'enabled' as const,
       },
     })
-    await ledger.changeAttention({ requestId: requestId('iso-follow'), workspaceId: alpha, taskRef: started.value.task.taskRef, action: 'follow', actor: { kind: 'member', memberId, handle: 'follower' } })
+    await ledger.changeAttention({ requestId: requestId('iso-follow'), workspaceId: alpha, taskRef: started.value.task!.taskRef, action: 'follow', actor: { kind: 'member', memberId, handle: 'follower' } })
 
     const committed = started.value
     const reply = (await ledger.reply({
-      requestId: requestId('iso-reply'), workspaceId: alpha, taskRef: committed.task.taskRef, body: 'Wake the follower',
+      requestId: requestId('iso-reply'), workspaceId: alpha, taskRef: committed.task!.taskRef, body: 'Wake the follower',
       baseRevision: committed.thread.revision, actor: agentTeamHumanActor(),
     })).value
     if (reply.kind !== 'committed') throw new Error(`expected committed reply, received ${reply.kind}`)

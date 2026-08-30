@@ -84,18 +84,22 @@ const attachmentSchema = z.object({
   byteSize: z.number().int().nonnegative(),
   mediaType: z.string().min(1),
 }).strict()
+function omitUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T
+}
+
 const messageSchema = z.object({
   messageRef: messageRefSchema,
   channelRef: channelRefSchema,
   threadRef: threadRefSchema,
-  taskRef: taskRefSchema,
+  taskRef: taskRefSchema.optional(),
   sender: memberIdSchema,
   body: z.string().min(1),
   attachments: z.array(attachmentSchema).optional(),
   topLevel: z.boolean(),
   sequence: z.number().int().positive(),
   occurredAt: z.string().datetime().optional(),
-}).strict()
+}).strict().transform(omitUndefined)
 
 type StoredMessage = z.output<typeof messageSchema>
 
@@ -108,12 +112,15 @@ function stampMessage(occurredAt: string, message: StoredMessage): Omit<StoredMe
 /** Stamp every bare stored message that carries its instant inside the same operation; Thread reads resolve cross-operation instants in the ledger. */
 function stampOperationMessages(operation: z.output<typeof storedAgentTeamOperationSchema>): AgentTeamOperation {
   if (operation.kind === 'team/message-sent') {
-    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } }
+    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } } as AgentTeamOperation
   }
   if (operation.kind === 'team/thread-replied') {
-    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } }
+    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } } as AgentTeamOperation
   }
-  return operation
+  if (operation.kind === 'team/thread-promoted') {
+    return { ...operation, data: { ...operation.data, message: stampMessage(operation.occurredAt, operation.data.message) } } as AgentTeamOperation
+  }
+  return operation as AgentTeamOperation
 }
 
 const taskSchema = z.object({
@@ -126,9 +133,9 @@ const taskSchema = z.object({
 
 const threadSchema = z.object({
   threadRef: threadRefSchema,
-  taskRef: taskRefSchema,
+  taskRef: taskRefSchema.optional(),
   revision: z.number().int().positive(),
-}).strict()
+}).strict().transform(omitUndefined)
 
 const attentionSchema = z.object({
   memberId: memberIdSchema,
@@ -320,15 +327,29 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       workspaceId: workspaceIdSchema,
       mentions: z.array(memberIdSchema),
       message: messageSchema,
-      task: taskSchema,
+      task: taskSchema.optional(),
       thread: threadSchema,
       inbox: inboxDeltaSchema,
-    }).strict(),
+    }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
     ...operationBase,
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/thread-replied'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      baseRevision: z.number().int().positive(),
+      mentions: z.array(memberIdSchema),
+      message: messageSchema,
+      task: taskSchema.optional(),
+      thread: threadSchema,
+      inbox: inboxDeltaSchema,
+    }).strict().transform(omitUndefined),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/thread-promoted'),
     data: z.object({
       workspaceId: workspaceIdSchema,
       baseRevision: z.number().int().positive(),
@@ -364,10 +385,10 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       workspaceId: workspaceIdSchema,
       action: z.union([z.literal('follow'), z.literal('unfollow')]),
       memberId: memberIdSchema,
-      task: taskSchema,
+      task: taskSchema.optional(),
       thread: threadSchema,
       inbox: inboxDeltaSchema,
-    }).strict(),
+    }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
     ...operationBase,
@@ -376,7 +397,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     data: z.object({
       workspaceId: workspaceIdSchema,
       memberId: memberIdSchema,
-      task: taskSchema,
+      task: taskSchema.optional(),
       thread: threadSchema,
       claims: z.array(claimSchema),
       anchor: messageSchema,
@@ -386,7 +407,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       remainingUnreadCount: z.number().int().nonnegative(),
       attention: attentionSchema.optional(),
       inbox: inboxDeltaSchema,
-    }).strict(),
+    }).strict().transform(omitUndefined),
   }).strict(),
   z.object({
     ...operationBase,

@@ -161,7 +161,7 @@ describe('Agent Team attachment remotes', () => {
       requestId: requestId('put'), workspaceId: alpha,
       name: 'design.png', mediaType: 'image/png', bytesBase64: Buffer.from('png').toString('base64'),
     })
-    const sent = await ctx.agentTeam.sendMessage({
+    const sent = await ctx.agentTeam.sendMessage({ asTask: true,
       requestId: requestId('send'), workspaceId: alpha, channelRef: channel.channel.channelRef,
       body: '请看这张图', attachments: [uploaded.attachmentId],
     })
@@ -173,14 +173,14 @@ describe('Agent Team attachment remotes', () => {
     expect(sent.message.body).toMatch(/\[attachment\] .*attachments\/v1\//)
 
     // Idempotent resend with the same request resolves to the same message.
-    const resent = await ctx.agentTeam.sendMessage({
+    const resent = await ctx.agentTeam.sendMessage({ asTask: true,
       requestId: requestId('send'), workspaceId: alpha, channelRef: channel.channel.channelRef,
       body: '请看这张图', attachments: [uploaded.attachmentId],
     })
     expect(resent.kind).toBe('committed')
 
     // An unknown attachment id is rejected before the ledger append.
-    await expect(ctx.agentTeam.sendMessage({
+    await expect(ctx.agentTeam.sendMessage({ asTask: true,
       requestId: requestId('send-unknown'), workspaceId: alpha, channelRef: channel.channel.channelRef,
       body: 'missing', attachments: [newAttachmentId()],
     })).rejects.toThrow(/not in the upload cache/)
@@ -190,14 +190,14 @@ describe('Agent Team attachment remotes', () => {
     const cold = replayLedger(facility)
     expect(() => cold.validate()).not.toThrow()
     expect(cold.referencedAttachmentIds().has(uploaded.attachmentId)).toBe(true)
-    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task.taskRef })
+    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task!.taskRef })
     expect(history.facts.some(fact => fact.kind === 'message' && fact.message.attachments?.[0]?.name === 'design.png')).toBe(true)
   })
 
   it('resolves Human reply attachments from the upload cache and replays them', async () => {
     const { ctx, facility } = await harness()
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering' })
-    const started = await ctx.agentTeam.sendMessage({
+    const started = await ctx.agentTeam.sendMessage({ asTask: true,
       requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: '开个任务',
     })
     if (started.kind !== 'committed') throw new Error('expected committed')
@@ -206,7 +206,7 @@ describe('Agent Team attachment remotes', () => {
       name: 'reply.png', mediaType: 'image/png', bytesBase64: Buffer.from('png').toString('base64'),
     })
     const replied = await ctx.agentTeam.reply({
-      requestId: requestId('reply'), workspaceId: alpha, taskRef: started.task.taskRef,
+      requestId: requestId('reply'), workspaceId: alpha, taskRef: started.task!.taskRef,
       body: '补充截图', baseRevision: started.thread.revision, attachments: [uploaded.attachmentId],
     })
     expect(replied.kind).toBe('committed')
@@ -217,14 +217,14 @@ describe('Agent Team attachment remotes', () => {
 
     // An unknown attachment id is rejected before the ledger append.
     await expect(ctx.agentTeam.reply({
-      requestId: requestId('reply-unknown'), workspaceId: alpha, taskRef: started.task.taskRef,
+      requestId: requestId('reply-unknown'), workspaceId: alpha, taskRef: started.task!.taskRef,
       body: 'missing', baseRevision: replied.thread.revision, attachments: [newAttachmentId()],
     })).rejects.toThrow(/not in the upload cache/)
 
     const cold = replayLedger(facility)
     expect(() => cold.validate()).not.toThrow()
     expect(cold.referencedAttachmentIds().has(uploaded.attachmentId)).toBe(true)
-    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: started.task.taskRef })
+    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: started.task!.taskRef })
     expect(history.facts.some(fact => fact.kind === 'message' && fact.message.attachments?.[0]?.name === 'reply.png')).toBe(true)
   })
 })
@@ -264,7 +264,7 @@ describe('agent-supplied attachment paths', () => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[]
       throw error
     })
-    const sent = await ctx.agentTeam.sendMessage({
+    const sent = await ctx.agentTeam.sendMessage({ asTask: true,
       requestId: requestId('send'), workspaceId: alpha, channelRef: channel.channel.channelRef,
       body: '截图在下面', attachmentPaths: [screenshot],
     })
@@ -285,18 +285,18 @@ describe('agent-supplied attachment paths', () => {
 
     // A reply carries path attachments through the same pipeline.
     const replied = await ctx.agentTeam.reply({
-      requestId: requestId('reply'), workspaceId: alpha, taskRef: sent.task.taskRef,
+      requestId: requestId('reply'), workspaceId: alpha, taskRef: sent.task!.taskRef,
       body: '补充一张', baseRevision: sent.thread.revision, attachmentPaths: [screenshot],
     })
     expect(replied.kind).toBe('committed')
     if (replied.kind !== 'committed') return
     expect(replied.message.attachments?.[0]?.mediaType).toBe('image/png')
-    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task.taskRef })
+    const history = ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: sent.task!.taskRef })
     expect(history.facts.filter(fact => fact.kind === 'message' && fact.message.attachments !== undefined)).toHaveLength(2)
 
     // One bad path rejects the whole send: no message, no cache writes.
     const entriesBefore = await readdir(attachmentsRoot())
-    await expect(ctx.agentTeam.sendMessage({
+    await expect(ctx.agentTeam.sendMessage({ asTask: true,
       requestId: requestId('send-bad'), workspaceId: alpha, channelRef: channel.channel.channelRef,
       body: '不应提交', attachmentPaths: [join(sourceDir, 'missing.png')],
     })).rejects.toThrow(/does not exist/)

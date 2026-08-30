@@ -60,6 +60,8 @@ import type {
   AgentTeamResolveTaskRefsResult,
   AgentTeamTaskRef,
   AgentTeamOperationReceipt,
+  AgentTeamPromoteThreadRequest,
+  AgentTeamPromoteThreadResult,
   AgentTeamPutAttachmentRequest,
   AgentTeamPutAttachmentResult,
   AgentTeamRecoverMemberRequest,
@@ -546,6 +548,16 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
+  /** Human-only promotion of a taskless Thread into a real Task plus public Message. */
+  @Remote('promoteThread')
+  async promoteThread(request: AgentTeamPromoteThreadRequest): Promise<AgentTeamPromoteThreadResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().promoteThread({ ...request, actor: agentTeamHumanActor() })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
   /** Human-only Channel membership grant; it never injects historical Thread bodies. */
   @Remote('joinChannel')
   async joinChannel(request: AgentTeamJoinChannelRequest): Promise<AgentTeamJoinChannelResult> {
@@ -566,7 +578,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Human top-level Task creation; unfollowed Agent mentions use the two-send result. */
+  /** Human top-level Thread start; asTask attaches an optional Task overlay. */
   @Remote('sendMessage')
   async sendMessage(request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
     return this.sendMessageAs(this.humanCall(request.workspaceId), request)
@@ -682,7 +694,7 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().view(request)
   }
 
-  /** Agent-only top-level Task creation. Workspace identity is verified against the live binding. */
+  /** Agent-only top-level Thread start. Workspace identity is verified against the live binding. */
   async sendMessageForAgent(agent: Agent, request: AgentTeamSendMessageRequest): Promise<AgentTeamSendMessageResult> {
     return this.sendMessageAs(this.memberCall(agent, request.workspaceId), request)
   }
@@ -700,7 +712,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  attentionStatusForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; taskRef: AgentTeamTask['taskRef'] }): AgentTeamThreadAttentionStatus {
+  attentionStatusForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef?: AgentTeamThreadAttentionRequest['threadRef'] | undefined; taskRef?: AgentTeamTask['taskRef'] | undefined }): AgentTeamThreadAttentionStatus {
     const actor = this.memberActor(agent)
     this.requireAgentWorkspace(actor, request.workspaceId)
     return this.requireLedger().attentionStatus(actor, request)
@@ -1099,7 +1111,8 @@ export default class AgentTeam extends TypertRemoteService {
           const sender = fact.message.sender === AGENT_TEAM_HUMAN_MEMBER_ID
             ? 'human' : this.requireLedger().getMember(fact.message.sender)?.handle ?? fact.message.sender
           const detail = ['Direct Team mention', `From: ${sender}`, `Channel: ${item.channelRef}`,
-            `Task: ${item.task.taskRef}`, `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
+            ...(item.task === undefined ? [] : [`Task: ${item.task.taskRef}`]),
+            `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
             `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
           if (append(detail)) detailedFactCount += 1
         } else if (fact.kind === 'activity') {
@@ -1108,10 +1121,13 @@ export default class AgentTeam extends TypertRemoteService {
         }
       }
       const ordinaryCount = facts.filter(entry => entry.fact.kind === 'message' && !entry.direct).length
-      if (ordinaryCount > 0) append(`Task ${item.task.taskRef}: ${ordinaryCount} unread update${ordinaryCount === 1 ? '' : 's'}.`)
+      if (ordinaryCount > 0) {
+        const route = item.task === undefined ? `Thread ${item.thread.threadRef}` : `Task ${item.task.taskRef}`
+        append(`${route}: ${ordinaryCount} unread update${ordinaryCount === 1 ? '' : 's'}.`)
+      }
     }
     if (omitted) sections.push('More unread work remains in team_inbox; the automatic context is bounded.')
-    sections.push('Use team_thread read with the relevant taskRef before acting or replying. Use team_inbox only when you need to triage the remaining Threads.')
+    sections.push('Use team_thread read with the relevant threadRef before acting or replying. Use team_inbox only when you need to triage the remaining Threads.')
     return sections.join('\n\n')
   }
 

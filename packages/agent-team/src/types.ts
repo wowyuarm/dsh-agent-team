@@ -21,10 +21,10 @@ export type AgentTeamChannelRef = Branded<'AgentTeamChannelRef'>
 /** Stable identifier of one immutable Message. */
 export type AgentTeamMessageRef = Branded<'AgentTeamMessageRef'>
 
-/** Stable identifier of one top-level Task. */
+/** Stable identifier of one Task. */
 export type AgentTeamTaskRef = Branded<'AgentTeamTaskRef'>
 
-/** Stable identifier of one Task Thread. */
+/** Stable identifier of one Thread. */
 export type AgentTeamThreadRef = Branded<'AgentTeamThreadRef'>
 
 /** Stable identifier of one Claim. */
@@ -150,7 +150,8 @@ export interface AgentTeamMessage {
   readonly messageRef: AgentTeamMessageRef
   readonly channelRef: AgentTeamChannelRef
   readonly threadRef: AgentTeamThreadRef
-  readonly taskRef: AgentTeamTaskRef
+  /** Absent on Messages committed while the Thread had no Task; promotion does not rewrite prior Messages. */
+  readonly taskRef?: AgentTeamTaskRef
   readonly sender: AgentTeamMemberId
   readonly body: string
   readonly attachments?: readonly AgentTeamMessageAttachment[] | undefined
@@ -160,7 +161,7 @@ export interface AgentTeamMessage {
   readonly occurredAt: string
 }
 
-/** Task created by one top-level Channel Message. */
+/** Task overlay created by an atomic start or Human promotion. */
 export interface AgentTeamTask {
   readonly taskRef: AgentTeamTaskRef
   readonly channelRef: AgentTeamChannelRef
@@ -169,10 +170,11 @@ export interface AgentTeamTask {
   readonly resolution: 'open' | 'accepted' | 'closed'
 }
 
-/** Current projection of one Task Thread. */
+/** Current projection of one collaboration Thread. */
 export interface AgentTeamThread {
   readonly threadRef: AgentTeamThreadRef
-  readonly taskRef: AgentTeamTaskRef
+  /** Present after atomic Task creation or Human promotion; absent on taskless Threads. */
+  readonly taskRef?: AgentTeamTaskRef
   /** Last public Message, Claim, or Task-resolution sequence. */
   readonly revision: number
 }
@@ -400,14 +402,14 @@ export interface AgentTeamChannelMemberRemovedOperation extends AgentTeamOperati
   }
 }
 
-/** Durable top-level Message, Task, Thread, and initial inbox facts. */
+/** Durable top-level Message, Thread, optional Task, and initial inbox facts. */
 export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   readonly kind: 'team/message-sent'
   readonly data: {
     readonly workspaceId: WorkspaceId
     readonly mentions: readonly AgentTeamMemberId[]
     readonly message: AgentTeamMessage
-    readonly task: AgentTeamTask
+    readonly task?: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta
   }
@@ -416,6 +418,20 @@ export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
 /** Durable existing-Thread reply and any invitation/direct-mention facts. */
 export interface AgentTeamThreadRepliedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/thread-replied'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly baseRevision: number
+    readonly mentions: readonly AgentTeamMemberId[]
+    readonly message: AgentTeamMessage
+    readonly task?: AgentTeamTask
+    readonly thread: AgentTeamThread
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
+/** Durable Human promotion of a taskless Thread into a real Task plus public Message. */
+export interface AgentTeamThreadPromotedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/thread-promoted'
   readonly data: {
     readonly workspaceId: WorkspaceId
     readonly baseRevision: number
@@ -478,7 +494,7 @@ export interface AgentTeamThreadAttentionChangedOperation extends AgentTeamOpera
     readonly workspaceId: WorkspaceId
     readonly action: 'follow' | 'unfollow'
     readonly memberId: AgentTeamMemberId
-    readonly task: AgentTeamTask
+    readonly task?: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly inbox: AgentTeamInboxDelta
   }
@@ -491,7 +507,7 @@ export interface AgentTeamThreadReadOperation extends AgentTeamOperationBase {
     readonly workspaceId: WorkspaceId
     readonly memberId: AgentTeamMemberId
     /** Current public state captured for a stable idempotent read response. */
-    readonly task: AgentTeamTask
+    readonly task?: AgentTeamTask
     readonly thread: AgentTeamThread
     readonly claims: readonly AgentTeamClaim[]
     readonly anchor: AgentTeamStoredMessage
@@ -536,6 +552,7 @@ export type AgentTeamOperation =
   | AgentTeamChannelMemberRemovedOperation
   | AgentTeamMessageSentOperation
   | AgentTeamThreadRepliedOperation
+  | AgentTeamThreadPromotedOperation
   | AgentTeamClaimCreatedOperation
   | AgentTeamClaimDoneOperation
   | AgentTeamClaimReleasedOperation
@@ -663,7 +680,7 @@ export interface AgentTeamJoinChannelResult {
   readonly memberId: AgentTeamMemberId
 }
 
-/** Intent to create one top-level Message, Task, and Thread. */
+/** Intent to create one top-level Message and Thread, with an optional Task. */
 export interface AgentTeamSendMessageRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
@@ -678,6 +695,11 @@ export interface AgentTeamSendMessageRequest {
    */
   readonly attachmentPaths?: readonly string[] | undefined
   readonly confirmationToken?: AgentTeamConfirmationToken
+  /**
+   * When false, create a taskless Thread. Omitted/true keeps the released-client
+   * atomic Message+Thread+Task path. New composer/tool seams pass false explicitly.
+   */
+  readonly asTask?: boolean
 }
 
 /** Upload one composer attachment into the Team attachment cache. */
@@ -714,7 +736,8 @@ export interface AgentTeamGetAttachmentResult {
 export interface AgentTeamReplyRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
-  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly body: string
   readonly baseRevision: number
   readonly recipients?: readonly AgentTeamMemberId[]
@@ -740,7 +763,7 @@ export interface AgentTeamConfirmationRequired {
 /** Existing unread work must be read before this Thread mutation can proceed. */
 export interface AgentTeamUnreadRequired {
   readonly kind: 'unread_required'
-  readonly taskRef: AgentTeamTaskRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly threadRef: AgentTeamThreadRef
   readonly revision: number
   readonly unreadCount: number
@@ -750,7 +773,7 @@ export interface AgentTeamUnreadRequired {
 /** A public Thread mutation used an obsolete optimistic-concurrency revision. */
 export interface AgentTeamStaleRevision {
   readonly kind: 'stale_revision'
-  readonly taskRef: AgentTeamTaskRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly threadRef: AgentTeamThreadRef
   readonly expectedRevision: number
   readonly revision: number
@@ -771,7 +794,7 @@ export interface AgentTeamSendMessageCommittedResult {
   readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
   readonly message: AgentTeamMessage
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly attention: readonly AgentTeamThreadAttention[]
   readonly directMarkers: readonly AgentTeamDirectMarker[]
@@ -786,7 +809,7 @@ export interface AgentTeamReplyCommittedResult {
   readonly kind: 'committed'
   readonly receipt: AgentTeamOperationReceipt
   readonly message: AgentTeamMessage
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly attention: readonly AgentTeamThreadAttention[]
   readonly directMarkers: readonly AgentTeamDirectMarker[]
@@ -822,6 +845,28 @@ export type AgentTeamTaskResult =
   | AgentTeamUnreadRequired
   | AgentTeamStaleRevision
 
+/** Human intent to attach a real Task overlay to a taskless Thread. */
+export interface AgentTeamPromoteThreadRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly threadRef: AgentTeamThreadRef
+  readonly body: string
+  readonly baseRevision: number
+}
+
+export interface AgentTeamPromoteThreadCommittedResult {
+  readonly kind: 'committed'
+  readonly receipt: AgentTeamOperationReceipt
+  readonly message: AgentTeamMessage
+  readonly task: AgentTeamTask
+  readonly thread: AgentTeamThread
+}
+
+export type AgentTeamPromoteThreadResult =
+  | AgentTeamPromoteThreadCommittedResult
+  | AgentTeamUnreadRequired
+  | AgentTeamStaleRevision
+
 /** Human intent to permanently remove one Agent Member. */
 export interface AgentTeamRemoveMemberRequest {
   readonly requestId: AgentTeamRequestId
@@ -839,20 +884,21 @@ export interface AgentTeamRemoveMemberResult {
 export interface AgentTeamThreadAttentionRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
-  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly action: 'follow' | 'unfollow'
 }
 
 export interface AgentTeamThreadAttentionResult {
   readonly receipt: AgentTeamOperationReceipt
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   /** Present after follow, absent after unfollow. */
   readonly attention?: AgentTeamThreadAttention
 }
 
 export interface AgentTeamThreadAttentionStatus {
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly attention?: AgentTeamThreadAttention
 }
@@ -898,7 +944,7 @@ export interface AgentTeamInboxRequest {
 /** One Thread summary containing no Message bodies. */
 export interface AgentTeamInboxItem {
   readonly channelRef: AgentTeamChannelRef
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly unreadCount: number
   readonly directCount: number
@@ -916,12 +962,13 @@ export interface AgentTeamInbox {
 export interface AgentTeamThreadReadRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
-  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
 }
 
 export interface AgentTeamThreadReadResult {
   readonly receipt: AgentTeamOperationReceipt
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly claims: readonly AgentTeamClaim[]
   readonly anchor: AgentTeamMessage
@@ -938,13 +985,14 @@ export interface AgentTeamThreadReadResult {
 /** Non-mutating Thread history request. */
 export interface AgentTeamThreadHistoryRequest {
   readonly workspaceId: WorkspaceId
-  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly beforeSequence?: number
   readonly limit?: number
 }
 
 export interface AgentTeamThreadHistory {
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly anchor: AgentTeamMessage
   /** Structured Member refs of the anchor Message, from its originating send operation. */
@@ -959,14 +1007,15 @@ export interface AgentTeamThreadHistory {
 export interface AgentTeamThreadAttentionObservation {
   readonly sequence: number
   readonly threadRef: AgentTeamThreadRef
-  readonly taskRef: AgentTeamTaskRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly memberId: AgentTeamMemberId
   readonly action: 'follow' | 'unfollow'
 }
 
 export interface AgentTeamThreadObservationsRequest {
   readonly workspaceId: WorkspaceId
-  readonly taskRef: AgentTeamTaskRef
+  readonly threadRef?: AgentTeamThreadRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly limit?: number
 }
 
@@ -979,9 +1028,9 @@ export interface AgentTeamViewItem {
   readonly message: AgentTeamMessage
   /** Structured Member refs of this Message, from its originating send operation. */
   readonly mentions: readonly AgentTeamMemberId[]
-  readonly task: AgentTeamTask
+  readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
-  readonly taskNumber: number
+  readonly taskNumber?: number
   readonly messageCount: number
 }
 

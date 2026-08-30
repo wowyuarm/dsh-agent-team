@@ -28,6 +28,7 @@ describe('Agent Team generated Typert boundary', () => {
       'inbox',
       'joinChannel',
       'members',
+      'promoteThread',
       'putAttachment',
       'readThread',
       'recoverMember',
