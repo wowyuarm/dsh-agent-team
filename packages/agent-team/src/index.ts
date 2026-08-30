@@ -423,9 +423,11 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * Operator nudge for an error-stopped Member: steer a continuation prompt
-   * into its live session. Runtime-only — no ledger operation, no suspend.
-   * Taking over manually also cancels any pending automatic recovery episode.
+   * Operator nudge for a Member that stopped making progress: steer a
+   * continuation prompt into its live session, rebuild it after an orphaned
+   * preset composition, or re-run activation when no live session exists.
+   * Runtime-only — no ledger operation, no suspend. Taking over manually also
+   * cancels any pending automatic recovery episode.
    */
   @Remote('recoverMember')
   async recoverMember(request: AgentTeamRecoverMemberRequest): Promise<AgentTeamRecoverMemberResult> {
@@ -438,6 +440,15 @@ export default class AgentTeam extends TypertRemoteService {
     const handle = this.handles.get(request.memberId)
     if (handle !== undefined && this.ctx.agentPresets.composedPreset(handle.agent.ctx) === undefined) {
       this.ctx.logger.info(`agent-team: rebuilding member '${member.handle}' after its preset composition was orphaned by a reload`)
+      await this.reactivateMember(request.memberId)
+      return Object.freeze({ status: this.memberStatus(member) })
+    }
+    // A failed activation also leaves nothing to steer; re-running it is the
+    // only way back. A renewed failure stays non-throwing: the refreshed
+    // status carries the activation diagnostic for the sidebar.
+    if (handle === undefined) {
+      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can be restarted`)
+      this.ctx.logger.info(`agent-team: restarting member '${member.handle}' after a failed activation`)
       await this.reactivateMember(request.memberId)
       return Object.freeze({ status: this.memberStatus(member) })
     }
