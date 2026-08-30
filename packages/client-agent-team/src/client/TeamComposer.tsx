@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { IconPlusOutline16, IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPlusOutline16, IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import css from './composer.module.css'
@@ -52,7 +52,7 @@ function draftPreviewUrl(file: File): string | undefined {
   return url
 }
 
-export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, placeholder, pendingFiles, onFilesChange, t }: {
+export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, placeholder, pendingFiles, onFilesChange, asTask, onAsTaskChange, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
@@ -67,6 +67,9 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   /** Upload-capable surfaces pass this to enable the "+" file picker; the reply path omits it. */
   readonly pendingFiles?: readonly File[]
   readonly onFilesChange?: (files: readonly File[]) => void
+  /** Channel-only: create a real Task with the top-level Message. Default off. */
+  readonly asTask?: boolean
+  readonly onAsTaskChange?: (asTask: boolean) => void
   readonly t: TeamConversationProps['t']
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -261,6 +264,15 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
         </ul>
       )}
       <div className={css.toolbar}>
+        {onAsTaskChange !== undefined && (
+          <Button
+            size="sm"
+            variant="outline"
+            aria-pressed={asTask === true}
+            disabled={pending}
+            onClick={() => { onAsTaskChange(asTask !== true) }}
+          >{t('asTask')}</Button>
+        )}
         {onFilesChange !== undefined && (
           <>
             <input ref={fileInputRef} type="file" multiple className={css.fileInput} aria-hidden="true" tabIndex={-1}

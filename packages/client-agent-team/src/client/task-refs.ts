@@ -63,12 +63,12 @@ export const jumpToTaskThread = (
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>,
   workspaceId: AgentTeamResolveTaskRefsRequest['workspaceId'],
   taskRef: AgentTeamTaskRef,
-  selectThread: (taskRef: AgentTeamTaskRef, threadRef: AgentTeamThreadRef, channelRef: AgentTeamChannelRef, taskNumber: number) => void,
+  selectThread: (threadRef: AgentTeamThreadRef, channelRef?: AgentTeamChannelRef, taskRef?: AgentTeamTaskRef, taskNumber?: number) => void,
 ): void => {
   void resolveTaskRefs({ workspaceId, taskRefs: [taskRef] }).then(result => {
     if (!result.ok) return
     const hit = result.value.resolved[0]
-    if (hit !== undefined) selectThread(hit.taskRef, hit.threadRef, hit.channelRef, hit.taskNumber)
+    if (hit !== undefined) selectThread(hit.threadRef, hit.channelRef, hit.taskRef, hit.taskNumber)
   })
 }
 

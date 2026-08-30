@@ -82,8 +82,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   let viewActivities: Array<Record<string, unknown>> = []
   const viewChannels = vi.fn(async (request: { threadRef?: string; topLevelOnly?: boolean }) => ({ ok: true, value: {
     humanMemberId: 'member:human', channels, members: memberships,
-    tasks: viewItems.length === 0 ? [] : [viewItems[0]!.task], threads: viewItems.length === 0 ? [] : [viewItems[0]!.thread],
-    taskNumbers: viewItems.length === 0 ? [] : [{ taskRef: 'task:1', taskNumber: 1 }],
+    tasks: viewItems.flatMap(item => item.task === undefined ? [] : [item.task]), threads: viewItems.length === 0 ? [] : [viewItems[0]!.thread],
+    taskNumbers: viewItems.flatMap(item => item.task === undefined || item.taskNumber === undefined ? [] : [{ taskRef: (item.task as { taskRef: string }).taskRef, taskNumber: item.taskNumber }]),
     items: request.threadRef !== undefined || !request.topLevelOnly ? viewItems : viewItems.filter(item => (item.message as { topLevel?: boolean }).topLevel), claims: viewClaims, activities: request.topLevelOnly ? [] : viewActivities, cursor: 0, hasMore: false,
   } }))
   const createChannel = vi.fn(async (request: AgentTeamCreateChannelRequest) => {
@@ -137,12 +137,13 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const sendMessage = vi.fn(async (request: AgentTeamSendMessageRequest) => {
     sentMessageCount += 1
     const sequence = 1 + sentMessageCount
-    const task = { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' }
-    const thread = { threadRef: 'thread:1', taskRef: 'task:1', revision: sequence }
+    const asTask = request.asTask === true
+    const task = asTask ? { taskRef: 'task:1', channelRef: request.channelRef, threadRef: 'thread:1', status: 'todo', resolution: 'open' } : undefined
+    const thread = { threadRef: 'thread:1', ...(asTask ? { taskRef: 'task:1' } : {}), revision: sequence }
     const attachments = request.attachments === undefined ? [] : request.attachments.map(id => ({ attachmentId: id, name: `file-${id}.png`, byteSize: 8, mediaType: 'image/png' }))
-    const message = { messageRef: `message:${sequence}`, channelRef: request.channelRef, threadRef: 'thread:1', taskRef: 'task:1', sender: 'member:human', body: request.body, ...(attachments.length === 0 ? {} : { attachments }), topLevel: true, sequence, occurredAt: '2026-08-21T10:00:00.000Z' }
-    viewItems = [{ message, mentions: [], task, thread, taskNumber: 1, messageCount: 1 }]
-    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread, attention: [], directMarkers: [] } }
+    const message = { messageRef: `message:${sequence}`, channelRef: request.channelRef, threadRef: 'thread:1', ...(asTask ? { taskRef: 'task:1' } : {}), sender: 'member:human', body: request.body, ...(attachments.length === 0 ? {} : { attachments }), topLevel: true, sequence, occurredAt: '2026-08-21T10:00:00.000Z' }
+    viewItems = [{ message, mentions: [], ...(task === undefined ? {} : { task, taskNumber: 1 }), thread, messageCount: 1 }]
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, ...(task === undefined ? {} : { task }), thread, attention: [], directMarkers: [] } }
   })
   let changeVersion = 0
   const changeWaiters: Array<(value: { ok: true; value: { version: number } }) => void> = []
@@ -152,6 +153,15 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     const thread = { ...(top.thread as object), revision: request.baseRevision + 1 }
     viewItems = [{ ...top, thread, mentions: [], messageCount: 2 }, { ...top, message, thread, mentions: [], messageCount: 2 }]
     return { ok: true as const, value: { kind: 'committed', receipt: {}, message, task: top.task, thread, attention: [], directMarkers: [] } }
+  })
+  const promoteThread = vi.fn(async (request: { requestId: string; workspaceId: string; threadRef: string; body: string; baseRevision: number }) => {
+    const top = viewItems.find(item => (item.thread as { threadRef: string }).threadRef === request.threadRef) ?? viewItems[0]
+    if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
+    const task = { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: request.threadRef, status: 'todo', resolution: 'open' }
+    const thread = { ...(top.thread as object), taskRef: task.taskRef, revision: request.baseRevision + 1 }
+    const message = { messageRef: 'message:promoted', channelRef: 'channel:engineering', threadRef: request.threadRef, taskRef: task.taskRef, sender: 'member:human', body: request.body, topLevel: false, sequence: request.baseRevision + 1, occurredAt: '2026-08-21T10:01:00.000Z' }
+    viewItems = viewItems.map(item => ({ ...item, task, thread, taskNumber: 1 }))
+    return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, task, thread } }
   })
   const changeTask = vi.fn(async (request: { action: 'accept' | 'close' | 'reopen' }) => {
     const top = viewItems[0]!
@@ -163,8 +173,9 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
   let nextRemainingUnreadCount = options?.remainingUnreadCount ?? 0
-  const readThread = vi.fn(async ({ taskRef }: { taskRef: string }) => {
-    const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
+  const readThread = vi.fn(async ({ taskRef, threadRef }: { taskRef?: string; threadRef?: string }) => {
+    const top = viewItems.find(item => (threadRef !== undefined && (item.thread as { threadRef: string }).threadRef === threadRef)
+      || (taskRef !== undefined && (item.task as { taskRef?: string } | undefined)?.taskRef === taskRef)) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     const remainingUnreadCount = nextRemainingUnreadCount
     nextRemainingUnreadCount = 0
@@ -174,16 +185,23 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
       readThroughSequence: (top.thread as { revision: number }).revision, remainingUnreadCount, consumedDirectMarkers: [],
     } }
   })
-  const loadThreadHistory = vi.fn(async ({ taskRef }: { taskRef: string }) => {
-    const top = viewItems.find(item => (item.task as { taskRef: string }).taskRef === taskRef) ?? viewItems[0]
+  const loadThreadHistory = vi.fn(async ({ taskRef, threadRef }: { taskRef?: string; threadRef?: string }) => {
+    const top = viewItems.find(item => (threadRef !== undefined && (item.thread as { threadRef: string }).threadRef === threadRef)
+      || (taskRef !== undefined && (item.task as { taskRef?: string } | undefined)?.taskRef === taskRef)) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     return { ok: true as const, value: { task: top.task, thread: top.thread, anchor: top.message, anchorMentions: [], claims: viewClaims, facts: [], cursor: 0, hasMore: false } }
   })
   const resolveTaskRefs = vi.fn(async (request: { workspaceId: string; taskRefs: readonly string[] }) => {
-    const numbers = new Map(viewItems.map((item, index) => [(item.task as { taskRef: string }).taskRef, index + 1]))
+    const numbers = new Map(viewItems.flatMap((item, index) => {
+      const taskRef = (item.task as { taskRef?: string } | undefined)?.taskRef
+      return taskRef === undefined ? [] : [[taskRef, index + 1] as const]
+    }))
     // One Host-known Task lives outside the loaded channel timeline, so the
     // click fallback path has something real to resolve.
-    const known = new Map(viewItems.map(item => [(item.task as { taskRef: string }).taskRef, item]))
+    const known = new Map(viewItems.flatMap(item => {
+      const taskRef = (item.task as { taskRef?: string } | undefined)?.taskRef
+      return taskRef === undefined ? [] : [[taskRef, item] as const]
+    }))
     known.set('task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c', {
       task: { taskRef: 'task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c', channelRef: 'channel:engineering', threadRef: 'thread:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6d', status: 'todo', resolution: 'open' },
     })
@@ -212,7 +230,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   runtime.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   runtime.provide('inputTriggers', {
@@ -237,5 +255,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }

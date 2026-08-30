@@ -5,6 +5,7 @@ import type {
   AgentTeamMemberId,
   AgentTeamRequestId,
   AgentTeamTaskRef,
+  AgentTeamThreadRef,
 } from '@wowyuarm/dsh-agent-team/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
@@ -35,13 +36,13 @@ const teamInbox = defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       totalUnreadCount: { type: 'number', required: true }, totalDirectCount: { type: 'number', required: true },
       items: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true },
-        status: { type: 'string', required: true }, revision: { type: 'number', required: true }, unreadCount: { type: 'number', required: true }, directCount: { type: 'number', required: true },
+        threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true },
+        taskRef: { type: 'string' }, status: { type: 'string' }, revision: { type: 'number', required: true }, unreadCount: { type: 'number', required: true }, directCount: { type: 'number', required: true },
         taskNumber: { type: 'number' },
       } } },
     } },
     render: (_args, value) => [{ type: 'text', text: value.items.length === 0 ? 'No unread Team work.'
-      : value.items.map(item => `${item.taskRef}${item.taskNumber === undefined ? '' : ` (#${item.taskNumber})`} · ${item.directCount > 0 ? 'direct' : 'unread'}, ${item.unreadCount} update(s), revision ${item.revision}`).join('\n') }],
+      : value.items.map(item => `${item.threadRef}${item.taskRef === undefined ? '' : ` · ${item.taskRef}`}${item.taskNumber === undefined ? '' : ` (#${item.taskNumber})`} · ${item.directCount > 0 ? 'direct' : 'unread'}, ${item.unreadCount} update(s), revision ${item.revision}`).join('\n') }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -54,9 +55,10 @@ const teamInbox = defineTool({
     return {
       totalUnreadCount: inbox.totalUnreadCount, totalDirectCount: inbox.totalDirectCount,
       items: inbox.items.map(item => {
-        const taskNumber = taskNumbers.get(item.task.taskRef)
-        return { taskRef: item.task.taskRef, threadRef: item.thread.threadRef, channelRef: item.channelRef,
-          status: item.task.status, revision: item.thread.revision, unreadCount: item.unreadCount, directCount: item.directCount,
+        const taskNumber = item.task === undefined ? undefined : taskNumbers.get(item.task.taskRef)
+        return { threadRef: item.thread.threadRef, channelRef: item.channelRef,
+          ...(item.task === undefined ? {} : { taskRef: item.task.taskRef, status: item.task.status }),
+          revision: item.thread.revision, unreadCount: item.unreadCount, directCount: item.directCount,
           ...(taskNumber === undefined ? {} : { taskNumber }) }
       }),
     }
@@ -65,16 +67,17 @@ const teamInbox = defineTool({
 
 const teamThread = defineTool({
   name: 'team_thread',
-  description: 'Read or manage your Attention on one Task Thread. read acknowledges one chronological batch; history does not change read state.',
+  description: 'Read or manage your Attention on one Thread. read acknowledges one chronological batch; history does not change read state. Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.',
   parameters: {
     action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history'] },
-    taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
+    threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix." },
+    taskRef: { type: 'string', description: "Optional Task ref alias for released clients. Prefer threadRef; if both are given they must identify the same Thread." },
     beforeSequence: { type: 'number' }, limit: { type: 'number' },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
-      kind: { type: 'string', required: true }, taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true },
-      revision: { type: 'number', required: true }, status: { type: 'string', required: true }, resolution: { type: 'string', required: true },
+      kind: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, taskRef: { type: 'string' },
+      revision: { type: 'number', required: true }, status: { type: 'string' }, resolution: { type: 'string' },
       following: { type: 'boolean', required: true }, readThroughSequence: { type: 'number' }, remainingUnreadCount: { type: 'number' }, cursor: { type: 'number' }, hasMore: { type: 'boolean' },
       anchor: { type: 'object', required: true, additionalProperties: false, properties: {
         messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, body: { type: 'string', required: true }, sequence: { type: 'number', required: true },
@@ -97,7 +100,8 @@ const teamThread = defineTool({
     if (agent === undefined) throw new Error('team_thread requires an Agent session')
     const current = member(agent)
     const host = service(agent)
-    const base = { workspaceId: current.workspaceId, taskRef: args.taskRef as AgentTeamTaskRef }
+    if (args.threadRef === undefined && args.taskRef === undefined) throw new Error('team_thread requires threadRef')
+    const base = { workspaceId: current.workspaceId, ...(args.threadRef === undefined ? {} : { threadRef: args.threadRef as AgentTeamThreadRef }), ...(args.taskRef === undefined ? {} : { taskRef: args.taskRef as AgentTeamTaskRef }) }
     if (args.action === 'status') {
       if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('status does not accept history arguments')
       const status = host.attentionStatusForAgent(agent, base)
@@ -133,8 +137,9 @@ function threadResult(
   extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number } = {},
 ) {
   return {
-    kind, taskRef: snapshot.task.taskRef, threadRef: snapshot.thread.threadRef, revision: snapshot.thread.revision,
-    status: snapshot.task.status, resolution: snapshot.task.resolution, following: attention !== undefined,
+    kind, threadRef: snapshot.thread.threadRef, revision: snapshot.thread.revision,
+    ...(snapshot.task === undefined ? {} : { taskRef: snapshot.task.taskRef, status: snapshot.task.status, resolution: snapshot.task.resolution }),
+    following: attention !== undefined,
     ...extra,
     ...(attention === undefined || extra.readThroughSequence !== undefined ? {} : { readThroughSequence: attention.readThroughSequence }),
     anchor: { messageRef: snapshot.anchor.messageRef, sender: snapshot.anchor.sender, body: snapshot.anchor.body, sequence: snapshot.anchor.sequence },
@@ -145,12 +150,14 @@ function threadResult(
 
 const teamMessage = markAgentTeamPreset(defineTool({
   name: 'team_message',
-  description: 'Create a top-level Task or reply to one existing Task Thread. Read the Thread first; replies require its current revision (an internal concurrency token carried by baseRevision, never quoted in bodies). A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips.',
+  description: 'Start a top-level Thread or reply to an existing Thread. start defaults to a taskless Thread; pass asTask true to create a Task in the same send. Read the Thread first; replies require its current revision (an internal concurrency token carried by baseRevision, never quoted in bodies). A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips.',
   parameters: {
     action: { type: 'string', required: true, enum: ['start', 'reply'] },
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
-    taskRef: { type: 'string', description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
-    body: { type: 'string', required: true, description: "Markdown body. Cite Team refs exactly as returned, as bare text with one colon (e.g. task:0f0a…) — never a double colon, never inside backticks or quotes. Spell each mentioned Member's handle in the prose so the mention renders inline." }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task. The revision is an internal concurrency token, not a citable fact." },
+    threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix." },
+    taskRef: { type: 'string', description: "Optional Task ref alias for reply on a Taskful Thread. Prefer threadRef." },
+    asTask: { type: 'boolean', description: 'When true, start creates a Task with the Thread. Default false creates a taskless Thread.' },
+    body: { type: 'string', required: true, description: "Markdown body. Cite Team refs exactly as returned, as bare text with one colon (e.g. task:0f0a…) — never a double colon, never inside backticks or quotes. Spell each mentioned Member's handle in the prose so the mention renders inline." }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Thread. The revision is an internal concurrency token, not a citable fact." },
     mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
     attachments: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths to share, e.g. screenshots or generated artifacts; images render as thumbnails for recipients. The Host validates each path and copies the file into the attachment cache, and members also receive one cached path per attachment; if any path fails validation the whole send is rejected.' },
   },
@@ -160,7 +167,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
       expectedRevision: { type: 'number' }, messageRef: { type: 'string' }, memberIds: { type: 'array', items: { type: 'string' } }, unreadCount: { type: 'number' }, directCount: { type: 'number' },
     } },
     render: (_args, value) => [{ type: 'text', text: value.kind === 'committed' ? `Message ${value.messageRef} committed at revision ${value.revision}.`
-      : `${value.kind}: ${value.memberIds?.join(', ') ?? `Task ${value.taskRef ?? ''} revision ${value.revision ?? ''}`}` }],
+      : `${value.kind}: ${value.memberIds?.join(', ') ?? `${value.threadRef ?? ''}${value.taskRef === undefined ? '' : ` · Task ${value.taskRef}`} revision ${value.revision ?? ''}`}` }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -172,30 +179,33 @@ const teamMessage = markAgentTeamPreset(defineTool({
     const attachmentPaths = Array.isArray(rawPaths) ? rawPaths.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : undefined
     const paths = attachmentPaths !== undefined && attachmentPaths.length > 0 ? { attachmentPaths } : {}
     if (args.action === 'start') {
-      if (args.channelRef === undefined || args.taskRef !== undefined || args.baseRevision !== undefined) throw new Error('start requires channelRef and does not accept taskRef or baseRevision')
+      if (args.channelRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined) throw new Error('start requires channelRef and does not accept threadRef, taskRef, or baseRevision')
       const result = await host.sendMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
-        channelRef: args.channelRef as never, body: args.body, ...(mentions === undefined ? {} : { recipients: mentions }), ...paths })
+        channelRef: args.channelRef as never, body: args.body, asTask: args.asTask === true, ...(mentions === undefined ? {} : { recipients: mentions }), ...paths })
       return messageOutcome(result)
     }
     const baseRevision = args.baseRevision
-    if (args.taskRef === undefined || args.channelRef !== undefined || typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) {
-      throw new Error("reply requires taskRef and a positive baseRevision, and does not accept channelRef; use the current Thread 'revision' returned by team_inbox or team_thread for this Task")
+    if ((args.threadRef === undefined && args.taskRef === undefined) || args.channelRef !== undefined || args.asTask !== undefined || typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) {
+      throw new Error("reply requires threadRef and a positive baseRevision, and does not accept channelRef; use the current Thread 'revision' returned by team_inbox or team_thread")
     }
     const result = await host.replyForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
-      taskRef: args.taskRef as AgentTeamTaskRef, body: args.body, baseRevision,
+      ...(args.threadRef === undefined ? {} : { threadRef: args.threadRef as AgentTeamThreadRef }),
+      ...(args.taskRef === undefined ? {} : { taskRef: args.taskRef as AgentTeamTaskRef }),
+      body: args.body, baseRevision,
       ...(mentions === undefined ? {} : { recipients: mentions }), ...paths })
     return messageOutcome(result)
   },
 }))
 
 function messageOutcome(result: Awaited<ReturnType<AgentTeam['sendMessageForAgent']>> | Awaited<ReturnType<AgentTeam['replyForAgent']>>) {
-  if (result.kind === 'committed') return { kind: result.kind, taskRef: result.task.taskRef, threadRef: result.thread.threadRef,
+  if (result.kind === 'committed') return { kind: result.kind, threadRef: result.thread.threadRef,
+    ...(result.task === undefined ? {} : { taskRef: result.task.taskRef }),
     revision: result.thread.revision, messageRef: result.message.messageRef }
   if (result.kind === 'member_not_following') return { kind: result.kind, memberIds: [...result.memberIds],
     ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), ...(result.threadRef === undefined ? {} : { threadRef: result.threadRef, revision: result.revision }) }
-  if (result.kind === 'unread_required') return { kind: result.kind, taskRef: result.taskRef, threadRef: result.threadRef,
+  if (result.kind === 'unread_required') return { kind: result.kind, ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), threadRef: result.threadRef,
     revision: result.revision, unreadCount: result.unreadCount, directCount: result.directCount }
-  if (result.kind === 'stale_revision') return { kind: result.kind, taskRef: result.taskRef, threadRef: result.threadRef,
+  if (result.kind === 'stale_revision') return { kind: result.kind, ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), threadRef: result.threadRef,
     expectedRevision: result.expectedRevision, revision: result.revision }
   throw new Error('Agents cannot receive invitation confirmations')
 }
@@ -241,9 +251,9 @@ const teamClaim = defineTool({
     const claims = listed.claims.map(claim => ({ claimRef: claim.claimRef, owner: claim.owner, direction: claim.direction, state: claim.state }))
     if (result.kind === 'committed') return { kind: result.kind, taskRef: result.task.taskRef, threadRef: result.thread.threadRef,
       revision: result.thread.revision, status: result.task.status, claims }
-    if (result.kind === 'unread_required') return { kind: result.kind, taskRef: result.taskRef, threadRef: result.threadRef,
+    if (result.kind === 'unread_required') return { kind: result.kind, taskRef: listed.task.taskRef, threadRef: result.threadRef,
       revision: result.revision, status: listed.task.status, unreadCount: result.unreadCount, directCount: result.directCount, claims }
-    return { kind: result.kind, taskRef: result.taskRef, threadRef: result.threadRef, expectedRevision: result.expectedRevision,
+    return { kind: result.kind, taskRef: listed.task.taskRef, threadRef: result.threadRef, expectedRevision: result.expectedRevision,
       revision: result.revision, status: listed.task.status, claims }
   },
 })

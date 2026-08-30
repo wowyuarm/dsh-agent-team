@@ -26,6 +26,8 @@ import type {
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
+  AgentTeamPromoteThreadRequest,
+  AgentTeamPromoteThreadResult,
   AgentTeamTaskRequest,
   AgentTeamTaskResult,
   AgentTeamSendMessageRequest,
@@ -115,6 +117,7 @@ export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'
   removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
   reply: (request: AgentTeamReplyRequest) => Promise<RemoteResult<AgentTeamReplyResult | AgentTeamConfirmationRequired>>
   changeTask: (request: AgentTeamTaskRequest) => Promise<RemoteResult<AgentTeamTaskResult>>
+  promoteThread: (request: AgentTeamPromoteThreadRequest) => Promise<RemoteResult<AgentTeamPromoteThreadResult>>
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
 }

@@ -66,6 +66,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const [statusMessage, setStatusMessage] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
+  const [asTask, setAsTask] = useState(false)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [managingMembers, setManagingMembers] = useState(false)
   // The composer draft lives in the keyed draft cache: view switches unmount
@@ -86,9 +87,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       return
     }
     if (ref.startsWith('task:')) {
-      const match = view?.items.find(item => item.task.taskRef === ref)
+      const match = view?.items.find(item => item.task?.taskRef === ref)
       if (match !== undefined) {
-        selectThread(match.task.taskRef, match.thread.threadRef, channelRef, match.taskNumber)
+        selectThread(match.thread.threadRef, channelRef, match.task?.taskRef, match.taskNumber)
         return
       }
       // Not in the loaded timeline: resolve through the Host and jump to the
@@ -236,6 +237,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       const request: AgentTeamSendMessageRequest = {
         requestId, workspaceId,
         channelRef, body: draft.trim(), recipients: recipientIds,
+        asTask,
         ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }),
       }
       const result = await sendMessage(request)
@@ -244,6 +246,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         setError(result.error.message)
       } else if (result.value.kind === 'committed') {
         pendingSendId.current = undefined
+        setAsTask(false)
         await refresh()
         drafts.clear(draftKey)
         setPendingFiles([])
@@ -332,7 +335,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                 showGroupedTime={item.message.topLevel === true && !turnGap}
                 {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
               >
-                {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>
+                {item.message.topLevel && item.task !== undefined && item.taskNumber !== undefined && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef, channelRef, item.task?.taskRef, item.taskNumber) }}>
                   <span className={channelCss.taskDot}>
                     {(() => {
                       const dot = taskStatusDot(item.task.status)
@@ -343,6 +346,11 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                   </span>
                   <span className={channelCss.taskNumber}>{t('taskLabel', { number: item.taskNumber })}</span>
                   <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>
+                  <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
+                  <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
+                </button>}
+                {item.message.topLevel && item.task === undefined && <button type="button" className={channelCss.taskFooter} aria-label={t('openThread')} onClick={() => { selectThread(item.thread.threadRef, channelRef) }}>
+                  <span className={channelCss.taskNumber}>{t('threadLabel')}</span>
                   <span className={channelCss.taskCount}>{t('taskMessageCount', { count: item.messageCount })}</span>
                   <span className={channelCss.taskArrow} aria-hidden="true"><IconChevronRightOutline14 size={12} /></span>
                 </button>}
@@ -366,6 +374,8 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
       onSubmit={() => { void send() }}
       pendingFiles={pendingFiles}
       onFilesChange={setPendingFiles}
+      asTask={asTask}
+      onAsTaskChange={setAsTask}
       t={t}
     /> : <div />}
   </main>

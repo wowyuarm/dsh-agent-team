@@ -11,6 +11,7 @@ import type {
   AgentTeamGetAttachmentRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamMembersRequest,
+  AgentTeamPromoteThreadRequest,
   AgentTeamPutAttachmentRequest,
   AgentTeamRecoverMemberRequest,
   AgentTeamRemoveChannelMemberRequest,
@@ -129,6 +130,7 @@ function registerModeShadow<T extends object>(
               getAttachment: (request: AgentTeamGetAttachmentRequest) => ctx.remote.agentTeam.getAttachment(request),
               reply: (request: AgentTeamReplyRequest) => ctx.remote.agentTeam.reply(request),
               changeTask: (request: AgentTeamTaskRequest) => ctx.remote.agentTeam.changeTask(request),
+              promoteThread: (request: AgentTeamPromoteThreadRequest) => ctx.remote.agentTeam.promoteThread(request),
               resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => ctx.remote.agentTeam.resolveTaskRefs(request),
             } : {}),
             ...(name === 'sidebar.workspaces' ? {

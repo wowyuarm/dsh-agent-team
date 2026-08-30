@@ -32,7 +32,7 @@ import threadCss from './thread.module.css'
 interface TeamThreadPageProps {
   readonly workspaceId: WorkspaceId
   readonly channelRef?: AgentTeamChannelRef
-  readonly taskRef: AgentTeamTaskRef
+  readonly taskRef?: AgentTeamTaskRef
   readonly threadRef: AgentTeamThreadRef
   readonly taskNumber?: number
   readonly backToWorkspace: TeamConversationProps['backToWorkspace']
@@ -45,6 +45,7 @@ interface TeamThreadPageProps {
   readonly getAttachment: TeamConversationProps['getAttachment']
   readonly reply: TeamConversationProps['reply']
   readonly changeTask: TeamConversationProps['changeTask']
+  readonly promoteThread: TeamConversationProps['promoteThread']
   readonly putAttachment: TeamConversationProps['putAttachment']
   readonly selectChannel: TeamConversationProps['selectChannel']
   readonly selectThread: TeamConversationProps['selectThread']
@@ -84,8 +85,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, putAttachment,
     loadChannels, readThread, loadThreadHistory,
-    subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, t,
+    subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, promoteThread, t,
   } = props
+  const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
@@ -105,8 +107,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // confirm dialog lists exactly what will be completed with the Task.
   const [confirmingAccept, setConfirmingAccept] = useState(false)
   useEffect(() => {
-    if (confirmingAccept && projection?.task.resolution === 'accepted') setConfirmingAccept(false)
-  }, [confirmingAccept, projection?.task.resolution])
+    if (confirmingAccept && projection?.task?.resolution === 'accepted') setConfirmingAccept(false)
+  }, [confirmingAccept, projection?.task?.resolution])
   const [replyRequestId, setReplyRequestId] = useState<AgentTeamRequestId>()
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
@@ -142,7 +144,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     sequenceRef.current = sequence
     setLoading(true)
     try {
-      const result = await readThread({ requestId: readRequestIdRef.current, workspaceId, taskRef })
+      const result = await readThread({ requestId: readRequestIdRef.current, workspaceId, ...threadRequest })
       if (!mountedRef.current || sequence !== sequenceRef.current) return false
       if (!result.ok) { setError(result.error.message); return false }
       updateProjection(result.value)
@@ -174,7 +176,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   const refreshPassiveFacts = async (): Promise<void> => {
     try {
-      const result = await loadThreadHistory({ workspaceId, taskRef, limit: 100 })
+      const result = await loadThreadHistory({ workspaceId, ...threadRequest, limit: 100 })
       if (!mountedRef.current || !result.ok) return
       const incoming = result.value.facts
       const shown = currentFactsRef.current
@@ -190,7 +192,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         currentFactsRef.current = merged
         return merged
       })
-      setProjection(current => current === undefined ? current : { ...current, task: result.value.task, thread: result.value.thread, claims: result.value.claims })
+      setProjection(current => current === undefined ? current : { ...current, ...(result.value.task === undefined ? {} : { task: result.value.task }), thread: result.value.thread, claims: result.value.claims })
       if (additions.length === 0) return
       // A reader scrolled away from the tail must be offered the explicit
       // new-updates action; a reader pinned to the bottom is watching these
@@ -234,8 +236,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       // One parallel round covers the whole first paint. The durable read no
       // longer wakes any change scope, so no second wave follows it.
       const [read, history] = await Promise.all([
-        readThread({ requestId: readRequestIdRef.current, workspaceId, taskRef }),
-        loadThreadHistory({ workspaceId, taskRef, limit: 20 }).catch(() => undefined),
+        readThread({ requestId: readRequestIdRef.current, workspaceId, ...threadRequest }),
+        loadThreadHistory({ workspaceId, ...threadRequest, limit: 20 }).catch(() => undefined),
       ])
       if (!mountedRef.current || sequence !== sequenceRef.current) return
       if (!read.ok) {
@@ -284,7 +286,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     if (beforeSequence === undefined) return
     setLoading(true)
     try {
-      const result = await loadThreadHistory({ workspaceId, taskRef, beforeSequence, limit: 20 })
+      const result = await loadThreadHistory({ workspaceId, ...threadRequest, beforeSequence, limit: 20 })
       if (!mountedRef.current) return
       if (!result.ok) { setError(result.error.message); return }
       setOlderFacts(current => mergeFacts(current, result.value.facts))
@@ -301,6 +303,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const activeProjection = projection
   const task = activeProjection?.task
   const thread = activeProjection?.thread
+  const resolvedTaskNumber = taskNumber ?? channelView?.taskNumbers.find(entry => entry.taskRef === task?.taskRef)?.taskNumber
   const taskTitle = activeProjection === undefined ? undefined : formatTaskTitle(activeProjection.anchor.body)
   const taskClaims = activeProjection?.claims ?? []
   const effectiveChannelRef = task?.channelRef ?? channelRef
@@ -417,6 +420,34 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     await refreshSupplemental()
   }
 
+  const convertToTask = async (): Promise<void> => {
+    if (pending || thread === undefined || task !== undefined) return
+    setPending(true)
+    setError(undefined)
+    const key = 'promote'
+    const requestId = mutationRequests.current.get(key) ?? mintRequestId()
+    mutationRequests.current.set(key, requestId)
+    try {
+      const result = await promoteThread({ requestId, workspaceId, threadRef, body: t('promoteToTaskNotice'), baseRevision: thread.revision })
+      if (!result.ok) { setError(result.error.message); return }
+      if (result.value.kind === 'committed') {
+        mutationRequests.current.delete(key)
+        await readCurrent(true)
+        await refreshSupplemental()
+      } else if (result.value.kind === 'unread_required') {
+        setError(t('unreadRequired', { count: result.value.unreadCount }))
+        mutationRequests.current.delete(key)
+        await refreshAfterFence()
+      } else {
+        setError(t('staleRevision'))
+        mutationRequests.current.delete(key)
+        await refreshPassiveFacts()
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally { setPending(false) }
+  }
+
   const mutateTask = async (action: 'accept' | 'close' | 'reopen'): Promise<void> => {
     if (pending || task === undefined || thread === undefined) return
     setPending(true)
@@ -453,7 +484,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   }
 
   const sendReply = async (): Promise<void> => {
-    if (pending || task === undefined || thread === undefined || draft.trim() === '') return
+    if (pending || thread === undefined || draft.trim() === '') return
     const id = replyRequestId ?? mintRequestId()
     setReplyRequestId(id)
     setPending(true)
@@ -476,7 +507,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         }
         attachmentIds.push(uploaded.value.attachmentId)
       }
-      const result = await reply({ requestId: id, workspaceId, taskRef: task.taskRef, body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
+      const result = await reply({ requestId: id, workspaceId, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }), body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
       if (!result.ok) {
         setError(result.error.message)
         return
@@ -488,7 +519,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           currentFactsRef.current = merged
           return merged
         })
-        setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread })
+        setProjection(current => current === undefined ? current : { ...current, ...(committed.task === undefined ? {} : { task: committed.task }), thread: committed.thread })
         drafts.clear(draftKey)
         setPendingFiles([])
         setReplyRequestId(undefined)
@@ -537,11 +568,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <div className={threadCss.titleLine}>
-            <h1>{task === undefined ? t('taskPending') : t('taskLabel', { number: taskNumber ?? '…' })}</h1>
+            <h1>{task === undefined ? t('threadLabel') : t('taskLabel', { number: resolvedTaskNumber ?? '…' })}</h1>
             {task !== undefined && <Pill>{formatTaskStatus(task.status, t)}</Pill>}
           </div>
           {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle} title={taskTitle}>{taskTitle}</p>}
         </div>
+        {task === undefined && thread !== undefined && <div className={css.headerActions}>
+          <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{pending ? t('promotingTask') : t('promoteToTask')}</Button>
+        </div>}
         {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
             closed Thread lives only in the composer-slot closed notice. */}
         {task !== undefined && thread !== undefined && task.resolution !== 'closed' && <div className={css.headerActions}>
@@ -624,8 +658,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       </div>
     </section>
 
-    {projection !== undefined && task !== undefined && thread !== undefined ? (
-      task.resolution === 'closed'
+    {projection !== undefined && thread !== undefined ? (
+      task?.resolution === 'closed'
         ? <div className={threadCss.closedBar} data-team-closed>
             {error !== undefined && <p className={css.error} role="alert">{error}</p>}
             <div className={threadCss.closedNotice}>

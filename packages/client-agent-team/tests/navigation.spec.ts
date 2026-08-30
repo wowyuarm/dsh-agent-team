@@ -55,7 +55,7 @@ describe('TeamNavigation', () => {
     const navigation = new TeamNavigation()
     navigation.actions().selectWorkspace('workspace:one' as never)
     navigation.actions().enterTeam()
-    navigation.actions().selectThread('task:1' as never, 'thread:1' as never, 'channel:1' as never, 7)
+    navigation.actions().selectThread('thread:1' as never, 'channel:1' as never, 'task:1' as never, 7)
 
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
       mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
@@ -67,7 +67,32 @@ describe('TeamNavigation', () => {
     })
   })
 
+  it('persists a taskless Thread with threadRef as the stable key', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+    navigation.actions().enterTeam()
+    navigation.actions().selectThread('thread:plain' as never, 'channel:1' as never)
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      threadRef: 'thread:plain',
+    })
+    expect(new TeamNavigation().getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      threadRef: 'thread:plain',
+    })
+  })
+
   it('ignores malformed and incomplete persisted state', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      threadRef: 'thread:plain',
+    }))
+    expect(new TeamNavigation().getSnapshot()).toEqual({
+      mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
+      threadRef: 'thread:plain',
+    })
+
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1',
       taskRef: 'task:orphaned', taskNumber: 7,
@@ -84,7 +109,7 @@ describe('TeamNavigation', () => {
     const navigation = new TeamNavigation()
     navigation.actions().selectWorkspace('workspace:one' as never)
     navigation.actions().enterTeam()
-    navigation.actions().selectThread('task:1' as never, 'thread:1' as never, 'channel:1' as never, 7)
+    navigation.actions().selectThread('thread:1' as never, 'channel:1' as never, 'task:1' as never, 7)
     navigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
 
     expect(navigation.getSnapshot()).toEqual({
@@ -124,7 +149,7 @@ describe('TeamNavigation', () => {
     const steps: Array<(navigation: TeamNavigation) => void> = [
       navigation => { navigation.actions().selectWorkspace('workspace:two' as never) },
       navigation => { navigation.actions().selectChannel('channel:2' as never) },
-      navigation => { navigation.actions().selectThread('task:9' as never, 'thread:9' as never) },
+      navigation => { navigation.actions().selectThread('thread:9' as never) },
       navigation => { navigation.actions().backToChannels() },
       navigation => { navigation.actions().backToWorkspace() },
       navigation => { navigation.actions().enterTeam() },
