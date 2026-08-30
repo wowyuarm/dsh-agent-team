@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import type { AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
+import { zh } from '../src/client/locales.ts'
+import type { TeamConversationProps } from '../src/client/slots.ts'
 import { TeamMessage } from '../src/client/TeamMessage.tsx'
+
+const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
+  let value: string = zh[key]
+  for (const [name, replacement] of Object.entries(params ?? {})) value = value.replace(`{${name}}`, String(replacement))
+  return value
+}) as TeamConversationProps['t']
 
 afterEach(cleanup)
 
@@ -74,5 +82,46 @@ describe('TeamMessage structured mention rendering', () => {
     const chips = spansWithText(container, '@lead')
     expect(chips).toHaveLength(1)
     expect(hasClassToken(chips[0]!.closest('div')!, 'messageText')).toBe(true)
+  })
+})
+
+describe('TeamMessage long-body clamp', () => {
+  const longBody = '长消息正文，用于超过折叠阈值。'.repeat(80)
+
+  function clampDivs(container: HTMLElement): HTMLElement[] {
+    return [...container.querySelectorAll('div')].filter(div => hasClassToken(div, 'messageClamp'))
+  }
+
+  it('starts over-threshold bodies clamped behind the expand control', () => {
+    const { container, getByRole } = render(
+      <TeamMessage senderName="Builder" memberId={'member:builder' as AgentTeamMemberId} human={false} body={longBody} t={t} />,
+    )
+    expect(clampDivs(container)).toHaveLength(1)
+    const toggle = getByRole('button', { name: '展开全文' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    // The preview still renders the full text into the clamped container, so
+    // in-body refs and mentions stay reachable without expanding.
+    expect(container.textContent).toContain('用于超过折叠阈值')
+  })
+
+  it('expands to the full body and collapses back through the toggle', () => {
+    const { container, getByRole } = render(
+      <TeamMessage senderName="Builder" memberId={'member:builder' as AgentTeamMemberId} human={false} body={longBody} t={t} />,
+    )
+    fireEvent.click(getByRole('button', { name: '展开全文' }))
+    expect(clampDivs(container)).toHaveLength(0)
+    const collapse = getByRole('button', { name: '收起' })
+    expect(collapse.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(collapse)
+    expect(clampDivs(container)).toHaveLength(1)
+    expect(getByRole('button', { name: '展开全文' }).getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('leaves short bodies unclamped without any toggle', () => {
+    const { container } = render(
+      <TeamMessage senderName="Builder" memberId={'member:builder' as AgentTeamMemberId} human={false} body="短消息" />,
+    )
+    expect(clampDivs(container)).toHaveLength(0)
+    expect(container.querySelector('button')).toBeNull()
   })
 })

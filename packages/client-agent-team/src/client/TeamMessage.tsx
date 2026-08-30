@@ -4,7 +4,7 @@ import type { AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } 
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
 import { cachedResolvedTaskRef, resolveUnknownTaskRefs, useResolvedTaskRefVersion, type ResolvedTaskRef } from './task-refs.ts'
-import { formatMessageTime, isSingleBrandedRef, memberHue, planMessageBody, splitBrandedRefs, splitMentionNames } from './team-formatters.ts'
+import { formatMessageTime, isSingleBrandedRef, memberHue, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames } from './team-formatters.ts'
 import css from './conversation.module.css'
 
 export interface TeamMessageProps {
@@ -56,6 +56,12 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     void resolveUnknownTaskRefs(bodyTaskRefs, onResolveTaskRefs)
   }, [onResolveTaskRefs, bodyTaskRefKey, refVersion])
   const taskLabel = useCallback((taskNumber: number): string => t?.('taskLabel', { number: taskNumber }) ?? `Task #${taskNumber}`, [t])
+  // Long bodies start clamped behind the expand control. The default derives
+  // from the body alone; the toggle itself is per-mount view state nothing
+  // persists.
+  const [expanded, setExpanded] = useState(false)
+  const clampable = shouldClampMessage(displayBody)
+  const clamped = clampable && !expanded
   const markdownRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const root = markdownRef.current
@@ -89,6 +95,15 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     root.addEventListener('click', openTask)
     return () => { root.removeEventListener('click', openTask) }
   }, [richAgentBody, onOpenRef])
+  const bodyNode = plan.render === 'inline' && plan.inline !== undefined
+    ? <div className={css.messageText}>
+        {plan.inline.segments.map((segment, index) => segment.mention
+          ? <span key={index} className={css.mention}>{segment.text}</span>
+          : <Fragment key={index}>{renderRefs(segment.text, onOpenRef, taskLabel)}</Fragment>)}
+      </div>
+    : plan.render === 'literal'
+      ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel)}</div>
+      : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} /></div>
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
       <div className={css.messageIdentity} style={avatarStyle} aria-hidden="true">{senderName.replace('@', '').slice(0, 1).toUpperCase()}</div>
@@ -99,15 +114,12 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
             {occurredAt !== undefined && <span className={css.messageTime}>{formatMessageTime(occurredAt)}</span>}
           </div>
         )}
-        {plan.render === 'inline' && plan.inline !== undefined
-          ? <div className={css.messageText}>
-              {plan.inline.segments.map((segment, index) => segment.mention
-                ? <span key={index} className={css.mention}>{segment.text}</span>
-                : <Fragment key={index}>{renderRefs(segment.text, onOpenRef, taskLabel)}</Fragment>)}
-            </div>
-          : plan.render === 'literal'
-            ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel)}</div>
-            : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} /></div>}
+        {clamped ? <div className={css.messageClamp}>{bodyNode}</div> : bodyNode}
+        {clampable && (
+          <button type="button" className={css.messageExpand} aria-expanded={expanded} onClick={() => { setExpanded(value => !value) }}>
+            {expanded ? (t?.('collapseMessage') ?? 'Show less') : (t?.('expandMessage') ?? 'Show more')}
+          </button>
+        )}
         {(plan.fallbackNames.length > 0 || plan.fallbackRefs.length > 0) && (
           <div className={css.mentionsRow}>
             {plan.fallbackNames.map(name => <span key={name} className={css.mention}>@{name}</span>)}

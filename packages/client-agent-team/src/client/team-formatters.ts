@@ -201,6 +201,19 @@ export function stripAttachmentLines(body: string): string {
   return body.replaceAll(/^\[attachment\] .*$(\n)?/gm, '').replace(/\n+$/, '')
 }
 
+/**
+ * Displayed bodies past this character count render clamped behind an expand
+ * control. The rule is deterministic from the body alone, so every surface
+ * derives the same default for the same Message and no client has to remember
+ * a fold state.
+ */
+export const MESSAGE_COLLAPSE_CHARS = 600
+
+/** Whether one displayed Message body starts clamped behind the expand control. */
+export function shouldClampMessage(displayBody: string): boolean {
+  return displayBody.length > MESSAGE_COLLAPSE_CHARS
+}
+
 /** How one Message body renders: mention-chip segments, literal text, or Markdown. */
 export type MessageBodyRender = 'inline' | 'literal' | 'markdown'
 

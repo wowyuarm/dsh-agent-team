@@ -380,6 +380,43 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(await refLink.evaluate(element => getComputedStyle(element).cursor)).toBe('pointer')
   await page.screenshot({ path: join(UI04_SHOTS, 'message-ref-linkify.png'), fullPage: true })
 
+  // Long-body clamp: a body past the deterministic character threshold starts
+  // clamped behind 展开全文 — the preview keeps the full text mounted under an
+  // alpha fade, expands in place, and collapses back through the same control.
+  const longBody = '这是一条超长验收消息。'.repeat(60)
+  await channelComposer.fill(longBody)
+  await page.getByRole('button', { name: '发送' }).click()
+  const longMessage = page.locator('[data-team-channel] article').filter({ hasText: '这是一条超长验收消息' })
+  await longMessage.waitFor()
+  const expandControl = longMessage.getByRole('button', { name: '展开全文' })
+  await expandControl.waitFor()
+  expect(await expandControl.getAttribute('aria-expanded')).toBe('false')
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-clamp-preview.png'), fullPage: true })
+  // Keyboard path: the focused control expands with Enter and flips to 收起.
+  await expandControl.focus()
+  await page.keyboard.press('Enter')
+  const collapseControl = longMessage.getByRole('button', { name: '收起' })
+  await collapseControl.waitFor()
+  expect(await collapseControl.getAttribute('aria-expanded')).toBe('true')
+  expect(await longMessage.locator('[class*="messageClamp"]').count()).toBe(0)
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-clamp-expanded.png'), fullPage: true })
+  await collapseControl.click()
+  await expect.poll(() => longMessage.locator('[class*="messageClamp"]').count()).toBe(1)
+  await expect.poll(async () => await longMessage.getByRole('button', { name: '展开全文' }).getAttribute('aria-expanded')).toBe('false')
+  // Narrow viewport: the clamped preview stays inside the viewport width.
+  // Geometry polls until the fold settles — the collapsed attribute flips
+  // before the conversation pane reaches its narrow width.
+  await page.setViewportSize({ width: 390, height: 844 })
+  const narrowClamp = longMessage.locator('[class*="messageClamp"]')
+  await page.locator('[data-sidebar-collapsed="true"]').waitFor()
+  await expect.poll(async () => (await narrowClamp.boundingBox())?.x ?? 999).toBeGreaterThanOrEqual(0)
+  await expect.poll(async () => {
+    const box = await narrowClamp.boundingBox()
+    return box === null ? 999 : box.x + box.width
+  }).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: join(UI04_SHOTS, 'message-clamp-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+
   // Attachment upload: the "+" picker takes real files, chips confirm the
   // selection, and the committed message renders the image thumbnail from the
   // Host cache — the full upload → ledger → display loop on the real app.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, planMessageBody, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
+import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -188,5 +188,11 @@ describe('Team presentation formatters', () => {
     expect(taskStatusDot('in_review')).toBe('warning')
     expect(taskStatusDot('done')).toBe('done')
     expect(taskStatusDot('closed')).toBe('closed')
+  })
+
+  it('clamps bodies purely by their displayed character count', () => {
+    expect(shouldClampMessage('短消息')).toBe(false)
+    expect(shouldClampMessage('字'.repeat(600))).toBe(false)
+    expect(shouldClampMessage('字'.repeat(601))).toBe(true)
   })
 })

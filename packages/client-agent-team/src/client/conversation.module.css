@@ -128,6 +128,37 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Clamped preview of an over-long body: fixed height with an alpha fade so
+   the cutoff reads as "there is more", not a rendering fault. The mask fades
+   transparency instead of painting a surface color, staying theme-agnostic. */
+.messageClamp {
+  -webkit-mask-image: linear-gradient(#000 72%, transparent 100%);
+  mask-image: linear-gradient(#000 72%, transparent 100%);
+  max-height: 176px;
+  overflow: hidden;
+}
+/* The clamp's expand/collapse toggle: quiet text link under the preview,
+   mirroring the sidebar text buttons. Block-level and shrink-wrapped so the
+   control owns its line instead of flowing beside a trailing entry card. */
+.messageExpand {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  display: block;
+  font-size: 12px;
+  line-height: 20px;
+  margin-top: 4px;
+  padding: 0 4px;
+  width: fit-content;
+}
+.messageExpand:hover,
+.messageExpand:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  outline: none;
+}
 /* Compact timeline typography over the shared Markdown primitive; the root
    font shorthand is reset so Agent and Human bodies share one text grid.
    Heading sizes are chat-tuned: the page h1 stays the loudest element. */
