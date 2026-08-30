@@ -117,6 +117,16 @@
   width: 5px;
 }
 
+/* A block of consecutive activities reads as one ledger: block members align
+   to the text column (avatar 28px + gap 10px, level with the run divider)
+   instead of stacking as centered floats; an isolated activity stays centered. */
+.activityRow:has(+ .activityRow),
+.activityRow + .activityRow {
+  justify-content: flex-start;
+  padding-left: 38px;
+  text-align: left;
+}
+
 .historySection {
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   margin: 0 auto 12px;
@@ -198,14 +208,18 @@
   z-index: 2;
 }
 
+/* Task openers run long and embed unbreakable refs, so clamp to two lines
+   instead of one hard truncate; the full text rides the title attribute. */
 .taskTitle {
   color: var(--dsw-alias-label-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: 13px;
   line-height: 20px;
   margin: 2px 0 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 /* The closed-task bar replaces the composer slot; the notice explains why input
@@ -231,6 +245,14 @@
   .claimRow {
     align-items: start;
     grid-template-columns: 14px minmax(0, 1fr) auto;
+  }
+
+  /* Auto-placement would cursor past the spanning direction and drop the
+     state into the 14px dot column; pin it to the owner row's right seat. */
+  .claimState {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
   }
 
   .claimDirection {

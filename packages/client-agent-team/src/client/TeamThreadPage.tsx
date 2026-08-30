@@ -540,7 +540,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
             <h1>{task === undefined ? t('taskPending') : t('taskLabel', { number: taskNumber ?? '…' })}</h1>
             {task !== undefined && <Pill>{formatTaskStatus(task.status, t)}</Pill>}
           </div>
-          {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle}>{taskTitle}</p>}
+          {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle} title={taskTitle}>{taskTitle}</p>}
         </div>
         {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
             closed Thread lives only in the composer-slot closed notice. */}
@@ -644,6 +644,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       onDraftChange={next => { drafts.writeDraft(draftKey, next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
       onRecipientsChange={next => { drafts.writeRecipients(draftKey, next); setConfirmation(undefined); setReplyRequestId(undefined); setStatusMessage(undefined) }}
       onSubmit={() => { void sendReply() }}
+      placeholder={t('replyPlaceholder')}
       pendingFiles={pendingFiles}
       onFilesChange={setPendingFiles}
       t={t}

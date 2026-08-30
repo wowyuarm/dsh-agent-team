@@ -312,9 +312,10 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
             const senderStatus = members.find(member => member.member.memberId === item.message.sender)
             const human = item.message.sender === view!.humanMemberId
             const sender = human ? t('human') : senderStatus?.member.handle ?? item.message.sender
+            const turnGap = isRunGap(index > 0 ? block.items[index - 1]!.message.occurredAt : undefined, item.message.occurredAt)
+            // A turn divider already labels the gapped entry; its row stays chrome-free.
             return <Fragment key={item.message.messageRef}>
-              {isRunGap(index > 0 ? block.items[index - 1]!.message.occurredAt : undefined, item.message.occurredAt)
-                && <TeamRunDivider occurredAt={item.message.occurredAt} />}
+              {turnGap && <TeamRunDivider occurredAt={item.message.occurredAt} />}
               <TeamMessage
                 senderName={sender}
                 memberId={item.message.sender}
@@ -328,6 +329,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
                 onOpenRef={openRef}
                 onResolveTaskRefs={lookupTaskRefs}
                 grouped={index > 0}
+                showGroupedTime={item.message.topLevel === true && !turnGap}
                 {...(senderStatus === undefined ? {} : { senderTitle: senderStatus.member.description })}
               >
                 {item.message.topLevel && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.task.taskRef, item.thread.threadRef, channelRef, item.taskNumber) }}>

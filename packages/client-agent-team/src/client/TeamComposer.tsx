@@ -52,7 +52,7 @@ function draftPreviewUrl(file: File): string | undefined {
   return url
 }
 
-export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, pendingFiles, onFilesChange, t }: {
+export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, placeholder, pendingFiles, onFilesChange, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
@@ -62,6 +62,8 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   readonly onDraftChange: (draft: string) => void
   readonly onRecipientsChange: (recipients: ReadonlySet<AgentTeamMemberId>) => void
   readonly onSubmit: () => void
+  /** Conversation-specific prompt; the shared default fits Channel surfaces. */
+  readonly placeholder?: string
   /** Upload-capable surfaces pass this to enable the "+" file picker; the reply path omits it. */
   readonly pendingFiles?: readonly File[]
   readonly onFilesChange?: (files: readonly File[]) => void
@@ -231,7 +233,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
           aria-expanded={menuOpen}
           value={draft}
           readOnly={pending}
-          placeholder={t('messagePlaceholder')}
+          placeholder={placeholder ?? t('messagePlaceholder')}
           rows={1}
           onChange={onChange}
           onKeyDown={onKeyDown}

@@ -19,6 +19,9 @@ export interface TeamMessageProps {
   readonly senderTitle?: string
   /** Continuation of one same-sender run: suppress repeated identity chrome. */
   readonly grouped?: boolean
+  /** Continuation rows that carry their own footer chip render the time so the
+      hairline-separated entry stays self-identifying. */
+  readonly showGroupedTime?: boolean
   readonly attachments?: readonly AgentTeamMessageAttachment[] | undefined
   /** Cache readback for thumbnails; absent on surfaces without the remotes. */
   readonly loadAttachment?: TeamConversationProps['getAttachment'] | undefined
@@ -31,7 +34,7 @@ export interface TeamMessageProps {
 }
 
 /** One chat message row with identity chrome and sender-appropriate rendering. */
-export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, children }: TeamMessageProps) {
+export function TeamMessage({ senderName, memberId, human, body, occurredAt, mentionNames, senderTitle, grouped, showGroupedTime, attachments, loadAttachment, t, onOpenRef, onResolveTaskRefs, children }: TeamMessageProps) {
   const avatarStyle = human ? undefined : { '--team-avatar-hue': memberHue(memberId) } as CSSProperties
   // Literal bodies carry mention chips inline — Human input always, and
   // plain-prose Agent bodies where literal rendering loses nothing. Rich
@@ -90,9 +93,9 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
       <div className={css.messageIdentity} style={avatarStyle} aria-hidden="true">{senderName.replace('@', '').slice(0, 1).toUpperCase()}</div>
       <div className={css.messageBody}>
-        {!grouped && (
+        {(!grouped || showGroupedTime === true) && (
           <div className={css.nameRow}>
-            <strong {...(senderTitle === undefined ? {} : { title: senderTitle })}>{senderName}</strong>
+            {!grouped && <strong {...(senderTitle === undefined ? {} : { title: senderTitle })}>{senderName}</strong>}
             {occurredAt !== undefined && <span className={css.messageTime}>{formatMessageTime(occurredAt)}</span>}
           </div>
         )}
