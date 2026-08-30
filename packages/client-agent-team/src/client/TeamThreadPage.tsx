@@ -113,6 +113,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const [confirmation, setConfirmation] = useState<AgentTeamConfirmationToken>()
   const [statusMessage, setStatusMessage] = useState<string>()
   const [pending, setPending] = useState(false)
+  // Label source for the promote/accept buttons only: a reply send also raises
+  // the shared `pending` gate, and must not retitle those buttons.
+  const [mutating, setMutating] = useState<'promote' | 'accept' | undefined>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const mountedRef = useRef(false)
@@ -423,6 +426,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const convertToTask = async (): Promise<void> => {
     if (pending || thread === undefined || task !== undefined) return
     setPending(true)
+    setMutating('promote')
     setError(undefined)
     const key = 'promote'
     const requestId = mutationRequests.current.get(key) ?? mintRequestId()
@@ -453,12 +457,16 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
-    } finally { setPending(false) }
+    } finally {
+      setPending(false)
+      setMutating(undefined)
+    }
   }
 
   const mutateTask = async (action: 'accept' | 'close' | 'reopen'): Promise<void> => {
     if (pending || task === undefined || thread === undefined) return
     setPending(true)
+    if (action === 'accept') setMutating('accept')
     setError(undefined)
     const key = `task:${action}`
     const requestId = mutationRequests.current.get(key) ?? mintRequestId()
@@ -488,7 +496,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
-    } finally { setPending(false) }
+    } finally {
+      setPending(false)
+      setMutating(undefined)
+    }
   }
 
   const sendReply = async (): Promise<void> => {
@@ -582,7 +593,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle} title={taskTitle}>{taskTitle}</p>}
         </div>
         {task === undefined && thread !== undefined && <div className={css.headerActions}>
-          <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{pending ? t('promotingTask') : t('promoteToTask')}</Button>
+          <Button size="sm" variant="primary" disabled={pending} onClick={() => { void convertToTask() }}>{mutating === 'promote' ? t('promotingTask') : t('promoteToTask')}</Button>
         </div>}
         {/* Open tasks act here; an accepted Thread keeps its header reopen. Reopen for a
             closed Thread lives only in the composer-slot closed notice. */}
@@ -613,7 +624,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           closeLabel={t('cancel')}
           footer={<>
             <Button variant="outline" disabled={pending} onClick={() => { setConfirmingAccept(false) }}>{t('cancel')}</Button>
-            <Button variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{pending ? t('acceptingTask') : t('acceptTask')}</Button>
+            <Button variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{mutating === 'accept' ? t('acceptingTask') : t('acceptTask')}</Button>
           </>}
         >
           <p className={css.confirmBody}>{t('acceptEarlyBody', { count: activeClaims.length })}</p>
