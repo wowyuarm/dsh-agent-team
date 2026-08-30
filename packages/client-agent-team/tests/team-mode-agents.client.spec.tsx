@@ -231,6 +231,14 @@ describe('Team agent surfaces', () => {
     await waitFor(() => {
       expect(b.recoverMember).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:offline' }))
     })
+    // A restart that leaves the Member unavailable surfaces the diagnostic on the row.
+    const alert = await b.view.findByRole('alert')
+    expect(alert.textContent).toContain('重启已执行，成员仍不可用：preset missing')
+    // A transport rejection surfaces as the row alert too.
+    b.recoverMember.mockRejectedValueOnce(new Error('connection lost'))
+    fireEvent.click(b.view.getByRole('button', { name: 'offline 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '重启' }))
+    await waitFor(() => { expect(b.view.getByRole('alert').textContent).toContain('重启执行失败：connection lost') })
     await b.runtime.dispose()
   })
 

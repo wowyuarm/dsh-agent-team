@@ -238,18 +238,32 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [rowAlert, setRowAlert] = useState<string>()
   // Both row actions ride the same runtime remote: the Host steers a live
   // session, rebuilds an orphaned composition, or re-runs a failed activation.
   const recover = async (): Promise<void> => {
-    await recoverMember({
-      requestId: mintRequestId(),
-      workspaceId: status.member.workspaceId,
-      memberId: status.member.memberId,
-    })
-    await onUpdated()
-    // A page opened while the Member was down predates the live Session;
-    // re-selecting is a no-op when already bound and rebinds when stale.
-    if (current === true) openMemberSession(status.member.sessionId)
+    try {
+      const result = await recoverMember({
+        requestId: mintRequestId(),
+        workspaceId: status.member.workspaceId,
+        memberId: status.member.memberId,
+      })
+      await onUpdated()
+      if (!result.ok) {
+        setRowAlert(t('restartFailed', { message: result.error.message }))
+        return
+      }
+      if (result.value.status.availability === 'unavailable') {
+        setRowAlert(t('restartStillUnavailable', { diagnostic: result.value.status.diagnostic ?? t('statusUnavailable') }))
+        return
+      }
+      setRowAlert(undefined)
+      // A page opened while the Member was down predates the live Session;
+      // re-selecting is a no-op when already bound and rebinds when stale.
+      if (current === true) openMemberSession(status.member.sessionId)
+    } catch (cause) {
+      setRowAlert(t('restartFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
   }
   return (
     <>
@@ -277,6 +291,7 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
           />
         </span>
       </div>
+      {rowAlert !== undefined && <div className={css.rowAlert} role="alert">{rowAlert}</div>}
       {editing && (
         <AgentEditorDialog
           status={status}

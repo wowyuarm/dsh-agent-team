@@ -439,6 +439,13 @@
   padding: 8px;
 }
 
+.rowAlert {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  padding: 2px 8px 6px;
+}
+
 .editDescription {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
