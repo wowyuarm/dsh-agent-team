@@ -260,13 +260,20 @@ describe('Team agent surfaces', () => {
     expect(workingClear.disabled).toBe(true)
     expect(within(workingMenu).getByText('成员正在工作中，完成后才能清空上下文')).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
-    // An error Member is also gated, but the reason must name its own state
-    // instead of claiming the Member is working.
+    // An error Member keeps a live idle handle, so its clear entry stays
+    // enabled — starting from a new context doubles as a recovery path.
     fireEvent.click(b.view.getByRole('button', { name: 'failed 的操作' }))
     const failedMenu = await within(document.body).findByRole('menu')
     const failedClear = within(failedMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
-    expect(failedClear.disabled).toBe(true)
-    expect(within(failedMenu).getByText('成员当前不可用，恢复在线且空闲后才能清空上下文')).toBeTruthy()
+    expect(failedClear.disabled).toBe(false)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    // An unavailable Member has no live handle; its entry is gated with a
+    // reason naming that state instead of claiming the Member is working.
+    fireEvent.click(b.view.getByRole('button', { name: 'offline 的操作' }))
+    const offlineMenu = await within(document.body).findByRole('menu')
+    const offlineClear = within(offlineMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
+    expect(offlineClear.disabled).toBe(true)
+    expect(within(offlineMenu).getByText('成员当前不可用，恢复在线且空闲后才能清空上下文')).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
 
     // Confirm before routing: the first click only opens the destructive dialog.

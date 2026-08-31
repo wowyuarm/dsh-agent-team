@@ -290,7 +290,11 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
       setRowAlert(t('clearContextFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
     }
   }
-  const contextClearable = status.presence === 'available'
+  // Error Members keep a live idle handle, so starting from a new context
+  // is available to them too — it doubles as a recovery path (the broken
+  // handle's error markers are dropped with it). Only a running turn or a
+  // missing handle gates the entry.
+  const contextClearable = status.presence === 'available' || status.presence === 'error'
   return (
     <>
       <div className={css.agentRow} data-menu-open={menuOpen || undefined}>

@@ -352,6 +352,27 @@ describe('Agent Team Member lifecycle', () => {
     expect(ctx.tools.schemas(rebuilt).length).toBeGreaterThan(0)
   })
 
+  it('renews an error Member from a new context, healing the broken composition', async () => {
+    const { ctx, workspaceId, presets, archived } = await realHarness()
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [] })
+    const live = ctx.agents.get(added.status.member.sessionId)!
+
+    // An error Member keeps its live idle handle, so starting from a new
+    // context must work for it too — and doubles as a recovery path.
+    presets.orphaned.add(live.ctx)
+    const orphaned = ctx.agentTeam.members().find(member => member.member.memberId === added.status.member.memberId)!
+    expect(orphaned.presence).toBe('error')
+
+    const cleared = await ctx.agentTeam.clearMemberContext({ requestId: requestId('clear'), workspaceId, memberId: added.status.member.memberId })
+    expect(cleared.status.presence).toBe('available')
+    expect(cleared.status.member.sessionId).not.toBe(added.status.member.sessionId)
+    expect(archived).toContain(added.status.member.sessionId)
+    const renewed = ctx.agents.get(cleared.status.member.sessionId)!
+    expect(renewed).not.toBe(live)
+    expect(ctx.agentPresets.serviceFor(renewed, 'compaction')).toBeDefined()
+    expect(ctx.tools.schemas(renewed).length).toBeGreaterThan(0)
+  })
+
   it('restarts a Member whose activation failed and rejects restart for suspended Members', async () => {
     const { ctx, workspaceId, presets } = await realHarness()
     presets.failingMount = true
