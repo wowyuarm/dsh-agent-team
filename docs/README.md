@@ -1,31 +1,33 @@
-# dsh-agent-team 文档
+# dsh-agent-team Documentation
 
-这里是本仓库需要持续维护的正式工程文档。`AGENTS.md` 只保留每次工作都必须知道的规则；具体流程、架构和跨仓库导航按需从这里进入。
+English | [中文](README.zh.md)
 
-## 文档入口
+This directory contains the maintained engineering documentation for this repository. `AGENTS.md` keeps only rules that every task must know; use this index for detailed workflows, architecture, domain language, and cross-repository navigation.
 
-| 文档 | 用途 | 什么时候读 |
+## Documentation entry points
+
+| Document | Purpose | Read it when |
 | --- | --- | --- |
-| [`development.md`](development.md) | 安装、命令、生成物、live/UI preview、browser replay 和发布检查 | 开始开发、运行验证、修改 package 或发布布局 |
-| [`dsh-release-compatibility.md`](dsh-release-compatibility.md) | DSH 新版本的评估、隔离认证、安装验证和发布门槛 | DSH 发版、更新 peerDependencies 或排查跨版本安装失败 |
-| [`architecture.md`](architecture.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
-| [`domain-model.md`](domain-model.md) | 稳定的 Agent Team 领域词汇 | 修改领域语义、类型命名或正式协作合同 |
-| [`team-collaboration.md`](team-collaboration.md) | 已实现的五工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
-| [`frontend-design.md`](frontend-design.md) | Team Client 的长期 UI 设计体系：设计原则、布局骨架、排版、组件合同、可访问性基线与验证流程 | 修改 `packages/client-agent-team/src/client/` 的可见 UI 或交互时 |
-| [`harness-navigation.md`](harness-navigation.md) | 本仓库与 `../deepseek-harness` 的查阅路线、源码入口、已知接入陷阱 | 不确定应该查哪个 Harness 文档/package/source 时 |
+| [`development.md`](development.md) | Setup, commands, generated artifacts, live/UI preview, browser replay, and release checks | Starting development, running verification, changing a package, or changing release layout |
+| [`dsh-release-compatibility.md`](dsh-release-compatibility.md) | Evaluating new DSH versions, isolated certification, installation checks, and release gates | DSH releases, updating `peerDependencies`, or investigating cross-version installation failures |
+| [`architecture.md`](architecture.md) | Host, tools, command, typed Remote, Client plugin, and authority boundaries | Changing runtime, RPC, preset, Client, or persistence |
+| [`domain-model.md`](domain-model.md) | Stable Agent Team vocabulary | Changing domain semantics, type names, or the collaboration contract |
+| [`team-collaboration.md`](team-collaboration.md) | The implemented five-tool, Thread Attention, Inbox, reading, mention, and mutation-fence contract | Changing collaboration semantics, model-facing tools, or Agent notifications |
+| [`frontend-design.md`](frontend-design.md) | Long-lived Team Client UI system: principles, layout, typography, components, accessibility, and verification | Changing visible UI or interaction under `packages/client-agent-team/src/client/` |
+| [`harness-navigation.md`](harness-navigation.md) | Routes through this repository and `../deepseek-harness`, including source entry points and integration traps | Unsure which Harness document, package, source, or test to inspect |
 
-## 文档规则
+## Documentation rules
 
-- 文档描述当前可验证的工程事实、稳定的维护流程和仍然有效的架构边界。
-- 实现行为以源码和测试为准；文档与代码冲突时先修正文档，不能用文档解释代码没有实现的行为。
-- `.scratch/` 保存 active work 与 archive 的设计、研究、tickets、原型和验证材料，不是当前实现或 API 的权威来源。先读 [`.scratch/README.md`](../.scratch/README.md)；正式文档只在需要解释历史背景时链接归档资料，并在写入前对照源码和测试。
-- 每个事实只有一个正式归属。命令、导出、package manifest 和生成脚本仍以对应文件为最终来源；正式文档只记录不容易从文件本身看出的维护规则、边界和查阅路线。
-- 代码修改导致正式文档中的当前行为、流程或边界失效时，在同一改动中更新文档。
-- 不确定的事实写成 `> TODO:`，不要猜测。
+- Documentation records verifiable engineering facts, stable maintenance workflows, and still-valid architecture boundaries.
+- Source and tests define implementation behavior. When prose conflicts with code, fix the documentation; do not use documentation to describe behavior the code does not implement.
+- `.scratch/` contains active work and archived designs, research, tickets, prototypes, and validation evidence. It is not an authority for current implementation or APIs. Read [`.scratch/README.md`](../.scratch/README.md) first; link to archives from maintained docs only for historical context, and verify conclusions against source and tests before recording them.
+- Each fact has one maintained home. Commands, exports, manifests, and generated scripts remain authoritative in their own files; maintained docs record the maintenance rules, boundaries, and routes that are not obvious from those files.
+- When a code change invalidates current behavior, workflow, or boundaries in maintained docs, update the docs in the same change.
+- Write uncertain facts as `> TODO:` instead of guessing.
 
-## 从哪里开始
+## Where to start
 
-- **改 Host 或 domain：** 读 [`architecture.md`](architecture.md) 与 [`domain-model.md`](domain-model.md)，再以 `packages/agent-team/src/` 和测试为准；需要决策来由时，按 `.scratch/README.md` 查 archive。
-- **改 tools、preset 或 `/team`：** 读 [`architecture.md`](architecture.md) 的对应章节，再查 Harness cookbook 和 subsystem 文档。
-- **改 Client 或 UI：** 读 [`frontend-design.md`](frontend-design.md)、[`architecture.md`](architecture.md) 的 Client 章节与 [`development.md`](development.md) 的 UI 验收规则；跨仓库路线见 [`harness-navigation.md`](harness-navigation.md)；需要历史设计来由时再查 `.scratch/archive/2026-08/ui-redesign/`。
-- **改安装、构建、测试或 Remote 生成：** 读 [`development.md`](development.md)，再查看对应 `package.json` / script 的实际实现。
+- **Host or domain:** read [`architecture.md`](architecture.md) and [`domain-model.md`](domain-model.md), then use `packages/agent-team/src/` and its tests as authority; use `.scratch/README.md` to locate historical decisions when needed.
+- **Tools, preset, or `/team`:** read the relevant sections of [`architecture.md`](architecture.md), then consult the Harness cookbook and subsystem docs.
+- **Client or UI:** read [`frontend-design.md`](frontend-design.md), the Client section of [`architecture.md`](architecture.md), and the UI acceptance rules in [`development.md`](development.md); use [`harness-navigation.md`](harness-navigation.md) for the cross-repository route.
+- **Installation, build, tests, or Remote generation:** read [`development.md`](development.md), then inspect the actual `package.json` or script implementation.

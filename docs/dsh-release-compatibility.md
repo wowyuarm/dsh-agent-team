@@ -1,88 +1,65 @@
-# DSH 发版兼容性认证
+# DSH Release Compatibility Certification
 
-本文定义外部 `dsh-agent-team` bundle 跟进 DeepSeek Harness（DSH）新版本的固定流程。目标是让一个 DSH 版本只有在实际证明可以安装、组装和运行后，才被声明为受支持版本。DSH 发版触发兼容性认证，不自动触发 Team bundle 发版。
+English | [中文](dsh-release-compatibility.zh.md)
 
-本文不定义 Team 行为。Team 行为仍以 `packages/` 源码和测试为准；DSH 接口以相邻 Harness checkout 的源码、测试和发布包为准。
+This document defines the fixed process for certifying an external `dsh-agent-team` bundle against new DeepSeek Harness (DSH) releases. A DSH version is supported only after installation, composition, and runtime have been proven. A DSH release triggers certification; it does not automatically trigger a Team release.
 
-## 1. 触发条件
+This is not a Team behavior specification. Team behavior is defined by `packages/` source and tests; the DSH interface is defined by the adjacent Harness checkout's source, tests, and published packages.
 
-出现下列任一情况时，执行一次认证：
+## 1. Triggers
 
-- DSH 发布新的正式版或预发布版。
-- Team 新增、修改或移除了对 DSH 的 Host、Remote、Client、slot、preset、Session、Workspace 或 Storage 依赖。
-- 用户报告 Team bundle 在某个 DSH 版本上安装、启动或进入 Team mode 失败。
+Run certification when any of the following occurs:
 
-只更新 DSH 的说明文档而不改变已认证版本范围，不需要执行认证。
+- DSH publishes a stable or prerelease version.
+- Team adds, changes, or removes a dependency on a DSH Host, Remote, Client, slot, preset, Session, Workspace, or Storage capability.
+- A user reports installation, startup, or Team-mode failure on a DSH version.
 
-## 2. 版本事实与支持规则
+Documentation-only DSH changes that do not alter the certified range do not require certification.
 
-### 2.1 Team 版本与 DSH 版本
+## 2. Version facts and support rules
 
-Team bundle 的版本独立演进，遵循 Team 自身的变更；它不与 DSH 版本机械同步。原因是两者可以独立变化：
+### 2.1 Team and DSH versions
 
-- 已有的 peerDependencies 已覆盖候选 DSH，认证通过后只需记录认证结果，不需要发布 Team；
-- Team 修复缺陷或增加功能时需要独立发布，不能等待 DSH 发版；
-- 一个 DSH 版本可能需要多次 Team 修复或没有任何 Team 改动。
+The Team bundle evolves independently according to Team changes. It does not mechanically follow DSH: existing peers may already cover a candidate; Team fixes may ship without a DSH release; and one DSH release may require several Team fixes or none.
 
-DSH 兼容性由根 `package.json` 的 peerDependencies 和本文件的已认证基线表达，不由 Team bundle 的自身版本号推断。仅兼容性范围变更而没有功能改动时，仍需发布一个新的 Team bundle 版本，因为用户只能从已发布包取得新的 `package.json`。
+DSH compatibility is expressed by peerDependencies in the root `package.json` and by the certified baseline here, not inferred from the Team bundle version. A compatibility-only range change still requires a new Team bundle because users obtain the new manifest from a published package.
 
-### 2.2 唯一版本依据
+### 2.2 The single version basis
 
-认证对象是 DSH 的不可变 GitHub release tag，例如 `dsh-v0.1.1-rc.2`，以及该 tag 发布的同一组 npm 包。
+Certify an immutable GitHub release tag, such as `dsh-v0.1.1-rc.2`, together with the same set of npm packages published by that tag. Record the tag, date and release notes, `@deepseek-ai/dsh` version, directly peered DSH packages, and whether installation resolves exactly one DSH dependency set at that version. Never use npm `latest` to identify the newest DSH; prereleases may be on `next`.
 
-检查时同时记录：
+### 2.3 npm prerelease ranges
 
-- GitHub release tag、发布日期和 release notes；
-- `@deepseek-ai/dsh` 版本；
-- Team 直接 peer 的 DSH 包版本；
-- 实际安装后是否只有一套同版本的 DSH 依赖图。
+Prerelease ranges are not ordinary continuous intervals. For example, `>=0.1.0-rc.8 <0.2.0` does not match `0.1.1-rc.2`: a comparator containing `0.1.0-rc.8` enables prereleases on that same `0.1.0` baseline only.
 
-不要用 npm 的 `latest` tag 判断“最新 DSH”。DSH 的当前预发布版本可能只挂在 `next`，而 `latest` 仍指向较旧版本。
+Do not infer compatibility from a shared major version or hide unverified versions behind a broad range. Only when a candidate falls outside current peers and certification passes should all `@deepseek-ai/dsh-*` peerDependencies be moved together to the new version line and a new Team bundle be published. The result must resolve without nested old DSH packages.
 
-### 2.3 npm 预发布版本规则
+## 3. Certification process
 
-npm 的 prerelease 版本范围不是普通的连续区间。比如：
+### 3.1 Discover and assess
 
-```text
->=0.1.0-rc.8 <0.2.0
-```
+1. Run `gh release list --repo deepseek-ai/deepseek-harness` to identify the latest release tag and notes.
+2. Compare the previous certified tag's commits and changed files with the candidate.
+3. Review the consumed surface first: Host (Agent, preset, Session, Workspace, Storage, Sandbox); Remote (Typert protocol and API remotes); Client (runtime, loader, slots, sidebar, layout, conversation, workspace, locale); and Team preset (tools and permissions).
+4. Classify changes as unrelated, regression-required, or possibly incompatible. For suspected incompatibility, identify the upstream public interface and this repository's call site; release notes alone are insufficient.
 
-不匹配 `0.1.1-rc.2`。包含 `0.1.0-rc.8` 的比较器只会启用同一 `0.1.0` 版本基线上的预发布版本。
+### 3.2 Isolated certification environment
 
-因此，不允许根据主版本号相同就假定兼容；也不允许用过宽范围掩盖未经验证的版本。只有候选 DSH 不在当前 peerDependencies 范围内、且认证通过时，才将根 `package.json` 内全部 `@deepseek-ai/dsh-*` peerDependencies 一起更新到新的版本线，并发布新的 Team bundle。它们必须保持一个可解析、无嵌套旧版 DSH 包的依赖图。
-
-## 3. 认证流程
-
-### 3.1 发现与初步评估
-
-1. 用 `gh release list --repo deepseek-ai/deepseek-harness` 确认最新发布 tag 和发布说明。
-2. 对比上一个已认证 tag 与候选 tag 的提交和改动文件。
-3. 优先审查本 bundle 消费的接口面：
-   - Host：Agent、Agent preset、Session、Workspace、Storage、Sandbox；
-   - Remote：Typert protocol、API remotes；
-   - Client：runtime、module loader、slots、sidebar、layout、conversation、workspace、locale；
-   - Team preset：tools 和 permission preset。
-4. 将变更分为“无关”“需要回归验证”“疑似接口不兼容”。疑似不兼容先定位到具体的上游公开接口和本仓库调用处，不能只依据 release note 下结论。
-
-发布说明只用于确定审查重点，不能替代源码和运行验证。
-
-### 3.2 建立隔离认证环境
-
-认证必须使用候选 tag 的独立 Harness checkout，不能切换日常开发用的 `../deepseek-harness` checkout。
+Use an independent checkout at the candidate tag, not the everyday `../deepseek-harness` checkout:
 
 ```text
-日常开发目录
-├── deepseek-harness/                 # 保持当前开发状态
+Daily development
+├── deepseek-harness/
 └── dsh-agent-team/
 
-认证临时目录
-├── deepseek-harness-<tag>/           # 固定在候选 release tag
-└── dsh-agent-team-compat-<tag>/      # Team 源码的隔离副本
+Temporary certification
+├── deepseek-harness-<tag>/
+└── dsh-agent-team-compat-<tag>/
 ```
 
-在认证 Harness checkout 中先完成其自身的构建，使 Team 的 TypeScript facade 指向候选 tag 的实际声明文件。不要把旧 checkout 的 `lib/` 或 `node_modules` 当作候选版本的构建结果复用；这会掩盖声明或运行时不兼容。
+Build the certified Harness checkout first so Team TypeScript facades point at its declarations. Do not reuse old `lib/` or `node_modules`; that can conceal declaration or runtime incompatibility.
 
-再在隔离 Team 副本中运行：
+Then run in the isolated Team copy:
 
 ```sh
 node scripts/sync-paths.mjs
@@ -90,11 +67,11 @@ npm run generate:typert
 npm run typecheck
 ```
 
-Typert 生成结果必须稳定。若结果变化，先审查生成物和 Remote contract，再决定是否修改 Team 源码；不要手改 `packages/agent-team/lib/typert.*`。
+Typert output must be stable. Review generator output and the Remote contract before changing Team source; never hand-edit `packages/agent-team/lib/typert.*`.
 
-### 3.3 自动验证
+### 3.3 Automated verification
 
-先运行与变更面匹配的窄测试，再至少运行：
+Run the narrow tests for the changed surface, then at least:
 
 ```sh
 npm test
@@ -103,84 +80,50 @@ npm pack --dry-run
 git diff --check
 ```
 
-以下能力必须有通过证据：
+The following evidence is required:
 
-| 能力 | 验证结论 |
+| Capability | Required conclusion |
 | --- | --- |
-| Host 恢复 | JSONL 与 SQLite 下的 Team ledger、Member 创建、挂起、恢复和移除正常。 |
-| preset 隔离 | `team-member` 可挂载，普通 Session 不获得 Team tools 或 guidance。 |
-| Remote | Host face 能生成，Client 能 mount generated Remote。 |
-| Client slot | Team mode 进入、退出和三处 shadow 的恢复正常；不重声明 `sidebar.workspaces.directoryFlow`。 |
-| 发布布局 | 打包后的根 bundle 可以通过真实 profile 安装，未依赖源码 symlink。 |
+| Host recovery | Team ledger, Member creation, suspension, resume, and removal work under JSON and SQLite. |
+| Preset isolation | `team-member` mounts; ordinary Sessions receive no Team tools or guidance. |
+| Remote | Host face generates and Client mounts the generated Remote. |
+| Client slots | Enter, leave, and restoration of the three Team shadows work; `sidebar.workspaces.directoryFlow` is not redeclared. |
+| Publication layout | A packed root bundle installs through a real profile without source symlinks. |
 
-### 3.4 浏览器组合验证
+### 3.4 Browser composition
 
-只要 bundle、Client module、Remote activation、slot 或 DSH Client 包发生变化，都必须运行：
+Any bundle, Client module, Remote activation, slot, or DSH Client package change requires:
 
 ```sh
 npm run test:browser
 ```
 
-该命令必须在候选 Harness checkout 上运行，并验证：
+Run it against the candidate Harness checkout and verify ordinary DSH → Team mode → ordinary DSH restoration. Cover Remote mounting, Team entry/reload/exit, existing Channel/Thread/Member flows, 390×844 layout, keyboard focus/dialogs, and absence of Team tools, guidance, and UI in ordinary Sessions. Handle browser output as described in `development.md`; do not commit routine screenshots or temporary Harness tests.
 
-```text
-普通 DSH Session ──进入 Team mode──> Team 页面可用
-       ▲                                  │
-       └────────退出 Team mode────────────┘
-```
+### 3.5 Dependency graph installation
 
-最少覆盖：
+When the candidate is outside current peers, resolve an installation in an empty directory using the candidate DSH and updated packed Team bundle. Confirm there is no peer conflict, every Team DSH peer is satisfied, no second old DSH set is pulled in, and the real published-layout profile passes browser verification.
 
-- Remote mount 后 Team UI 注册；
-- Team mode 的进入、刷新恢复、退出和普通 DSH surface 恢复；
-- Channel、Thread、Member 等已有主流程；
-- 390×844 窄屏无横向溢出，键盘焦点与对话框可用；
-- 普通 Session 没有 Team tools、Team guidance 或 Team UI。
+## 4. Results and release gates
 
-浏览器产物按 `docs/development.md` 处理，不提交日常截图和临时 Harness 测试文件。
-
-### 3.5 安装依赖图验证
-
-候选 DSH 不在当前 peerDependencies 范围内时，在一个空目录中，使用候选 DSH 和更新后的已打包 Team bundle 做一次安装解析。确认：
-
-- npm 或 DSH plugin 安装不报告 peer dependency conflict；
-- Team 的每个 DSH peer 都由候选版本满足；
-- 不出现被 Team 拉入的第二套 rc.8 或其他旧版 DSH 包；
-- 用发布布局启动的实际 profile 通过浏览器验证。
-
-## 4. 认证结果与发布门槛
-
-认证完成后，按以下结果处理：
-
-| 认证结果 | 后续动作 |
+| Result | Action |
 | --- | --- |
-| 候选 DSH 已在当前 peerDependencies 范围内，且全部验证通过 | 在本文件记录已认证基线和验证证据；不修改 manifest，不发布 Team。 |
-| 候选 DSH 不在当前 peerDependencies 范围内，且全部验证通过 | 原子更新所有 DSH peerDependencies、兼容性文档和 Team 自身版本，完成安装依赖图验证后发布 Team。 |
-| 验证未通过 | 不扩大 peerDependencies，不发布 Team；按第 5 节记录和处理。 |
+| Candidate is within current peers and all checks pass | Record the certified baseline and evidence; do not change the manifest or publish Team. |
+| Candidate is outside current peers and all checks pass | Atomically update all DSH peers, compatibility docs, and Team version; verify the dependency graph and publish. |
+| Any check fails | Do not widen peers or publish; record and handle under section 5. |
 
-扩大 peerDependencies 并发布时，必须同时满足：
+A peer expansion requires source assessment, passing Typert generation, typecheck, tests, build, pack checks, real browser composition, a conflict-free dependency graph, consistent compatibility wording in `package.json`, architecture/development docs and README, and no temporary material committed. Never widen a range before verification.
 
-1. 已完成候选 tag 的源码评估；
-2. Typert 生成、类型检查、测试、构建、打包检查均通过；
-3. 真实 browser composition 通过；
-4. 安装依赖图无 peer conflict 和嵌套旧版 DSH 包；
-5. `package.json`、`docs/architecture.md`、`docs/development.md` 和 README 中的兼容性表述一致；
-6. 认证使用的临时 checkout、profile、测试文件和截图不进入提交。
+## 5. Failure handling
 
-不要先放开版本范围，再补验证。
+- **Only npm peer conflict:** do not claim support; revise the peer-range strategy and resolve again.
+- **Typecheck or Typert failure:** locate the upstream interface change and Team call site, change Team source/tests, and repeat certification.
+- **Browser composition failure:** isolate Client module, Remote, slot, and ordinary DSH restoration boundaries; do not bypass with private shipped UI or compatibility fallbacks.
+- **Session or Storage recovery failure:** check for an announced persistence-format change; do not add silent Team ledger compatibility reads or fallback.
+- **Insufficient public upstream API:** choose a maintainable bundle-owned design or propose a separate Harness contract change; do not change Harness shipped defaults to accommodate Team.
 
-## 5. 未通过时的处理
+Record candidate tag, symptom, affected interface, reproduction command, and next step. Do not turn an unverified inference into a compatibility claim.
 
-| 现象 | 处理 |
-| --- | --- |
-| 只有 npm peer conflict | 不声明支持候选 DSH；修正 peer 范围的策略后重新解析和验证。 |
-| 类型检查或 Typert 失败 | 定位上游接口变更和 Team 调用点；修改 Team 源码与测试，重新执行完整认证。 |
-| browser composition 失败 | 按 Client module、Remote、slot、普通 DSH 恢复四个边界定位；不得用私有 shipped UI 或兼容 fallback 绕过。 |
-| Session 或 Storage 恢复失败 | 先确认 DSH 是否声明了持久化格式变更；不为 Team ledger 增加静默兼容读取或 fallback。 |
-| 上游公开接口不足 | 在本 bundle 内选择可维护的替代设计，或单独提出 Harness 接口改动；不要修改 Harness shipped defaults 来迁就 Team。 |
+## 6. Current baseline
 
-失败结论应记录候选 tag、现象、受影响接口、复现命令和下一步。不把未经验证的推断写成兼容性结论。
-
-## 6. 当前基线
-
-当前 Team bundle 的已认证基线是 DSH `0.1.1-rc.2`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、65 个测试、构建、打包检查和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。没有发现 Host、typed Remote、Client slot 或 `team-member` preset 的接口不兼容。
+The current certified baseline is DSH `0.1.1-rc.2`. Certification covered Typert generation, full typecheck, 65 tests, build, pack checks, and real browser composition with published-layout installation, Remote mount, Team entry/exit, and ordinary DSH restoration. No incompatibility was found in Host, typed Remote, Client slots, or the `team-member` preset.

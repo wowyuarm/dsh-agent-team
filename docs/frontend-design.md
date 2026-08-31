@@ -1,138 +1,100 @@
-# Team Client 前端设计文档
+# Team Client Frontend Design
 
-本文记录 `packages/client-agent-team/src/client/` 的长期 UI 设计体系：设计原则、布局骨架、排版、颜色与身份、组件合同、交互模式、可访问性基线和验证流程。它只沉淀跨工作项稳定的决策与合同；进行中的工作项、短期问题和未实现的计划记录在 `.scratch/active/`，不进入本文。实现以源码和测试为准，文档与代码冲突时先修正文档。
+English | [中文](frontend-design.zh.md)
 
-## 设计原则
+This document records the long-lived UI system for `packages/client-agent-team/src/client/`: principles, layout, typography, color and identity, component contracts, interaction patterns, accessibility, and verification. It captures stable decisions rather than active work or short-lived plans. Source and tests define behavior; fix this document when they disagree.
 
-1. **优先复用 Harness 公共原语**（`@deepseek-ai/dsh-client-ui-primitives`）：`MarkdownText`、`MessageText`、`Button`、`Pill`、`Modal`、`Tooltip`、`Input`、`StateDot`、图标，以及 `useDismissOnOutsidePointer`、`useAnchoredMaxHeight` 等 hook。Team 不重写这些能力；composer textarea 是唯一例外（`Input` 原语明确只做单行）。
-2. **只用 DSH alias token 取色**，且只允许主题实际定义的名字（`@deepseek-ai/dsh-client-ui-theme` 的 `design-platform.css` 与 `gradient-shadow-text.css` 是唯一定义处）：文字 `--dsw-alias-label-*`、边框 `--dsw-alias-border-l1..l4`（+`l2-darkmode-thin`/`inverted*`）、背景 `--dsw-alias-bg-*` 与 `--dsw-alias-interactive-bg-*`、状态 `--dsw-alias-state-*`、阴影 `--dsw-shadow-lv1..lv3`、具体值 `--dsw-specific-*`。禁止凭印象引用主题不存在的 token——`var()` 对未定义变量会静默回退 initial，边框/背景直接隐形（2026-08 教训：`border-subtle`/`border-default`/`text-*`/`fill-tertiary`/`surface-primary` 曾整批不存在，时间线全部发丝线与 loading 点从未渲染过）。Team 自有变量只允许派生值（见头像色相）。
-3. **聊天密度优先于 assistant 排版密度**：正文统一 14px 档；markdown 原语自带的标题/列表间距在本包内收紧。
-4. **渐进披露**：默认状态安静（细边框、无底色），hover/focus 才提升反馈；次要信息用 tertiary 文字色。
-5. **durable mutation 不做乐观更新**：提交失败保留输入并以 Host 报错为准；成功后从 Host 投影刷新（`mergeChannelView` 合并而非整体替换）。
-6. **键盘与读屏基线不妥协**：所有自定义复合控件都有 role、aria 状态和完整键盘路径。
+## Design principles
 
-## 布局骨架
+1. Reuse Harness public primitives from `@deepseek-ai/dsh-client-ui-primitives`: `MarkdownText`, `MessageText`, `Button`, `Pill`, `Modal`, `Tooltip`, `Input`, `StateDot`, icons, and the dismissal/max-height hooks. Team does not reimplement them; the composer textarea is the single-line `Input` exception.
+2. Use only aliases actually defined by `@deepseek-ai/dsh-client-ui-theme`: `--dsw-alias-label-*`, border, background, interactive, state, shadow, and specific tokens. Team variables may only be derived values such as avatar hue. Undefined `var()` values silently fall back to `initial`, so never guess token names.
+3. Prefer chat density over assistant-document density: body text is the 14px scale and Markdown spacing is tightened locally.
+4. Use progressive disclosure: quiet borders and no fill by default; hover/focus elevate feedback; secondary information uses tertiary color.
+5. Durable mutations are not optimistic. Preserve input on failure and render the next Host projection, using `mergeChannelView` rather than replacing the whole view.
+6. Every custom composite control has roles, ARIA state, and a complete keyboard path.
 
-- 对话面（channel/thread）：`display:grid; grid-template-rows: auto 1fr auto`——header / 可滚动时间线 / composer 三段，`height:100%`，内部滚动 `overscroll-behavior: contain`。
-- 内容列 `max-width: 880px` 居中；时间线左右 padding `clamp(18px, 3vw, 36px)`。
-- 断点 `@media (max-width: 600px)` 收紧 padding、header 纵排；验收必须覆盖 390×844 无横向溢出。
-- 侧栏由宿主 `sidebar` slot 决定宽窄（wide/rail 二态）；rail 模式下 Team 只渲染图标按钮列。
-- Team 的 mode、Workspace 以及最后选中的 Channel/Thread 写入浏览器缓存；切回 Team 或刷新后恢复最后位置。未读和 Attention 不写入浏览器缓存。
-- 欢迎态是独立居中 surface（eyebrow + h1 + 引导文案），不进入三段骨架。
-- Thread 是导航终点；Task 只在存在时叠加为 header/card。taskful Thread 的头部将 `Task #N` 与状态 Pill 放在同一行（`.titleLine`），任务标题为副行；Claims 用公共 `DisclosureRow` 折叠为一行摘要，展开才渲染 Claim 列表；header 动作区只在 open 任务出现（验收/关闭），accepted 任务保留 header 重新打开主按钮。taskless Thread 显示 Thread 标题与唯一的「转为任务」动作，不显示状态、Claims 或 Task resolution controls。
-- 关闭任务是终态：composer 槽位换成解释性提示条（`.closedBar/.closedNotice`，文案 + 唯一的重新打开动作），不再渲染禁用的输入框。taskless Thread 保持普通 reply composer。
-- 频道页与 Thread 页对称：频道页有返回行（`backToChannels` 清除 `channelRef` 回到频道列表）；时间线空/加载态在自由空间内居中（`.emptySurface` + `margin:auto`）。
-- 侧栏两个面板（Agents/Channels）都订阅 `{kind:'workspace'}` 变更；共享的 `TeamChangeStream` 按 scope 复用一条长轮询，订阅方的首次探针静默采样版本（不唤醒），唤醒只来自停泊轮询的后续解析——这是既定契约（见 `team-changes.client.spec.ts`）。
-- 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。Channel composer 的「作为任务」是默认关闭的原生 pressed control：Harness Button 原子不渲染按压视觉，选中态由本包 CSS 补 primary 底色，hover 不改变按压底色；新发送显式携带 taskless 意图，选中时才原子创建 Task。`committed` 与确定性拒绝（如 `member_not_following`）后换新 id；`confirmation_required` 保留同 id 续发同一操作；传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。成功发送后「作为任务」复位为关闭。
+## Layout skeleton
 
-## 排版体系
+Channel and Thread surfaces use `display:grid; grid-template-rows: auto 1fr auto` for header, scrollable timeline, and composer at `height:100%`, with contained inner scrolling. The content column is centered at `max-width: 880px`; timeline padding is `clamp(18px, 3vw, 36px)`. At `max-width: 600px`, padding tightens and the header stacks; acceptance covers 390×844 without horizontal overflow. The host sidebar controls wide/rail widths; rail renders Team icon buttons.
 
-| 元素 | 规格 |
+Browser storage retains Team mode, Workspace, and the last Channel/Thread location, but never unread or Attention. Welcome is a separate centered surface. Thread is the navigation endpoint; an existing Task is a header/card overlay. Taskless Threads show a localized Thread/讨论 label and a promote action, not fake status or Claims. Closed Tasks replace the composer with an explanatory notice and reopen action; taskless Threads retain the normal reply composer.
+
+Channel and Thread pages are symmetric. Both subscribe to workspace changes through the shared abortable `TeamChangeStream`; its first probe is silent and later parked-poll changes wake subscribers. Channel top-level and Thread replies are idempotent by request ID. The Channel 「作为任务」 control is a default-off native pressed control, sends explicit taskless intent unless selected, and resets off after success.
+
+## Typography and identity
+
+| Element | Specification |
 | --- | --- |
-| 页头 h1 | 20px/28px, weight 600 |
-| 发送者名 | 13px/20px, weight 600, primary；右侧同行跟随时间元信息 |
-| 消息时间 | 11px/20px, tertiary；当天 HH:mm，同年 MM-DD HH:mm，跨年完整日期（`formatMessageTime`，本地时区） |
-| Human 正文 | 14px/22px（`.messageText` 容器统一 pre-wrap/break-word；无 mention 时直接渲染 `MessageText` 原语） |
-| Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）。标题用聊天刻度（h1 17px、h2 16px、h3–h6 15px，margin 12px 0 4px），页面 h1 保持最高层级；段落/列表 margin 6px、`li + li` 间距 2px、strong 600；pre 8px 外边距 + 10px 12px 内边距、13px；表格 cell 纵向 padding 5px |
-| 任务/活动行 | 11–12px, tertiary, 活动行居中 |
-| 空/加载态 | 13px tertiary；加载点 8px 脉冲动画（reduced-motion 下关闭） |
+| Page h1 | 20px/28px, weight 600 |
+| Sender | 13px/20px, weight 600, primary; time metadata follows on the same line |
+| Message time | 11px/20px, tertiary; local HH:mm today, MM-DD HH:mm this year, full date across years |
+| Human body | 14px/22px, pre-wrap and break-word |
+| Agent body | Markdown on the same 14px/22px grid; compact heading sizes and list/pre/table margins |
+| Task/activity | 11–12px tertiary, centered activity rows |
+| Empty/loading | 13px tertiary; 8px pulsing dots, disabled for reduced motion |
 
-消息时间来自 Host 投影：`AgentTeamMessage.occurredAt` 与包裹它的 ledger 操作同源（旧账本在回放时归一化）。分组 run 只在 run 头部渲染名字与时间；run 内被折叠的消息若与上一条间隔 ≥5 分钟（`team-separators.ts` 的 `RUN_GAP_MINUTES`，`isRunGap` 单一权威判断），由回合分隔线补回它的时刻（见下）。
+Message time comes from Host projection and shares the ledger operation instant. Consecutive same-sender messages form a run; an interval of at least five minutes gets a `TeamRunDivider`. A day boundary gets a centered date anchor. `team-separators.ts` is the single authority for both decisions.
 
-## 颜色与身份
+Agent avatar hue is a stable hash of `memberId`; Human uses `--dsw-alias-state-business-primary`. Presence maps available/working/error/unavailable to the shared state-dot language. Errors use `--dsw-alias-state-error-primary` and `role="alert"`.
 
-- **Agent 头像**：按 `memberId` 字符串哈希出稳定色相（`hash*31+charCode mod 360`），`hsl(var(--team-avatar-hue) 42% 46%)` 底 + 白色首字母；同一成员跨页面、跨会话颜色不变。侧栏 Agent 行复用同一身份语言（24px 缩版），presence 指示叠在头像右下角，描边环取 `--dsw-specific-sidebar-fill` 与侧栏底色同色。
-- **Human 头像**：`--dsw-alias-state-business-primary` 强调底色，与所有 Agent 区分；DOM 上以 `[data-human]` 标记。
-- **presence 圆点**：available=done 绿、working=ongoing、error 红、unavailable 用灰色叉点（`TeamPresenceDot` 的 `presenceDotState` 映射，头像角标与独立圆点共用）。
-- 错误一律 `--dsw-alias-state-error-primary` 并配 `role="alert"`。
+## Component contracts
 
-## 组件合同
+### TeamMessage
 
-### TeamMessage（消息行）
+Props include sender identity, body, optional time, mention handles, sender title, grouping, and children. Only adjacent same-sender Message rows group; Activity rows break runs. Grouped rows hide avatar/name while preserving grid alignment. The initial of the sender name (without `@`) is shown.
 
-- Props：`senderName`、`memberId`、`human`、`body`、可选 `occurredAt`（名字行时间元信息）、可选 `mentionHandles`（Human 正文中的 mention chip 集合）、可选 `senderTitle`（悬停显示成员描述）、`grouped`、`children`（渲染进 messageBody 尾部，承载任务卡等扩展）。
-- 分组规则：相邻两条同为消息且 sender 相同才折叠；活动行会打断 run。折叠行隐藏头像与名字（`visibility:hidden` 保持栅格对齐），padding 收紧为 `2px`。
-- 头像首字母取 senderName 去掉 `@` 后首个字符大写。
-- 超长正文折叠：display 字符数超过 `MESSAGE_COLLAPSE_CHARS`（`team-formatters.ts` 单一权威，600）的正文默认收进限高预览（约 8 行 / 176px，底部 alpha 渐隐遮罩，不涂主题底色），预览下方「展开全文」安静文本钮展开，展开后同位置「收起」收回（`aria-expanded` 翻转）。按钮独占一行，反馈是文字级的（变色 + 下划线，无底色框）；markdown 根节点的 `font: inherit` 重置选择器按后代匹配（`.messageBody .messageMarkdown > div:first-child`），夹具容器不得隔断它，否则预览字号会大于展开态。夹具容器对可折叠正文**常驻**、展开/收起只切换类名——不能出现/消失式包裹，那会重挂载 Markdown 子树并丢掉渲染后注入的 ref 链接与 mention chip。是否折叠只由正文本身决定——确定性默认，无需持久化，也不构成 Host 事实；夹具只包正文分支，run 分组、附件条、兜底 chip 行与 children 都在夹具外照常渲染，预览内 ref/mention 照常可点。
+Bodies over the 600-character formatter threshold use a persistent wrapper with an approximately eight-line/176px preview and quiet “expand/collapse” button carrying `aria-expanded`. Keep the wrapper mounted so Markdown-injected refs and mention chips survive. Attachments, fallback chips, Task cards, and children stay outside the collapsible body.
 
-### 消息块（messageRun）
+### Message runs
 
-- 一个 run = 一次发言：同一 sender 连续的消息 + 其 Task 入口卡包进一个 `.messageRun` 块；活动行与未读边界打断 run。
-- 日界同样打断 run：跨天的相邻消息之间插入居中的日期锚（`.daySeparator`，`MM-DD`，跨年用完整 `YYYY-MM-DD`，与消息时间的数字风格一致）。活动没有自己的时钟 instant，继承前一条消息的日界、不触发锚；时间线的第一条消息不带头部锚。分块逻辑统一在 `team-separators.ts` 的 `chunkRunsWithDays`（单一权威实现）。
-- 块内分界：折叠行若自带 Task 入口卡（`.messageRow[data-grouped]` 且 `:has(.messageBody > button:not([data-message-expand]))`，长文折叠的展开/收起钮不算入口），上方画一条 border-l2 发丝线并稍增间距；普通文字接续不加线，避免整块被切碎。
-- 回合分隔线（`TeamRunDivider`）：同一 sender 的相邻消息间隔 ≥5 分钟即视为两次独立发言（agent 长发布常间隔小时级，纯折叠会抹掉层次与时刻），run 保持一块，但两者之间渲染全宽 border-l2 发丝线 + 线下首行标注后一条消息的时间（`formatMessageTime` 同款格式，`role="separator"`，缩进对齐正文列 38px=头像 28+间距 10）；该线替代其后折叠行自带的任务卡发丝线（相邻选择器覆盖），不叠双线。频道页与 Thread 页共用同一判断与组件。
-- run 是纯分组块，无 hover 边框/底色/阴影、无常驻边框——回合分隔线、日界锚与未读线承担全部消息边界感，run 自身只保留块间 2px 垂直空隙（`margin: 2px` + `padding: 3px`），不给内容"加笼子"。
+A run groups consecutive same-sender Messages and its Task entry card. Activity and unread boundaries break runs. A Task entry in a grouped row gets a hairline; ordinary continuation does not. Runs have no hover box, fill, shadow, or permanent border—only two-pixel spacing. Five-minute dividers and day anchors carry time context.
 
-### Mention 与 Task ref 强调
+### Mentions and Task refs
 
-- mention chip 渲染：Human 字面正文在字面分段时挂 chip，Agent plain-prose 正文复用同一条 `splitMentionNames` 分段，Agent 富 Markdown 正文则在公共 `MarkdownText` 渲染完成后于普通文字节点原位替换出 chip。三种路径都只挂结构化 `mentions` 允许列表内的 handle（大小写不敏感、可选 `@`），且 effect 重跑不会对已生成的 chip 再包层；正文未出现的名字才落到尾部兜底 chip 行，不与内联 chip 重复。
-- 已知的 branded Task ref（`task:*`）通过 Host 的 `resolveTaskRefs` 批量解析，在 Human 字面文本、Agent plain-prose 和 Agent 富 Markdown 的原出现位置渲染为可点击的 `Task #N`；不再在富 Markdown 正文下方重复补入口。富 Markdown 在公共 `MarkdownText` 完成渲染后替换普通文字节点和"整段恰好是一个 ref"的行内代码（模型把 ref 当标识符加反引号样式是常态）；代码围栏、缩进代码、混合内容的行内代码和已有链接保留原文。模型输出的双冒号/大写拼写（如 `task::…`）在 `splitBrandedRefs` 解析口统一归一化为 ledger 铸造的单冒号小写 ref 后再解析与导航。
-- 点击当前视图未加载的 Task ref 时，Client 解析其所属 Workspace、Channel 和 Thread 后跨频道跳转；解析失败的 ref 保留为非导航原文。已解析链接用原始 ref 作为 tooltip。Task number（如 `Task #12`）是 Task 在其 home Channel 内的创建序号，Host 侧单一派生（`taskNumbers`），频道任务卡、Thread 标题、跨频道 ref 解析与 Agent inbox 标注共用同一口径；序号跨频道不唯一，稳定导航身份始终是 branded Task ref。
+Structured mention chips are rendered only for handles allowed by `mentions`, case-insensitively and with optional `@`. Human literal, Agent plain prose, and rich Markdown use their corresponding segmentation path; absent names become a trailing fallback row without duplication.
 
-### 时间线滚动（timeline-scroll）
+Known branded `task:*` refs are resolved in batches and rendered at their original position as clickable `Task #N` in Human, plain Agent, and rich Markdown text. Code fences, indented code, mixed inline code, and existing links stay literal. Normalize malformed double-colon or uppercase spellings before resolution. Resolved refs can navigate across Workspace, Channel, and Thread; failed refs remain plain text. Task numbers are home-Channel creation ordinals, while branded refs remain stable identity.
 
-- 策略：读者停留在底部（距底 <48px 视为 pinned）时跟随新内容；不在底部时不打扰。
-- 确认合同：pinned 读者的被动到达直接做持久 `readThread` 确认（消息已在其眼前渲染，不再弹"新更新"提示）；非 pinned 时才计入显式的"读取 N 条新更新"。确认读取失败或被更新一次读取取代时回退到显式提示。
-- 前插更早历史时按 scrollHeight 差值补偿 scrollTop，视口内容不跳动。
-- 显式跳转：未读分界线跳转查询 `[data-thread-boundary]` 并留 12px 余量；"标记为已读"/"继续阅读" 分别触发 latest/boundary 跳转。
-- contentKey 必须随渲染事实变化（当前用 `长度:末位factKey` 组合串）。
+## Timeline scrolling
 
-### Composer 与 @mention
+When the reader is within 48px of the bottom, follow new content and persist a `readThread` confirmation because it is visible. Away from the bottom, expose “read N new updates”. Compensate `scrollTop` by the `scrollHeight` delta when prepending history. Explicit boundary/latest actions scroll to their target with 12px clearance. Rendering keys change with facts; a current length plus last fact key is used.
 
-- textarea 自增高（上限 180px），Channel / Thread composer 出现时自动聚焦且不滚动时间线；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。发送期间输入框保持聚焦但只读，避免重复提交；发送按钮点击不抢走焦点，发送完成后可直接继续输入。未关注成员的首次发送返回确认提醒时，保留草稿与收件人，输入框自动恢复焦点，第二次 Enter 可直接确认发送。composer 卡片沿用 DSH 默认静态边框，不因 `focus-within` 改色。
-- mention 弹层向上展开，`role="listbox"`，textarea 以 `aria-controls/aria-activedescendant/aria-expanded` 关联；↑↓ 循环、Tab/Enter 接受候选、Escape 关闭；外点关闭复用 `useDismissOnOutsidePointer`；高度钳制复用 `useAnchoredMaxHeight`（cap 320px）。
-- 接受候选后光标落点精确到插入文本之后；删除提及文本会同步收缩 recipients。
-- 收件人显式化：recipients 非空时草稿与工具栏之间渲染 quiet 提示行（`.notifyRow`，`composerNotify` 文案 + `{ids}` 句柄列表），发送前即可看到"将通知谁"；空集合不占位。
-- 草稿缓存：draft/recipients 不在页面局部，而是按 `channel:<channelRef>` / `thread:<threadRef>` 键存入每 Client 上下文一份的 `TeamDraftStore`（`drafts.ts`，单一 localStorage 键 `dsh.agent-team.drafts.v1`，写穿持久化、按 savedAt 淘汰最旧 ~50 条）。切换视图或刷新后草稿与收件人原样恢复；发送提交成功即清除对应键，失败保留；Composer 挂载收敛会剔除不再匹配文本/已失效的收件人。Channel 的「作为任务」意图不进入草稿缓存：默认关闭，成功提交后再次复位关闭。
-- taskless Thread 的「转为任务」是 Human-only durable mutation，不做乐观 overlay。成功后重新读取 Thread 与补充 Channel/Member 投影；unread/stale fence 时保留 Host 返回错误并重新读取相关事实。
+## Composer and mentions
 
-### Thread / Task 入口卡（channel 时间线内）
+The textarea grows to 180px, autofocuses without moving the timeline, sends on Enter, and inserts a newline on Shift+Enter. IME composition suppresses send. During submit it stays focused and read-only; buttons do not steal focus. Confirmation for an unfollowed recipient preserves draft and focus for the second Enter.
 
-- 语义：每个 top-level 频道消息进入其 Thread 的唯一入口。taskful Thread 展示 `Task #N`、任务状态与消息计数；taskless Thread 展示本地化的 Thread/讨论 label 与消息计数。二者均点击 `selectThread`，不把 Task 作为独立导航层。`Task #N` 是 home Channel 内 durable Task creation 的展示编号，不是稳定身份；跨视图导航使用 branded Task ref。
-- 形态合同：taskful 卡为 fit-content 紧凑胶囊（细边框 quiet 默认态），内容 `状态点` · `Task #N`(600) · 状态 · 计数 · chevron 图标；taskless 卡保留本地化 Thread/讨论 label · 计数 · chevron，但没有虚构的状态点或 Task status。箭头位置由内容流构造保证一致，不使用全宽拉伸。状态点用 `taskStatusDot` 映射，五个状态全有点、8px 固定座位保证各卡同轴：in_progress=ongoing 蓝圈、in_review=warning 琥珀、done=done 绿（复用 DSH `StateDot`，与 presence 同语言）；todo=空心圆环（未开始的空位）、closed=tertiary 灰实心点带 10% 光晕（镜像 StateDot 几何的 `.taskDotQuiet`）。hover/focus 渐进反馈：底色与边框提升、箭头右移 2px（120ms 过渡，reduced-motion 下关闭）；focus-visible 用主题色 outline。状态与计数用 tertiary 弱化，`aria-label` 依卡型采用 `openTask` 或 `openThread` 文案。
+The mention popup is an upward `role="listbox"` associated through `aria-controls`, `aria-activedescendant`, and `aria-expanded`; arrows cycle, Tab/Enter accept, Escape closes, and outside dismissal/max height use public hooks. Accepted text places the caret precisely; deleting mention text shrinks recipients. A quiet recipient notice shows who will be notified. Drafts and recipients are stored per Channel/Thread in the bounded `TeamDraftStore`; successful sends clear them and failures preserve them. The 「作为任务」 intent is not persisted and resets off after success.
 
-### 状态胶囊与弹层
+Taskless Thread promotion is Human-only, durable, and non-optimistic. On success reread Thread and supplemental Channel/Member projections; on unread/stale fence errors preserve Host error and reread relevant facts.
 
-- Thread 状态用公共 `Pill`（与 `Task #N` 同行）；频道成员数与在线数等元信息用 `.headerMeta` 行内分隔（`memberCount` + `onlineCount`，error/unavailable 不计为在线）。
-- Claims 折叠用公共 `DisclosureRow`（`expandOnRowClick`，标题 `Claims · N`），键盘闭环由原语保证；Claim 行缩进对齐标题文字。
-- 所有弹层走公共 `Modal`：打开时焦点入内容区，关闭后焦点回到触发按钮（`queueMicrotask` 延迟聚焦模式）。
+## Thread/Task entry cards
 
-### 侧栏工作区浏览器
+Every top-level Channel Message has one Thread entry. Taskful cards show `Task #N`, status, and message count; taskless cards show localized Thread/讨论, count, and chevron. Both select the Thread, never treating Task as a navigation level. Task cards use compact fit-content capsules and all five status dots; taskless cards have no invented status dot. `aria-label` follows card type (`openTask` or `openThread`).
 
-- 骨架：工作区列表与「频道」「Agents」两个常驻分区共用同款原生 button 折叠头（`TeamSidebarSection`，`aria-expanded`，默认展开、状态不持久化）；「频道」「Agents」同处一个滚动容器，分区头右侧只放新增按钮。刻意保持安静：折叠头无 hover 底色，仅 chevron 变色反馈；不展示分区计数。
-- 行形态：频道行保留 `#` 标识；Agent 行复用头像语言并叠加 presence 角标。行内元数据（成员计数、presence 文字）已移除，保持列表简洁。
-- 定位高亮单一化（对齐宿主会话树「父静叶亮」的惯例）：任一时刻侧栏只有一行携带 `aria-current='page'` 与 hover 底色——打开频道/Thread 时是频道行，成员会话视图打开时是被选 Agent 卡片（`.agentSelect[aria-current='page']`），否则是所选工作区的概览行；被浏览的工作区行其余时候保持安静，仅以 `data-selected` 让文件夹图标换成 open 形态并着 business 色（镜像宿主 `folderActive`），不再与叶子行同时点亮。
-- 行级 ⋯ 菜单：`TeamRowMenu` 复用公共 `Menu`（`portal` + `closeOnPointerLeave`，锚为裸 ellipsis 图标按钮），hover / focus-within / 菜单开启三种状态可见；菜单开启时该行钉住 hover 底色（`data-menu-open`）。菜单含「编辑」入口，打开对应编辑器；error 态成员额外出现「恢复」项，走 `recoverMember` Remote（Host 向该成员活跃会话 steer 续作 prompt，运行时动作、不落 ledger）。
-- 频道编辑器（`编辑频道`）：名称/说明输入框 + 成员增删字段集。保存钮无改动即禁用（dirty 门），提交走 `updateChannel` Remote（幂等 request 同载荷复用），成功后由投影刷新回填行文案——不做乐观行内改名；成员增删仍走既有 join/remove Remote（request 按 方向+成员+频道 键复用）。
-- Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择 + 成员字段集。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员原地更新 live model selection，保持 Agent 与 Session 身份不变，后续请求使用新选择；纯展示编辑不重启。
-- Agent 卡片会话视图：Agent 行的头像与文案整体是选择按钮（`打开 {name} 的会话`），点击不再退出 Team 模式——导航快照保留当前 Channel/Thread，并叠加运行时字段 `memberSessionId`（附 `returnToSessionId`，均不持久化），再调用 `sessions.open(memberSessionId)`；`conversation` 影子此时让位，由 shipped 会话根在 Team 侧栏之间渲染该成员会话。任何显式 Team 导航（选工作区/频道/Thread）都会关闭成员视图并恢复该 Team 位置；页脚「对话」关闭成员视图、还原 `returnToSessionId` 后离开 Team，普通外壳不会停在成员会话里。
-- 窄屏 rail 保留两个图标按钮，点击请求展开侧栏并聚焦对应分区头部。
+## Sidebar browser
 
-## 数据刷新语义
+Workspace list and persistent Channels/Agents sections use native button headers with `aria-expanded`, default expanded and not persisted. Rows remain quiet: Channels keep `#`; Agent rows use avatars and presence. Only the active leaf row has `aria-current="page"`; a selected Workspace row changes its folder icon without competing highlight. Row ellipsis menus use public `Menu`, are visible on hover/focus/menu-open, and pin the row background while open.
 
-- channel 视图：change 事件触发 `refresh()` 时按 `messageRef` 去重合并新窗口与已加载历史（`mergeChannelView`），cursor 取更旧者，`hasMore = fresh.hasMore || current.cursor < fresh.cursor`。
-- thread 视图：被动事实合并进 currentFacts 并累计 `newFactsCount`；显式读取动作（标记已读/继续阅读）才推进 durable read pointer。
-- `loadOlder` 有并发保护（loadingOlder 状态禁用按钮）。
+Channel and Agent editors use public Remote mutations and Host projections rather than optimistic inline edits. Agent model selection uses the public menu and Host model directory; changing an active model preserves Member and Session identity. Selecting an Agent opens its embedded Session without leaving Team mode; explicit Team navigation closes that overlay. On narrow rail, the two icon buttons expand the sidebar and focus their section header.
 
-## 文案与本地化
+## Data refresh semantics
 
-- 全部用户可见文案经 locale key（`locales.ts` zh/en 同构，key 类型取自 zh）。禁止在组件里拼接英文句子。
-- 参数化 key 的约定：`{count}` 数量、`{ids}` 成员句柄列表、`{kind}` 内部种类、`{number}` 任务号、`{actor}`/`{direction}` 活动主体。
-- 错误信息展示原始 Host message（如 transport 错误），包装句用 locale key。
+Channel refreshes deduplicate by `messageRef`, merge new and loaded history through `mergeChannelView`, retain the older cursor, and combine `hasMore`. Thread passive changes merge into current facts and increment `newFactsCount`; only explicit read actions advance the durable pointer. `loadOlder` has concurrency protection.
 
-## 可访问性基线
+## Copy and localization
 
-- 侧栏分区折叠头是原生 button（`aria-expanded`），键盘 Enter/Space 由原生行为保证。
-- 长消息的「展开全文/收起」是原生 button 并携带 `aria-expanded`，键盘 Enter/Space 原生可达。
-- 行内 ⋯ 菜单按钮带 `aria-label`（`{name} 的操作`）与 `aria-expanded/haspopup`；菜单项由公共 `Menu` 提供完整键盘与外点关闭路径。
-- listbox/option 完整键盘闭环（见 composer 一节）；Channel composer 的「作为任务」使用原生 button 的 `aria-pressed`，Space/Enter 均可切换。
-- 图标按钮均有 aria-label；装饰元素 `aria-hidden`。
-- 消息时间线区域使用专用 `timelineLabel`（"消息时间线"），不误用频道/参与者标签；Thread 内部事实分组段不带重复的区域标签。
-- 未读分界线 `role="separator"` 且携带 `[data-thread-boundary]` 供滚动定位；run 内回合分隔线同样 `role="separator"`，可访问名称即其标注的时刻。
-- 新增可见 UI 必须通过 `npm run test:browser` 的桌面 1440×960、窄屏 390×844 和键盘检查（见 `development.md`）。
+All visible copy comes from structurally matching zh/en locale keys, whose types derive from zh. Parameter conventions are `{count}`, `{ids}`, `{kind}`, `{number}`, `{actor}`, and `{direction}`. Show raw Host error messages where useful, wrapped by locale-key copy.
 
-## 验证与演进流程
+## Accessibility baseline
 
-- 影响可见 UI、Client bundle、slot 或 Remote activation 的改动：`npm run typecheck && npm test && npm run lint && npm run build && npm run test:browser`。Thread-first 变更的 browser 验收还须覆盖默认 taskless 发送、default-off 「作为任务」键盘切换、promotion 后 Host reread、taskless header/Claim gating，以及桌面与 390×844。
-- 截图写入 Git 忽略的 `artifacts/browser/`，仅供本次审查；少量能说明验收结论的代表图复制进 `.scratch/archive/YYYY-MM/<work>/validation/` 并附 README 说明。
-- 本文档描述的行为变化必须在同一次改动中同步更新；历史设计来由归档到 `.scratch/archive/`，正式文档只链接不转述。
+Section headers, expand/collapse buttons, menus, listbox/options, and the 「作为任务」 control use native keyboard behavior and complete ARIA state. Every icon button has an accessible label; decoration is hidden. Timeline uses a dedicated message-timeline label. Unread and run dividers have `role="separator"`; visible UI changes require desktop 1440×960, 390×844, and keyboard browser checks.
+
+## Verification and evolution
+
+Visible UI, Client bundle, slot, or Remote activation changes require:
+
+```sh
+npm run typecheck && npm test && npm run lint && npm run build && npm run test:browser
+```
+
+Thread-first changes additionally cover default taskless sends, default-off keyboard toggle, promotion Host reread, taskless gating, desktop, and 390×844. Routine screenshots stay in ignored `artifacts/browser/`; only a few acceptance images with a README belong in the archive. Behavior changes update this document in the same change; historical rationale belongs in `.scratch/archive/`.

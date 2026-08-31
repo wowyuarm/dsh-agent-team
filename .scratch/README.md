@@ -21,4 +21,4 @@
 
 UI 改动需要真实浏览器自检时，`npm run test:browser` 会把本次截图写入 `artifacts/browser/`。它们用于审查本次改动，不是自动视觉回归基线，也不会改动 Git 工作区。只有人工确认能说明已完成工作项验收结论的少量代表图，才复制进对应归档的 `archive/YYYY-MM/validation/`；每张图都必须在同目录 README 中说明证明的验收点和复跑命令。一个浏览器 journey 跨多个 UI ticket 时，可以像本仓库一样集中保存。
 
-详细 UI 改动检查和证据选择规则见 [`../docs/development.md`](../docs/development.md)。
+详细 UI 改动检查和证据选择规则见 [`../docs/development.zh.md`](../docs/development.zh.md)。

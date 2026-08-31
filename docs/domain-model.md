@@ -1,93 +1,95 @@
-# dsh-agent-team 领域词汇
+# dsh-agent-team Domain Vocabulary
+
+English | [中文](domain-model.zh.md)
 
 ## Agent Team
 
-一个 dshHome 内唯一的共享协作域。Agent Team 保存跨成员的协作事实，不共享成员的模型上下文、session transcript 或私有记忆。
+The single shared collaboration domain in one DSH home. It stores cross-member collaboration facts, not model context, session transcripts, or private memory.
 
 ## Member
 
-Agent Team 中可被授权读取、发言、认领和接收 Inbox 提示的稳定身份。Member 由不可变的 member ref 标识，并绑定一个 workspace。首版包含 Human Member 和 Agent Member。
+A stable identity authorized to read, speak, claim work, and receive Inbox hints. A Member is identified by an immutable branded ref and bound to a Workspace. The first release has Human and Agent Members.
 
 ## Human Member
 
-当前 Harness 用户对应的特殊 Member。Human Member 参与消息、claim 和 activity，并拥有 channel、成员、验收及 task 终态的管理权限。
+The special Member corresponding to the current Harness user. It participates in Messages, Claims, and Activities and can manage Channels, Members, acceptance, and Task terminal state.
 
 ## Agent Member
 
-由 Agent Team 创建和管理的 Member。一个 Agent Member 绑定一个 dsh session、一个显式 team-enabled preset 和一个 workspace；普通 session 与 fork 不自动获得成员身份。
+A Member created and managed by Team. It is bound to one DSH Session, explicit team-enabled preset, and Workspace; ordinary Sessions and forks do not gain membership automatically.
 
 ## Workspace
 
-一个项目及其共享工作目录。Agent Member 的 session cwd 是其 Workspace 的项目目录；成员私有记忆不存放在项目根目录。
+A project and shared working directory. An Agent Member's Session cwd is the Workspace project directory; private memory lives outside the project root.
 
 ## Channel
 
-Workspace 内的持久协作场所。Agent Member 必须显式加入 Channel 才能读取、发言、认领或 follow；Human Member 可以管理和查看 Workspace 内全部 Channel。
+A persistent collaboration place in a Workspace. An Agent must explicitly join to read, speak, claim, or follow; Human Members can manage and view every Workspace Channel.
 
 ## Message
 
-Member 在 Channel 或已有 Thread 中显式发出的不可变内容。每条 Channel 顶层 Message 原子创建一个 Thread；新 Client/tool 默认创建 taskless Thread，显式选择「作为任务」才在同一次提交中附加真实 Task。Thread Message 只延续已有 Thread。
+Immutable content explicitly sent in a Channel or existing Thread. Every top-level Channel Message atomically creates a Thread; new Clients/tools default to a taskless Thread, while explicit 「作为任务」 creates a real Task in the same commit. A reply continues an existing Thread.
 
 ## Task
 
-附着在既有 Thread 上的可选 work-tracking overlay，而不是 Thread 存在的前提。它可由顶层 Message 的显式「作为任务」意图原子创建，或由 Human promotion 原子附加；promotion 同时追加一条公开说明 Message。Task 的工作状态从 Claims 派生，Human acceptance 与 closed 是显式覆盖事实：常规验收要求全部 Claim 完成（in_review）；Human 也可在 in_progress 时提前验收，accept 操作随之把当时仍 active 的 Claims 投影为 done 并在 activity 记录 `completedClaimRefs`（owner 各自收到通知），不伪造 owner 的 claim-done 事件。面向 Human 的 `Task #N` 是 Task 在 home Channel 内的 durable 创建序号：taskful 顶层发送和后续 promotion 均参与排序，taskless anchor 最初在时间线的位置不参与；既有 ledger 的编号保持不变。它不是稳定身份；跨频道导航和持久引用必须使用 branded `taskRef`。
+An optional work-tracking overlay attached to an existing Thread, not a prerequisite for a Thread. It can be created by explicit top-level task intent or added by Human promotion. Promotion also appends a public explanation Message. Task status is derived from Claims; Human acceptance and close are explicit facts. Human-facing `Task #N` is the durable Task creation ordinal within its home Channel: taskful starts and promotions participate, while a taskless anchor's original position does not. It is not identity; stable cross-channel references use branded `taskRef`.
 
 ## Thread
 
-Channel 内独立的单层公开协作 aggregate：它总有 `threadRef`、anchor Message 和 revision，但可不带 Task。Thread revision 随公开 Message 递增；Taskful Thread 的 Claim 变化和 Task resolution 也递增。对既有 Thread 的公开写入必须携带该 Thread 的当前 revision。taskless Thread 仍支持 reply、follow、structured mention、Inbox、read 与 history，但没有 Claims、Task status 或 accept/close/reopen。协作读写优先以 `threadRef` 定位；released task-only Client 可以用 `taskRef` 作为仅限 taskful Thread 的 Host compatibility alias，而 Task/Claim 操作仍以 `taskRef` 为身份。revision 是内部并发令牌：仅供工具 baseRevision 透传，不作为消息正文的可引用事实。
+An independent, single-level public collaboration aggregate inside a Channel. It always has `threadRef`, an anchor Message, and a revision, but may have no Task. Public Messages increment revision; Taskful Claim and resolution changes do too. Existing-Thread writes require current revision. A taskless Thread still supports replies, follows, structured mentions, Inbox, reads, and history, but has no Claims, Task status, or resolution controls. Collaboration uses `threadRef` first; a released task-only Client may use `taskRef` as a Host compatibility alias only for taskful Threads, while Task/Claim operations use `taskRef` identity. Revision is an internal concurrency token, not citable message content.
 
 ## Claim
 
-Member 对 Task overlay 中某个 Direction 的工作承诺。taskless Thread 没有 Claim。Claim 的状态为 active、done 或 released；同一 Task 中规范化后相同的 Direction 最多有一个 active Claim。多 Claims 是 dsh 对 Raft 单 owner 的有意偏离，不同文本仍可能表达重复工作。
+A Member's commitment to one Direction in a Task overlay. Taskless Threads have no Claims. States are active, done, and released; after normalization, one Task has at most one active Claim for the same Direction. Multiple Claims intentionally allow different text that may describe duplicate work.
 
 ## Direction
 
-Claim 的自由文本工作方向。比较时执行 Unicode 规范化、首尾空白删除、连续空白压缩和大小写折叠；不推断同义词。
+Free-text work direction for a Claim. Comparisons apply Unicode normalization, trim, whitespace compression, and case folding; synonyms are not inferred.
 
 ## Thread Attention
 
-一个 Member 对一个 Thread 的私有、持久关注周期。Attention 记录 follow 状态、开始位置和连续 read watermark；它是 Member × Thread 的个人状态，不进入公开 Thread revision，也不因 read/follow 产生其他成员的 Agent Inbox 工作。创建顶层 Thread、成功 Claim、显式 follow 或 Human 确认邀请可开始 Attention；taskless Thread 可直接 unfollow，taskful Thread 仅在该 Member 没有 active Claim 时可 unfollow；两者都会结束当前周期并放弃该周期的未读，之后重新 follow 从当时 Thread 尾部开始。
+A private persistent attention period for one Member and Thread. It records follow state, start position, and contiguous read watermark and is not public revision. Creating a Thread, a successful Claim, explicit follow, or Human invitation starts Attention. Taskless Threads may be unfollowed directly; taskful Threads require no active Claim. Unfollow ends the period and abandons its unread work; following later starts at the current tail.
 
 ## Thread Inbox
 
-Team ledger 从 Thread Attention 与 direct mention 派生的成员级未读投影。普通 Message、Claim 变化和 Task resolution 变化只对当前 follower 形成 ordinary unread；structured mention 形成 direct unread。`team_inbox` 返回跨 Thread 摘要，`team_thread.read` 原子返回连续未读批次并推进 watermark，`team_thread.history` 只回看历史。Inbox 是 Host 权威，不是 Agent Session queue、浏览器状态或 per-message read 表。Human Web 不提供 Inbox 界面；它从 Channel 直接浏览和打开 Thread。
+Member-level unread projection derived from Thread Attention and direct mentions. Ordinary Messages, Claim changes, and Task resolution changes become ordinary unread for current followers; structured mentions create direct unread. `team_inbox` summarizes across Threads; `team_thread.read` returns one batch and advances the watermark; `history` only looks back. Host owns Inbox; it is not a Session queue, browser state, or per-message read table. Human Web has no Inbox page and opens Threads from Channels.
 
 ## Follow
 
-Follow 是 Thread Attention 的一个操作语义，不是独立的持久对象或旧版 Delivery 订阅。follow 控制普通 Thread 更新是否形成该成员的 Inbox 工作；它不撤销 Channel 可见性。unfollow 在没有 active Claim 时结束当前 Attention 周期。
+An operation on Thread Attention, not an independent subscription object. Follow controls whether ordinary updates create Inbox work and does not revoke Channel visibility.
 
 ## Activity
 
-由 Agent Team 记录的协作状态事实。Claim create/done/release 与 Task accept/close/reopen 是公开、revisioned Thread timeline facts；follow/unfollow 与 read-watermark 是 Attention audit facts，不进入公开协作时间线。Agent runtime error 可作为 Human UI 的当前风险观察，但不是 ledger Thread Activity 或 Agent Inbox 事实。
+A recorded collaboration-state fact. Claim create/done/release, Task accept/close/reopen, and promotion are public revisioned Thread facts; follow/unfollow and read watermarks are private Attention audit facts. Runtime errors may be current Human UI risk but are not ledger Activity or Inbox facts.
 
 ## Inbox Hint
 
-Host 由 durable Thread Inbox 状态派生给 Agent 的安全边界提示。Ticket 01 只实现 durable Inbox projection；Agent runtime wake hint 属于 Ticket 03，尚未实现。提示最多合并为每个 Member 一个无正文 Inbox hint；它不是 Message/Activity 正文投递，也不表示模型已读取、处理、回复或验收。普通更新可唤醒 idle Member，running Member 在安全 next-step 边界收到提示；恢复时从 durable unread 重新派生。
+A safe-boundary hint derived from durable Thread Inbox state. A hint is bounded and may wake an idle Agent or arrive at a running Agent's next safe step; it does not mean the model read, handled, replied to, or accepted anything. Durable Inbox is rediscovered after resume.
 
 ## Operation
 
-Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有全局递增 sequence、稳定 operation id、幂等 request id、actor 和一种业务事实。
+One immutable atomic business commit in the Team ledger. Each operation has global sequence, stable operation ID, idempotent request ID, actor, and one business fact.
 
 ## Revision
 
-特定 Thread 最近一次相关 Operation 的 sequence。Revision 是 optimistic concurrency fence，不是消息数量。
+The sequence of the latest operation relevant to a Thread. It is an optimistic concurrency fence, not a Message count.
 
 ## Ref
 
-跨重启稳定、带对象类型且不可由调用者拼接的标识。Member、Channel、Task、Thread、Message、Claim 和 Operation 使用不同的 branded refs；Attention 由 Member 与 Thread 的组合标识，不暴露为可伪造的调用者对象。
+A restart-stable, typed identifier that callers cannot safely construct by concatenation. Member, Channel, Task, Thread, Message, Claim, and Operation use distinct branded refs. Attention is identified by Member plus Thread.
 
 ## Team DM
 
-未来可能增加的私有 Place 类型，具有独立 participant set、visibility、Message、Thread、Attention 与 Inbox 语义。M2 第一阶段不实现 DM；后续方向是把 Human-visible DM transcript 与 Agent 内部 append-only session 分开持久化，具体 authority 与通知语义待单独设计。
+A possible future private Place with its own participants, visibility, Messages, Threads, Attention, and Inbox. M2 does not implement DM; the authority and notification design remains separate.
 
 ## Runtime Presence
 
-Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 available（live idle）、working（Agent loop running）、error（当前 loop/tool failure，保留到下一次 loop 启动）与 unavailable（无可用 AgentHandle 或 lifecycle/setup/resume 阻止调用）；列表以状态点呈现，和 Claim 状态分离。
+An in-process availability projection, not a ledger fact: available (live idle), working (loop running), error (current loop/tool failure), and unavailable (no usable handle or lifecycle/setup/resume block). It is separate from Claim state.
 
 ## Suspend
 
-临时停止 Agent Member 的 live Agent，同时保留成员身份、session、claims、Thread Attention、未读状态和私有 memory。Resume 恢复同一 session，并由 durable unread 决定是否重新提示 Inbox。
+Temporarily stop a Member's live Agent while retaining identity, Session, Claims, Attention, unread state, and private memory. Resume uses the same Session and durable unread to decide whether to hint Inbox.
 
 ## Remove
 
-不可逆地停用 Agent Member。Remove 释放 active claims、结束 Thread Attention、删除私有 memory、归档 session；历史 Message、Activity 和身份快照永久保留。
+Irreversibly deactivate an Agent Member: release active Claims, end Attention, delete private memory, and archive its Session. Historical Messages, Activities, and identity snapshots remain.

@@ -1,87 +1,61 @@
 # Team Collaboration Protocol
 
-This document defines the implemented collaboration contract shared by the Agent Team Host and model-facing Team tools. The operation ledger is the durable authority. Tool results, Client projections, and Agent Session history do not maintain separate Team state.
+English | [中文](team-collaboration.zh.md)
+
+This document defines the implemented collaboration contract shared by the Agent Team Host and model-facing Team tools. The operation ledger is durable authority; tool results, Client projections, and Agent Session history do not maintain separate Team state.
 
 ## Collaboration model
 
-A top-level Channel Message creates one Thread and its anchor. New model-facing starts create a taskless Thread by default; passing the explicit task intent creates a Task overlay in the same atomic operation, while omission remains taskful for released Clients. A Human may promote a taskless Thread later: one atomic operation creates the Task overlay and records a structured `promote` Task activity that notifies current followers — promotion writes no prose Message. Replies add immutable Messages to the existing Thread. Public Thread facts are Messages and—only when a Task overlay exists—Claim changes, Human Task resolution changes, and promotion; their global operation sequence determines chronology and the current Thread revision.
+A top-level Channel Message creates one Thread and anchor. New model-facing starts are taskless by default; explicit task intent creates a Task overlay atomically, while an omitted field remains taskful for released Clients. A Human can promote a taskless Thread with one atomic Task activity. Replies append immutable Messages. Public Thread chronology consists of Messages and, only with a Task overlay, Claim changes, Human resolution, and promotion.
 
-An Agent can read and mutate only Channels in its own Workspace where it is a Member. Team tools resolve that Workspace and actor from the live Agent Member. No Team tool accepts a model-supplied Workspace identity.
+Agents may read or mutate only Channels in their own Workspace where they are Members. Tools resolve Workspace and actor from the live Agent Member; no tool accepts a model-supplied Workspace identity.
 
 ## Five-tool protocol
 
-The tools have separate responsibilities:
+- `team_view` discovers bounded authorized Channel, Task, and Member summaries, without a Thread timeline.
+- `team_inbox` lists bounded body-free unread Thread summaries. Direct requests sort before ordinary unread, then by newest relevant sequence; listing does not mark read.
+- `team_thread` owns Attention and reading. `threadRef` is primary; `taskRef` is a compatibility alias for released task-only Clients on taskful Threads. `read` returns one chronological unread batch and advances the watermark; `history` pages older facts; follow/unfollow change personal Attention.
+- `team_message.start` creates a top-level Thread and defaults taskless; explicit task intent atomically creates a Task. `reply` appends to an existing Thread. Both accept absolute attachment paths; Host validates and caches all paths atomically.
+- `team_claim` lists and mutates only the Agent's own Direction Claims on real Tasks. Taskless Threads have no Claim mutation. A Direction is one sentence describing the Agent's angle; plans and acceptance checklists belong in Thread messages. A successful Claim starts Attention.
 
-- `team_view` discovers authorized Channel, Task, and Member summaries. Results are bounded and contain no Thread timeline.
-- `team_inbox` returns bounded, body-free summaries for Threads with unread work. Direct requests sort before ordinary unread work, then by newest relevant sequence. Listing does not change read state.
-- `team_thread` owns personal Attention and Thread reading. `threadRef` is the primary identity; a `taskRef` is only a compatibility alias for released Clients on taskful Threads. `read` atomically returns one chronological unread batch, advances the durable watermark, and reports how many unread facts remain; `history` returns bounded older public facts without changing read state. `follow` and `unfollow` change personal Attention.
-- `team_message.start` creates a top-level Thread; it defaults to taskless and accepts explicit task intent for atomic Task creation. `team_message.reply` appends an explicit reply to an existing Thread. Both accept optional absolute file paths in `attachments`: the Host validates each path, copies the bytes into the attachment cache, and recipients see thumbnails/chips plus one cached path line; if any path fails validation the whole send is rejected.
-- `team_claim` lists Claims and lets an Agent create, complete, or release only its own Direction Claims on a real Task; taskless Threads have no Claim mutation path. A Direction is a one-sentence statement of the angle the Agent is taking so others can spot collisions and track progress; execution plans and acceptance checklists belong in Thread messages. A successful Claim starts Attention automatically.
-
-Every successful or rejected Team tool result returns through the normal model loop. Team tools do not conclude the Agent turn. The Agent decides whether to read, retry, continue project work, send another collaboration update, or finish.
+Successful and rejected tool results return through the normal model loop. Tools do not conclude the Agent turn.
 
 ## Thread Attention and Inbox
 
-Thread Attention is durable private state for one Member and one Thread. It records the start of the current attention period and a contiguous read watermark. Creating a top-level Thread, creating a Claim on a Taskful Thread, explicitly following, or accepting a Human invitation starts Attention.
+Attention is durable private state for one Member and Thread: current period start and contiguous read watermark. Creating a Thread, creating a Task Claim, explicitly following, or accepting a Human invitation starts it. Taskless Threads can be unfollowed directly; taskful Threads require no active Claim. Unfollow ends the period and discards its unread work; a later follow starts at the current tail.
 
-A taskless Thread can be unfollowed directly; a taskful Thread can be unfollowed only when the Agent has no active Claim on its Task overlay. Unfollow ends the current Attention period and discards that period's unread work. A later follow starts at the current Thread tail; abandoned history does not become unread again.
+While active, other Members' Messages—and taskful Claim and Task resolution Activities—become ordinary unread. Structured mentions create durable direct markers. The sender's own mutation is not unread. Promotion creates a `promote` Activity for current followers. Follow/unfollow/read are private and do not advance Thread revision.
 
-While Attention is active, Messages—and on taskful Threads, Claim changes and Task accept/close/reopen activities—from other Members become ordinary unread facts. A structured mention creates a durable direct marker for its recipient. The sender's own mutation does not become unread for the sender. Promotion carries durable Activity markers for current followers: its `promote` activity arrives as a follower unread fact and is rendered by `team_thread.read` like other Task transitions. Follow, unfollow, and read operations are not public Thread facts and do not advance Thread revision.
+The first read returns the anchor, optional Task/Claim snapshot, limited recent background, and bounded unread batch. Background is orientation and already read. `history` is the only older-facts pager.
 
-The first read in an Attention period returns the Thread anchor, its optional current Task and Claim snapshot, limited recent background, and the bounded unread batch. Background facts are orientation only and are marked as already read. `team_thread.history` is the only tool for paging older Thread facts.
-
-The Human Client opens the Channels workspace by default. Human navigation follows Workspace → Channel → Thread; a Task is a card/header overlay on a taskful Thread rather than a navigation level. The Client does not display, enter, or poll a Human Inbox. Opening a Thread performs the durable Human Thread read. A bounded read that leaves unread facts exposes an explicit continue-reading action. The current Thread surface shows public revisioned facts and, only when present, Task status, Claims, and runtime risk; it intentionally does not render follow/unfollow buttons or Human-only follow/unfollow observations. History paging never acknowledges new work. Passive change polling acknowledges an arriving batch only while the reader is pinned to the timeline bottom — the facts are rendering in front of them — and otherwise exposes the explicit read action; updates arriving off-screen always wait for that explicit action.
+Human navigation is Workspace → Channel → Thread; a Task is an overlay, not a navigation level. The Client has no Human Inbox UI. Opening a Thread performs durable Human read, and a bounded result with remaining unread exposes explicit continuation. History does not acknowledge new work. Passive polling acknowledges only when pinned to the bottom; off-screen updates wait for explicit read.
 
 ## Structured mentions
 
-Recipients are selected with Member refs. Text such as `@name` has no mention semantics by itself: only Members passed in the `mentions` parameter render as mention chips, and the Client parses the body for those handles case-insensitively with an optional leading `@`. Human bodies always carry their chips inline, plain-prose Agent bodies render theirs through the same literal segmentation, and rich Markdown Agent bodies get theirs from the post-render Markdown pass at each handle's prose position. Only mentioned names absent from the body render as a trailing chip row.
+Only Member refs in the `mentions` parameter have mention semantics; literal `@name` alone does not. The Client renders allowed handles case-insensitively in Human, plain Agent, and rich Markdown bodies; absent names become trailing chips.
 
-A top-level Message may mention Agents directly: mentioned Members start following the new Thread and receive the Message. In an existing Thread, an Agent may mention another Agent only when that Agent already follows it; a Member reply that mentions an unfollowed Agent returns `member_not_following`, commits no Message, and issues no confirmation token. A Human reply mentioning an unfollowed Agent goes through the Host-owned one-use confirmation flow before any operation commits. An Agent may mention the Human without making the Human a follower.
+A top-level Message mentioning Agents makes them follow the new Thread and delivers the Message. In an existing Thread, an Agent may mention another Agent only if that Agent already follows it; otherwise `member_not_following` commits nothing. Human replies use a Host-owned one-use confirmation before committing. Agents may mention the Human without making the Human a follower.
 
 ## Mutation fences
 
-A public mutation on an existing Thread must use the current `baseRevision`. The revision is an internal concurrency token: tools consume it, projections may display it, and it is never citable content for messages. The Host checks fences in this order:
+Existing-Thread mutations require current `baseRevision`. Host checks: (1) relevant unread must be read, otherwise `unread_required`; (2) revision must match, otherwise `stale_revision`; (3) closed Tasks reject replies, Claims, and new Attention. Taskless Threads have no Claim or Task-resolution mutation. These are normal collaboration outcomes, not infrastructure failures; there is no force-send or unread bypass.
 
-1. Relevant unread work must be read. Failure returns `unread_required` with the current revision and unread counts.
-2. `baseRevision` must match the current Thread revision. Failure returns `stale_revision` with the supplied and current revisions.
-3. A closed Task rejects replies, Claims, and new Attention; taskless Threads have no Claim or Task-resolution mutation path.
-
-These outcomes are normal collaboration results, not infrastructure failures. The Agent can read the Thread, inspect the returned revision, and decide whether to retry without creating a duplicate Message. There is no force-send or unread bypass.
-
-Human close releases active Claims, ends Attention, and stops ordinary delivery. Reopen restores an open Task but does not restore previous Attention periods.
+Human close releases active Claims and ends Attention. Reopen restores an open Task but not previous Attention periods.
 
 ## Human Remote boundary
 
-The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`; it does not call the Host's Human Inbox projection. `threadObservations` is a non-mutating Human-only projection of follow/unfollow Attention transitions for one Thread, while `changeAttention` mutates that durable state. The current Thread UI does not call or render either Attention control/observation path; they remain available for later UI and Agent workflows. The Client stores only navigation mode and Workspace selection locally; unread state, Attention, revisions, and observations remain Host-owned.
+The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`; it does not use a Human Inbox projection. Attention observations and controls remain available for later UI, while the current Thread UI does not render them. Browser storage keeps only navigation mode and Workspace selection; unread, Attention, revisions, and observations remain Host-owned.
 
 ## Team Member context boundary
 
-The explicit `team-member` preset is a full coding composition: shell, filesystem and search, web search, background-job controls, skills, todo tracking, compaction, the five Team tools, Workspace instruction discovery, and the private-memory context plugin. The host owns the Web service/provider; the Team preset adds only the model-facing web tool. Ordinary Sessions do not inherit these Team rows.
-
-A Member keeps its project `cwd` at the Workspace path. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md` guidance; Team does not reimplement or relocate that discovery. Each Member's private root contains a lowercase `memory.md` index and on-demand `notes/`. At each safe pre-step, the Member sees at most its own changed index, framed as escaped, typed reference context. The index is bounded at 8 KiB; exceeding the budget produces a maintenance warning rather than silent truncation, deletion, or summarization. Notes are never automatically injected. Suspend/resume preserves the files, and permanent removal deletes the private root.
-
-Memory is not authority: it may be stale and cannot override Workspace instructions, direct Human input, or durable Team facts. Members should record only verified, durable knowledge and must not store credentials, sensitive data, guesses, chat logs, other Members' memory, or facts already owned by the Team ledger.
+The explicit `team-member` preset contains coding tools, background jobs, skills, todo, compaction, all five Team tools, Workspace instruction discovery, and private-memory context. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md`. Each Member private root has `memory.md` and `notes/`; only a bounded escaped reference index is injected. Memory can be stale and never overrides Workspace instructions, Human input, or durable Team facts. Do not store credentials, sensitive data, guesses, chat logs, or facts already owned by the ledger.
 
 ## Agent notification boundary
 
-The Host derives Agent notifications from durable unread state and injects one bounded, coalesced context message through the Agent public safe-boundary API. An idle Agent starts a turn; a running request or tool receives the context at the next step boundary without interruption. The durable Inbox remains the authority in every case:
+Host derives bounded coalesced notifications from durable unread state. Idle Agents start a turn; running Agents receive context at the next safe step. Direct mentions include Message body, sender, Channel, optional Task overlay, Thread, and Message ref. Task/Claim Activities include actor, transition, affected refs, Task, Thread, and revision. Ordinary unread exposes only a body-free Thread-first route with unread count and revision; taskful summaries may name the Task. Omitted details remain discoverable through `team_inbox` and `team_thread`.
 
-- A structured direct mention includes its Message body, sender, Channel, optional Task overlay, Thread, and Message ref.
-- A Task or Claim Activity includes the actor, transition, affected refs, Task, Thread, and revision. Task close retains a sparse Activity marker for every affected follower before ending Attention, so the terminal state change remains readable after restart.
-- Ordinary unread Messages expose only a body-free Thread-first route with unread count and revision; taskful summaries may name their Task overlay. The Agent can call `team_thread.read` with the Thread ref directly; `team_inbox` remains available when several Threads require triage.
-
-Automatic context is bounded to eight Inbox Threads, twenty detailed direct or Activity facts, 8 KiB per direct Message body, and 32 KiB overall. Anything omitted remains durable and discoverable through `team_inbox` and `team_thread`. A successful Thread read consumes the relevant direct and Activity markers together with the ordinary read watermark.
-
-Pending hints are coalesced per Member. A consumed or ignored hint does not cause another turn until a later relevant durable change, resume, or runtime-error recovery resets the notification state. Restart and resume call the same durable Inbox check, so transient Session queues are not the authority. This is at-least-once notification intent, not exactly-once model processing: the Agent may ignore, fail, or repeat the Team read operation.
-
-对可恢复的临时服务错误，Host 按 Member 的连续 `agent/error` occurrences 计数，不按恢复唤醒次数或错误文本计数：前两次错误延迟后各唤醒一次，第 3 次立即停止自动恢复并保留 error 供 operator 处理。不同 recoverable kind 也不中断连续错误。只有 clean turn end 会清零，非可恢复错误会取消 tracking。恢复 notice 自身合并 continuation 和当前 durable Inbox facts，因此普通 Inbox 通知不会覆盖它或追加第二条提示。
-
-Web Client 的 Agent 行菜单提供两个 runtime 恢复入口（均不写 ledger）：有 live session 的 error Member 显示「恢复」，由 Host 向其 session 注入 continuation 提示（孤儿组合则原地重建）；激活失败的 Member 显示「重启」，由 Host 重新执行该 Member 的激活，再次失败仍以 diagnostic 形式呈现在侧栏。
-
-「从全新上下文开始」是第三个入口：对 `presence === 'available'`（在线且空闲）或 `presence === 'error'`（带 live handle 的错误态，换新上下文同时也是一种恢复手段——坏 handle 的错误标记随 dispose 丢弃，新会话重新挂 preset）的 enabled Member 可用，其余 presence 灰掉并按各自状态给出原因（working 提示等当前 turn 结束，unavailable 提示先恢复在线；unavailable 无 live handle 且首次激活失败时 session 可能从未物化，归档会失败，由「重启」覆盖），避免截断当前 loop。确认框点名成员并说明影响范围——旧会话归档保留在会话记录中，身份、私有记忆与 notes、频道和会话绑定均保持不变，后续协作从新上下文继续累积——确认后 Host 记录一条 `team/member-session-renewed` 操作（投影变更：该 Member 的 sessionId 迁移到新铸造的 id，其余事实不变），dispose 旧 handle、将旧 Session 归档（日志留在磁盘，从所有分组界面隐藏，workspace 记账保留），并在新 sessionId 上走 `agents.create` 激活路径（header 的 `parentSession` 记录旧 id 作为谱系，新会话命名与成员 handle 一致），下一次 turn 从空上下文开始；agent idle 翻转会像 running 一样广播 workspace change，让侧栏 presence 门禁在 turn 结束后即时解除。对新用户可见的行为是：一个 Agent 始终对应一个当前会话，agent card 点开的右侧页面正常渲染且实时更新（新 id 没有历史 resident 实例，不存在同 id 重建后永久置灰的问题）；若该 Member Session 正嵌在右栏，Client 直接导航到新 session 的嵌入视图。同一 requestId 重试会铸造同一新 id 并由账本幂等去重。历史上同 id 原地清空的 `team/member-context-cleared` 操作已停止写入，其 schema 与 replay 校验保留为 tombstone，旧账本继续可回放。
+Hints are at-least-once notification intent, coalesced per Member and rediscovered on restart/resume. A consumed or ignored hint does not create another turn until a later relevant durable change or recovery. Runtime recovery, error thresholds, and the three UI recovery actions remain Host behavior; they do not create ledger authority beyond their documented operations.
 
 ## Assembled acceptance
 
-`npm run test:browser` uses the credential-free Harness Web scaffold to verify the public Client and Host chain. The representative trace exercises a default taskless top-level Thread, the default-off Human 「作为任务」 control, Human promotion with Host reread, and taskless header/Claim gating; it also requires Human's second-send confirmation to invite an unfollowed Agent, verifies the Agent's durable Inbox and explicit read/reply, then verifies the Human Channel and Thread state. Desktop, 390×844, and keyboard paths are part of the assembled acceptance. A page reload reads the same facts from Host projections before the journey leaves Team mode and confirms the ordinary DSH conversation surface is restored.
-
-Browser storage remains limited to navigation and Workspace selection. The acceptance trace does not derive unread, Attention, or Thread facts from local storage or Member Session relay text. Agent safe-boundary wake and the three notification forms—direct mention, Task/Claim Activity, and body-free ordinary route—are covered separately by the real Agent-loop integration tests in `packages/agent-team/tests/member-lifecycle.spec.ts`; browser replay does not depend on live provider behavior.
+`npm run test:browser` uses a credential-free Harness Web scaffold. It verifies default taskless Thread creation, default-off Human 「作为任务」, Human promotion and Host reread, taskless header/Claim gating, invitation confirmation, Agent Inbox read/reply, Human Channel/Thread state, reload persistence, desktop/390×844/keyboard paths, Team exit, and ordinary DSH restoration. Real Agent-loop integration tests separately cover safe-boundary wake and direct, Activity, and body-free ordinary notification forms.

@@ -101,7 +101,7 @@ dsh web
 
 ## 开发
 
-维护中的文档入口是 [`docs/README.md`](docs/README.md)。常用检查命令：
+维护中的文档入口是 [`docs/README.zh.md`](docs/README.zh.md)。常用检查命令：
 
 ```sh
 corepack pnpm install
@@ -115,7 +115,7 @@ npm pack --dry-run
 
 `npm run test:browser` 使用相邻的 `../deepseek-harness` checkout、隔离临时 profile 和 `/usr/bin/google-chrome`（可用 `CHROME_PATH` 覆盖），不需要 provider credentials。手动检查时，`npm run preview:ui` 会加载不调用模型的 Team fixture；`DEEPSEEK_API_KEY=... npm run preview` 会启动真实 provider preview。两个 preview 命令都会在 `Ctrl+C` 后清理临时状态。
 
-架构和协作协议见 [`docs/architecture.md`](docs/architecture.md) 与 [`docs/team-collaboration.md`](docs/team-collaboration.md)。
+架构和协作协议见 [`docs/architecture.zh.md`](docs/architecture.zh.md) 与 [`docs/team-collaboration.zh.md`](docs/team-collaboration.zh.md)。
 
 ## 许可证
 
