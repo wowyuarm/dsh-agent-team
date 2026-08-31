@@ -36,7 +36,7 @@ Team is one collaboration domain per DSH home. Its append-only operation ledger 
 
 ### Composer attachments (cache, not archive)
 
-Attachments live in the bounded cache `$DSH_HOME/agent-team/attachments/v1/<attachmentId>/`, with a sanitized original name and `meta.json`; they are never ledger bytes or an archive. `putAttachment` enforces a 10 MB file cap and sanitizes names; `getAttachment` serves Client display. Messages record metadata while the stored body contains machine-facing `[attachment] <absolute path>` lines. The Client strips those lines and renders thumbnails/chips.
+Attachments live in the bounded cache `$DSH_HOME/agent-team/attachments/v1/<attachmentId>/`, with a sanitized original name and `meta.json`; they are never ledger bytes or an archive. `putAttachment` enforces a 10 MB file cap and sanitizes names; `getAttachment` serves Client display. Messages record metadata while the stored body contains machine-facing `[attachment] <absolute path>` lines. The Client strips those lines and renders thumbnails/chips. The Channel and Thread composers accept files both through the "+" picker and by pasting into the draft; a paste that carries files is intercepted and joins the same pending-file chips, while plain-text pastes keep their native insertion.
 
 Garbage collection runs at startup and every 24 hours: referenced uploads older than 72 hours and orphaned uploads older than 24 hours are removed, while metadata remains. Agent-sent absolute paths are validated as absolute non-empty regular files under 10 MB, copied into a fresh immutable cache entry, and rejected atomically if any path fails. A manually pasted absolute path is simply read by the Agent; Host touches nothing it does not own.
 

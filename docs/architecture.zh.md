@@ -42,6 +42,7 @@ Team 是每个 DSH home 内唯一的协作域。append-only operation ledger 是
 Composer attachments 是 `$DSH_HOME/agent-team/attachments/v1/<attachmentId>/` 下的有界 cache（包含经过清理的原始名称和 `meta.json` sidecar），不是 archive，也不是 ledger bytes。
 
 - `putAttachment` 写入 immutable payload（每个文件上限 10 MB，并从名称中剥离 path separators 和 control characters）；`getAttachment` 为 Client display 读取它们。两者和其他 Host capabilities 一样都是 typed Remote actions。
+- Channel 与 Thread composer 的附件入口有两个：「+」按钮选择文件，或直接向输入框粘贴——携带文件的粘贴会被拦截并进入同一 pending-file chips 流，纯文本粘贴保持浏览器原生插入。
 - Message 在 ledger 中记录 attachment metadata（`attachmentId`、`name`、`byteSize`、`mediaType`）；存储 body 为每个 attachment 携带一行面向机器的 `[attachment] <absolute path>`，让 Member agents 通过普通 file tools 按 path 读取 bytes。Client 会从 display 中移除这些行，改为根据 metadata 渲染 thumbnails/chips。
 - Ledger 是唯一 durable attachment authority。Bytes 是 transient 的：Host startup 以及每 24h 执行一次 GC sweep；被 Message 引用且超过 72h 的 uploads（Member consumption window），或从未发送的 orphaned uploads 超过 24h 的，都会被移除。Metadata 保留，Client 随后优雅降级为 name chip。
 - Members 通过 `team_message` 的可选 `attachments`（absolute paths）共享文件：Host 先验证每个 path（absolute、regular file、non-empty、10 MB），再以 extension-derived media type 复制到 cache 的新 immutable entry，因此 agent-sent images 与 composer uploads 的渲染一致。任一 rejection 都会拒绝整个 send，不提交也不复制。

@@ -346,6 +346,41 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
+  it('turns pasted clipboard files into composer chips and sends their ids', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[aria-current="page"]')?.textContent).toContain('Alpha') })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    const composer = b.view.container
+    const chipCount = (): number => composer.querySelectorAll('ul[aria-label="添加附件"] > li').length
+    const textarea = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+
+    // A paste carrying files is intercepted and joins the same chip flow.
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => new File(['shot'], 'image.png', { type: 'image/png' }) }],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => { expect(chipCount()).toBe(1) })
+    expect(composer.querySelector('[class*="fileChipName"]')?.textContent).toContain('image.png')
+
+    // Plain-text pastes keep the browser's native insertion: no chip, and the
+    // text lands in the draft untouched.
+    fireEvent.paste(textarea, {
+      clipboardData: { items: [], getData: () => 'pasted note' },
+    })
+    expect(chipCount()).toBe(1)
+
+    fireEvent.change(textarea, { target: { value: '粘贴的截图' } })
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => { expect(b.putAttachment).toHaveBeenCalledWith(expect.objectContaining({ name: 'image.png', mediaType: 'image/png' })) })
+    await waitFor(() => { expect(b.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ body: '粘贴的截图', attachments: ['attachment:1'] })) })
+    await waitFor(() => { expect(chipCount()).toBe(0) })
+    await b.runtime.dispose()
+  })
+
   it('caches composer drafts across view switches and clears them on committed sends', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))

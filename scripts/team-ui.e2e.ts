@@ -521,6 +521,23 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.keyboard.press('Escape')
   await expect.poll(() => page.getByRole('dialog').count()).toBe(0)
 
+  // Paste intake: a real Chromium paste carrying an image file is intercepted
+  // before the textarea's native handling and joins the same chip flow, then
+  // uploads through the same ledger path as the "+" picker above.
+  await channelComposer.focus()
+  await channelComposer.evaluate((el, bytes) => {
+    const file = new File([new Uint8Array(bytes)], 'image.png', { type: 'image/png' })
+    const data = new DataTransfer()
+    data.items.add(file)
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, [...pngBytes])
+  await page.getByText('image.png').first().waitFor()
+  await channelComposer.fill('这是粘贴上传的截图')
+  await page.getByRole('button', { name: '发送' }).click()
+  const pastedMessage = page.locator('[data-team-channel] article').filter({ hasText: '这是粘贴上传的截图' })
+  await pastedMessage.waitFor()
+  await expect.poll(() => pastedMessage.locator('img[src^="data:image/png"]').count()).toBeGreaterThanOrEqual(1)
+
   // Narrow-viewport linkify row.
   await page.setViewportSize({ width: 390, height: 844 })
   await refMessage.getByRole('button', { name: /task:c0ffee00/ }).waitFor()

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ChangeEvent, KeyboardEvent } from 'react'
+import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { Button, IconPlusOutline16, IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
@@ -167,6 +167,20 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     })
   }
 
+  // Pasted files (screenshots, copies) join the same chips the "+" picker
+  // fills; only a paste that carries files is intercepted, so plain text
+  // keeps the browser's native insertion.
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
+    if (pending || onFilesChange === undefined || pendingFiles === undefined) return
+    const files = Array.from(event.clipboardData.items)
+      .filter(item => item.kind === 'file')
+      .map(item => item.getAsFile())
+      .filter((file): file is File => file !== null)
+    if (files.length === 0) return
+    event.preventDefault()
+    onFilesChange([...pendingFiles, ...files])
+  }
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     const composing = composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
     if (menuOpen && event.key === 'ArrowDown') {
@@ -239,6 +253,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
           placeholder={placeholder ?? t('messagePlaceholder')}
           rows={1}
           onChange={onChange}
+          onPaste={onPaste}
           onKeyDown={onKeyDown}
           onSelect={event => { updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length) }}
           onCompositionStart={() => { composingRef.current = true }}
