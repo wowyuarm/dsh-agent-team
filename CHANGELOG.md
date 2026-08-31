@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.5] - 2026-08-31
+
+- Member sessions can start from a new context in place: renewing a session keeps the Agent identity, and error members get the same fresh-start path.
+- Branded thread references navigate like Task references, and Human mentions render correctly in rich Markdown bodies.
+- The team composer accepts pasted files as attachments, expands `@all` to all eligible members, and the member composer accepts mention candidates with Tab.
+- Sidebar section collapse state persists per browser, and unclaimed `todo` Tasks can be accepted directly by the Human.
+- Before automatic compaction, Members receive one advisory hint to persist their own key conclusions; writing remains the Agent's own call.
+- Docs are now bilingual (English default path plus `.zh.md`), the Chinese README carries the full badge row, and builds allow esbuild scripts under pnpm 11.
+
 ## [0.1.4] - 2026-08-30
 
 - Thread-first collaboration: start ordinary Threads without a Task, then promote a Thread to a Task when work is ready; structured promotion activity and optional Task overlays keep both paths durable.
