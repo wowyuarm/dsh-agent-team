@@ -16,6 +16,7 @@ import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { MultiMenuField } from './multi-menu-field.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
 import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
+import { useSidebarSectionOpen, setSidebarSectionOpen } from './sidebar-sections.ts'
 import { mintRequestId } from './requests.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
@@ -65,6 +66,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
     void moveSidebarItem(workspaceId, 'channels', orderedChannelRefs, movedRef, targetRef, marker)
   }
   const drag = useSidebarRowDrag({ refs: orderedChannelRefs, onCommit: applyMove })
+  const sectionOpen = useSidebarSectionOpen(workspaceId, 'channels')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -191,6 +193,8 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
       </Modal>
       <TeamSidebarSection
         title={t('channels')}
+        open={sectionOpen}
+        onToggle={open => { setSidebarSectionOpen(workspaceId, 'channels', open) }}
         actions={(
           <Tooltip label={t('addChannel')} delayMs={500}>
             <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addChannel')} onClick={() => { setError(undefined); setFormOpen(true) }}>

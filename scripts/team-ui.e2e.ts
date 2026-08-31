@@ -226,6 +226,13 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const channelsToggle = page.getByRole('button', { name: '频道', exact: true })
   await channelsToggle.click()
   await expect.poll(() => page.getByRole('button', { name: '# engineering' }).count()).toBe(0)
+  // Collapse is a browser-local presentation preference, not a Team fact: it
+  // survives a full reload like the row order does, then still expands again.
+  // The section header itself stays reachable while collapsed, so no channel
+  // row is needed to prove the persisted state.
+  await page.reload()
+  await channelsToggle.waitFor({ timeout: 20_000 })
+  await expect.poll(() => page.getByRole('button', { name: '# engineering' }).count()).toBe(0)
   await channelsToggle.click()
   await page.getByRole('button', { name: '# engineering' }).waitFor()
 
@@ -360,9 +367,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
   // The fresh session is immediately usable: the member-composer mention flow
   // runs against the recreated Session and its structured prompt lands there.
+  // Tab accepts the highlighted candidate, mirroring the team-mode composer.
   await memberInput.fill('@rev')
   await page.getByRole('option', { name: '@reviewer' }).waitFor()
-  await page.getByRole('option', { name: '@reviewer' }).click()
+  await memberInput.press('Tab')
   await expect.poll(() => memberInput.inputValue()).toBe('@reviewer ')
   await memberInput.press('Enter')
   const isStructuredReviewerPrompt = (event: (typeof freshBuilderAgent.session.events)[number]): boolean => event.type === 'user/message'

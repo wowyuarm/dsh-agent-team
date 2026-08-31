@@ -11,6 +11,7 @@ import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
 import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
+import { useSidebarSectionOpen, setSidebarSectionOpen } from './sidebar-sections.ts'
 import { mintRequestId } from './requests.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
@@ -63,6 +64,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
     void moveSidebarItem(workspaceId, 'agents', orderedAgentRefs, movedRef, targetRef, marker)
   }
   const drag = useSidebarRowDrag({ refs: orderedAgentRefs, onCommit: applyMove })
+  const sectionOpen = useSidebarSectionOpen(workspaceId, 'agents')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -189,6 +191,8 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
       </Modal>
       <TeamSidebarSection
         title={t('agents')}
+        open={sectionOpen}
+        onToggle={open => { setSidebarSectionOpen(workspaceId, 'agents', open) }}
         actions={(
           <Tooltip label={t('addAgent')} delayMs={500}>
             <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addAgent')} onClick={() => { setError(undefined); setFormOpen(true) }}>
