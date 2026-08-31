@@ -154,12 +154,14 @@ describe('Team presentation formatters', () => {
     expect(task.taskRefs).toEqual(['task:0123abcd-0000-0000-0000-000000000000'])
   })
 
-  it('keeps rich Agent bodies on Markdown with the legacy fallback rows', () => {
+  it('keeps rich Agent bodies on Markdown and paints their refs inline when navigation is available', () => {
     const body = '# 标题\n\n见 channel:0123abcd-0000-0000-0000-000000000000'
     const plan = planMessageBody(body, { human: false, mentionNames: ['tester'], canOpenRefs: true })
     expect(plan.render).toBe('markdown')
     expect(plan.richAgentBody).toBe(true)
-    expect(plan.fallbackRefs).toEqual(['channel:0123abcd-0000-0000-0000-000000000000'])
+    // Rich Markdown refs render at their authored position through the
+    // post-render pass, so the trailing chip row keeps only unmatched names.
+    expect(plan.fallbackRefs).toEqual([])
     expect(plan.fallbackNames).toEqual(['tester'])
     expect(plan.taskRefs).toEqual([])
   })
@@ -173,6 +175,11 @@ describe('Team presentation formatters', () => {
     expect(rich.fallbackNames).toEqual(['builder'])
     expect(rich.fallbackRefs).toEqual([])
     expect(rich.taskRefs).toEqual([])
+    // Without navigation the post-render pass cannot paint refs inline, so
+    // rich Markdown bodies keep their branded refs in the trailing row.
+    const refBody = planMessageBody('**粗体** 见 channel:0123abcd-0000-0000-0000-000000000000', { human: false, mentionNames: ['builder'], canOpenRefs: false })
+    expect(refBody.render).toBe('markdown')
+    expect(refBody.fallbackRefs).toEqual(['channel:0123abcd-0000-0000-0000-000000000000'])
   })
 
   it('strips attachment prompt lines and keeps the raw body when stripping empties it', () => {
