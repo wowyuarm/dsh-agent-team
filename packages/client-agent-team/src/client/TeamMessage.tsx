@@ -56,6 +56,7 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     void resolveUnknownTaskRefs(bodyTaskRefs, onResolveTaskRefs)
   }, [onResolveTaskRefs, bodyTaskRefKey, refVersion])
   const taskLabel = useCallback((taskNumber: number): string => t?.('taskLabel', { number: taskNumber }) ?? `Task #${taskNumber}`, [t])
+  const refLabel = useCallback((ref: string): string => ref.startsWith('thread:') ? (t?.('threadLabel') ?? 'Thread') : ref.startsWith('channel:') ? (t?.('channels') ?? 'Channels') : ref, [t])
   // Long bodies start clamped behind the expand control. The default derives
   // from the body alone; the toggle itself is per-mount view state nothing
   // persists.
@@ -73,24 +74,24 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
         .filter(segment => segment.ref?.startsWith('task:') === true)
         .map(segment => segment.ref as AgentTeamTaskRef)))]
     if (onResolveTaskRefs !== undefined && taskRefs.length > 0) void resolveUnknownTaskRefs(taskRefs, onResolveTaskRefs)
-    for (const code of styledRefCodes) renderResolvedMarkdownCodeRef(code, taskLabel)
-    for (const node of textNodes) renderResolvedMarkdownText(node, mentionNames ?? [], taskLabel)
+    for (const code of styledRefCodes) renderResolvedMarkdownCodeRef(code, taskLabel, refLabel)
+    for (const node of textNodes) renderResolvedMarkdownText(node, mentionNames ?? [], taskLabel, refLabel)
     for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-task-ref]')) {
       const taskRef = button.dataset.taskRef as AgentTeamTaskRef | undefined
       const hit = taskRef === undefined ? undefined : cachedResolvedTaskRef(taskRef)
       if (taskRef !== undefined && hit !== undefined) button.textContent = taskLabel(hit.taskNumber)
     }
-  }, [richAgentBody, onOpenRef, onResolveTaskRefs, refVersion, taskLabel, mentionNames])
+  }, [richAgentBody, onOpenRef, onResolveTaskRefs, refVersion, taskLabel, refLabel, mentionNames])
   useEffect(() => {
     const root = markdownRef.current
     if (!richAgentBody || root === null || onOpenRef === undefined) return
     const openTask = (event: Event): void => {
       const target = event.target
       if (!(target instanceof Element)) return
-      const button = target.closest('button[data-task-ref]')
+      const button = target.closest('button[data-ref], button[data-task-ref]')
       if (button === null || !root.contains(button)) return
-      const taskRef = button instanceof HTMLElement ? button.dataset.taskRef : undefined
-      if (taskRef !== undefined) onOpenRef(taskRef)
+      const ref = button instanceof HTMLElement ? button.dataset.ref ?? button.dataset.taskRef : undefined
+      if (ref !== undefined) onOpenRef(ref)
     }
     root.addEventListener('click', openTask)
     return () => { root.removeEventListener('click', openTask) }
@@ -99,10 +100,10 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
     ? <div className={css.messageText}>
         {plan.inline.segments.map((segment, index) => segment.mention
           ? <span key={index} className={css.mention}>{segment.text}</span>
-          : <Fragment key={index}>{renderRefs(segment.text, onOpenRef, taskLabel)}</Fragment>)}
+          : <Fragment key={index}>{renderRefs(segment.text, onOpenRef, taskLabel, refLabel)}</Fragment>)}
       </div>
     : plan.render === 'literal'
-      ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel)}</div>
+      ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel, refLabel)}</div>
       : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} /></div>
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
@@ -184,17 +185,29 @@ function resolvedTaskRefButton(taskRef: AgentTeamTaskRef, label: string): HTMLBu
 }
 
 /** Replace a whole-ref code span with its resolved Task chip once known. */
-function renderResolvedMarkdownCodeRef(code: HTMLElement, taskLabel: (taskNumber: number) => string): void {
+function renderResolvedMarkdownCodeRef(code: HTMLElement, taskLabel: (taskNumber: number) => string, refLabel: (ref: string) => string): void {
   const segments = splitBrandedRefs((code.textContent ?? '').trim())
   const segment = segments.length === 1 ? segments[0]! : undefined
-  const taskRef = segment?.ref?.startsWith('task:') === true ? segment.ref as AgentTeamTaskRef : undefined
+  const ref = segment?.ref
+  if (ref === undefined) return
+  const taskRef = ref.startsWith('task:') === true ? ref as AgentTeamTaskRef : undefined
   const resolved = taskRef === undefined ? undefined : cachedResolvedTaskRef(taskRef)
-  if (taskRef === undefined || resolved === undefined) return
-  code.replaceWith(resolvedTaskRefButton(taskRef, taskLabel(resolved.taskNumber)))
+  if (taskRef !== undefined && resolved === undefined) return
+  if (taskRef !== undefined) {
+    code.replaceWith(resolvedTaskRefButton(taskRef, taskLabel(resolved!.taskNumber)))
+    return
+  }
+  const button = document.createElement('button')
+  button.type = 'button'
+  if (css.refLink !== undefined) button.className = css.refLink
+  button.dataset.ref = ref
+  button.title = ref
+  button.textContent = refLabel(ref)
+  code.replaceWith(button)
 }
 
 /** Replace resolved Task refs and structured mention handles in one prose text node without changing Markdown structure. */
-function renderResolvedMarkdownText(node: Text, mentionNames: readonly string[], taskLabel: (taskNumber: number) => string): void {
+function renderResolvedMarkdownText(node: Text, mentionNames: readonly string[], taskLabel: (taskNumber: number) => string, refLabel: (ref: string) => string): void {
   let changed = false
   const fragment = document.createDocumentFragment()
   for (const refSegment of splitBrandedRefs(node.data)) {
@@ -214,23 +227,36 @@ function renderResolvedMarkdownText(node: Text, mentionNames: readonly string[],
     }
     const taskRef = refSegment.ref.startsWith('task:') === true ? refSegment.ref as AgentTeamTaskRef : undefined
     const resolved = taskRef === undefined ? undefined : cachedResolvedTaskRef(taskRef)
-    if (resolved === undefined) {
+    // Task refs need Host resolution before becoming human-readable links;
+    // channel/thread refs already have their canonical display text and can be
+    // linked immediately at the authored position.
+    if (taskRef !== undefined && resolved === undefined) {
       fragment.append(refSegment.text)
       continue
     }
     changed = true
-    fragment.append(resolvedTaskRefButton(taskRef!, taskLabel(resolved.taskNumber)))
+    if (taskRef !== undefined) {
+      fragment.append(resolvedTaskRefButton(taskRef, taskLabel(resolved!.taskNumber)))
+    } else {
+      const button = document.createElement('button')
+      button.type = 'button'
+      if (css.refLink !== undefined) button.className = css.refLink
+      button.dataset.ref = refSegment.ref
+      button.title = refSegment.ref
+      button.textContent = refLabel(refSegment.ref)
+      fragment.append(button)
+    }
   }
   if (changed) node.replaceWith(fragment)
 }
 
 /** Render one literal text run, linkifying branded refs when navigation is available. */
-function renderRefs(text: string, onOpenRef: ((ref: string) => void) | undefined, taskLabel: (taskNumber: number) => string): ReactNode {
+function renderRefs(text: string, onOpenRef: ((ref: string) => void) | undefined, taskLabel: (taskNumber: number) => string, refLabel: (ref: string) => string): ReactNode {
   if (onOpenRef === undefined) return text
   return splitBrandedRefs(text).map((segment, index) => {
     if (segment.ref === undefined) return <Fragment key={index}>{segment.text}</Fragment>
     const resolved = cachedResolvedTaskRef(segment.ref as AgentTeamTaskRef)
-    const label = resolved !== undefined && segment.ref.startsWith('task:') ? taskLabel(resolved.taskNumber) : segment.ref
+    const label = resolved !== undefined && segment.ref.startsWith('task:') ? taskLabel(resolved.taskNumber) : refLabel(segment.ref)
     return <button key={index} type="button" className={css.refLink} title={segment.ref} onClick={() => { onOpenRef(segment.ref!) }}>{label}</button>
   })
 }

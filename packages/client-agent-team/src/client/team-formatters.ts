@@ -269,7 +269,10 @@ export function planMessageBody(body: string, options: {
     render,
     ...(inline === undefined ? {} : { inline }),
     fallbackNames,
-    fallbackRefs: richAgentBody && options.canOpenRefs ? refs.filter(ref => !ref.startsWith('task:')) : [],
+    // Rich Markdown refs are painted at their authored position after the
+    // Markdown primitive has built its DOM; do not duplicate them in the
+    // trailing chip row when navigation is available.
+    fallbackRefs: richAgentBody && !options.canOpenRefs ? refs : [],
     taskRefs: options.canOpenRefs && !richAgentBody
       ? refs.filter(ref => ref.startsWith('task:')).map(ref => ref as AgentTeamTaskRef)
       : [],

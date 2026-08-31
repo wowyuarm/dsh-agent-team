@@ -83,6 +83,28 @@ describe('TeamMessage structured mention rendering', () => {
     expect(chips).toHaveLength(1)
     expect(hasClassToken(chips[0]!.closest('div')!, 'messageText')).toBe(true)
   })
+
+  it('renders thread refs as inline chips in rich Markdown bodies', () => {
+    const threadRef = 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e32'
+    const { container, findAllByRole } = render(
+      <TeamMessage
+        senderName="Builder"
+        memberId={'member:builder' as AgentTeamMemberId}
+        human={false}
+        body={`**来源**：${threadRef} 和 \`${threadRef}\``}
+        onOpenRef={() => {}}
+        t={t}
+      />,
+    )
+    return findAllByRole('button', { name: '讨论' }).then(() => {
+      const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      expect(buttons).toHaveLength(2)
+      expect(buttons.map(button => button.getAttribute('title'))).toEqual([threadRef, threadRef])
+      expect(buttons.every(button => button.closest('[class*="messageMarkdown"]') !== null)).toBe(true)
+      expect(buttons.every(button => button.closest('[class*="mentionsRow"]') === null)).toBe(true)
+      expect(container.textContent).toContain('来源')
+    })
+  })
 })
 
 describe('TeamMessage long-body clamp', () => {

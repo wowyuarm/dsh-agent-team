@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamView, AgentTeamViewItem,
-  AgentTeamTaskRef,
+  AgentTeamTaskRef, AgentTeamThreadRef,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -84,6 +84,24 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const openRef = (ref: string): void => {
     if (ref.startsWith('channel:')) {
       if (ref !== channelRef) selectChannel(ref as AgentTeamChannelRef)
+      return
+    }
+    if (ref.startsWith('thread:')) {
+      const match = view?.items.find(item => item.thread.threadRef === ref)
+      if (match !== undefined) {
+        selectThread(match.thread.threadRef, channelRef, match.task?.taskRef, match.taskNumber)
+        return
+      }
+      // A ref may point outside the currently loaded Channel window. Ask the
+      // Host for the bounded Thread view so it can provide the home Channel.
+      void loadChannels({ workspaceId, threadRef: ref as AgentTeamThreadRef, includeActivities: false, limit: 1 }).then(result => {
+        if (!result.ok) return
+        const target = result.value.items[0]
+        if (target !== undefined) {
+          const targetChannel = result.value.channels.find(channel => channel.channelRef === target.message.channelRef)
+          if (targetChannel !== undefined) selectThread(target.thread.threadRef, targetChannel.channelRef, target.task?.taskRef, target.taskNumber)
+        }
+      })
       return
     }
     if (ref.startsWith('task:')) {

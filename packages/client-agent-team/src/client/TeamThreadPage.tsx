@@ -338,7 +338,22 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   // Channel; the open Task's own refs are already on screen, and other Tasks
   // are not resolvable from this surface, so they degrade to a no-op.
   const openRef = (ref: string): void => {
-    if (ref.startsWith('channel:') && ref !== channelRef) selectChannel(ref as AgentTeamChannelRef)
+    if (ref.startsWith('channel:') && ref !== channelRef) {
+      selectChannel(ref as AgentTeamChannelRef)
+      return
+    }
+    if (ref.startsWith('thread:') && ref !== threadRef) {
+      // Thread refs do not have a dedicated resolver Remote. The Host view
+      // query still returns the target's home Channel and Task projection.
+      void loadChannels({ workspaceId, threadRef: ref as AgentTeamThreadRef, includeActivities: false, limit: 1 }).then(result => {
+        if (!result.ok) return
+        const target = result.value.items[0]
+        if (target === undefined) return
+        const targetChannel = result.value.channels.find(channel => channel.channelRef === target.message.channelRef)
+        if (targetChannel !== undefined) selectThread(target.thread.threadRef, targetChannel.channelRef, target.task?.taskRef, target.taskNumber)
+      })
+      return
+    }
     if (ref.startsWith('task:') && ref !== taskRef) {
       // Another Task cited here: resolve its home Channel and jump.
       jumpToTaskThread(resolveTaskRefs, workspaceId, ref as AgentTeamTaskRef, selectThread)
