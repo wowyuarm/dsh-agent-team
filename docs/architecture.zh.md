@@ -34,7 +34,7 @@ Team 是每个 DSH home 内唯一的协作域。append-only operation ledger 是
 - Thread Attention 是 private Member x Thread state。ordinary unread 来自当前 Attention；structured mentions 创建 direct markers；terminal Task changes 在 Attention 结束后仍可能保留稀疏 Activity markers。Host 是唯一 Inbox authority。Session history 可以保留有界 notification context（包括 direct Message bodies 和 Task/Claim transition summaries），但不能形成 parallel unread projection。
 - Team 管理的 Agent sessions 使用显式 Team preset 和可信的 `danger-full-access` policy，这是面向可信 Workspace 的有意产品边界。
 - Host 激活 Member 时，会通过 session-title service 用其 handle 命名没有标题的 Member session，使普通 Session list 显示 Member identity。显式 rename 或任何已有 title 始终优先，命名失败不会导致 activation 失败。
-- Human 接受 Task 后，Host-local coordinator 会去重所有 Claim owners，等待每个 live Member 进入 idle，并且只有 scoped token meter 严格超过 200K 时才 compact。Pending/error bookkeeping 只在进程内维护；只有进入 transaction 的 compactions 才会写入 durable Session history，绝不写入 Team ledger。
+- Human 接受 Task 后，Host-local coordinator 会去重所有 Claim owners，等待每个 live Member 进入 idle，并且只有 scoped token meter 严格超过 200K 时才 compact。每次 compact 尝试前，coordinator 会 steer 一条 plugin-source 的提示性消息，邀请 Member 把持久结论写入自己的 private memory/notes；写不写由 Agent 自行决定，提示失败或被忽略都不阻塞 compaction。Pending/error bookkeeping 只在进程内维护；只有进入 transaction 的 compactions 才会写入 durable Session history，绝不写入 Team ledger。
 - `$DSH_HOME/agent-team/members/` 下的 private-memory directories 是 Member identity 的 Host-owned effects，不是第二权威。Member activation 确保 private-memory directory、`notes/` 和缺失的 `memory.md` 存在；startup 不会清理 ledger 不知道的 `member:` directories。显式 Member removal 会归档其 Session 并移除该 Member 的 private-memory directory；Team removal path 之外的 entries 保持不动。
 
 ### Composer attachments（cache，不是 archive）

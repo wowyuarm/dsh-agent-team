@@ -7,6 +7,17 @@ import type { AgentTeamMemberId, AgentTeamOperation } from './types.ts'
 /** Strict threshold: 200K exactly does not compact. */
 export const AUTO_COMPACTION_TOKEN_LIMIT = 200_000
 
+/**
+ * Suggested summary marker of the pre-compaction memory hint. Same shape as
+ * the inbox and recovery notices so future turns can recognize it.
+ */
+export const PRE_COMPACTION_NOTICE_SUMMARY = 'Compaction is imminent; consider persisting key conclusions.'
+
+/** Suggested pre-compaction hint body; writing is the Agent's own call. */
+export function preCompactionNoticeText(): string {
+  return 'This session is about to be compacted, which will summarize away the current conversation detail. If there are durable conclusions worth keeping — validated facts, decisions, or reusable details — consider writing them to your memory or notes now. This is only a reminder: decide yourself whether anything is worth persisting, and do nothing if not. Do not start new work because of this message.'
+}
+
 /** Claim owners of a durable Human acceptance, including early-completed ones. */
 export function acceptedTaskCompactionMembers(operation: AgentTeamOperation): readonly AgentTeamMemberId[] | undefined {
   if (operation.kind !== 'team/task-changed' || operation.actor.kind !== 'human' || operation.data.activity.kind !== 'accept') return undefined
@@ -31,6 +42,8 @@ export class AutoCompactionCoordinator {
     readonly failed: (memberId: AgentTeamMemberId, sessionId: Agent['id'], diagnostic: string) => void
     readonly cleared: (memberId: AgentTeamMemberId, sessionId: Agent['id']) => void
     readonly log: (message: string) => void
+    /** Steer the pre-compaction memory hint; absent skips the hint entirely. */
+    readonly steerPreCompaction?: (agent: Agent) => void
   }) {}
 
   /** Queue all unique claim owners; unavailable Members stay pending. */
@@ -80,10 +93,34 @@ export class AutoCompactionCoordinator {
         this.fail(memberId, agent, 'automatic compaction failed: tokenMeter is unavailable in the Member scope')
         return
       }
-      const before = meter.measure(agent.session).totalTokens
+      let before = meter.measure(agent.session).totalTokens
       if (before <= AUTO_COMPACTION_TOKEN_LIMIT) {
         this.complete(memberId, agent)
         return
+      }
+      // The session is over the threshold and about to be compacted: steer one
+      // advisory hint so the Agent can persist its own key conclusions first.
+      // The hint turn itself is ordinary agent work — its failure is contained
+      // by the agent loop and never blocks compaction; only the fresh idle
+      // boundary is awaited before the final measurement and compactNow.
+      if (this.options.steerPreCompaction !== undefined) {
+        try {
+          this.options.steerPreCompaction(agent)
+        } catch (error) {
+          this.options.log(`pre-compaction memory hint failed: ${describe(error)} (member ${memberId}, session ${agent.id})`)
+        }
+        try {
+          if (!(await waitForIdleOrAbort(agent, this.controller.signal))) return
+        } catch (error) {
+          this.options.log(`pre-compaction hint idle wait failed: ${describe(error)} (member ${memberId}, session ${agent.id})`)
+        }
+        if (this.controller.signal.aborted) return
+        if (this.options.agentForMember(memberId) !== agent) continue
+        before = meter.measure(agent.session).totalTokens
+        if (before <= AUTO_COMPACTION_TOKEN_LIMIT) {
+          this.complete(memberId, agent)
+          return
+        }
       }
       const engine = this.options.compactionForAgent(agent)
       if (engine === undefined) {

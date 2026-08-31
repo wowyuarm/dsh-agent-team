@@ -24,7 +24,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
-import { acceptedTaskCompactionMembers, AutoCompactionCoordinator } from './auto-compaction.ts'
+import { acceptedTaskCompactionMembers, AutoCompactionCoordinator, PRE_COMPACTION_NOTICE_SUMMARY, preCompactionNoticeText } from './auto-compaction.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
@@ -219,6 +219,14 @@ export default class AgentTeam extends TypertRemoteService {
         this.emitAutoCompactionChanged(memberId)
       },
       log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
+      // Advisory only: the Agent decides whether anything is worth persisting.
+      steerPreCompaction: agent => {
+        const hint = createUserMessage({
+          content: [{ type: 'text', text: preCompactionNoticeText() }],
+          source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: PRE_COMPACTION_NOTICE_SUMMARY },
+        })
+        agent.steer(hint)
+      },
     })
   }
 
