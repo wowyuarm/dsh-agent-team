@@ -56,7 +56,12 @@ export function TeamMemberSessionComposer({ controller, inputActions, overlay, p
       setSubmissionNotice('Compact 未执行，请重试。')
       return
     }
-    if (input.phase === 'plain') compactWasSubmitting.current = false
+    if (input.phase === 'plain') {
+      // Reaching plain after a compact flight means the InputMachine adopted
+      // the clear-on-success draft; a stale retry notice must not outlive it.
+      if (compactWasSubmitting.current) setSubmissionNotice(undefined)
+      compactWasSubmitting.current = false
+    }
   }, [input?.claim?.token, input?.phase])
 
   useEffect(() => {
@@ -94,6 +99,16 @@ export function TeamMemberSessionComposer({ controller, inputActions, overlay, p
     // open. Keep this ahead of IME/menu handling to match the resident bar.
     if (event.key === 'Enter' && event.shiftKey) return
     if (event.repeat || composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+    // Tab accepts the highlighted candidate, mirroring the team-mode composer
+    // and the Channel/Thread bars; Shift+Tab keeps native focus reversal.
+    if (event.key === 'Tab' && !event.shiftKey) {
+      const highlight = controller.menu.getSnapshot().highlight
+      if (highlight !== null) {
+        event.preventDefault()
+        controller.pick(highlight.source, highlight.index)
+      }
+      return
+    }
     const key = event.key === 'ArrowUp' ? 'up' : event.key === 'ArrowDown' ? 'down' : event.key === 'Escape' ? 'escape' : event.key === 'Enter' ? 'enter' : undefined
     if (key !== undefined) {
       const outcome = controller.arbitrate(key, false)

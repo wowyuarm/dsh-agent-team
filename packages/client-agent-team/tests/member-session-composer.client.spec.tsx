@@ -75,6 +75,27 @@ describe('Team Member session composer', () => {
     expect(controller.toggleSource).toHaveBeenCalledTimes(3)
   })
 
+  it('clears the retry notice once a compact retry succeeds and the phase settles to plain', () => {
+    const controller = { dismiss: vi.fn(), toggleSource: vi.fn(), arbitrate: vi.fn(() => 'pass') }
+    const props = (phase: 'plain' | 'claimed' | 'submitting') => ({
+      controller,
+      useInput: (selector: (state: never) => unknown) => selector({ draft: phase === 'plain' ? '' : '/compact', draftRev: 1, phase, claim: phase === 'plain' ? undefined : { token: '/compact' } } as never),
+      useSession: (selector: (current: never) => unknown) => selector({ running: false } as never),
+      inputActions: { setDraft: vi.fn(), submit: vi.fn() },
+    } as unknown as TeamMemberSessionComposerProps)
+    const tested = render(<TeamMemberSessionComposer {...props('submitting')} />)
+    // First flight fails: submitting → claimed keeps the draft and shows the
+    // retry notice.
+    tested.rerender(<TeamMemberSessionComposer {...props('claimed')} />)
+    expect(tested.getByRole('alert').textContent).toContain('Compact 未执行')
+    // The retry succeeds: submitting → plain is the InputMachine's clear-on-
+    // success settlement; a stale failure notice must not outlive it.
+    tested.rerender(<TeamMemberSessionComposer {...props('submitting')} />)
+    tested.rerender(<TeamMemberSessionComposer {...props('plain')} />)
+    expect(tested.queryByRole('alert')).toBeNull()
+    expect((tested.getByRole('textbox') as HTMLTextAreaElement).value).toBe('')
+  })
+
   it('shows a retry alert after a compact claim returns from submitting to claimed', () => {
     const controller = { dismiss: vi.fn(), toggleSource: vi.fn(), arbitrate: vi.fn(() => 'pass') }
     const props = (phase: 'claimed' | 'submitting') => ({
@@ -103,6 +124,49 @@ describe('Team Member session composer', () => {
     fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })
     expect(tested.controller.arbitrate).not.toHaveBeenCalled()
     expect(tested.submit).not.toHaveBeenCalled()
+  })
+
+  it('accepts the highlighted candidate with Tab and keeps Shift+Tab native', () => {
+    const highlight = { source: 'team-member', index: 1 }
+    const controller = {
+      dismiss: vi.fn(),
+      toggleSource: vi.fn(),
+      arbitrate: vi.fn(() => 'pass'),
+      menu: { getSnapshot: vi.fn(() => ({ highlight })) },
+      pick: vi.fn(),
+    }
+    const tested = render(<TeamMemberSessionComposer {...({
+      controller,
+      useInput: (selector: (state: never) => unknown) => selector({ draft: '@rev', draftRev: 3, phase: 'plain' } as never),
+      useSession: (selector: (current: never) => unknown) => selector({ running: false } as never),
+      inputActions: { setDraft: vi.fn(), submit: vi.fn() },
+    } as unknown as TeamMemberSessionComposerProps)} />)
+    const input = tested.getByRole('textbox')
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(controller.pick).toHaveBeenCalledWith(highlight.source, highlight.index)
+    expect(controller.arbitrate).not.toHaveBeenCalled()
+    // Shift+Tab is a native focus move, never a pick.
+    fireEvent.keyDown(input, { key: 'Tab', shiftKey: true })
+    expect(controller.pick).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves plain Tab to the browser when no candidate is highlighted', () => {
+    const controller = {
+      dismiss: vi.fn(),
+      toggleSource: vi.fn(),
+      arbitrate: vi.fn(() => 'pass'),
+      menu: { getSnapshot: vi.fn(() => ({ highlight: null })) },
+      pick: vi.fn(),
+    }
+    const tested = render(<TeamMemberSessionComposer {...({
+      controller,
+      useInput: (selector: (state: never) => unknown) => selector({ draft: 'plain text', draftRev: 1, phase: 'plain' } as never),
+      useSession: (selector: (current: never) => unknown) => selector({ running: false } as never),
+      inputActions: { setDraft: vi.fn(), submit: vi.fn() },
+    } as unknown as TeamMemberSessionComposerProps)} />)
+    fireEvent.keyDown(tested.getByRole('textbox'), { key: 'Tab' })
+    expect(controller.pick).not.toHaveBeenCalled()
+    expect(controller.arbitrate).not.toHaveBeenCalled()
   })
 
   it('passes keyboard menu handling unless IME is composing, then stops a running turn', () => {
