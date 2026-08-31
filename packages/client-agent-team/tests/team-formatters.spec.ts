@@ -115,6 +115,11 @@ describe('Team presentation formatters', () => {
     expect(mentionNamesOf(['member:2' as AgentTeamMemberId, 'member:1' as AgentTeamMemberId, 'member:gone' as AgentTeamMemberId], handles)).toEqual(['lead', 'builder'])
   })
 
+  it('keeps the Human mention renderable when the Agent roster omits it', () => {
+    const handles = new Map([['member:builder' as AgentTeamMemberId, 'builder']])
+    expect(mentionNamesOf(['member:human' as AgentTeamMemberId, 'member:builder' as AgentTeamMemberId], handles)).toEqual(['human', 'builder'])
+  })
+
   it('accepts plain-prose bodies for literal mention rendering', () => {
     expect(isPlainTextBody('@lead please review the diff')).toBe(true)
     expect(isPlainTextBody('two lines\nwith a normal break')).toBe(true)

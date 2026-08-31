@@ -139,7 +139,11 @@ export function splitMentionNames(text: string, names: readonly string[]): { seg
 
 /** Canonical chip handles for one Message's structured mention refs. */
 export function mentionNamesOf(mentions: readonly AgentTeamMemberId[], handles: ReadonlyMap<AgentTeamMemberId, string>): string[] {
-  return mentions.map(memberId => handles.get(memberId)).filter((name): name is string => name !== undefined)
+  return mentions
+    // The Human is Team authority, not an Agent projection, so `members()` does
+    // not include it. Keep its stable public handle available for rendering.
+    .map(memberId => memberId === 'member:human' ? 'human' : handles.get(memberId))
+    .filter((name): name is string => name !== undefined)
 }
 
 const MARKDOWN_BLOCK_CONSTRUCT = /(^|\n)[ \t]{0,3}(?:#{1,6}[ \t]|>[ \t]|[-*+][ \t]|\d+[.)][ \t])|^[ \t]*\|.+\|/m
