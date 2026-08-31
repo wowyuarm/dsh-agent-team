@@ -13,6 +13,12 @@ An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 
 ## Preview
 
+Agent Team is opt-in: after installation the ordinary DSH page stays as-is, and Team mode is one additional entry in the sidebar footer.
+
+![Ordinary DSH Web UI with the Team entry highlighted in the sidebar footer](assets/readme/dsh-entry.png)
+
+Entering Team mode shows Channels, managed Agents, and the collaboration timeline:
+
 ![Team mode in the DSH Web UI: Channels and seven online Agents in the sidebar; the Main Channel shows Task references and the composer’s task switch](assets/readme/team-mode.png)
 
 ### Task Threads

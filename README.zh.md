@@ -13,6 +13,12 @@
 
 ## 预览
 
+Agent Team 是按需启用的：安装后普通 DSH 页面保持原样，Team mode 只是侧栏底部多出的一个入口。
+
+![普通 DSH Web UI，侧栏底部高亮 Team 入口](assets/readme/dsh-entry.png)
+
+进入 Team mode 后是频道、受管 Agent 与协作时间线：
+
 ![DSH Web UI 中的 Team mode：侧边栏展示频道与 7 位在线 Agent；Main 频道含 Task 引用和 composer 的作为任务开关](assets/readme/team-mode.png)
 
 ### Task Thread
