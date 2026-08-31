@@ -280,7 +280,7 @@ describe('Team agent surfaces', () => {
     // Confirm routes through the Host remote with the Member identity.
     fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '确认清空' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
     await waitFor(() => {
       expect(b.clearMemberContext).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:builder' }))
     })
@@ -300,14 +300,14 @@ describe('Team agent surfaces', () => {
     })
     fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '确认清空' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
     await waitFor(() => { expect(b.refresh).toHaveBeenCalledTimes(1) })
 
     // A transport rejection surfaces as the row alert.
     b.clearMemberContext.mockRejectedValueOnce(new Error('connection lost'))
     fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '确认清空' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
     await waitFor(() => { expect(b.view.getByRole('alert').textContent).toContain('清空上下文失败：connection lost') })
     // A failed clear leaves the embedded seat untouched.
     expect(b.refresh).toHaveBeenCalledTimes(1)

@@ -274,7 +274,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await clearEntry.click()
   const clearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
   await clearDialog.waitFor()
-  expect(await clearDialog.textContent()).toContain('不可撤销')
+  expect(await clearDialog.textContent()).toContain('无法恢复')
   await clearDialog.getByRole('button', { name: '取消' }).click()
   await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
 
@@ -334,7 +334,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await executeClearEntry.click()
   const executeClearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
   await executeClearDialog.waitFor()
-  await executeClearDialog.getByRole('button', { name: '确认清空' }).click()
+  await executeClearDialog.getByRole('button', { name: '开始全新上下文' }).click()
   await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
   // The embedded pane now shows the empty conversation (hero composer, no
   // rows): the compact transcript is gone while the Member composer stays live.
