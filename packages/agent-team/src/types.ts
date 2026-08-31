@@ -360,6 +360,18 @@ export interface AgentTeamMemberSessionRestartedOperation extends AgentTeamOpera
   readonly data: { readonly member: AgentTeamAgentMember }
 }
 
+/**
+ * Audit record of one Member context clear: the Host discarded the Member's
+ * persisted Session log and recreated the live Session under the same
+ * sessionId, so the next turn starts from an empty context. Projection state
+ * is unchanged — identity, memory path, and binding survive — so apply()
+ * treats this operation as a marker only.
+ */
+export interface AgentTeamMemberContextClearedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-context-cleared'
+  readonly data: { readonly member: AgentTeamAgentMember }
+}
+
 /** Durable Human rename of one Channel's display facts; identity refs never change. */
 export interface AgentTeamChannelUpdatedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/channel-updated'
@@ -545,6 +557,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberSuspendedOperation
   | AgentTeamMemberResumedOperation
   | AgentTeamMemberSessionRestartedOperation
+  | AgentTeamMemberContextClearedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation
@@ -645,6 +658,19 @@ export interface AgentTeamRecoverMemberRequest {
 
 /** Result of a recovery nudge; runtime-only steering, so there is no ledger receipt. */
 export interface AgentTeamRecoverMemberResult {
+  readonly status: AgentTeamAgentMemberStatus
+}
+
+/** Human intent to clear one enabled Member's conversation context in place. */
+export interface AgentTeamClearMemberContextRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+}
+
+/** The Member keeps identity, memory, and binding; only its Session log is discarded and recreated empty. */
+export interface AgentTeamClearMemberContextResult {
+  readonly receipt: AgentTeamOperationReceipt
   readonly status: AgentTeamAgentMemberStatus
 }
 

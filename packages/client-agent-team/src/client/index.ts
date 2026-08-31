@@ -14,6 +14,7 @@ import type {
   AgentTeamPromoteThreadRequest,
   AgentTeamPutAttachmentRequest,
   AgentTeamRecoverMemberRequest,
+  AgentTeamClearMemberContextRequest,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamReplyRequest,
   AgentTeamResolveTaskRefsRequest,
@@ -73,6 +74,19 @@ function registerModeShadow<T extends object>(
   component: T,
   extraInject?: () => Record<string, unknown>,
 ): void {
+  // Stay in Team mode: the conversation shadow stands down for Member Session
+  // views (see registerModeShadow), so the shipped conversation root renders
+  // the selected Member Session inside the Team shell.
+  const openMemberSessionImpl = (sessionId: AgentTeamClientMemberStatus['member']['sessionId']): void => {
+    const sessions = ctx.sessions as unknown as ISessions
+    const snapshot = navigation.getSnapshot()
+    const current = sessions.list.getSnapshot().current
+    // The return target is captured on first entry only — switching between
+    // Member Sessions must keep pointing at the Human's original session.
+    const returnTo = snapshot.memberSessionId === undefined && current !== undefined && current !== sessionId ? current : undefined
+    navigation.actions().enterMemberSession(sessionId, returnTo)
+    sessions.open(sessionId)
+  }
   // Remote bindings shared by every Team slot; surface-specific entries extend it below.
   const sharedRemotes = {
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
@@ -84,24 +98,31 @@ function registerModeShadow<T extends object>(
     updateChannel: (request: AgentTeamUpdateChannelRequest) => ctx.remote.agentTeam.updateChannel(request),
     updateMember: (request: AgentTeamUpdateMemberRequest) => ctx.remote.agentTeam.updateMember(request),
     recoverMember: (request: AgentTeamRecoverMemberRequest) => ctx.remote.agentTeam.recoverMember(request),
+    clearMemberContext: (request: AgentTeamClearMemberContextRequest) => ctx.remote.agentTeam.clearMemberContext(request),
     // The Host-scoped catalog needs no live Member, so suspended ones stay editable too.
     loadModels: async () => {
       const connection = ctx.get('connection') as ConnectionHandle
       const response = await connection.api.llm.models({})
       return response.result
     },
-    openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => {
-      // Stay in Team mode: the conversation shadow stands down for Member
-      // Session views (see registerModeShadow), so the shipped conversation
-      // root renders the selected Member Session inside the Team shell.
-      const sessions = ctx.sessions as unknown as ISessions
-      const snapshot = navigation.getSnapshot()
-      const current = sessions.list.getSnapshot().current
-      // The return target is captured on first entry only — switching between
-      // Member Sessions must keep pointing at the Human's original session.
-      const returnTo = snapshot.memberSessionId === undefined && current !== undefined && current !== sessionId ? current : undefined
-      navigation.actions().enterMemberSession(sessionId, returnTo)
-      sessions.open(sessionId)
+    openMemberSession: openMemberSessionImpl,
+    // The Host recreated the Member's Session under the same id with an empty
+    // durable log, but the disposed generation's resident window keeps its
+    // `removed` bit permanently, and the public sessions face has no
+    // per-session rebuild verb: a staged removed session's teardown stays
+    // deferred until the stage moves to a different session. So leave the
+    // member view, reopen the Human's return session to force that stage move
+    // (which sweeps the frozen instance), pull the recreated Session back into
+    // the list baseline, then re-enter — the reopen lazily rebuilds the
+    // instance from host truth, landing the seat on the blank hero. Without a
+    // return target no stage move is possible, so the seat keeps the frozen
+    // view until the next stage move or reload converges it.
+    refreshMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => {
+      const sessions = ctx.sessions as unknown as ISessions & { refresh(): Promise<void> }
+      const returnTo = navigation.getSnapshot().returnToSessionId
+      navigation.actions().exitMemberSession()
+      if (returnTo !== undefined) sessions.open(returnTo)
+      void sessions.refresh().then(() => { openMemberSessionImpl(sessionId) })
     },
   }
   ctx.slots.inject(name, () => {

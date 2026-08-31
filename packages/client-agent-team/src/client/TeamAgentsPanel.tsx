@@ -6,7 +6,7 @@ import type {
   AgentTeamChannel,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconEditOutline16, IconNewChatOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
@@ -27,17 +27,19 @@ interface TeamAgentsPanelProps {
   readonly addMember: TeamSidebarProps['addMember']
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
+  readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  readonly refreshMemberSession: TeamSidebarProps['refreshMemberSession']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, recoverMember, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, refreshMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
   const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
@@ -201,7 +203,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
+              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} refreshMemberSession={refreshMemberSession} onUpdated={() => { void refresh() }} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -221,7 +223,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, openMemberSession, refreshMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
@@ -229,15 +231,18 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
   readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
+  readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
+  readonly refreshMemberSession: TeamSidebarProps['refreshMemberSession']
   readonly onUpdated: () => Promise<void> | void
   readonly t: TeamSidebarProps['t']
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [rowAlert, setRowAlert] = useState<string>()
   // Both row actions ride the same runtime remote: the Host steers a live
   // session, rebuilds an orphaned composition, or re-runs a failed activation.
@@ -265,6 +270,30 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
       setRowAlert(t('restartFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
     }
   }
+  const clearContext = async (): Promise<void> => {
+    try {
+      const result = await clearMemberContext({
+        requestId: mintRequestId(),
+        workspaceId: status.member.workspaceId,
+        memberId: status.member.memberId,
+      })
+      await onUpdated()
+      if (!result.ok) {
+        setRowAlert(t('clearContextFailed', { message: result.error.message }))
+        return
+      }
+      setRowAlert(undefined)
+      // The Host recreated the same Session id empty. The resident client
+      // window still shows the disposed generation (its `removed` bit is
+      // permanent), so the runtime rebuilds the seat from host truth when
+      // this Member's Session was embedded — the pane falls back to the
+      // blank hero immediately instead of showing stale history.
+      if (current === true) refreshMemberSession(status.member.sessionId)
+    } catch (cause) {
+      setRowAlert(t('clearContextFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
+  }
+  const contextClearable = status.presence === 'available'
   return (
     <>
       <div className={css.agentRow} data-menu-open={menuOpen || undefined}>
@@ -282,9 +311,12 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
               ...(status.availability === 'unavailable' ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
+              { id: 'clear-context', label: t('clearContextAgent'), icon: <IconNewChatOutline16 />, danger: true, disabled: !contextClearable },
+              ...(!contextClearable ? [{ type: 'label' as const, id: 'clear-context-reason', text: status.presence === 'working' ? t('clearContextWorkingReason') : t('clearContextUnavailableReason') }] : []),
             ]}
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)
+              else if (id === 'clear-context') setClearing(true)
               else void recover()
             }}
             onOpenChange={setMenuOpen}
@@ -292,6 +324,21 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
         </span>
       </div>
       {rowAlert !== undefined && <div className={css.rowAlert} role="alert">{rowAlert}</div>}
+      {clearing && (
+        <Modal
+          open
+          onClose={() => { setClearing(false) }}
+          title={t('clearContextTitle', { name: status.member.handle })}
+          closeLabel={t('close')}
+          contentClassName={createCss.dialogContent!}
+          footer={<>
+            <Button variant="outline" onClick={() => { setClearing(false) }}>{t('cancel')}</Button>
+            <Button variant="primary" onClick={() => { setClearing(false); void clearContext() }}>{t('clearContextConfirm')}</Button>
+          </>}
+        >
+          <p className={createCss.error}>{t('clearContextNotice', { name: status.member.handle })}</p>
+        </Modal>
+      )}
       {editing && (
         <AgentEditorDialog
           status={status}

@@ -242,6 +242,78 @@ describe('Team agent surfaces', () => {
     await b.runtime.dispose()
   })
 
+  it('offers 从全新上下文开始 only for idle Members and requires a destructive confirm', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+
+    // The available Member gets an enabled clear entry.
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    const healthyMenu = await within(document.body).findByRole('menu')
+    const clearItem = within(healthyMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
+    expect(clearItem.disabled).toBe(false)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    // The working Member's entry is disabled with a reason label.
+    fireEvent.click(b.view.getByRole('button', { name: 'worker 的操作' }))
+    const workingMenu = await within(document.body).findByRole('menu')
+    const workingClear = within(workingMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
+    expect(workingClear.disabled).toBe(true)
+    expect(within(workingMenu).getByText('成员正在工作中，完成后才能清空上下文')).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    // An error Member is also gated, but the reason must name its own state
+    // instead of claiming the Member is working.
+    fireEvent.click(b.view.getByRole('button', { name: 'failed 的操作' }))
+    const failedMenu = await within(document.body).findByRole('menu')
+    const failedClear = within(failedMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
+    expect(failedClear.disabled).toBe(true)
+    expect(within(failedMenu).getByText('成员当前不可用，恢复在线且空闲后才能清空上下文')).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // Confirm before routing: the first click only opens the destructive dialog.
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
+    expect(b.view.getByRole('dialog', { name: '从全新上下文开始：builder' })).toBeTruthy()
+    expect(b.clearMemberContext).not.toHaveBeenCalled()
+    // Cancel closes without routing.
+    fireEvent.click(b.view.getByRole('button', { name: '取消' }))
+    expect(b.view.queryByRole('dialog', { name: '从全新上下文开始：builder' })).toBeNull()
+    // Confirm routes through the Host remote with the Member identity.
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '确认清空' }))
+    await waitFor(() => {
+      expect(b.clearMemberContext).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:builder' }))
+    })
+    // The seat is not embedded here, so no window rebuild is triggered.
+    expect(b.refresh).not.toHaveBeenCalled()
+
+    // While the Member's Session is embedded, a successful clear forces the
+    // resident window to rebuild from host truth — the pane falls back to the
+    // blank hero instead of keeping the disposed generation's stale history.
+    await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    fireEvent.click(await b.view.findByRole('button', { name: '打开 builder 的会话' }))
+    await waitFor(() => {
+      expect(b.runtime.sessions.calls.some(call => call.method === 'open' && call.args[0] === 'session:member:builder')).toBe(true)
+    })
+    await waitFor(() => {
+      expect(b.view.getByRole('button', { name: '打开 builder 的会话' }).getAttribute('aria-current')).toBe('page')
+    })
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '确认清空' }))
+    await waitFor(() => { expect(b.refresh).toHaveBeenCalledTimes(1) })
+
+    // A transport rejection surfaces as the row alert.
+    b.clearMemberContext.mockRejectedValueOnce(new Error('connection lost'))
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '确认清空' }))
+    await waitFor(() => { expect(b.view.getByRole('alert').textContent).toContain('清空上下文失败：connection lost') })
+    // A failed clear leaves the embedded seat untouched.
+    expect(b.refresh).toHaveBeenCalledTimes(1)
+    await b.runtime.dispose()
+  })
+
   it('edits Agent identity and pins a Member model through the editor', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))

@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { IconEllipsisOutline16, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutline16, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './sidebar.module.css'
 
 /**
@@ -11,7 +10,8 @@ import css from './sidebar.module.css'
 export function TeamRowMenu({ label, items, onSelect, onOpenChange }: {
   /** Localized action label for the trigger, e.g. "{name} 的操作". */
   readonly label: string
-  readonly items: readonly MenuItem[]
+  /** Menu rows plus optional non-interactive labels and separators. */
+  readonly items: readonly MenuEntry[]
   readonly onSelect: (id: string) => void
   /** Lets the row pin its hover styling while the portal list is up. */
   readonly onOpenChange?: (open: boolean) => void

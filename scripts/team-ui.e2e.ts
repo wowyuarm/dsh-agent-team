@@ -263,6 +263,21 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-edit-modal.png'), fullPage: true })
   await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
 
+  // 「从全新上下文开始」rides the same row menu: idle Members get an enabled
+  // destructive entry whose confirm names the Member; cancelling routes nothing.
+  await builderRow.hover()
+  await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
+  await page.getByRole('menuitem', { name: '从全新上下文开始' }).waitFor()
+  const clearEntry = page.getByRole('menuitem', { name: '从全新上下文开始' })
+  expect(await clearEntry.isDisabled()).toBe(false)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-clear-context-menu.png'), fullPage: true })
+  await clearEntry.click()
+  const clearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
+  await clearDialog.waitFor()
+  expect(await clearDialog.textContent()).toContain('不可撤销')
+  await clearDialog.getByRole('button', { name: '取消' }).click()
+  await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
+
   const memberWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const memberStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
   const builderMember = memberStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
@@ -274,6 +289,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // Member Session between the Team sidebars. A Member session has no human
   // turns yet, so DSH renders its blank-session view — the hero composer
   // carrying the Member's workspace + `team-member` preset chips.
+  // The Human's own session is staged first on purpose: the embedded view then
+  // carries a return target, which the context-clear rebuild later needs to
+  // force the stage move that sweeps the disposed session generation.
+  await brandButton.click()
+  // The two Member Sessions exist already; the brand click adds the Human's.
+  await expect.poll(() => scaffold.ctx.sessions.list().length).toBeGreaterThanOrEqual(3)
   await builderRow.getByRole('button', { name: '打开 builder 的会话' }).click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.agentTeamMode ?? null)).toBe('team')
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
@@ -299,17 +320,54 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // consumed its own draft, or its late success could clear that next draft.
   await expect.poll(() => memberInput.inputValue()).toBe('')
 
+  // 「从全新上下文开始」executes for real while the Member Session is embedded:
+  // the Host recreates the same Session id with an empty durable log, and the
+  // right pane must fall back to the blank hero immediately — no stale
+  // transcript, composer enabled for the fresh context. This runs before any
+  // prompt send: the scenario mounts no replay fixture, so a stray model call
+  // would push the Member to error presence and lock the available-only gate.
+  await builderRow.hover()
+  await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
+  const executeClearEntry = page.getByRole('menuitem', { name: '从全新上下文开始' })
+  await executeClearEntry.waitFor()
+  await expect.poll(async () => await executeClearEntry.isDisabled()).toBe(false)
+  await executeClearEntry.click()
+  const executeClearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
+  await executeClearDialog.waitFor()
+  await executeClearDialog.getByRole('button', { name: '确认清空' }).click()
+  await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
+  // The embedded pane now shows the empty conversation (hero composer, no
+  // rows): the compact transcript is gone while the Member composer stays live.
+  await expect.poll(() => page.getByText('/compact').count()).toBe(0)
+  await expect.poll(() => page.evaluate(() => ({
+    channel: document.querySelectorAll('[data-team-channel]').length,
+    composer: document.querySelectorAll('[data-team-member-composer="true"]').length,
+    mode: document.documentElement.dataset.agentTeamMode ?? null,
+  })), { timeout: 10_000 }).toEqual({ channel: 0, composer: 1, mode: 'team' })
+  await expect.poll(() => memberInput.isEnabled()).toBe(true)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-cleared.png'), fullPage: true })
+  // Host side: the Member keeps the same Session binding and a fresh handle
+  // whose durable log is empty (no command/user events survive the clear).
+  const clearedStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
+  const clearedBuilder = clearedStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
+  expect(clearedBuilder.member.sessionId).toBe(builderMember.member.sessionId)
+  const freshBuilderAgent = scaffold.ctx.agents.get(clearedBuilder.member.sessionId)!
+  expect(freshBuilderAgent).not.toBe(builderAgent)
+  expect(freshBuilderAgent.session.events.filter(event => event.type === 'user/message' || event.type === 'command/run' || event.type === 'turn/start')).toHaveLength(0)
+
+  // The fresh session is immediately usable: the member-composer mention flow
+  // runs against the recreated Session and its structured prompt lands there.
   await memberInput.fill('@rev')
   await page.getByRole('option', { name: '@reviewer' }).waitFor()
   await page.getByRole('option', { name: '@reviewer' }).click()
   await expect.poll(() => memberInput.inputValue()).toBe('@reviewer ')
   await memberInput.press('Enter')
-  const isStructuredReviewerPrompt = (event: (typeof builderAgent.session.events)[number]): boolean => event.type === 'user/message'
+  const isStructuredReviewerPrompt = (event: (typeof freshBuilderAgent.session.events)[number]): boolean => event.type === 'user/message'
     && event.data.source.kind === 'user'
     && event.data.content.some(block => block.type === 'text' && block.text === `<team-member ref="${reviewerMember.member.memberId}">@reviewer</team-member>`)
-  await expect.poll(() => builderAgent.session.events.some(isStructuredReviewerPrompt)).toBe(true)
-  await builderAgent.whenIdle()
-  const mentionPrompt = builderAgent.session.events.findLast(isStructuredReviewerPrompt)
+  await expect.poll(() => freshBuilderAgent.session.events.some(isStructuredReviewerPrompt)).toBe(true)
+  await freshBuilderAgent.whenIdle()
+  const mentionPrompt = freshBuilderAgent.session.events.findLast(isStructuredReviewerPrompt)
   expect(mentionPrompt).toBeDefined()
   await memberInput.fill('newline')
   await memberInput.press('Shift+Enter')

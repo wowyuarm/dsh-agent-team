@@ -17,7 +17,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -66,6 +66,8 @@ import type {
   AgentTeamPutAttachmentResult,
   AgentTeamRecoverMemberRequest,
   AgentTeamRecoverMemberResult,
+  AgentTeamClearMemberContextRequest,
+  AgentTeamClearMemberContextResult,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
   AgentTeamRemoveMemberRequest,
@@ -243,8 +245,15 @@ export default class AgentTeam extends TypertRemoteService {
         this.notifyMember(agent)
       }
       // A turn that ends without an error closes any automatic recovery episode.
-      if (status === 'idle' && member !== undefined && this.memberFailures.get(member.memberId)?.runtime === undefined) {
-        this.recovery.onCleanTurnEnd(member.memberId)
+      // The idle transition is itself presence-affecting (working → available),
+      // so it must wake workspace watchers exactly like the running transition
+      // above; without this wake, cached Client member rows keep showing the
+      // Member as working after every turn until an unrelated change arrives.
+      if (status === 'idle' && member !== undefined) {
+        if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
+          this.recovery.onCleanTurnEnd(member.memberId)
+        }
+        this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
       }
     })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
@@ -455,6 +464,67 @@ export default class AgentTeam extends TypertRemoteService {
     this.ctx.logger.info(`agent-team: operator asked member '${member.handle}' to resume`)
     this.steerResume(member, this.manualResumeText())
     return Object.freeze({ status: this.memberStatus(member) })
+  }
+
+  /**
+   * Start one enabled Member from a new context in place: dispose the live
+   * handle, discard the persisted Session log under the same sessionId, and
+   * recreate the Session empty through the ordinary activation path, so
+   * preset, tools, private memory, and model selection all reload while the
+   * next turn carries no history. The audit operation changes no projection
+   * state — identity, memory path, and binding survive.
+   */
+  @Remote('clearMemberContext')
+  async clearMemberContext(request: AgentTeamClearMemberContextRequest): Promise<AgentTeamClearMemberContextResult> {
+    return this.enqueueLifecycle(async () => {
+      this.requireAccepting()
+      this.requireWorkspace(request.workspaceId)
+      const stored = this.requireLedger().getMember(request.memberId)
+      if (stored === undefined || stored.workspaceId !== request.workspaceId) throw new Error(`unknown Member '${request.memberId}' in workspace '${request.workspaceId}'`)
+      if (stored.state !== 'enabled') throw new Error(`Agent Member '${stored.handle}' is ${stored.state}; only enabled Members can start from a new context`)
+      const active = this.handles.get(request.memberId)
+      if (active === undefined) throw new Error(`Agent Member '${stored.handle}' has no active session to clear`)
+      if (this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before starting from a new context`)
+      const result = await this.requireLedger().clearMemberContext({ ...request, actor: agentTeamHumanActor() })
+      if (result.committed) this.emitCommitted(result.value.receipt)
+      // The header is captured before dispose: disposal removes the Session
+      // from the store, but the persistence seam still needs its header to
+      // resolve the artifact the next resume would load.
+      const header = active.agent.session.header
+      // Drop the old handle's transient state: pending recovery episodes and
+      // error markers belong to the disposed agent, not to the Member.
+      this.recovery.stopTracking(request.memberId)
+      await active.dispose()
+      this.handles.delete(request.memberId)
+      this.modelSelections.delete(request.memberId)
+      this.clearMemberFailure(request.memberId, 'activation')
+      this.clearMemberNotificationState(request.memberId)
+      // The persisted Session log is the only history the next resume could
+      // load; discarding it makes the recreate below start empty.
+      await this.deleteMemberSessionLog(stored, header)
+      await this.activateMember(stored)
+      const reactivated = this.handles.get(request.memberId)
+      if (reactivated === undefined) {
+        // Reactivation failed; the activation diagnostic carries the reason and
+        // the audit record stays honest about the attempt.
+        throw new Error(`Agent Member '${stored.handle}' failed to start a new context: ${this.memberFailures.get(request.memberId)?.activation ?? 'unknown error'}`)
+      }
+      return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
+    })
+  }
+
+  /**
+   * Discard one Member's persisted Session log artifact. Public persistence
+   * offers no delete verb, so this removes the JSONL backend's per-session
+   * log file at the path the seam itself resolves; any other backend rejects
+   * loudly rather than pretending the log vanished.
+   */
+  private async deleteMemberSessionLog(member: AgentTeamAgentMember, header: SessionHeader): Promise<void> {
+    const location = this.ctx.sessionPersistence.locate(header)
+    if (location === undefined || location.kind !== 'jsonl') {
+      throw new Error(`Agent Member '${member.handle}' uses a persistence backend that cannot discard its Session log (${location?.kind ?? 'unknown'})`)
+    }
+    await rm(location.path, { force: true })
   }
 
   /** Ledger handle for log lines; falls back to the raw id when unknown. */

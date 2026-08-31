@@ -3,6 +3,8 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
+  AgentTeamClearMemberContextRequest,
+  AgentTeamClearMemberContextResult,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamJoinChannelRequest,
@@ -93,12 +95,20 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     updateChannel: (request: AgentTeamUpdateChannelRequest) => Promise<RemoteResult<AgentTeamUpdateChannelResult>>
     updateMember: (request: AgentTeamUpdateMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     recoverMember: (request: AgentTeamRecoverMemberRequest) => Promise<RemoteResult<AgentTeamRecoverMemberResult>>
+    clearMemberContext: (request: AgentTeamClearMemberContextRequest) => Promise<RemoteResult<AgentTeamClearMemberContextResult>>
     joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => void
+    /**
+     * Rebuild the conversation seat after the Host recreated a Member's
+     * Session under the same id with an empty durable log: the resident
+     * client window still holds the disposed generation, so the runtime
+     * re-opens the seat from host truth (the blank hero for a cleared log).
+     */
+    refreshMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => void
     selectedChannelRef?: AgentTeamChannelRef
   }
 

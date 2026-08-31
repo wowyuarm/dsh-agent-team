@@ -16,6 +16,7 @@ import type {
   AgentTeamChannelMemberRemovedOperation,
   AgentTeamChannelRef,
   AgentTeamChannelUpdatedOperation,
+  AgentTeamClearMemberContextRequest,
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimsReleasedActivity,
@@ -39,6 +40,7 @@ import type {
   AgentTeamJoinChannelResult,
   AgentTeamMemberActor,
   AgentTeamMemberAddedOperation,
+  AgentTeamMemberContextClearedOperation,
   AgentTeamMemberId,
   AgentTeamMemberRemovedOperation,
   AgentTeamMemberResumedOperation,
@@ -136,6 +138,10 @@ export interface AgentTeamAuthorizedAddMemberRequest extends AgentTeamAddMemberR
 }
 
 export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMemberStateRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedClearMemberContextRequest extends AgentTeamClearMemberContextRequest {
   readonly actor: AgentTeamHumanActor
 }
 
@@ -443,6 +449,32 @@ export class AgentTeamLedger {
 
   resumeMember(request: AgentTeamAuthorizedSetMemberStateRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
     return this.setMemberState(request, 'enabled')
+  }
+
+  /**
+   * Audit record of one in-place Member context clear. The operation changes
+   * no projection state — identity, memory path, and binding are untouched —
+   * so replay treats it as a marker while the Host discards and recreates the
+   * live Session under the same sessionId.
+   */
+  clearMemberContext(request: AgentTeamAuthorizedClearMemberContextRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameMemberContextClear(existing, request)
+        return this.resolved(this.memberResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const member = this.requireMember(request.memberId)
+      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can start from a new context`)
+      const operation: AgentTeamMemberContextClearedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/member-context-cleared',
+        data: Object.freeze({ member }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.memberResult(operation))
+    })
   }
 
   getMember(memberId: AgentTeamMemberId): AgentTeamAgentMember | undefined {
@@ -1092,6 +1124,7 @@ export class AgentTeamLedger {
       case 'team/member-suspended':
       case 'team/member-resumed':
       case 'team/member-session-restarted':
+      case 'team/member-context-cleared':
       case 'team/member-updated':
       case 'team/member-removed':
         return [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
@@ -1175,6 +1208,7 @@ export class AgentTeamLedger {
       case 'team/member-suspended':
       case 'team/member-resumed':
       case 'team/member-session-restarted':
+      case 'team/member-context-cleared':
       case 'team/member-updated':
       case 'team/channel-member-added':
       case 'team/thread-read':
@@ -1267,6 +1301,13 @@ export class AgentTeamLedger {
       const prior = projection.members.get(operation.data.member.memberId)
       // The restart records the unchanged Member: same identity, still enabled.
       if (prior === undefined || prior.state !== 'enabled' || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member restart')
+      return
+    }
+    if (operation.kind === 'team/member-context-cleared') {
+      assertHuman()
+      const prior = projection.members.get(operation.data.member.memberId)
+      // The clear records the unchanged Member: same identity, still enabled.
+      if (prior === undefined || prior.state !== 'enabled' || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member context clear')
       return
     }
     if (operation.kind === 'team/channel-updated') {
@@ -1672,6 +1713,11 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/member-session-restarted') {
       // Audit-only: identity, transcript, and memory are untouched, so the
       // projection deliberately does not change.
+      return
+    }
+    if (operation.kind === 'team/member-context-cleared') {
+      // Audit-only: identity, memory path, and binding are untouched; the
+      // Host already recreated the live Session empty under the same id.
       return
     }
     if (operation.kind === 'team/channel-updated') {
@@ -2438,6 +2484,11 @@ export class AgentTeamLedger {
     if (operation.kind !== kind || !this.sameActor(operation.actor, request.actor) || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
   }
 
+  private assertSameMemberContextClear(operation: AgentTeamOperation, request: AgentTeamAuthorizedClearMemberContextRequest): asserts operation is AgentTeamMemberContextClearedOperation {
+    if (operation.kind !== 'team/member-context-cleared' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
+  }
+
   private assertSameChannelUpdate(operation: AgentTeamOperation, request: AgentTeamAuthorizedUpdateChannelRequest): asserts operation is AgentTeamChannelUpdatedOperation {
     if (operation.kind !== 'team/channel-updated' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId || operation.data.channel.channelRef !== request.channelRef
@@ -2594,7 +2645,7 @@ export class AgentTeamLedger {
     return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel })
   }
 
-  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberSessionRestartedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
+  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberSessionRestartedOperation | AgentTeamMemberContextClearedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
     return Object.freeze({ receipt: this.receipt(operation), member: operation.data.member })
   }
 

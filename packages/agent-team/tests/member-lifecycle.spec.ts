@@ -25,7 +25,7 @@ import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgent
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
 import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
-import type { AgentTeamChannelRef, AgentTeamRequestId } from '../src/types.ts'
+import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -254,6 +254,60 @@ describe('Agent Team Member lifecycle', () => {
     expect(removed.member.state).toBe('inactive')
     expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
+  })
+
+  it('clears an enabled Member context in place: same sessionId, empty log, memory and binding survive', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('clear-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('clear-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const liveBefore = ctx.agents.get(added.status.member.sessionId)!
+    // Give the Member a real turn so the clear has a transcript to erase.
+    adapter.enqueue(textResponse('Initial work finished.'))
+    const idle = waitForIdle(ctx, liveBefore)
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('clear-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Build the initial feature', recipients: [added.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await idle
+    expect(adapter.requests).toHaveLength(1)
+    expect(liveBefore.session.events.some(event => event.type === 'user/message' || event.type === 'turn/start')).toBe(true)
+    // Consume the durable unread so the Member settles to available; the clear
+    // guard requires an idle Member.
+    await ctx.agentTeam.readThreadForAgent(liveBefore, { requestId: requestId('clear-read'), workspaceId, taskRef: started.task!.taskRef })
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline
+      && ctx.agentTeam.members().find(member => member.member.memberId === added.status.member.memberId)!.presence !== 'available') {
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    expect(ctx.agentTeam.members().find(member => member.member.memberId === added.status.member.memberId)!.presence).toBe('available')
+    await writeFile(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'), 'persistent note')
+
+    const cleared = await ctx.agentTeam.clearMemberContext({ requestId: requestId('clear'), workspaceId, memberId: added.status.member.memberId })
+    expect(cleared.status.availability).toBe('active')
+    expect(cleared.status.presence).toBe('available')
+    expect(cleared.status.member.sessionId).toBe(added.status.member.sessionId)
+
+    // The live Session is a fresh handle with an empty conversation under the
+    // same id (the constructor seed marker is the only event left).
+    const liveAfter = ctx.agents.get(added.status.member.sessionId)!
+    expect(liveAfter).not.toBe(liveBefore)
+    expect(liveAfter.session.header.cwd).toBe(liveBefore.session.header.cwd)
+    expect(liveAfter.session.events.filter(event => event.type === 'user/message' || event.type === 'turn/start')).toHaveLength(0)
+    expect(liveAfter.session.events.length).toBeLessThan(liveBefore.session.events.length)
+
+    // Private memory and the workspace binding survive.
+    await expect(access(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'))).resolves.toBeUndefined()
+    expect(ctx.agentTeam.memberForAgent(liveAfter)).toEqual(added.status.member)
+
+    // The audit operation replays cleanly and dedupes by request.
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+    const again = await ctx.agentTeam.clearMemberContext({ requestId: requestId('clear'), workspaceId, memberId: added.status.member.memberId })
+    expect(again.receipt.operationId).toBe(cleared.receipt.operationId)
+
+    // Guards: unknown and suspended Members cannot clear.
+    await expect(ctx.agentTeam.clearMemberContext({ requestId: requestId('clear-unknown'), workspaceId, memberId: 'member:missing' as AgentTeamMemberId })).rejects.toThrow(/unknown Member/)
+    await ctx.agentTeam.suspendMember({ requestId: requestId('clear-suspend'), memberId: added.status.member.memberId })
+    await expect(ctx.agentTeam.clearMemberContext({ requestId: requestId('clear-suspended'), workspaceId, memberId: added.status.member.memberId }))
+      .rejects.toThrow(/only enabled Members can start from a new context/)
   })
 
   it('surfaces an orphaned preset composition and rebuilds the Member on resume', async () => {

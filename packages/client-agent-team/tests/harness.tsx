@@ -32,6 +32,11 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
   const runtime = await SlotTestRuntime.create()
+  // refreshMemberSession is client-local (not a Remote call): it exits the
+  // member view, pulls the recreated Session back into the list baseline, and
+  // re-enters, so the sessions test double carries a spy for that list pull.
+  const refresh = vi.fn(async () => {})
+  ;(runtime.sessions as unknown as { refresh: () => Promise<void> }).refresh = refresh
   const locale = new LocaleRuntime(runtime.ctx)
   runtime.provide('locale', locale)
   runtime.slots.installLocale(locale)
@@ -116,6 +121,10 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const recoverMember = vi.fn(async (request: { requestId: string; memberId: string }) => ({
     ok: true as const,
     value: { status: memberRows.find(entry => entry.member.memberId === request.memberId) },
+  }))
+  const clearMemberContext = vi.fn(async (request: { requestId: string; memberId: string }) => ({
+    ok: true as const,
+    value: { receipt: {}, status: memberRows.find(entry => entry.member.memberId === request.memberId) },
   }))
   const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
     groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
@@ -230,7 +239,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   runtime.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   runtime.provide('inputTriggers', {
@@ -255,5 +264,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, refresh, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
