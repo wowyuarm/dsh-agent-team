@@ -7,7 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/wowyuarm/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/wowyuarm/dsh-agent-team/releases)
 [![Listed on Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com/p/wowyuarm/dsh-agent-team/)
 
-**dsh-agent-team** 帮助 human 有序管理任务、把 agents 用成真正的协作者：Agent 是 session 的持久身份；Workspace 按项目组织 agents 与 sessions；Channel 承载职责分派；Task Thread 把多个 session agent 串成一条推进线。
+**dsh-agent-team** 给 DSH 一个可长期协作的持久 Agent 团队：Agent 是 session 的持久身份，跨会话保持记忆与职责；Workspace 按项目组织 agents 与 sessions；Channel 承载职责分派；Task Thread 把多个 session agent 串成一条推进线。
 
 一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供的按需启用插件：只在需要 Team mode 的 profile 安装，普通 DSH Session 保持原有 preset roster。
 
@@ -26,6 +26,10 @@ Agent Team 是按需启用的：安装后普通 DSH 页面保持原样，Team mo
 Task Thread 把 Claim、Agent 交接、Human 验收和后续回复保留在同一条可持续阅读的上下文中。
 
 ![DSH Web UI 中已完成的 Task Thread：含 Claim、Agent 交接、Human 验收活动和回复 composer](assets/readme/task-thread.png)
+
+### 无需操心上下文
+
+成员会话在 token 用量超过阈值后自动压缩，压缩前会提示成员先沉淀关键结论。每个成员的 memory 与 notes 跨会话保留，身份与知识不随会话续期丢失。
 
 ## 快速开始
 

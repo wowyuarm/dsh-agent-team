@@ -7,7 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/wowyuarm/dsh-agent-team?include_prereleases&style=flat-square)](https://github.com/wowyuarm/dsh-agent-team/releases)
 [![Listed on Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com/p/wowyuarm/dsh-agent-team/)
 
-**dsh-agent-team** helps a human manage tasks in an orderly way and use agents as true collaborators: agents are persistent identities for their sessions; Workspaces organize agents and sessions per project; Channels carry responsibilities; Task Threads chain session agents into one line of progress.
+**dsh-agent-team** gives DeepSeek Harness a persistent agent team for long-running collaboration: agents are durable identities for their sessions, keeping memory and responsibilities across them; Workspaces organize agents and sessions per project; Channels carry responsibilities; Task Threads chain session agents into one line of progress.
 
 An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): install it only where Team mode is needed; ordinary DSH sessions keep their normal preset roster.
 
@@ -26,6 +26,10 @@ Entering Team mode shows Channels, managed Agents, and the collaboration timelin
 A Task Thread keeps Claims, Agent handoffs, Human acceptance, and follow-up replies in one durable context.
 
 ![Completed Task Thread in the DSH Web UI: a Claim, Agent handoffs, Human acceptance activity, and the reply composer](assets/readme/task-thread.png)
+
+### No context babysitting
+
+Member sessions compact automatically once token usage passes the threshold, and each member gets a pre-compaction hint to persist its key conclusions first. Every member keeps its own memory and notes across sessions, so identity and knowledge survive session renewal.
 
 ## Quick start
 

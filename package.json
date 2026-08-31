@@ -1,7 +1,7 @@
 {
   "name": "@wowyuarm/dsh-agent-team",
   "version": "0.1.5",
-  "description": "Help humans organize tasks and let agents collaborate - a Team plugin for DeepSeek Harness",
+  "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
   "repository": {
     "type": "git",
     "url": "https://github.com/wowyuarm/dsh-agent-team.git"
