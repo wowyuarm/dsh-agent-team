@@ -440,6 +440,47 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
   await page.getByRole('button', { name: '发送', exact: true }).waitFor()
 
+  // @all expansion: typing a prefix of "all" surfaces the fixed row on top of
+  // the matching members; keyboard navigation highlights it and Tab accepts.
+  // The expansion snapshot covers every eligible delivery member (builder,
+  // reviewer) at pick time, and later text edits must not prune it away.
+  await channelComposer.fill('全员同步 @a')
+  const allOption = page.getByRole('option', { name: /@all/ })
+  await allOption.waitFor()
+  // 'a' prefixes "all" but no handle in this channel, so the fixed row is
+  // the only candidate; it is highlighted by default.
+  expect(await page.getByRole('option').count()).toBe(1)
+  await expect.poll(() => allOption.getAttribute('aria-selected')).toBe('true')
+  await page.screenshot({ path: join(UI04_SHOTS, 'all-mention-menu.png'), fullPage: true })
+  await page.keyboard.press('Tab')
+  await expect.poll(() => channelComposer.inputValue()).toBe('全员同步 @all ')
+  const notifyRow = page.getByText(/将通知/)
+  await expect.poll(() => notifyRow.textContent()).toContain('@builder')
+  expect(await notifyRow.textContent()).toContain('@reviewer')
+  await channelComposer.fill('全员同步 @all，今天截止')
+  await expect.poll(() => notifyRow.textContent()).toContain('@reviewer')
+  await page.getByRole('button', { name: '发送' }).click()
+  const allMessage = page.locator('[data-team-channel] article').filter({ hasText: '全员同步' })
+  await allMessage.waitFor()
+  expect((await allMessage.textContent())?.includes('@all，今天截止')).toBe(true)
+  // The expansion delivered a direct mention to every eligible member: both
+  // agents read the taskless Thread so the later inbox assertions keep
+  // counting only the original @builder invitation flow. The @all message is
+  // the newest taskless Thread in the workspace; the Members are re-fetched
+  // because builder's session was renewed by the clear-context flow above.
+  const allWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
+  const allProjection = scaffold.ctx.agentTeam.view({ workspaceId: allWorkspace.id })
+  const allThread = allProjection.threads
+    .filter((thread: { taskRef?: string }) => thread.taskRef === undefined)
+    .reduce((latest: { revision: number } | undefined, thread: { revision: number }) => latest === undefined || thread.revision > latest.revision ? thread : latest, undefined)!
+  for (const handle of ['builder', 'reviewer']) {
+    const status = scaffold.ctx.agentTeam.members({ workspaceId: allWorkspace.id }).find((entry: { member: { handle: string } }) => entry.member.handle === handle)!
+    const reader = scaffold.ctx.agents.get(status.member.sessionId)!
+    await scaffold.ctx.agentTeam.readThreadForAgent(reader, {
+      requestId: `m2-all-read-${handle}` as never, workspaceId: allWorkspace.id, threadRef: allThread.threadRef,
+    })
+  }
+
   // Branded-ref linkify: a UUID-shaped task ref in a plain body renders as a
   // real link control (click-to-navigate is component-tested against the
   // resolved selectThread call); non-UUID `channel:` prose stays literal.
@@ -720,7 +761,9 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.reload()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByRole('button', { name: /Task #1/ }).click()
-  await page.getByText('reviewer 已读取邀请并回复 Human，关联', { exact: false }).waitFor()
+  // The structured Human mention renders as the canonical @human chip (the
+  // stored body keeps the bare word; only the rendering chipifies it).
+  await page.getByText('reviewer 已读取邀请并回复 @human，关联', { exact: false }).waitFor()
 
   const replayedThread = scaffold.ctx.agentTeam.threadHistory({ workspaceId: workspace.id, taskRef: task.taskRef, limit: 100 })
   expect(JSON.stringify(replayedThread)).toContain('请 reviewer 加入这个已有 Thread 并回复 Human @reviewer')

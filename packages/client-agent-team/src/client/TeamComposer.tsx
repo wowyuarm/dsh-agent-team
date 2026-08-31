@@ -13,6 +13,9 @@ interface MentionMatch {
   readonly query: string
 }
 
+/** One pickable row: the fixed @all expansion or one concrete member. */
+type MentionOption = { readonly kind: 'all' } | { readonly kind: 'member'; readonly status: AgentTeamClientMemberStatus }
+
 function findMention(draft: string, caret: number): MentionMatch | undefined {
   const beforeCaret = draft.slice(0, caret)
   if (beforeCaret.length === 0 || /\s/u.test(beforeCaret.at(-1) ?? '')) return undefined
@@ -37,6 +40,15 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
   return members.filter(status => status.presence !== 'unavailable'
     && status.member.state !== 'inactive'
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
+}
+
+/** Every member a manual handle pick could reach: the @all expansion snapshot. */
+function allMentionMembers(members: readonly AgentTeamClientMemberStatus[]): readonly AgentTeamClientMemberStatus[] {
+  return members.filter(status => status.presence !== 'unavailable' && status.member.state !== 'inactive')
+}
+
+function containsAllMention(draft: string): boolean {
+  return /(?:^|[^\p{L}\p{N}_])@all(?=$|[^\p{L}\p{N}_])/u.test(draft)
 }
 
 /** One object URL per draft file; revoked when the draft is removed. */
@@ -79,9 +91,15 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   const composingRef = useRef(false)
   const [mention, setMention] = useState<MentionMatch>()
   const [highlight, setHighlight] = useState(0)
-  const candidates = mention === undefined ? [] : mentionCandidates(members, mention.query)
-  const menuOpen = mention !== undefined && candidates.length > 0
-  const activeCandidate = candidates[highlight]
+  // @all is a composer-layer expansion of the same eligibility filter a
+  // handle pick uses; the fixed row stays on top of the matching members.
+  const memberCandidates = mention === undefined ? [] : mentionCandidates(members, mention.query)
+  const options: readonly MentionOption[] = mention !== undefined && 'all'.startsWith(mention.query.toLocaleLowerCase())
+    ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status }))]
+    : memberCandidates.map(status => ({ kind: 'member' as const, status }))
+  const menuOpen = mention !== undefined && options.length > 0
+  const activeOption = options[highlight]
+  const allCount = allMentionMembers(members).length
   const listId = 'team-mention-suggestions'
   const menuMaxHeight = useAnchoredMaxHeight(menuRef, 320, menuOpen ? draft : null)
 
@@ -95,12 +113,12 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   }, [draft])
 
   useEffect(() => {
-    if (mention === undefined || candidates.length === 0) {
+    if (mention === undefined || options.length === 0) {
       setHighlight(0)
       return
     }
-    setHighlight(current => Math.min(current, candidates.length - 1))
-  }, [mention, candidates.length])
+    setHighlight(current => Math.min(current, options.length - 1))
+  }, [mention, options.length])
 
   // Match the resident DSH composer without stealing a later user choice: Team
   // data can load after navigation, so a dialog or another control may already
@@ -119,6 +137,9 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   }, [confirmation, pending])
 
   const pruneRecipients = (nextDraft: string): void => {
+    // An @all marker stands for its expansion snapshot: the member handles it
+    // stands for are not in the text, so text-based pruning must stand down.
+    if (containsAllMention(nextDraft)) return
     const knownMembers = new Map(members.map(status => [status.member.memberId, status.member]))
     const next = new Set([...recipients].filter(memberId => {
       const member = knownMembers.get(memberId)
@@ -149,8 +170,28 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     updateMention(nextDraft, event.target.selectionStart ?? nextDraft.length)
   }
 
-  const selectMention = (member: AgentTeamClientMemberStatus): void => {
+  const selectOption = (option: MentionOption): void => {
     if (mention === undefined) return
+    if (option.kind === 'all') {
+      // Expand at pick time: the recipients snapshot is every eligible member
+      // a handle pick could reach at this moment.
+      const nextDraft = `${draft.slice(0, mention.start)}@all ${draft.slice(mention.end)}`
+      const nextCaret = mention.start + '@all '.length
+      const nextRecipients = new Set(recipients)
+      for (const status of allMentionMembers(members)) nextRecipients.add(status.member.memberId)
+      onDraftChange(nextDraft)
+      onRecipientsChange(nextRecipients)
+      setMention(undefined)
+      setHighlight(0)
+      requestAnimationFrame(() => {
+        const input = inputRef.current
+        if (input === null) return
+        input.focus({ preventScroll: true })
+        input.setSelectionRange(nextCaret, nextCaret)
+      })
+      return
+    }
+    const member = option.status
     const inserted = `@${member.member.handle} `
     const nextDraft = `${draft.slice(0, mention.start)}${inserted}${draft.slice(mention.end)}`
     const nextCaret = mention.start + inserted.length
@@ -185,12 +226,12 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     const composing = composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
     if (menuOpen && event.key === 'ArrowDown') {
       event.preventDefault()
-      setHighlight(current => (current + 1) % candidates.length)
+      setHighlight(current => (current + 1) % options.length)
       return
     }
     if (menuOpen && event.key === 'ArrowUp') {
       event.preventDefault()
-      setHighlight(current => (current - 1 + candidates.length) % candidates.length)
+      setHighlight(current => (current - 1 + options.length) % options.length)
       return
     }
     if (event.key === 'Escape' && menuOpen) {
@@ -201,13 +242,13 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     // Tab accepts the highlighted candidate; Shift+Tab keeps default focus reversal.
     if (menuOpen && event.key === 'Tab' && !event.shiftKey) {
       event.preventDefault()
-      if (activeCandidate !== undefined) selectMention(activeCandidate)
+      if (activeOption !== undefined) selectOption(activeOption)
       return
     }
     if (event.key !== 'Enter' || event.shiftKey || composing || event.repeat) return
-    if (menuOpen && activeCandidate !== undefined) {
+    if (menuOpen && activeOption !== undefined) {
       event.preventDefault()
-      selectMention(activeCandidate)
+      selectOption(activeOption)
       return
     }
     event.preventDefault()
@@ -222,23 +263,38 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
       {confirmation !== undefined && <p className={css.confirmation} role="status">{confirmation}</p>}
       <div className={css.inputArea}>
         {menuOpen && <div id={listId} ref={menuRef} className={css.mentionMenu} role="listbox" aria-label={t('mentionSuggestions')} style={{ maxHeight: menuMaxHeight }}>
-          {candidates.map((status, index) => {
-            const optionId = `${listId}-${status.member.memberId}`
+          {options.map((option, index) => {
+            const optionId = option.kind === 'all' ? `${listId}-all` : `${listId}-${option.status.member.memberId}`
             const selected = index === highlight
-            return <button
-              key={status.member.memberId}
-              id={optionId}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              className={css.mentionOption}
-              onMouseDown={event => { event.preventDefault() }}
-              onClick={() => { selectMention(status) }}
-            >
-              <TeamPresenceDot status={status} t={t} />
-              <span className={css.mentionName}>@{status.member.handle}</span>
-              <span className={css.mentionDescription}>{status.member.description}</span>
-            </button>
+            return option.kind === 'all'
+              ? <button
+                  key="all"
+                  id={optionId}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={css.mentionOption}
+                  onMouseDown={event => { event.preventDefault() }}
+                  onClick={() => { selectOption(option) }}
+                >
+                  <span className={css.mentionAllDot} aria-hidden="true" />
+                  <span className={css.mentionName}>@all</span>
+                  <span className={css.mentionDescription}>{t('mentionAll', { count: allCount })}</span>
+                </button>
+              : <button
+                  key={option.status.member.memberId}
+                  id={optionId}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={css.mentionOption}
+                  onMouseDown={event => { event.preventDefault() }}
+                  onClick={() => { selectOption(option) }}
+                >
+                  <TeamPresenceDot status={option.status} t={t} />
+                  <span className={css.mentionName}>@{option.status.member.handle}</span>
+                  <span className={css.mentionDescription}>{option.status.member.description}</span>
+                </button>
           })}
         </div>}
         <textarea
@@ -246,7 +302,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
           aria-label={t('messageDraft')}
           aria-autocomplete="list"
           aria-controls={menuOpen ? listId : undefined}
-          aria-activedescendant={menuOpen && activeCandidate !== undefined ? `${listId}-${activeCandidate.member.memberId}` : undefined}
+          aria-activedescendant={menuOpen && activeOption !== undefined ? activeOption.kind === 'all' ? `${listId}-all` : `${listId}-${activeOption.status.member.memberId}` : undefined}
           aria-expanded={menuOpen}
           value={draft}
           readOnly={pending}

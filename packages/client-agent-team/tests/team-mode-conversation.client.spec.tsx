@@ -178,6 +178,52 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
+  it('expands @all into every eligible channel member at pick time', async () => {
+    const b = await runtimeWithTeam()
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
+    fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'standup' } })
+    // builder, worker, and failed join; offline (unavailable) does not.
+    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /worker/ }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /failed/ }))
+    fireEvent.click(b.view.getByRole('button', { name: '创建频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '# standup' }))
+    expect(await b.view.findByRole('heading', { name: '# standup' })).toBeTruthy()
+
+    const input = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    // Typing a prefix of "all" surfaces the fixed expansion row on top.
+    fireEvent.change(input, { target: { value: '请评审 @a' } })
+    const allOption = await b.view.findByRole('option', { name: /@all/ })
+    expect(allOption.textContent).toContain('通知所有成员')
+
+    // Keyboard: ArrowDown highlights @all first; Tab accepts it.
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(allOption.getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(input.value).toBe('请评审 @all ')
+
+    // The notify row lists the expansion snapshot: every channel member
+    // whose presence is not unavailable — failed is error, not offline.
+    await waitFor(() => expect(b.view.getByText(/将通知/).textContent).toContain('@builder'))
+    expect(b.view.getByText(/将通知/).textContent).toContain('@worker')
+    expect(b.view.getByText(/将通知/).textContent).toContain('@failed')
+    expect(b.view.getByText(/将通知/).textContent).not.toContain('@offline')
+
+    // Editing the text after the expansion must not prune the recipients:
+    // their handles are not in the body, only the @all marker is.
+    fireEvent.change(input, { target: { value: '请评审 @all，今天截止' } })
+    await waitFor(() => expect(b.view.getByText(/将通知/).textContent).toContain('@worker'))
+
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(b.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      body: '请评审 @all，今天截止',
+      recipients: ['member:builder', 'member:failed', 'member:worker'],
+    })))
+    await b.runtime.dispose()
+  })
+
   it('accepts an unclaimed todo Task directly without a confirm dialog', async () => {
     const b = await runtimeWithTeam({
       mode: 'team', workspaceId: 'w1', initialChannels: true,
