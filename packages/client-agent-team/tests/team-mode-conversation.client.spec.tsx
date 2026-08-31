@@ -178,6 +178,24 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
+  it('accepts an unclaimed todo Task directly without a confirm dialog', async () => {
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seededMessages: [{ body: '外部完成的任务', occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    // The default seed is a todo Task with no Claims: acceptance is offered
+    // and runs immediately, with no early-acceptance dialog to confirm.
+    const acceptButton = await b.view.findByRole('button', { name: '验收' })
+    fireEvent.click(acceptButton)
+    await waitFor(() => expect(b.changeTask).toHaveBeenCalledTimes(1))
+    expect(b.changeTask).toHaveBeenCalledWith(expect.objectContaining({ action: 'accept' }))
+    expect(b.view.queryByRole('dialog', { name: '提前验收任务' })).toBeNull()
+    await b.runtime.dispose()
+  })
+
   it('renders resolved Task refs inline in rich Agent Markdown, styled code spans included', async () => {
     const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e41'
     const unknownRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e43'

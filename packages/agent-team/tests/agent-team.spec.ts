@@ -173,6 +173,47 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(replayed.items.map(item => item.thread.threadRef)).toEqual(inbox.items.map(item => item.thread.threadRef))
   })
 
+  it('accepts an unclaimed todo Task directly and stays honest about the empty Claim list', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    expect(started.task.status).toBe('todo')
+    const ledger = replayLedger(test)
+
+    const accepted = committed((await ledger.changeTask({ requestId: requestId('accept'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'accept', baseRevision: started.thread.revision, actor: agentTeamHumanActor() })).value)
+    // Direct acceptance of work finished outside the ledger: no Claims to
+    // complete, so the activity carries no claim lists and the inbox delta
+    // stays empty for members who never followed the Thread.
+    expect(accepted.task).toMatchObject({ status: 'done', resolution: 'accepted' })
+    expect(accepted.claims).toEqual([])
+    expect(accepted.activity.kind).toBe('accept')
+    expect(accepted.activity.completedClaimRefs).toBeUndefined()
+
+    const view = ledger.view({ workspaceId: alpha })
+    expect(view.activities).toEqual([expect.objectContaining({ kind: 'accept', taskRef: started.task.taskRef })])
+    expect(view.tasks.find(task => task.taskRef === started.task.taskRef)).toMatchObject({ status: 'done', resolution: 'accepted' })
+    expect(ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+    // Cold replay reproduces the same projection and validates the transition.
+    const cold = replayLedger(test)
+    expect(() => cold.validate()).not.toThrow()
+    expect(cold.view({ workspaceId: alpha }).tasks.find(task => task.taskRef === started.task.taskRef)).toMatchObject({ status: 'done', resolution: 'accepted' })
+  })
+
+  it('closes an unclaimed todo Task through the close path, not acceptance', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const closed = committed((await ledger.changeTask({ requestId: requestId('close'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'close', baseRevision: started.thread.revision, actor: agentTeamHumanActor() })).value)
+    expect(closed.task).toMatchObject({ status: 'closed', resolution: 'closed' })
+    expect(closed.activity.kind).toBe('close')
+    const reopened = committed((await ledger.changeTask({ requestId: requestId('reopen'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'reopen', baseRevision: closed.thread.revision, actor: agentTeamHumanActor() })).value)
+    expect(reopened.task).toMatchObject({ status: 'todo', resolution: 'open' })
+  })
+
   it('resolves branded Task refs to navigation facts and omits unknown refs', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

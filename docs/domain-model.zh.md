@@ -32,7 +32,7 @@ Member 在 Channel 或已有 Thread 中显式发出的不可变内容。每条 C
 
 ## Task
 
-附着在既有 Thread 上的可选 work-tracking overlay，而不是 Thread 存在的前提。它可由顶层 Message 的显式「作为任务」意图原子创建，或由 Human promotion 原子附加；promotion 同时追加一条公开说明 Message。Task 的工作状态从 Claims 派生，Human acceptance 与 closed 是显式覆盖事实：常规验收要求全部 Claim 完成（in_review）；Human 也可在 in_progress 时提前验收，accept 操作随之把当时仍 active 的 Claims 投影为 done 并在 activity 记录 `completedClaimRefs`（owner 各自收到通知），不伪造 owner 的 claim-done 事件。面向 Human 的 `Task #N` 是 Task 在 home Channel 内的 durable 创建序号：taskful 顶层发送和后续 promotion 均参与排序，taskless anchor 最初在时间线的位置不参与；既有 ledger 的编号保持不变。它不是稳定身份；跨频道导航和持久引用必须使用 branded `taskRef`。
+附着在既有 Thread 上的可选 work-tracking overlay，而不是 Thread 存在的前提。它可由顶层 Message 的显式「作为任务」意图原子创建，或由 Human promotion 原子附加；promotion 同时追加一条公开说明 Message。Task 的工作状态从 Claims 派生，Human acceptance 与 closed 是显式覆盖事实：常规验收要求全部 Claim 完成（in_review）；Human 也可在 in_progress 时提前验收，accept 操作随之把当时仍 active 的 Claims 投影为 done 并在 activity 记录 `completedClaimRefs`（owner 各自收到通知），不伪造 owner 的 claim-done 事件；从未被 claim 的 todo Task 也可直接验收，activity 不携带 claim 列表，账目如实记录为无 Claim 完成。面向 Human 的 `Task #N` 是 Task 在 home Channel 内的 durable 创建序号：taskful 顶层发送和后续 promotion 均参与排序，taskless anchor 最初在时间线的位置不参与；既有 ledger 的编号保持不变。它不是稳定身份；跨频道导航和持久引用必须使用 branded `taskRef`。
 
 ## Thread
 

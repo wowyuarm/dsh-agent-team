@@ -616,7 +616,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           {(() => {
             const activeClaims = projection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
             const earlyAccept = task.resolution === 'open' && task.status === 'in_progress' && activeClaims.length > 0
-            if (!(task.status === 'in_review' || earlyAccept) || task.resolution !== 'open') return null
+            // todo Tasks accept directly: the work finished outside the
+            // ledger, so there is nothing to confirm and no Claims to list.
+            if (!(task.status === 'in_review' || task.status === 'todo' || earlyAccept) || task.resolution !== 'open') return null
             return <Button size="sm" variant="primary" disabled={pending}
               onClick={() => { if (earlyAccept) { setConfirmingAccept(true) } else { void mutateTask('accept') } }}>{t('acceptTask')}</Button>
           })()}

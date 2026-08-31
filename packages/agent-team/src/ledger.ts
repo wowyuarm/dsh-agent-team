@@ -760,8 +760,10 @@ export class AgentTeamLedger {
       // Acceptance normally waits for every Claim to finish (in_review);
       // a Human may also accept early while work is in progress, which then
       // completes the still-active Claims inside the same atomic operation.
-      if (request.action === 'accept' && task.status !== 'in_review' && task.status !== 'in_progress') {
-        throw new Error(`Task '${task.taskRef}' must be in_review or in_progress before acceptance`)
+      // A never-claimed todo Task may be accepted directly as well: work
+      // finished outside the ledger is declared complete by the Human.
+      if (request.action === 'accept' && task.status !== 'in_review' && task.status !== 'in_progress' && task.status !== 'todo') {
+        throw new Error(`Task '${task.taskRef}' must be in_review, in_progress, or todo before acceptance`)
       }
       const priorActiveClaims = [...this.state.claims.values()].filter(claim => claim.taskRef === task.taskRef && claim.state === 'active')
       if (request.action === 'accept' && task.status === 'in_progress' && priorActiveClaims.length === 0) {
