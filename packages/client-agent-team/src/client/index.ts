@@ -106,24 +106,6 @@ function registerModeShadow<T extends object>(
       return response.result
     },
     openMemberSession: openMemberSessionImpl,
-    // The Host recreated the Member's Session under the same id with an empty
-    // durable log, but the disposed generation's resident window keeps its
-    // `removed` bit permanently, and the public sessions face has no
-    // per-session rebuild verb: a staged removed session's teardown stays
-    // deferred until the stage moves to a different session. So leave the
-    // member view, reopen the Human's return session to force that stage move
-    // (which sweeps the frozen instance), pull the recreated Session back into
-    // the list baseline, then re-enter — the reopen lazily rebuilds the
-    // instance from host truth, landing the seat on the blank hero. Without a
-    // return target no stage move is possible, so the seat keeps the frozen
-    // view until the next stage move or reload converges it.
-    refreshMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => {
-      const sessions = ctx.sessions as unknown as ISessions & { refresh(): Promise<void> }
-      const returnTo = navigation.getSnapshot().returnToSessionId
-      navigation.actions().exitMemberSession()
-      if (returnTo !== undefined) sessions.open(returnTo)
-      void sessions.refresh().then(() => { openMemberSessionImpl(sessionId) })
-    },
   }
   ctx.slots.inject(name, () => {
     let dispose: (() => void) | undefined

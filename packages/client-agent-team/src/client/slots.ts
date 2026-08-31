@@ -102,13 +102,6 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadModels: () => Promise<RemoteResult<TeamModelCatalog>>
     /** Embed the Member's Session conversation in the Team conversation seat. */
     openMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => void
-    /**
-     * Rebuild the conversation seat after the Host recreated a Member's
-     * Session under the same id with an empty durable log: the resident
-     * client window still holds the disposed generation, so the runtime
-     * re-opens the seat from host truth (the blank hero for a cleared log).
-     */
-    refreshMemberSession: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => void
     selectedChannelRef?: AgentTeamChannelRef
   }
 

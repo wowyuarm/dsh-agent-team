@@ -17,7 +17,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
-import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -467,12 +467,15 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * Start one enabled Member from a new context in place: dispose the live
-   * handle, discard the persisted Session log under the same sessionId, and
-   * recreate the Session empty through the ordinary activation path, so
-   * preset, tools, private memory, and model selection all reload while the
-   * next turn carries no history. The audit operation changes no projection
-   * state — identity, memory path, and binding survive.
+   * Start one enabled Member from a new context: dispose the live handle,
+   * archive the previous Session (its log stays on disk for history), and
+   * activate a fresh Session under a new sessionId, so preset, tools, private
+   * memory, and model selection all reload while the next turn carries no
+   * history. The durable operation moves the Member's sessionId; identity,
+   * memory path, and binding survive. A new id is what keeps the Web Client
+   * seat live: a disposed generation's resident instance keeps its `removed`
+   * bit forever, so renewing under the same id would leave a permanently
+   * grayed session view.
    */
   @Remote('clearMemberContext')
   async clearMemberContext(request: AgentTeamClearMemberContextRequest): Promise<AgentTeamClearMemberContextResult> {
@@ -485,12 +488,19 @@ export default class AgentTeam extends TypertRemoteService {
       const active = this.handles.get(request.memberId)
       if (active === undefined) throw new Error(`Agent Member '${stored.handle}' has no active session to clear`)
       if (this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; wait for the current turn to end before starting from a new context`)
-      const result = await this.requireLedger().clearMemberContext({ ...request, actor: agentTeamHumanActor() })
+      const previousSessionId = stored.sessionId
+      // The fresh id derives from the requestId, so a retried identical
+      // request mints the same id and the ledger dedupes it instead of
+      // colliding; the format matches addMember's `agent-team-<uuid>`.
+      const sessionId = SessionId(`agent-team-${request.requestId}`)
+      const result = await this.requireLedger().renewMemberSession({ ...request, sessionId, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
-      // The header is captured before dispose: disposal removes the Session
-      // from the store, but the persistence seam still needs its header to
-      // resolve the artifact the next resume would load.
-      const header = active.agent.session.header
+      else {
+        // A retried identical request already renewed this Member; report the
+        // recorded outcome without another dispose/reactivate cycle.
+        return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
+      }
+      const renewed = result.value.member
       // Drop the old handle's transient state: pending recovery episodes and
       // error markers belong to the disposed agent, not to the Member.
       this.recovery.stopTracking(request.memberId)
@@ -499,32 +509,18 @@ export default class AgentTeam extends TypertRemoteService {
       this.modelSelections.delete(request.memberId)
       this.clearMemberFailure(request.memberId, 'activation')
       this.clearMemberNotificationState(request.memberId)
-      // The persisted Session log is the only history the next resume could
-      // load; discarding it makes the recreate below start empty.
-      await this.deleteMemberSessionLog(stored, header)
-      await this.activateMember(stored)
+      // The previous log survives on disk; archiving hides it from every
+      // grouping surface so one Member keeps exactly one visible Session.
+      await this.ctx.workspaceRegistry.archiveSession(previousSessionId)
+      await this.activateMember(renewed, undefined, undefined, previousSessionId)
       const reactivated = this.handles.get(request.memberId)
       if (reactivated === undefined) {
         // Reactivation failed; the activation diagnostic carries the reason and
-        // the audit record stays honest about the attempt.
+        // the durable renewal stays honest about the attempt.
         throw new Error(`Agent Member '${stored.handle}' failed to start a new context: ${this.memberFailures.get(request.memberId)?.activation ?? 'unknown error'}`)
       }
-      return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
+      return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(renewed) })
     })
-  }
-
-  /**
-   * Discard one Member's persisted Session log artifact. Public persistence
-   * offers no delete verb, so this removes the JSONL backend's per-session
-   * log file at the path the seam itself resolves; any other backend rejects
-   * loudly rather than pretending the log vanished.
-   */
-  private async deleteMemberSessionLog(member: AgentTeamAgentMember, header: SessionHeader): Promise<void> {
-    const location = this.ctx.sessionPersistence.locate(header)
-    if (location === undefined || location.kind !== 'jsonl') {
-      throw new Error(`Agent Member '${member.handle}' uses a persistence backend that cannot discard its Session log (${location?.kind ?? 'unknown'})`)
-    }
-    await rm(location.path, { force: true })
   }
 
   /** Ledger handle for log lines; falls back to the raw id when unknown. */
@@ -926,7 +922,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>): Promise<void> {
+  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId): Promise<void> {
     if (this.handles.has(member.memberId)) return
     let created: AgentHandle | undefined
     try {
@@ -957,7 +953,9 @@ export default class AgentTeam extends TypertRemoteService {
         ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup })
         : await this.ctx.agents.create({
             sessionId: member.sessionId,
-            meta: { cwd: workspacePath, agentPreset: member.presetId },
+            // A context renewal records its fork lineage so the archived
+            // previous Session stays discoverable from the durable header.
+            meta: { cwd: workspacePath, agentPreset: member.presetId, ...(forkedFrom === undefined ? {} : { parentSession: forkedFrom }) },
             agentOptions,
             setup,
           })

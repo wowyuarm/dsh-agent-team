@@ -274,7 +274,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await clearEntry.click()
   const clearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
   await clearDialog.waitFor()
-  expect(await clearDialog.textContent()).toContain('无法恢复')
+  expect(await clearDialog.textContent()).toContain('归档保留')
   await clearDialog.getByRole('button', { name: '取消' }).click()
   await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
 
@@ -290,8 +290,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // turns yet, so DSH renders its blank-session view — the hero composer
   // carrying the Member's workspace + `team-member` preset chips.
   // The Human's own session is staged first on purpose: the embedded view then
-  // carries a return target, which the context-clear rebuild later needs to
-  // force the stage move that sweeps the disposed session generation.
+  // carries a return target, so leaving Team later restores an ordinary
+  // conversation instead of stranding the Member Session.
   await brandButton.click()
   // The two Member Sessions exist already; the brand click adds the Human's.
   await expect.poll(() => scaffold.ctx.sessions.list().length).toBeGreaterThanOrEqual(3)
@@ -321,11 +321,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => memberInput.inputValue()).toBe('')
 
   // 「从全新上下文开始」executes for real while the Member Session is embedded:
-  // the Host recreates the same Session id with an empty durable log, and the
-  // right pane must fall back to the blank hero immediately — no stale
-  // transcript, composer enabled for the fresh context. This runs before any
-  // prompt send: the scenario mounts no replay fixture, so a stray model call
-  // would push the Member to error presence and lock the available-only gate.
+  // the Host moves the Member onto a fresh Session id, and the right pane
+  // navigates onto it — blank hero, no stale transcript, composer enabled for
+  // the fresh context. This runs before any prompt send: the scenario mounts no
+  // replay fixture, so a stray model call would push the Member to error
+  // presence and lock the available-only gate.
   await builderRow.hover()
   await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
   const executeClearEntry = page.getByRole('menuitem', { name: '从全新上下文开始' })
@@ -336,7 +336,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await executeClearDialog.waitFor()
   await executeClearDialog.getByRole('button', { name: '开始全新上下文' }).click()
   await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
-  // The embedded pane now shows the empty conversation (hero composer, no
+  // The embedded pane navigates onto the renewed Session (hero composer, no
   // rows): the compact transcript is gone while the Member composer stays live.
   await expect.poll(() => page.getByText('/compact').count()).toBe(0)
   await expect.poll(() => page.evaluate(() => ({
@@ -346,14 +346,17 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   })), { timeout: 10_000 }).toEqual({ channel: 0, composer: 1, mode: 'team' })
   await expect.poll(() => memberInput.isEnabled()).toBe(true)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-cleared.png'), fullPage: true })
-  // Host side: the Member keeps the same Session binding and a fresh handle
-  // whose durable log is empty (no command/user events survive the clear).
+  // Host side: the Member moved onto a fresh Session id; the previous log
+  // stays on disk but is archived from every grouping surface, and the new
+  // Session records the previous id as fork lineage.
   const clearedStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
   const clearedBuilder = clearedStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
-  expect(clearedBuilder.member.sessionId).toBe(builderMember.member.sessionId)
+  expect(clearedBuilder.member.sessionId).not.toBe(builderMember.member.sessionId)
   const freshBuilderAgent = scaffold.ctx.agents.get(clearedBuilder.member.sessionId)!
   expect(freshBuilderAgent).not.toBe(builderAgent)
+  expect(freshBuilderAgent.session.header.parentSession).toBe(builderMember.member.sessionId)
   expect(freshBuilderAgent.session.events.filter(event => event.type === 'user/message' || event.type === 'command/run' || event.type === 'turn/start')).toHaveLength(0)
+  expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(builderMember.member.sessionId)
 
   // The fresh session is immediately usable: the member-composer mention flow
   // runs against the recreated Session and its structured prompt lands there.

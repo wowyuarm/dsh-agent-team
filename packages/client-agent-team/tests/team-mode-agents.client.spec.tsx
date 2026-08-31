@@ -284,16 +284,16 @@ describe('Team agent surfaces', () => {
     await waitFor(() => {
       expect(b.clearMemberContext).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:builder' }))
     })
-    // The seat is not embedded here, so no window rebuild is triggered.
-    expect(b.refresh).not.toHaveBeenCalled()
+    // The seat is not embedded here, so no member view navigation happens.
+    expect(b.runtime.sessions.calls.some(call => call.method === 'open' && String(call.args[0]).includes('renewed'))).toBe(false)
 
-    // While the Member's Session is embedded, a successful clear forces the
-    // resident window to rebuild from host truth — the pane falls back to the
-    // blank hero instead of keeping the disposed generation's stale history.
-    await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    // While the Member's Session is embedded, a successful clear navigates the
+    // seat onto the renewed Session id — a brand-new id has no resident client
+    // instance, so the pane lazily instantiates the fresh conversation.
+    await b.runtime.sessions.add({ id: 'session:member:builder-renewed-1' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
     fireEvent.click(await b.view.findByRole('button', { name: '打开 builder 的会话' }))
     await waitFor(() => {
-      expect(b.runtime.sessions.calls.some(call => call.method === 'open' && call.args[0] === 'session:member:builder')).toBe(true)
+      expect(b.runtime.sessions.calls.some(call => call.method === 'open' && String(call.args[0]).includes('renewed'))).toBe(true)
     })
     await waitFor(() => {
       expect(b.view.getByRole('button', { name: '打开 builder 的会话' }).getAttribute('aria-current')).toBe('page')
@@ -301,7 +301,9 @@ describe('Team agent surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
     fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
-    await waitFor(() => { expect(b.refresh).toHaveBeenCalledTimes(1) })
+    await waitFor(() => {
+      expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('renewed'))).toHaveLength(2)
+    })
 
     // A transport rejection surfaces as the row alert.
     b.clearMemberContext.mockRejectedValueOnce(new Error('connection lost'))
@@ -309,8 +311,6 @@ describe('Team agent surfaces', () => {
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
     fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
     await waitFor(() => { expect(b.view.getByRole('alert').textContent).toContain('清空上下文失败：connection lost') })
-    // A failed clear leaves the embedded seat untouched.
-    expect(b.refresh).toHaveBeenCalledTimes(1)
     await b.runtime.dispose()
   })
 

@@ -34,12 +34,11 @@ interface TeamAgentsPanelProps {
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
-  readonly refreshMemberSession: TeamSidebarProps['refreshMemberSession']
   readonly onCreatingChange: (request: AgentTeamAddMemberRequest, creating: boolean) => void
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, refreshMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
   const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
@@ -203,7 +202,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} refreshMemberSession={refreshMemberSession} onUpdated={() => { void refresh() }} t={t} />
+              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -223,7 +222,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, openMemberSession, refreshMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
@@ -236,7 +235,6 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
-  readonly refreshMemberSession: TeamSidebarProps['refreshMemberSession']
   readonly onUpdated: () => Promise<void> | void
   readonly t: TeamSidebarProps['t']
 }) {
@@ -283,12 +281,11 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
         return
       }
       setRowAlert(undefined)
-      // The Host recreated the same Session id empty. The resident client
-      // window still shows the disposed generation (its `removed` bit is
-      // permanent), so the runtime rebuilds the seat from host truth when
-      // this Member's Session was embedded — the pane falls back to the
-      // blank hero immediately instead of showing stale history.
-      if (current === true) refreshMemberSession(status.member.sessionId)
+      // The Host moved the Member onto a fresh Session id (the previous log
+      // stays archived on disk). A new id has no resident client instance, so
+      // re-entering the member view lazily instantiates it from host truth:
+      // blank hero, live updates, and no disposed-generation gray-out.
+      if (current === true) openMemberSession(result.value.status.member.sessionId)
     } catch (cause) {
       setRowAlert(t('clearContextFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
     }

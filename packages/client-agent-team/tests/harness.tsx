@@ -32,11 +32,6 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
   const runtime = await SlotTestRuntime.create()
-  // refreshMemberSession is client-local (not a Remote call): it exits the
-  // member view, pulls the recreated Session back into the list baseline, and
-  // re-enters, so the sessions test double carries a spy for that list pull.
-  const refresh = vi.fn(async () => {})
-  ;(runtime.sessions as unknown as { refresh: () => Promise<void> }).refresh = refresh
   const locale = new LocaleRuntime(runtime.ctx)
   runtime.provide('locale', locale)
   runtime.slots.installLocale(locale)
@@ -122,10 +117,19 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     ok: true as const,
     value: { status: memberRows.find(entry => entry.member.memberId === request.memberId) },
   }))
-  const clearMemberContext = vi.fn(async (request: { requestId: string; memberId: string }) => ({
-    ok: true as const,
-    value: { receipt: {}, status: memberRows.find(entry => entry.member.memberId === request.memberId) },
-  }))
+  // The Host moves a renewed Member onto a freshly minted Session id, so the
+  // mock transitions the row the way the real renewal does.
+  let renewCounter = 0
+  const clearMemberContext = vi.fn(async (request: { requestId: string; memberId: string }) => {
+    renewCounter += 1
+    memberRows = memberRows.map(entry => entry.member.memberId === request.memberId
+      ? { ...entry, member: { ...entry.member, sessionId: `${entry.member.sessionId}-renewed-${renewCounter}` } }
+      : entry)
+    return {
+      ok: true as const,
+      value: { receipt: {}, status: memberRows.find(entry => entry.member.memberId === request.memberId) },
+    }
+  })
   const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
     groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
       { id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'low', name: 'low' }, { id: 'high', name: 'high' }] } },
@@ -264,5 +268,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, refresh, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }

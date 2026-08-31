@@ -142,6 +142,8 @@ async function realHarness(
   readonly root: string
   readonly project: string
   readonly teamFiber: Awaited<ReturnType<Context['plugin']>>
+  /** Sessions the fake workspace registry archived, in archive order. */
+  readonly archived: readonly SessionId[]
   readonly presets: TestablePresets
 }> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
@@ -221,7 +223,7 @@ async function realHarness(
   })
   const teamFiber = await ctx.plugin(AgentTeam)
   cleanups.push(async () => { await ctx.fiber.dispose(); await facility.closeAll(); await rm(root, { recursive: true, force: true }) })
-  return { ctx, workspaceId, root, project, teamFiber, presets: ctx.agentPresets as TestablePresets }
+  return { ctx, workspaceId, root, project, teamFiber, archived, presets: ctx.agentPresets as TestablePresets }
 }
 
 describe('Agent Team Member lifecycle', () => {
@@ -256,9 +258,9 @@ describe('Agent Team Member lifecycle', () => {
     await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
   })
 
-  it('clears an enabled Member context in place: same sessionId, empty log, memory and binding survive', async () => {
+  it('renews an enabled Member onto a fresh session: new sessionId, archived previous log, memory and binding survive', async () => {
     const adapter = new ScriptedAdapter()
-    const { ctx, workspaceId } = await realHarness(adapter)
+    const { ctx, workspaceId, archived } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('clear-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const added = await ctx.agentTeam.addMember({ requestId: requestId('clear-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     const liveBefore = ctx.agents.get(added.status.member.sessionId)!
@@ -284,24 +286,42 @@ describe('Agent Team Member lifecycle', () => {
     const cleared = await ctx.agentTeam.clearMemberContext({ requestId: requestId('clear'), workspaceId, memberId: added.status.member.memberId })
     expect(cleared.status.availability).toBe('active')
     expect(cleared.status.presence).toBe('available')
-    expect(cleared.status.member.sessionId).toBe(added.status.member.sessionId)
+    expect(cleared.status.member.sessionId).not.toBe(added.status.member.sessionId)
 
-    // The live Session is a fresh handle with an empty conversation under the
-    // same id (the constructor seed marker is the only event left).
-    const liveAfter = ctx.agents.get(added.status.member.sessionId)!
+    // The old live Session is disposed; the Member now runs a fresh handle
+    // under a new id with an empty conversation (the constructor seed marker
+    // is the only event left) and fork lineage back to the previous Session.
+    expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
+    const liveAfter = ctx.agents.get(cleared.status.member.sessionId)!
     expect(liveAfter).not.toBe(liveBefore)
     expect(liveAfter.session.header.cwd).toBe(liveBefore.session.header.cwd)
+    expect(liveAfter.session.header.parentSession).toBe(added.status.member.sessionId)
     expect(liveAfter.session.events.filter(event => event.type === 'user/message' || event.type === 'turn/start')).toHaveLength(0)
     expect(liveAfter.session.events.length).toBeLessThan(liveBefore.session.events.length)
+    const sessionTitle = ctx.get('sessionTitle')
+    expect(sessionTitle?.get(liveAfter.session)).toMatchObject({ title: 'builder', source: { kind: 'user' } })
+
+    // The previous Session log survives on disk (only archived from grouping
+    // surfaces), so the Member's history stays queryable. Disposal drains the
+    // log asynchronously, so wait for the artifact to materialize.
+    const flushDeadline = Date.now() + 3000
+    while (Date.now() < flushDeadline
+      && !(await ctx.sessionPersistence.list()).some(header => header.id === added.status.member.sessionId)) {
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    expect((await ctx.sessionPersistence.list()).some(header => header.id === added.status.member.sessionId)).toBe(true)
+    expect(archived).toContain(added.status.member.sessionId)
+    expect(archived).not.toContain(cleared.status.member.sessionId)
 
     // Private memory and the workspace binding survive.
     await expect(access(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'))).resolves.toBeUndefined()
-    expect(ctx.agentTeam.memberForAgent(liveAfter)).toEqual(added.status.member)
+    expect(ctx.agentTeam.memberForAgent(liveAfter)).toEqual(cleared.status.member)
 
-    // The audit operation replays cleanly and dedupes by request.
+    // The renewal replays cleanly and dedupes by request.
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
     const again = await ctx.agentTeam.clearMemberContext({ requestId: requestId('clear'), workspaceId, memberId: added.status.member.memberId })
     expect(again.receipt.operationId).toBe(cleared.receipt.operationId)
+    expect(again.status.member.sessionId).toBe(cleared.status.member.sessionId)
 
     // Guards: unknown and suspended Members cannot clear.
     await expect(ctx.agentTeam.clearMemberContext({ requestId: requestId('clear-unknown'), workspaceId, memberId: 'member:missing' as AgentTeamMemberId })).rejects.toThrow(/unknown Member/)

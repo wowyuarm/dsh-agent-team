@@ -361,15 +361,32 @@ export interface AgentTeamMemberSessionRestartedOperation extends AgentTeamOpera
 }
 
 /**
- * Audit record of one Member context clear: the Host discarded the Member's
- * persisted Session log and recreated the live Session under the same
- * sessionId, so the next turn starts from an empty context. Projection state
- * is unchanged — identity, memory path, and binding survive — so apply()
- * treats this operation as a marker only.
+ * Legacy audit record of one in-place Member context clear (superseded by
+ * `team/member-session-renewed`). The Host discarded the Member's persisted
+ * Session log and recreated the live Session under the same sessionId.
+ * Projection state is unchanged, so apply() treats this operation as a marker
+ * only. Never written again; the schema and replay validation stay so
+ * ledgers recorded before the renewal redesign keep replaying.
  */
 export interface AgentTeamMemberContextClearedOperation extends AgentTeamOperationBase {
   readonly kind: 'team/member-context-cleared'
   readonly data: { readonly member: AgentTeamAgentMember }
+}
+
+/**
+ * Durable transition of one Member onto a fresh Session: the Member keeps its
+ * identity, memory, and binding while its sessionId moves to a newly created
+ * Session whose first turn starts from an empty context. The previous Session
+ * log stays on disk (archived from every grouping surface), and the new
+ * Session header records the previous id as fork lineage.
+ */
+export interface AgentTeamMemberSessionRenewedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-session-renewed'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+    /** The Session the Member ran on before this renewal. */
+    readonly previousSessionId: SessionId
+  }
 }
 
 /** Durable Human rename of one Channel's display facts; identity refs never change. */
@@ -558,6 +575,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberResumedOperation
   | AgentTeamMemberSessionRestartedOperation
   | AgentTeamMemberContextClearedOperation
+  | AgentTeamMemberSessionRenewedOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation
@@ -661,14 +679,14 @@ export interface AgentTeamRecoverMemberResult {
   readonly status: AgentTeamAgentMemberStatus
 }
 
-/** Human intent to clear one enabled Member's conversation context in place. */
+/** Human intent to start one enabled Member's next turn from an empty context. */
 export interface AgentTeamClearMemberContextRequest {
   readonly requestId: AgentTeamRequestId
   readonly workspaceId: WorkspaceId
   readonly memberId: AgentTeamMemberId
 }
 
-/** The Member keeps identity, memory, and binding; only its Session log is discarded and recreated empty. */
+/** The Member keeps identity, memory, and binding; its sessionId moves to a fresh Session and the previous log stays archived on disk. */
 export interface AgentTeamClearMemberContextResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly status: AgentTeamAgentMemberStatus

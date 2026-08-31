@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamActivity,
@@ -16,7 +17,6 @@ import type {
   AgentTeamChannelMemberRemovedOperation,
   AgentTeamChannelRef,
   AgentTeamChannelUpdatedOperation,
-  AgentTeamClearMemberContextRequest,
   AgentTeamClaim,
   AgentTeamClaimActivity,
   AgentTeamClaimsReleasedActivity,
@@ -40,10 +40,10 @@ import type {
   AgentTeamJoinChannelResult,
   AgentTeamMemberActor,
   AgentTeamMemberAddedOperation,
-  AgentTeamMemberContextClearedOperation,
   AgentTeamMemberId,
   AgentTeamMemberRemovedOperation,
   AgentTeamMemberResumedOperation,
+  AgentTeamMemberSessionRenewedOperation,
   AgentTeamMemberSessionRestartedOperation,
   AgentTeamMemberSuspendedOperation,
   AgentTeamMemberUpdatedOperation,
@@ -141,7 +141,13 @@ export interface AgentTeamAuthorizedSetMemberStateRequest extends AgentTeamSetMe
   readonly actor: AgentTeamHumanActor
 }
 
-export interface AgentTeamAuthorizedClearMemberContextRequest extends AgentTeamClearMemberContextRequest {
+/** Host-authorized intent to move one enabled Member onto a fresh Session id. */
+export interface AgentTeamAuthorizedRenewMemberSessionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+  /** The freshly minted Session the Member transitions onto. */
+  readonly sessionId: SessionId
   readonly actor: AgentTeamHumanActor
 }
 
@@ -452,24 +458,26 @@ export class AgentTeamLedger {
   }
 
   /**
-   * Audit record of one in-place Member context clear. The operation changes
-   * no projection state — identity, memory path, and binding are untouched —
-   * so replay treats it as a marker while the Host discards and recreates the
-   * live Session under the same sessionId.
+   * Move one enabled Member onto a fresh Session: the durable operation
+   * records the sessionId transition while identity, memory, and binding
+   * survive. The Host disposes the old handle and archives the previous
+   * Session log around this write, so the next turn starts empty.
    */
-  clearMemberContext(request: AgentTeamAuthorizedClearMemberContextRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
+  renewMemberSession(request: AgentTeamAuthorizedRenewMemberSessionRequest): Promise<AgentTeamLedgerResult<AgentTeamDurableMemberResult>> {
     return this.enqueue(async () => {
       const existing = this.state.byRequest.get(request.requestId)
       if (existing !== undefined) {
-        this.assertSameMemberContextClear(existing, request)
+        this.assertSameMemberSessionRenewed(existing, request)
         return this.resolved(this.memberResult(existing))
       }
       this.assertHumanActor(request.actor)
-      const member = this.requireMember(request.memberId)
-      if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can start from a new context`)
-      const operation: AgentTeamMemberContextClearedOperation = Object.freeze({
-        ...this.operationBase(request, this.nextSequence()), kind: 'team/member-context-cleared',
-        data: Object.freeze({ member }),
+      const prior = this.requireMember(request.memberId)
+      if (prior.state !== 'enabled') throw new Error(`Agent Member '${prior.handle}' is ${prior.state}; only enabled Members can start from a new context`)
+      if (prior.sessionId === request.sessionId) throw new Error(`Agent Member '${prior.handle}' already runs Session '${request.sessionId}'`)
+      const member = Object.freeze({ ...prior, sessionId: request.sessionId })
+      const operation: AgentTeamMemberSessionRenewedOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/member-session-renewed',
+        data: Object.freeze({ member, previousSessionId: prior.sessionId }),
       })
       await this.table.put(operation.operationId, operation)
       this.apply(operation)
@@ -1125,6 +1133,7 @@ export class AgentTeamLedger {
       case 'team/member-resumed':
       case 'team/member-session-restarted':
       case 'team/member-context-cleared':
+      case 'team/member-session-renewed':
       case 'team/member-updated':
       case 'team/member-removed':
         return [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
@@ -1209,6 +1218,7 @@ export class AgentTeamLedger {
       case 'team/member-resumed':
       case 'team/member-session-restarted':
       case 'team/member-context-cleared':
+      case 'team/member-session-renewed':
       case 'team/member-updated':
       case 'team/channel-member-added':
       case 'team/thread-read':
@@ -1306,8 +1316,21 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/member-context-cleared') {
       assertHuman()
       const prior = projection.members.get(operation.data.member.memberId)
-      // The clear records the unchanged Member: same identity, still enabled.
+      // Legacy in-place clear: the recorded Member is unchanged, and the
+      // projection deliberately does not change either.
       if (prior === undefined || prior.state !== 'enabled' || !this.sameMemberIdentity(prior, operation.data.member)) throw new Error('invalid Member context clear')
+      return
+    }
+    if (operation.kind === 'team/member-session-renewed') {
+      assertHuman()
+      const prior = projection.members.get(operation.data.member.memberId)
+      // The renewal moves exactly the sessionId: the prior Member must be
+      // enabled on the recorded previous Session, and every other fact must
+      // carry over unchanged.
+      if (prior === undefined || prior.state !== 'enabled'
+        || prior.sessionId !== operation.data.previousSessionId
+        || operation.data.member.sessionId === operation.data.previousSessionId
+        || !this.sameMemberFacts(prior, operation.data.member)) throw new Error('invalid Member session renewal')
       return
     }
     if (operation.kind === 'team/channel-updated') {
@@ -1716,8 +1739,12 @@ export class AgentTeamLedger {
       return
     }
     if (operation.kind === 'team/member-context-cleared') {
-      // Audit-only: identity, memory path, and binding are untouched; the
-      // Host already recreated the live Session empty under the same id.
+      // Legacy audit-only marker: identity, memory path, and binding were
+      // untouched; the Host recreated the live Session empty under the same id.
+      return
+    }
+    if (operation.kind === 'team/member-session-renewed') {
+      target.members.set(operation.data.member.memberId, operation.data.member)
       return
     }
     if (operation.kind === 'team/channel-updated') {
@@ -2484,9 +2511,9 @@ export class AgentTeamLedger {
     if (operation.kind !== kind || !this.sameActor(operation.actor, request.actor) || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
   }
 
-  private assertSameMemberContextClear(operation: AgentTeamOperation, request: AgentTeamAuthorizedClearMemberContextRequest): asserts operation is AgentTeamMemberContextClearedOperation {
-    if (operation.kind !== 'team/member-context-cleared' || !this.sameActor(operation.actor, request.actor)
-      || operation.data.member.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
+  private assertSameMemberSessionRenewed(operation: AgentTeamOperation, request: AgentTeamAuthorizedRenewMemberSessionRequest): asserts operation is AgentTeamMemberSessionRenewedOperation {
+    if (operation.kind !== 'team/member-session-renewed' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.member.memberId !== request.memberId || operation.data.member.sessionId !== request.sessionId) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameChannelUpdate(operation: AgentTeamOperation, request: AgentTeamAuthorizedUpdateChannelRequest): asserts operation is AgentTeamChannelUpdatedOperation {
@@ -2602,6 +2629,14 @@ export class AgentTeamLedger {
       && left.privateMemoryPath === right.privateMemoryPath
   }
 
+  /** sameMemberIdentity minus the sessionId: every durable Member fact a session renewal must carry over unchanged. */
+  private sameMemberFacts(left: AgentTeamAgentMember, right: AgentTeamAgentMember): boolean {
+    return left.memberId === right.memberId && left.workspaceId === right.workspaceId
+      && left.handle === right.handle && left.description === right.description && left.presetId === right.presetId
+      && isDeepStrictEqual(left.model ?? undefined, right.model ?? undefined)
+      && left.privateMemoryPath === right.privateMemoryPath
+  }
+
   private sameActor(left: AgentTeamHumanActor | AgentTeamMemberActor, right: AgentTeamHumanActor | AgentTeamMemberActor): boolean {
     return left.kind === right.kind && left.memberId === right.memberId && left.handle === right.handle
   }
@@ -2645,7 +2680,7 @@ export class AgentTeamLedger {
     return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel })
   }
 
-  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberSessionRestartedOperation | AgentTeamMemberContextClearedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
+  private memberResult(operation: AgentTeamMemberAddedOperation | AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation | AgentTeamMemberSessionRestartedOperation | AgentTeamMemberSessionRenewedOperation | AgentTeamMemberUpdatedOperation): AgentTeamDurableMemberResult {
     return Object.freeze({ receipt: this.receipt(operation), member: operation.data.member })
   }
 
