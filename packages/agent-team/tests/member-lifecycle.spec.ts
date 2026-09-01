@@ -643,7 +643,7 @@ describe('Agent Team Member lifecycle', () => {
     await ctx.agentTeam.resumeMember({ requestId: requestId('dm-resume'), memberId: reviewer.status.member.memberId })
     ctx.agentTeam['handles'].delete(reviewer.status.member.memberId)
     await expect(ctx.agentTeam.dmForAgent(sender, { requestId: requestId('dm-undelivered'), workspaceId,
-      recipientMemberId: reviewer.status.member.memberId, body: 'are you back?' })).rejects.toMatchObject({ name: 'AgentTeamDmDeliveryError' })
+      recipientMemberId: reviewer.status.member.memberId, body: 'are you back?' })).rejects.toMatchObject({ name: 'AgentTeamDmDeliveryError', recipientHandle: 'reviewer' })
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 

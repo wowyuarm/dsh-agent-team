@@ -150,7 +150,7 @@ export interface AgentTeamCommitted {
  * history once its session is live again.
  */
 export class AgentTeamDmDeliveryError extends Error {
-  constructor(readonly recipientMemberId: AgentTeamMemberId, message: string) {
+  constructor(readonly recipientMemberId: AgentTeamMemberId, readonly recipientHandle: string, message: string) {
     super(message)
     this.name = 'AgentTeamDmDeliveryError'
   }
@@ -860,7 +860,7 @@ export default class AgentTeam extends TypertRemoteService {
     const recipient = result.value.recipient
     const handle = this.handles.get(recipient.memberId)
     if (handle === undefined) {
-      throw new AgentTeamDmDeliveryError(recipient.memberId, `DM recorded but not delivered: Agent Member '${recipient.handle}' has no live session; it will find the message in its DM history after recovery`)
+      throw new AgentTeamDmDeliveryError(recipient.memberId, recipient.handle, `DM recorded but not delivered: Agent Member '${recipient.handle}' has no live session; it will find the message in its DM history after recovery`)
     }
     try {
       const message = createUserMessage({
@@ -872,7 +872,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (handle.agent.status === 'idle') handle.agent.followup(message)
       else handle.agent.steer(message)
     } catch (error) {
-      throw new AgentTeamDmDeliveryError(recipient.memberId, `DM recorded but not delivered: ${error instanceof Error ? error.message : String(error)}`)
+      throw new AgentTeamDmDeliveryError(recipient.memberId, recipient.handle, `DM recorded but not delivered: ${error instanceof Error ? error.message : String(error)}`)
     }
     return result.value
   }

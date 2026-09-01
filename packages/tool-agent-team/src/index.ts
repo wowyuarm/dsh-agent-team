@@ -198,7 +198,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
         return { kind: 'dm-sent', recipientMemberId: result.recipient.memberId, recipientHandle: result.recipient.handle, delivered: true }
       } catch (error) {
         if (error instanceof AgentTeamDmDeliveryError) {
-          return { kind: 'dm-sent', recipientMemberId: error.recipientMemberId, recipientHandle: error.recipientMemberId, delivered: false, deliveryNote: error.message }
+          return { kind: 'dm-sent', recipientMemberId: error.recipientMemberId, recipientHandle: error.recipientHandle, delivered: false, deliveryNote: error.message }
         }
         throw error
       }
