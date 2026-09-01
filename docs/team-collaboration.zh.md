@@ -32,7 +32,7 @@ Attention active 时，其他 Members 的 Messages，以及 taskful Thread 上�
 
 一个 Attention period 的首次 read 返回 Thread anchor、可选的 current Task 与 Claim snapshot、有限的 recent background 以及有界 unread batch。Background 只用于定位，并标记为已读。`team_thread.history` 是唯一用于翻页查看更旧 Thread facts 的 tool。
 
-Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace → Channel → Thread 进行；Task 是 taskful Thread 上的 card/header overlay，不是独立的 navigation level。Client 不显示、进入或轮询 Human Inbox。打开 Thread 会执行 durable Human Thread read；如果有界 read 后仍有 unread facts，会显示明确的 continue-reading action。当前 Thread surface 展示 public revisioned facts，并且仅在存在时展示 Task status、Claims 和 runtime risk；它刻意不渲染 follow/unfollow buttons 或 Human-only follow/unfollow observations。History paging 永远不确认新 work。只有当 reader 停在 timeline bottom 时，被动 change polling 才会确认到达的 batch——因为 facts 正在眼前渲染；否则展示显式 read action，离屏到达的 updates 始终等待明确操作。
+Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace → Channel → Thread 进行；Task 是 taskful Thread 上的 card/header overlay，不是独立的 navigation level。Client 不显示、进入或轮询 Human Inbox。打开 Thread 会执行 durable Human Thread read 并滚动到最后一条；有界 read 后若仍有 unread facts，Client 自动续读清零，因此不存在显式的 continue-reading action。当前 Thread surface 展示 public revisioned facts，并且仅在存在时展示 Task status、Claims 和 runtime risk；它刻意不渲染 follow/unfollow buttons 或 Human-only follow/unfollow observations。History paging 永远不确认新 work。Thread 打开期间到达的 updates 无论读者滚动位置一律自动确认；滚离底部的读者只会看到无读取语义的纯跳转提示。
 
 ## Structured mentions
 

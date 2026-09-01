@@ -57,7 +57,7 @@ Known branded `task:*` refs are resolved in batches and rendered at their origin
 
 ## Timeline scrolling
 
-When the reader is within 48px of the bottom, follow new content and persist a `readThread` confirmation because it is visible. Away from the bottom, expose “read N new updates”. Compensate `scrollTop` by the `scrollHeight` delta when prepending history. Explicit boundary/latest actions scroll to their target with 12px clearance. Rendering keys change with facts; a current length plus last fact key is used.
+When the reader is within 48px of the bottom, follow new content; away from the bottom, do not disturb. Every arrival while a Thread is open is acknowledged durably right away, whether or not the reader is pinned — a scrolled-away reader gets only the pure “↓ N new update(s)” jump hint, which scrolls to the tail without any read semantics and clears when the reader returns to the bottom. Opening a Thread scrolls to the latest fact, and a bounded read with a remaining unread count continues automatically: a serial drain loop issues fresh-requestId reads until the remainder is zero (50-round cap surfaces an error). Compensate `scrollTop` by the `scrollHeight` delta when prepending history. Rendering keys change with facts; a current length plus last fact key is used.
 
 ## Composer and mentions
 
@@ -79,7 +79,7 @@ Channel and Agent editors use public Remote mutations and Host projections rathe
 
 ## Data refresh semantics
 
-Channel refreshes deduplicate by `messageRef`, merge new and loaded history through `mergeChannelView`, retain the older cursor, and combine `hasMore`. Thread passive changes merge into current facts and increment `newFactsCount`; only explicit read actions advance the durable pointer. `loadOlder` has concurrency protection.
+Channel refreshes deduplicate by `messageRef`, merge new and loaded history through `mergeChannelView`, retain the older cursor, and combine `hasMore`. Thread passive changes merge into current facts; the durable read pointer advances automatically on open and on every arrival (a bounded read's remainder drains through the serial continuation loop), and `newFactsCount` only drives the pure jump hint. `loadOlder` has concurrency protection.
 
 ## Copy and localization
 

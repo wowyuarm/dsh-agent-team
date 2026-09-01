@@ -11,7 +11,7 @@ beforeEach(() => { localStorage.clear() })
 
 describe('Team conversation surfaces', () => {
   it('opens a selected Channel in the Team center and sends only after Host commit', async () => {
-    const b = await runtimeWithTeam({ remainingUnreadCount: 1 })
+    const b = await runtimeWithTeam({ remainingUnreadCounts: [1] })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
@@ -74,8 +74,11 @@ describe('Team conversation surfaces', () => {
     expect(b.view.queryByRole('button', { name: '关注 Thread' })).toBeNull()
     expect(b.view.queryByRole('button', { name: '取消关注' })).toBeNull()
     expect(b.view.queryByText('Human 观察')).toBeNull()
-    fireEvent.click(await b.view.findByRole('button', { name: '继续阅读' }))
+    // Opening onto a bounded read with a remainder drains it automatically:
+    // each round carries a fresh requestId, no continue-reading control
+    // exists, and the unread facts render once the loop settles.
     await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
+    expect(b.readThread.mock.calls[0]![0].requestId).not.toBe(b.readThread.mock.calls[1]![0].requestId)
     expect(b.view.queryByRole('button', { name: '继续阅读' })).toBeNull()
     expect(b.view.getByText('@builder 认领了「Implement API」')).toBeTruthy()
     expect(b.view.queryByText(/member:builder/)).toBeNull()
@@ -369,7 +372,7 @@ describe('Team conversation surfaces', () => {
   })
 
   it('uploads thread reply attachments and passes their ids to reply', async () => {
-    const b = await runtimeWithTeam({ initialChannels: true, remainingUnreadCount: 1, seededMessages: [{ body: '开个任务', occurredAt: '2026-08-21T09:00:00.000Z' }] })
+    const b = await runtimeWithTeam({ initialChannels: true, remainingUnreadCounts: [1], seededMessages: [{ body: '开个任务', occurredAt: '2026-08-21T09:00:00.000Z' }] })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
@@ -598,7 +601,7 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('counts only facts newer than the shown timeline as new updates on change wakes', async () => {
+  it('acknowledges off-screen arrivals automatically and keeps only a pure jump hint', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
@@ -637,21 +640,26 @@ describe('Team conversation surfaces', () => {
     b.publishAgentReply()
     await waitFor(() => expect(b.loadThreadHistory).toHaveBeenLastCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
     await new Promise(resolve => setTimeout(resolve, 20))
-    expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
+    expect(b.view.queryByText(/↓ \d+ 条新更新/)).toBeNull()
 
-    // A reader scrolled away from the tail keeps the explicit new-updates action.
+    // A reader scrolled away from the tail still gets every arrival
+    // acknowledged durably; the only on-screen affordance is the pure jump
+    // hint, which carries no read semantics.
     const timelineSection = document.querySelector('section[aria-label="消息时间线"]') as HTMLElement
     Object.defineProperty(timelineSection, 'scrollHeight', { configurable: true, value: 1000 })
     Object.defineProperty(timelineSection, 'clientHeight', { configurable: true, value: 120 })
     fireEvent.scroll(timelineSection)
 
-    // A fact newer than everything shown is genuinely new and countable.
     historyWith([{ ...backfillFact, sequence: 9, message: { ...backfillFact.message, messageRef: 'message:new-9', body: 'genuinely new', sequence: 9 } }])
     b.publishAgentReply()
-    expect(await b.view.findByText('读取 1 条新更新')).toBeTruthy()
-    fireEvent.click(b.view.getByRole('button', { name: '标记为已读' }))
     await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
-    expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull()
+    expect(await b.view.findByText('↓ 1 条新更新')).toBeTruthy()
+    expect(b.view.queryByRole('button', { name: '标记为已读' })).toBeNull()
+
+    // The hint click only scrolls to the tail; it performs no read itself.
+    fireEvent.click(b.view.getByRole('button', { name: '↓ 1 条新更新' }))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(b.readThread).toHaveBeenCalledTimes(2)
     await b.runtime.dispose()
   })
 
@@ -692,11 +700,73 @@ describe('Team conversation surfaces', () => {
 
     // jsdom never scrolls the reader away from the bottom, so the arriving
     // fact renders in front of them and must be acknowledged durably rather
-    // than counted into the explicit new-updates prompt.
+    // than surfaced as a jump hint.
     b.publishChannelUpdate()
-    await waitFor(() => expect(b.view.queryByText(/读取 \d+ 条新更新/)).toBeNull())
+    await waitFor(() => expect(b.view.queryByText(/↓ \d+ 条新更新/)).toBeNull())
     expect(await b.view.findByText('watched live')).toBeTruthy()
     await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(2))
+    expect(b.view.queryByRole('button', { name: '标记为已读' })).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('drains a multi-round unread backlog automatically with fresh request ids', async () => {
+    const b = await runtimeWithTeam({
+      initialChannels: true, remainingUnreadCounts: [25, 5, 0],
+      seededMessages: [{ body: '积压任务', occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[aria-current="page"]')?.textContent).toContain('Alpha') })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+
+    // The bounded batches drain in a serial loop: one read per round, each
+    // with its own requestId, until the remainder reaches zero. No manual
+    // continue-reading control exists anywhere in the flow.
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledTimes(3))
+    const requestIds = b.readThread.mock.calls.map(([request]) => request.requestId)
+    expect(new Set(requestIds).size).toBe(3)
+    expect(b.view.queryByRole('button', { name: '继续阅读' })).toBeNull()
+    expect(b.view.queryByText(/仍有未读更新未能自动读取/)).toBeNull()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(b.readThread).toHaveBeenCalledTimes(3)
+    await b.runtime.dispose()
+  })
+
+  it('keeps the jump hint when the automatic acknowledgment read fails', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[aria-current="page"]')?.textContent).toContain('Alpha') })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    fireEvent.change(messageInput, { target: { value: 'first task' } })
+    fireEvent.click(b.view.getByRole('button', { name: '作为任务' }))
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect(await b.view.findByText('first task')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+
+    const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
+      sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
+    const failedFact = { kind: 'message', sequence: 9, message: { messageRef: 'message:new-9', channelRef: 'channel:1', threadRef: 'thread:1',
+      taskRef: 'task:1', sender: 'member:builder', body: 'unacknowledged', topLevel: false, sequence: 9, occurredAt: '' }, mentions: [] }
+    b.loadThreadHistory.mockImplementation(async () => ({ ok: true as const, value: {
+      task: { taskRef: 'task:1', channelRef: 'channel:1', status: 'todo', resolution: 'open' },
+      thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts: [failedFact], cursor: 0, hasMore: false,
+    } } as never))
+
+    b.publishAgentReply()
+    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
+    b.readThread.mockRejectedValueOnce(new Error('acknowledgment transport failed') as never)
+    b.publishChannelUpdate()
+    // The durable read failed: the arrivals stay visible, the durable
+    // acknowledgment surfaces as an error, and the pure jump hint remains
+    // (with no manual read control to substitute for the retry).
+    await waitFor(() => { expect(b.view.getByText('↓ 1 条新更新')).toBeTruthy() })
+    expect(await b.view.findByText('unacknowledged')).toBeTruthy()
+    expect(await b.view.findByRole('alert')).toBeTruthy()
     expect(b.view.queryByRole('button', { name: '标记为已读' })).toBeNull()
     await b.runtime.dispose()
   })

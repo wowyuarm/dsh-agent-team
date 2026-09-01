@@ -1,30 +1,26 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 const BOTTOM_MARGIN_PX = 48
-const BOUNDARY_OFFSET_PX = 12
 
 export interface TimelineScroll {
   readonly ref: React.RefObject<HTMLElement>
   onScroll: () => void
   /** Whether the reader currently sits within the follow margin of the bottom. */
   isPinned: () => boolean
-  /** Jump to the unread-boundary marker on the next content commit. */
-  jumpToBoundary: () => void
-  /** Jump to the latest fact on the next content commit. */
-  jumpToLatest: () => void
+  /** Scroll the timeline to the latest fact immediately. */
+  scrollToBottom: () => void
 }
 
 /**
  * Chat-timeline scroll policy shared by the Channel and Thread pages: follow
- * new facts only while the reader stays pinned to the bottom, keep prepended
- * history visually stable, and honor explicit jump requests exactly once per
- * content commit. The content key must change whenever rendered facts change.
+ * new facts only while the reader stays pinned to the bottom, and keep
+ * prepended history visually stable. The content key must change whenever
+ * rendered facts change.
  */
 export function useTimelineScroll(contentKey: string): TimelineScroll {
   const ref = useRef<HTMLElement>(null)
   const pinnedRef = useRef(true)
   const heightRef = useRef(0)
-  const jumpRef = useRef<'boundary' | 'latest'>()
 
   const onScroll = useCallback(() => {
     const element = ref.current
@@ -32,14 +28,10 @@ export function useTimelineScroll(contentKey: string): TimelineScroll {
     pinnedRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < BOTTOM_MARGIN_PX
   }, [])
 
-  const jumpToBoundary = useCallback(() => {
-    jumpRef.current = 'boundary'
-    pinnedRef.current = false
-  }, [])
-
-  const jumpToLatest = useCallback(() => {
-    jumpRef.current = 'latest'
+  const scrollToBottom = useCallback(() => {
+    const element = ref.current
     pinnedRef.current = true
+    if (element !== null) element.scrollTop = element.scrollHeight
   }, [])
 
   useEffect(() => {
@@ -47,16 +39,7 @@ export function useTimelineScroll(contentKey: string): TimelineScroll {
     if (element === null) return
     const previousHeight = heightRef.current
     heightRef.current = element.scrollHeight
-    const jump = jumpRef.current
-    jumpRef.current = undefined
-    if (jump === 'boundary') {
-      const marker = element.querySelector<HTMLElement>('[data-thread-boundary]')
-      if (marker !== null) {
-        element.scrollTop += marker.getBoundingClientRect().top - element.getBoundingClientRect().top - BOUNDARY_OFFSET_PX
-        return
-      }
-    }
-    if (jump === 'latest' || pinnedRef.current) {
+    if (pinnedRef.current) {
       element.scrollTop = element.scrollHeight
       return
     }
@@ -66,5 +49,5 @@ export function useTimelineScroll(contentKey: string): TimelineScroll {
     }
   }, [contentKey])
 
-  return { ref, onScroll, isPinned: () => pinnedRef.current, jumpToBoundary, jumpToLatest }
+  return { ref, onScroll, isPinned: () => pinnedRef.current, scrollToBottom }
 }

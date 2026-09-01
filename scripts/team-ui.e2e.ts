@@ -765,6 +765,52 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // stored body keeps the bare word; only the rendering chipifies it).
   await page.getByText('reviewer 已读取邀请并回复 @human，关联', { exact: false }).waitFor()
 
+  // Open-onto-unread acceptance: while the Human is away from the Thread,
+  // agents publish a multi-batch backlog, then the Human reopens it. The
+  // Thread must land at the latest fact, drain every bounded batch
+  // automatically (no continue-reading control), keep the unread boundary
+  // rendered as information, and leave no unread remainder in the ledger.
+  await page.getByRole('button', { name: '返回频道' }).click()
+  await page.getByRole('heading', { name: '# delivery' }).waitFor()
+  const backlogBatch = async (label: string): Promise<void> => {
+    const backlogRead = await scaffold.ctx.agentTeam.readThreadForAgent(reviewerAgent, {
+      requestId: `m2-open-unread-${label}-read` as never, workspaceId: workspace.id, taskRef: task.taskRef,
+    })
+    const backlogReply = await scaffold.ctx.agentTeam.replyForAgent(reviewerAgent, {
+      requestId: `m2-open-unread-${label}-reply` as never,
+      workspaceId: workspace.id, taskRef: task.taskRef,
+      body: `离线期间的批量更新 ${label}`,
+      baseRevision: backlogRead.thread.revision,
+    })
+    if (backlogReply.kind !== 'committed') throw new Error(`backlog reply rejected: ${backlogReply.kind}`)
+  }
+  for (const label of ['一', '二', '三']) await backlogBatch(label)
+  const preOpenInbox = scaffold.ctx.agentTeam.inbox({ workspaceId: workspace.id })
+  const preOpenThread = preOpenInbox.items.find(item => item.task?.taskRef === task.taskRef)
+  expect(preOpenThread?.unreadCount ?? 0).toBeGreaterThanOrEqual(3)
+  await page.getByRole('button', { name: /Task #1/ }).click()
+  await page.getByRole('heading', { name: /Task #1/ }).waitFor()
+  await page.getByText('离线期间的批量更新 三', { exact: true }).waitFor()
+  // The boundary stays as an informational separator even though reading is
+  // fully automatic now.
+  await page.getByText('以下是本次打开收到的更新').waitFor()
+  await expect.poll(() => page.getByRole('button', { name: '继续阅读' }).count()).toBe(0)
+  await expect.poll(() => page.getByRole('button', { name: '标记为已读' }).count()).toBe(0)
+  const humanThreadScroller = page.locator('section[aria-label="消息时间线"]')
+  await expect.poll(async () => {
+    const box = await humanThreadScroller.boundingBox()
+    if (box === null) return -1
+    const atBottom = await humanThreadScroller.evaluate(element =>
+      element.scrollHeight - element.scrollTop - element.clientHeight < 48)
+    return atBottom ? 1 : 0
+  }, { timeout: 10_000 }).toBe(1)
+  await expect.poll(() => {
+    const openInbox = scaffold.ctx.agentTeam.inbox({ workspaceId: workspace.id })
+    const openThread = openInbox.items.find(item => item.task?.taskRef === task.taskRef)
+    return openThread?.unreadCount ?? 0
+  }, { timeout: 10_000 }).toBe(0)
+  await page.screenshot({ path: join(UI05_SHOTS, 'open-onto-unread-drained.png'), fullPage: true })
+
   const replayedThread = scaffold.ctx.agentTeam.threadHistory({ workspaceId: workspace.id, taskRef: task.taskRef, limit: 100 })
   expect(JSON.stringify(replayedThread)).toContain('请 reviewer 加入这个已有 Thread 并回复 Human @reviewer')
   expect(JSON.stringify(replayedThread)).toContain('reviewer 已读取邀请并回复 Human')

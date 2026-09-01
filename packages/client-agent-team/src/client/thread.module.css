@@ -194,18 +194,33 @@
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
   box-shadow: var(--dsw-shadow-lv2);
-  color: var(--dsw-alias-label-secondary);
   display: flex;
   font-size: 12px;
-  gap: 8px;
   justify-content: center;
   line-height: 18px;
   margin: 8px auto;
-  padding: 4px 6px 4px 12px;
+  padding: 4px 12px;
   position: sticky;
   bottom: 8px;
   width: fit-content;
   z-index: 2;
+}
+
+/* The hint carries no read semantics — it only scrolls to the tail. */
+.newUpdatesJump {
+  background: none;
+  border: 0;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  line-height: inherit;
+  padding: 0;
+}
+
+.newUpdatesJump:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
 }
 
 /* Task openers run long and embed unbreakable refs, so clamp to two lines

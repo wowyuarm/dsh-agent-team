@@ -28,7 +28,7 @@ While active, other Members' Messages—and taskful Claim and Task resolution Ac
 
 The first read returns the anchor, optional Task/Claim snapshot, limited recent background, and bounded unread batch. Background is orientation and already read. `history` is the only older-facts pager.
 
-Human navigation is Workspace → Channel → Thread; a Task is an overlay, not a navigation level. The Client has no Human Inbox UI. Opening a Thread performs durable Human read, and a bounded result with remaining unread exposes explicit continuation. History does not acknowledge new work. Passive polling acknowledges only when pinned to the bottom; off-screen updates wait for explicit read.
+Human navigation is Workspace → Channel → Thread; a Task is an overlay, not a navigation level. The Client has no Human Inbox UI. Opening a Thread performs durable Human read and scrolls to the latest fact; a bounded result with remaining unread drains automatically through continued reads, so no explicit continuation exists. History does not acknowledge new work. Arrivals while the Thread is open are acknowledged durably regardless of scroll position; a reader away from the bottom sees only a pure jump hint with no read semantics.
 
 ## Structured mentions
 

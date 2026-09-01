@@ -96,7 +96,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const [readFacts, setReadFacts] = useState<readonly AgentTeamThreadReadFact[]>([])
   const [historyCursor, setHistoryCursor] = useState<number>()
   const [historyHasMore, setHistoryHasMore] = useState(false)
-  const [remainingUnreadCount, setRemainingUnreadCount] = useState(0)
+  // A bounded read acknowledges at most 20 unread facts; larger backlogs need
+  // continuation reads. Reads also never self-wake a change scope, so a
+  // backlog beyond a handful of batches would otherwise linger forever. The
+  // cap stops a pathological feed (facts arriving faster than they are read)
+  // from looping without bound; the error surface keeps the remainder visible.
+  const MAX_AUTO_READ_ROUNDS = 50
+  const [autoReadExhausted, setAutoReadExhausted] = useState(false)
   const [newFactsCount, setNewFactsCount] = useState(0)
   // The reply draft lives in the keyed draft cache: view switches unmount
   // this page, and a refresh must not cost the half-written message either.
@@ -122,14 +128,15 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const currentFactsRef = useRef<readonly AgentTeamThreadFact[]>([])
   const sequenceRef = useRef(0)
   const readRequestIdRef = useRef<AgentTeamRequestId>(mintRequestId())
+  const projectionRef = useRef<ReadProjection>()
   const mutationRequests = useRef(new Map<string, AgentTeamRequestId>())
   const threadLastFact = currentFacts[currentFacts.length - 1]
   const timeline = useTimelineScroll(`${currentFacts.length}:${olderFacts.length}:${threadLastFact === undefined ? '' : factKey(threadLastFact)}`)
 
   const updateProjection = (next: ReadProjection): void => {
+    projectionRef.current = next
     setProjection(next)
     setReadFacts(next.facts)
-    setRemainingUnreadCount(next.remainingUnreadCount)
     const anchor = messageFact(next.anchor, next.anchorMentions)
     const batch = [anchor, ...next.facts.map(fact => fact.fact)]
     setCurrentFacts(current => {
@@ -137,7 +144,25 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       currentFactsRef.current = merged
       return merged
     })
-    setNewFactsCount(0)
+  }
+
+  // Continue a bounded read while unread facts remain. Each round must mint a
+  // fresh requestId: the Host replays a repeated id from its idempotency
+  // cache, which would return the same batch forever. The loop terminates on
+  // a zero remainder, a failed read (the existing error surface offers
+  // retry), a superseding sequence, or the round cap.
+  const drainUnread = async (): Promise<void> => {
+    for (let round = 1; round <= MAX_AUTO_READ_ROUNDS; round += 1) {
+      const snapshot = projectionRef.current
+      if (snapshot === undefined || snapshot.remainingUnreadCount <= 0) return
+      const beforeSequence = sequenceRef.current
+      if (!await readCurrent(true)) return
+      // A newer read or remount owns the tail now; it drains the remainder.
+      if (!mountedRef.current || sequenceRef.current !== beforeSequence + 1) return
+      // A stalled remainder (Host fault) must not spin the loop.
+      if (projectionRef.current?.remainingUnreadCount === snapshot.remainingUnreadCount) return
+    }
+    setAutoReadExhausted(true)
   }
 
   const readCurrent = async (newRequest = false): Promise<boolean> => {
@@ -195,21 +220,22 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         currentFactsRef.current = merged
         return merged
       })
-      setProjection(current => current === undefined ? current : { ...current, ...(result.value.task === undefined ? {} : { task: result.value.task }), thread: result.value.thread, claims: result.value.claims })
+      setProjection(current => {
+        const next = current === undefined ? current : { ...current, ...(result.value.task === undefined ? {} : { task: result.value.task }), thread: result.value.thread, claims: result.value.claims }
+        if (next !== undefined) projectionRef.current = next
+        return next
+      })
       if (additions.length === 0) return
-      // A reader scrolled away from the tail must be offered the explicit
-      // new-updates action; a reader pinned to the bottom is watching these
-      // facts arrive, so they are already seen and the batch is acknowledged
-      // durably instead of being counted for an explicit read.
-      if (!timeline.isPinned()) {
-        setNewFactsCount(current => current + additions.length)
-        return
-      }
+      // Every arrival while the Thread is open is acknowledged durably: the
+      // timeline renders it either way, and the Human has no manual read
+      // action anymore. The count only feeds the pure jump hint for a reader
+      // away from the bottom; returning to the bottom clears it.
+      if (!timeline.isPinned()) setNewFactsCount(current => current + additions.length)
       const priorSequence = sequenceRef.current
       if (await readCurrent(true)) return
       // The durable acknowledgment did not happen (it failed, a newer read
-      // superseded it, or the page unmounted); fall back to the explicit
-      // action unless that newer read now owns the tail.
+      // superseded it, or the page unmounted); the count keeps the jump hint
+      // visible unless that newer read now owns the tail.
       if (!mountedRef.current || sequenceRef.current !== priorSequence + 1) return
       setNewFactsCount(current => current + additions.length)
     } catch {
@@ -219,6 +245,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   useEffect(() => {
     mountedRef.current = true
+    projectionRef.current = undefined
     setProjection(undefined)
     setChannelView(undefined)
     setMembers([])
@@ -228,7 +255,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setReadFacts([])
     setHistoryCursor(undefined)
     setHistoryHasMore(false)
-    setRemainingUnreadCount(0)
+    setAutoReadExhausted(false)
     setNewFactsCount(0)
     setError(undefined)
     setStatusMessage(undefined)
@@ -249,8 +276,9 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         return
       }
       updateProjection(read.value)
-      // Opened onto unread updates: land on the boundary instead of the floor.
-      if (read.value.facts.some(fact => fact.unread)) timeline.jumpToBoundary()
+      // The Thread opens at the latest fact; the unread boundary stays
+      // rendered as information, but reading is automatic from here on.
+      timeline.scrollToBottom()
       if (history !== undefined && history.ok) {
         setCurrentFacts(current => {
           const merged = mergeFacts(current, history.value.facts)
@@ -262,6 +290,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       }
       setError(undefined)
       setLoading(false)
+      await drainUnread()
     })()
     void refreshSupplemental()
     const disposers = [
@@ -282,6 +311,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       for (const dispose of disposers) dispose()
     }
   }, [workspaceId, taskRef, threadRef])
+
+  // Returning to the bottom is the reader's answer to the jump hint: the
+  // arrivals are on screen, their durable read already happened (or will be
+  // retried by the next change wake), and the hint has nothing left to say.
+  useEffect(() => {
+    if (newFactsCount > 0 && timeline.isPinned()) setNewFactsCount(0)
+  }, [newFactsCount, currentFacts, olderFacts, timeline])
 
   const loadOlder = async (): Promise<void> => {
     if (historyHasMore === false && historyCursor === undefined) return
@@ -424,7 +460,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         return
       }
       flushRun()
-      if (boundaryIndex === index) nodes.push(<p key={`boundary-${index}`} className={threadCss.unreadBoundary} role="separator" data-thread-boundary><span>{t('unreadBoundary')}</span></p>)
+      if (boundaryIndex === index) nodes.push(<p key={`boundary-${index}`} className={threadCss.unreadBoundary} role="separator"><span>{t('unreadBoundary')}</span></p>)
       if (sender !== undefined) run.push(fact)
       else nodes.push(<Fragment key={factKey(fact)}>{renderFact(fact)}</Fragment>)
     })
@@ -433,9 +469,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   }
 
   const refreshAfterFence = async (): Promise<void> => {
-    timeline.jumpToLatest()
+    timeline.scrollToBottom()
     await readCurrent(true)
     await refreshSupplemental()
+    await drainUnread()
   }
 
   const convertToTask = async (): Promise<void> => {
@@ -686,11 +723,13 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         {currentFactsWithAnchor.length > 0 && <section className={threadCss.publicSection}>
           {renderFactBlocks(currentFactsWithAnchor, unreadBoundary)}
         </section>}
-        {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
-          <span>{t('readNewUpdates', { count: newFactsCount })}</span>
-          <Button size="sm" variant="outline" disabled={loading} onClick={() => { timeline.jumpToLatest(); void readCurrent(true) }}>{t('markRead')}</Button>
+        {autoReadExhausted && <div className={css.timelineAction} role="alert">
+          <span>{t('autoReadIncomplete')}</span>
+          <Button size="sm" onClick={() => { setAutoReadExhausted(false); void drainUnread() }} disabled={loading}>{t('retry')}</Button>
         </div>}
-        {remainingUnreadCount > 0 && <div className={css.timelineAction} role="status"><span>{t('remainingUnread', { count: remainingUnreadCount })}</span><Button size="sm" onClick={() => { timeline.jumpToBoundary(); void readCurrent(true) }} disabled={loading}>{t('continueReading')}</Button></div>}
+        {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
+          <button type="button" className={threadCss.newUpdatesJump} onClick={timeline.scrollToBottom}>{t('newUpdatesJump', { count: newFactsCount })}</button>
+        </div>}
       </div>
     </section>
 

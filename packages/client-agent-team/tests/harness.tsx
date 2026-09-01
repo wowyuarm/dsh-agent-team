@@ -27,7 +27,7 @@ interface SeededMessage {
   readonly mentions?: readonly string[]
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCount?: number; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: 'in_progress' }) {
+export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: 'in_progress' }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -185,13 +185,16 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     viewItems = viewItems.map(item => ({ ...item, task, thread }))
     return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
-  let nextRemainingUnreadCount = options?.remainingUnreadCount ?? 0
-  const readThread = vi.fn(async ({ taskRef, threadRef }: { taskRef?: string; threadRef?: string }) => {
+  // Each read consumes the queue head as its remainingUnreadCount: the page's
+  // auto-drain loop keeps issuing fresh-requestId reads until a zero, so the
+  // queue supplies every round the way the Host's bounded batches would.
+  const remainingUnreadCounts = [...(options?.remainingUnreadCounts ?? [])]
+  const readThread = vi.fn(async ({ requestId, taskRef, threadRef }: { requestId?: string; taskRef?: string; threadRef?: string }) => {
+    void requestId
     const top = viewItems.find(item => (threadRef !== undefined && (item.thread as { threadRef: string }).threadRef === threadRef)
       || (taskRef !== undefined && (item.task as { taskRef?: string } | undefined)?.taskRef === taskRef)) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
-    const remainingUnreadCount = nextRemainingUnreadCount
-    nextRemainingUnreadCount = 0
+    const remainingUnreadCount = remainingUnreadCounts.length > 0 ? remainingUnreadCounts.shift()! : 0
     return { ok: true as const, value: {
       receipt: {}, task: top.task, thread: top.thread, claims: viewClaims,
       anchor: top.message, anchorMentions: [], facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message, mentions: (item as { mentions?: string[] }).mentions ?? [] }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],

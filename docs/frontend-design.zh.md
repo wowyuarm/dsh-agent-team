@@ -74,9 +74,10 @@
 ### 时间线滚动（timeline-scroll）
 
 - 策略：读者停留在底部（距底 <48px 视为 pinned）时跟随新内容；不在底部时不打扰。
-- 确认合同：pinned 读者的被动到达直接做持久 `readThread` 确认（消息已在其眼前渲染，不再弹"新更新"提示）；非 pinned 时才计入显式的"读取 N 条新更新"。确认读取失败或被更新一次读取取代时回退到显式提示。
+- 确认合同：Thread 打开期间到达的事实一律自动做持久 `readThread` 确认（pinned 读者当场看见，滚离底部的读者由纯跳转提示引导回底），确认失败时回退为既有 error surface；不存在任何手动读取动作。
+- 打开即清零：打开 Thread 直接滚动到最后一条；有界批次若返回剩余未读，Client 以串行循环自动续读（每轮 mint 新 requestId 复用 Host 幂等缓存语义），连续 50 轮未清零视为异常并显示错误提示。
 - 前插更早历史时按 scrollHeight 差值补偿 scrollTop，视口内容不跳动。
-- 显式跳转：未读分界线跳转查询 `[data-thread-boundary]` 并留 12px 余量；"标记为已读"/"继续阅读" 分别触发 latest/boundary 跳转。
+- 跳转：`scrollToBottom` 立即滚到底部；「↓ N 条新更新」提示按钮只滚到底、无读取语义，读者回到底部即消失。
 - contentKey 必须随渲染事实变化（当前用 `长度:末位factKey` 组合串）。
 
 ### Composer 与 @mention
@@ -114,7 +115,7 @@
 ## 数据刷新语义
 
 - channel 视图：change 事件触发 `refresh()` 时按 `messageRef` 去重合并新窗口与已加载历史（`mergeChannelView`），cursor 取更旧者，`hasMore = fresh.hasMore || current.cursor < fresh.cursor`。
-- thread 视图：被动事实合并进 currentFacts 并累计 `newFactsCount`；显式读取动作（标记已读/继续阅读）才推进 durable read pointer。
+- thread 视图：被动事实合并进 currentFacts；打开与到达的读取全部自动推进 durable read pointer（有界批次余量由串行续读循环清零），`newFactsCount` 仅驱动纯跳转提示。
 - `loadOlder` 有并发保护（loadingOlder 状态禁用按钮）。
 
 ## 文案与本地化
@@ -131,7 +132,7 @@
 - listbox/option 完整键盘闭环（见 composer 一节）；Channel composer 的「作为任务」使用原生 button 的 `aria-pressed`，Space/Enter 均可切换。
 - 图标按钮均有 aria-label；装饰元素 `aria-hidden`。
 - 消息时间线区域使用专用 `timelineLabel`（"消息时间线"），不误用频道/参与者标签；Thread 内部事实分组段不带重复的区域标签。
-- 未读分界线 `role="separator"` 且携带 `[data-thread-boundary]` 供滚动定位；run 内回合分隔线同样 `role="separator"`，可访问名称即其标注的时刻。
+- 未读分界线 `role="separator"` 仅作信息展示（不再驱动滚动定位）；run 内回合分隔线同样 `role="separator"`，可访问名称即其标注的时刻。
 - 新增可见 UI 必须通过 `npm run test:browser` 的桌面 1440×960、窄屏 390×844 和键盘检查（见 `development.md`）。
 
 ## 验证与演进流程
