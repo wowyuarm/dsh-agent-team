@@ -916,14 +916,16 @@ export class AgentTeamLedger {
   /**
    * Bounded adjacent context for a DM relay: the truncated body of the most
    * recent earlier DM between the two sessions, newest first. Returns
-   * undefined when this is their first exchange.
+   * undefined when this is their first exchange. `excluding` skips the
+   * operation id of the DM being delivered right now, so the context line is
+   * the adjacent prior exchange rather than a self-reference.
    */
-  dmHistoryBetween(senderSessionId: SessionId, recipientMemberId: AgentTeamMemberId): string | undefined {
+  dmHistoryBetween(senderSessionId: SessionId, recipientMemberId: AgentTeamMemberId, excluding?: AgentTeamOperationId): string | undefined {
     const sender = [...this.state.members.values()].find(member => member.sessionId === senderSessionId)
     if (sender === undefined) return undefined
     for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
       const operation = this.state.ordered[index]!
-      if (operation.kind !== 'team/dm-sent') continue
+      if (operation.kind !== 'team/dm-sent' || operation.operationId === excluding) continue
       const pair = operation.data.senderMemberId === sender.memberId && operation.data.recipientMemberId === recipientMemberId
       const mirror = operation.data.senderMemberId === recipientMemberId && operation.data.recipientMemberId === sender.memberId
       if (!pair && !mirror) continue

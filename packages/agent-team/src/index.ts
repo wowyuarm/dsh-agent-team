@@ -70,6 +70,7 @@ import type {
   AgentTeamClearMemberContextResult,
   AgentTeamDmRequest,
   AgentTeamDmResult,
+  AgentTeamOperationId,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
   AgentTeamRemoveMemberRequest,
@@ -864,7 +865,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
     try {
       const message = createUserMessage({
-        content: [{ type: 'text', text: this.dmRelayText(agent, recipient, request.body.trim()) }],
+        content: [{ type: 'text', text: this.dmRelayText(agent, recipient, request.body.trim(), result.value.receipt.operationId) }],
         source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'relay' },
       })
       // An idle recipient gets one ordinary turn; a busy one is steered into
@@ -878,9 +879,9 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Relay body: the DM itself plus one bounded line of adjacent context. */
-  private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string): string {
+  private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string, excluding: AgentTeamOperationId): string {
     const sender = this.memberForAgent(senderAgent)
-    const prior = this.requireLedger().dmHistoryBetween(senderAgent.id, recipient.memberId)
+    const prior = this.requireLedger().dmHistoryBetween(senderAgent.id, recipient.memberId, excluding)
     const header = `Direct message from @${sender?.handle ?? 'a Team Member'}:`
     const context = prior === undefined ? '' : `\n\n[most recent prior DM between you: ${prior}]`
     return `${header}\n\n${body}${context}`
