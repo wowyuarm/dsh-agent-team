@@ -918,7 +918,9 @@ export class AgentTeamLedger {
    * recent earlier DM between the two sessions, newest first. Returns
    * undefined when this is their first exchange. `excluding` skips the
    * operation id of the DM being delivered right now, so the context line is
-   * the adjacent prior exchange rather than a self-reference.
+   * the adjacent prior exchange rather than a self-reference. Direction
+   * labels are from the reader's perspective: the reader is the recipient of
+   * the DM being delivered, so messages the reader sent are `you → them`.
    */
   dmHistoryBetween(senderSessionId: SessionId, recipientMemberId: AgentTeamMemberId, excluding?: AgentTeamOperationId): string | undefined {
     const sender = [...this.state.members.values()].find(member => member.sessionId === senderSessionId)
@@ -929,7 +931,9 @@ export class AgentTeamLedger {
       const pair = operation.data.senderMemberId === sender.memberId && operation.data.recipientMemberId === recipientMemberId
       const mirror = operation.data.senderMemberId === recipientMemberId && operation.data.recipientMemberId === sender.memberId
       if (!pair && !mirror) continue
-      const direction = pair ? 'you → them' : 'them → you'
+      // pair: the other Member sent it to the reader → (them → you);
+      // mirror: the reader sent it to the other Member → (you → them).
+      const direction = pair ? 'them → you' : 'you → them'
       const truncated = operation.data.body.length > 160 ? `${operation.data.body.slice(0, 160)}…` : operation.data.body
       return `(${direction}) ${truncated}`
     }

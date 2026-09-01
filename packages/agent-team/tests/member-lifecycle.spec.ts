@@ -612,6 +612,8 @@ describe('Agent Team Member lifecycle', () => {
 
     // A second DM carries the bounded adjacent context of the first exchange:
     // the context line cites the prior DM's body, never the one being sent.
+    // Direction is from the reader's perspective: the cited DM came from the
+    // other Member (the sender), so the reviewer reads (them → you).
     const second = await call('team_message', { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'still green?' })
     expect(second).toMatchObject({ kind: 'dm-sent', delivered: true })
     adapter.enqueue(textResponse('Still green.'))
@@ -621,8 +623,23 @@ describe('Agent Team Member lifecycle', () => {
     expect(relays).toHaveLength(2)
     const secondText = (relays[1]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text
     expect(secondText).toContain('most recent prior DM')
-    expect(secondText).toContain('quick check: is the build green?')
+    expect(secondText).toContain('(them → you) quick check: is the build green?')
     expect(secondText.slice(secondText.indexOf('[most recent prior DM'))).not.toContain('still green?')
+
+    // A reply DM in the mirror direction: the builder now reads the reviewer's
+    // prior DM, which the reader received from the other Member — but the
+    // latest prior exchange from the reader's own side is the builder's own
+    // 'still green?', so the reader (builder) reads (you → them).
+    adapter.enqueue(textResponse('Thanks.'))
+    const replyFromReviewer = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-mirror-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: builder.status.member.memberId, body: 'yes, all green' }, agent: recipient })
+    expect(replyFromReviewer.isError).toBe(false)
+    adapter.enqueue(textResponse('Noted.'))
+    await waitForIdle(ctx, sender)
+    const senderRelays = sender.session.events.filter(event => event.type === 'user/message'
+      && (event.data as { source?: { form?: string } }).source?.form === 'relay')
+    expect(senderRelays).toHaveLength(1)
+    const mirrorText = (senderRelays[0]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text
+    expect(mirrorText).toContain('(you → them) still green?')
 
     // Parameter matrix: human recipients, unknown Members, and stray fields.
     const bad = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
