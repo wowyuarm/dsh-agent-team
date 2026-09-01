@@ -38,6 +38,10 @@ Member 在 Channel 或已有 Thread 中显式发出的不可变内容。每条 C
 
 Channel 内独立的单层公开协作 aggregate：它总有 `threadRef`、anchor Message 和 revision，但可不带 Task。Thread revision 随公开 Message 递增；Taskful Thread 的 Claim 变化和 Task resolution 也递增。对既有 Thread 的公开写入必须携带该 Thread 的当前 revision。taskless Thread 仍支持 reply、follow、structured mention、Inbox、read 与 history，但没有 Claims、Task status 或 accept/close/reopen。协作读写优先以 `threadRef` 定位；released task-only Client 可以用 `taskRef` 作为仅限 taskful Thread 的 Host compatibility alias，而 Task/Claim 操作仍以 `taskRef` 为身份。revision 是内部并发令牌：仅供工具 baseRevision 透传，不作为消息正文的可引用事实。
 
+## Direct Message
+
+Member 之间的私有直达消息，非 Thread 的一部分。ledger 只追加一条 audit-only 的 `team/dm-sent` operation（requestId 幂等，sender/recipient 必须是同 Workspace 的 enabled Agent Member），projection 有意不变——不产生 Channel、Thread、revision、Attention 或 Inbox markers。送达是瞬时运行时效果：收件人 idle 时以 relay-form user message 开一个 followup turn，busy 时 steer 进当前 turn；正文带一行有界相邻上下文（紧邻的前一条往来 DM 摘要）。注入失败不影响 durable 事实，发送方收到结构化 delivery error，不自动重投。DM 用于快速澄清与状态同步；任务工作、决策与需追溯内容属于 Thread。
+
 ## Claim
 
 Member 对 Task overlay 中某个 Direction 的工作承诺。taskless Thread 没有 Claim。Claim 的状态为 active、done 或 released；同一 Task 中规范化后相同的 Direction 最多有一个 active Claim。多 Claims 是 dsh 对 Raft 单 owner 的有意偏离，不同文本仍可能表达重复工作。

@@ -566,6 +566,22 @@ export interface AgentTeamMemberRemovedOperation extends AgentTeamOperationBase 
   }
 }
 
+/**
+ * Durable audit record of one Member-to-Member direct message. A DM is pure
+ * delivery: it creates no Channel/Thread/revision, no Inbox attention, and no
+ * markers. The ledger records it for audit, idempotent retries, and post-
+ * compaction traceability; the wake itself is a transient runtime effect.
+ */
+export interface AgentTeamDmSentOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/dm-sent'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    readonly senderMemberId: AgentTeamMemberId
+    readonly recipientMemberId: AgentTeamMemberId
+    readonly body: string
+  }
+}
+
 /** Closed union of durable Agent Team operations. */
 export type AgentTeamOperation =
   | AgentTeamInitializedOperation
@@ -590,6 +606,7 @@ export type AgentTeamOperation =
   | AgentTeamThreadAttentionChangedOperation
   | AgentTeamThreadReadOperation
   | AgentTeamMemberRemovedOperation
+  | AgentTeamDmSentOperation
 
 /** Receipt returned after an operation is durable or an identical retry resolves it. */
 export interface AgentTeamOperationReceipt {
@@ -929,6 +946,23 @@ export interface AgentTeamThreadAttentionRequest {
   readonly threadRef?: AgentTeamThreadRef
   readonly taskRef?: AgentTeamTaskRef
   readonly action: 'follow' | 'unfollow'
+}
+
+/**
+ * Agent-only direct message to one enabled Agent Member in the same
+ * Workspace. Delivery is pure injection: the ledger records the send, and the
+ * recipient's live session receives the body as a relay-form user message.
+ */
+export interface AgentTeamDmRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly recipientMemberId: AgentTeamMemberId
+  readonly body: string
+}
+
+export interface AgentTeamDmResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly recipient: AgentTeamAgentMember
 }
 
 export interface AgentTeamThreadAttentionResult {

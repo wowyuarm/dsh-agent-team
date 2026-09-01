@@ -430,6 +430,17 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       inbox: inboxDeltaSchema,
     }).strict(),
   }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/dm-sent'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      senderMemberId: memberIdSchema,
+      recipientMemberId: memberIdSchema,
+      body: z.string().min(1),
+    }).strict(),
+  }).strict(),
 ])
 
 /** Durable validator for the closed Agent Team operation union; ledgers written before message occurredAt existed normalize on load. */

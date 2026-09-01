@@ -570,6 +570,83 @@ describe('Agent Team Member lifecycle', () => {
     expect(await call('team_inbox', {})).toMatchObject({ totalUnreadCount: 0, items: [] })
   })
 
+  it('delivers a direct message through the tool and injects it into the live recipient session', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('dm-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('dm-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const reviewer = await ctx.agentTeam.addMember({ requestId: requestId('dm-reviewer'), workspaceId, handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const sender = ctx.agents.get(builder.status.member.sessionId)!
+    const recipient = ctx.agents.get(reviewer.status.member.sessionId)!
+    let callNumber = 0
+    const call = async (name: string, args: unknown) => {
+      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-${++callNumber}`), name, arguments: args, agent: sender })
+      expect(result.isError).toBe(false)
+      if (result.isError) throw new Error(result.error.message)
+      return result.value as Record<string, any>
+    }
+
+    // The recipient's model answers briefly; the DM relay is one user turn.
+    const sent = await call('team_message', { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'quick check: is the build green?' })
+    expect(sent).toMatchObject({ kind: 'dm-sent', recipientMemberId: reviewer.status.member.memberId, recipientHandle: 'reviewer', delivered: true })
+
+    // The injected relay carries the DM body, the sender attribution, and the
+    // plugin relay source; it is durable in the recipient's session log.
+    adapter.enqueue(textResponse('Build is green.'))
+    await waitForIdle(ctx, recipient)
+    const relay = recipient.session.events.findLast(event => event.type === 'user/message'
+      && (event.data as { source?: { form?: string } }).source?.form === 'relay')
+    expect(relay).toBeDefined()
+    const relayData = relay!.data as { content: Array<{ type: string; text: string }>; source: { kind: string; plugin: string; form: string } }
+    expect(relayData.source).toMatchObject({ kind: 'plugin', form: 'relay' })
+    expect(relayData.content[0]!.text).toContain('Direct message from @builder')
+    expect(relayData.content[0]!.text).toContain('quick check: is the build green?')
+
+    // Audit-only: no Thread or Message appears in the Channel, and neither
+    // Member's Inbox gains unread work from the DM.
+    const view = ctx.agentTeam.view({ workspaceId })
+    expect(view.threads).toHaveLength(0)
+    expect(view.items).toHaveLength(0)
+    expect(ctx.agentTeam.inboxForAgent(recipient, { workspaceId })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+
+    // A second DM carries the bounded adjacent context of the first exchange.
+    const second = await call('team_message', { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'still green?' })
+    expect(second).toMatchObject({ kind: 'dm-sent', delivered: true })
+    adapter.enqueue(textResponse('Still green.'))
+    await waitForIdle(ctx, recipient)
+    const relays = recipient.session.events.filter(event => event.type === 'user/message'
+      && (event.data as { source?: { form?: string } }).source?.form === 'relay')
+    expect(relays).toHaveLength(2)
+    expect((relays[1]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text).toContain('most recent prior DM')
+
+    // Parameter matrix: human recipients, unknown Members, and stray fields.
+    const bad = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
+    expect(bad.isError).toBe(true)
+    expect(bad.error?.message ?? '').toMatch(/Agent Member/)
+    const unknown = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-unknown-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: 'member:nobody', body: 'hi' }, agent: sender })
+    expect(unknown.isError).toBe(true)
+    const stray = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-stray-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'hi', channelRef: channel.channel.channelRef }, agent: sender })
+    expect(stray.isError).toBe(true)
+    expect(stray.error?.message ?? '').toMatch(/does not accept/)
+
+    // A suspended peer is not a sendable target: the ledger rejects the send
+    // outright (nothing is recorded), which is the pre-delivery guard.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('dm-suspend'), memberId: reviewer.status.member.memberId })
+    const suspended = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-suspended-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'are you back?' }, agent: sender })
+    expect(suspended.isError).toBe(true)
+    expect(suspended.error?.message ?? '').toMatch(/suspended/)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+
+    // Missing live session: an enabled Member whose handle is gone records
+    // the DM durably but surfaces the structured delivery error to the sender.
+    await ctx.agentTeam.resumeMember({ requestId: requestId('dm-resume'), memberId: reviewer.status.member.memberId })
+    ctx.agentTeam['handles'].delete(reviewer.status.member.memberId)
+    await expect(ctx.agentTeam.dmForAgent(sender, { requestId: requestId('dm-undelivered'), workspaceId,
+      recipientMemberId: reviewer.status.member.memberId, body: 'are you back?' })).rejects.toMatchObject({ name: 'AgentTeamDmDeliveryError' })
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('returns a rejected Team result to the next model step without ending the turn', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)

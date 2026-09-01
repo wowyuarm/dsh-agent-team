@@ -200,6 +200,76 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(cold.view({ workspaceId: alpha }).tasks.find(task => task.taskRef === started.task.taskRef)).toMatchObject({ status: 'done', resolution: 'accepted' })
   })
 
+  it('records DMs as audit-only operations with idempotent retries and unchanged projections', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const sender = await addLedgerMember(ledger, channel.channel.channelRef, 'member:sender', 'sender')
+    const receiver = await addLedgerMember(ledger, channel.channel.channelRef, 'member:receiver', 'receiver')
+
+    const before = ledger.view({ workspaceId: alpha })
+    const beforeInbox = ledger.inbox(receiver.actor, { workspaceId: alpha })
+    const beforeStatus = ledger.status()
+
+    const dm = (await ledger.sendDm({ requestId: requestId('dm-1'), workspaceId: alpha,
+      recipientMemberId: receiver.member.memberId, body: 'quick check: is the build green?', actor: sender.actor })).value
+    expect(dm.receipt).toMatchObject({ sequence: beforeStatus.sequence + 1 })
+    expect(dm.recipient.memberId).toBe(receiver.member.memberId)
+
+    // Audit-only: no Thread, Task, Message, or channel membership appears.
+    const after = ledger.view({ workspaceId: alpha })
+    expect(after.threads).toHaveLength(before.threads.length)
+    expect(after.items).toHaveLength(before.items.length)
+    expect(after.claims).toHaveLength(before.claims.length)
+    // No Inbox semantics: unread/direct counts stay untouched for both sides.
+    expect(ledger.inbox(receiver.actor, { workspaceId: alpha })).toEqual(beforeInbox)
+    expect(ledger.inbox(sender.actor, { workspaceId: alpha })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+
+    // Idempotent retry: same requestId resolves the same receipt, no second append.
+    const retry = (await ledger.sendDm({ requestId: requestId('dm-1'), workspaceId: alpha,
+      recipientMemberId: receiver.member.memberId, body: 'quick check: is the build green?', actor: sender.actor })).value
+    expect(retry.receipt).toEqual(dm.receipt)
+    expect(ledger.status().operationCount).toBe(beforeStatus.operationCount + 1)
+
+    // The adjacent-context lookup finds the exchange in both directions.
+    expect(ledger.dmHistoryBetween(receiver.member.sessionId, sender.member.memberId)).toContain('quick check')
+    expect(ledger.dmHistoryBetween(sender.member.sessionId, receiver.member.memberId)).toContain('quick check')
+
+    // Cold replay validates the audit-only record.
+    const cold = replayLedger(test)
+    expect(() => cold.validate()).not.toThrow()
+    expect(cold.dmHistoryBetween(receiver.member.sessionId, sender.member.memberId)).toContain('quick check')
+  })
+
+  it('rejects DMs to other Workspaces, the Human, and the sender itself', async () => {
+    const test = await harness(new MemoryMediaPool(), [alpha, beta])
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    // A second Workspace with its own Member: cross-workspace DM must fail.
+    const betaChannel = await test.ctx.agentTeam.createChannel({ requestId: requestId('beta-channel'), workspaceId: beta, name: 'beta', description: '' })
+    const ledger = replayLedger(test)
+    const sender = await addLedgerMember(ledger, channel.channel.channelRef, 'member:sender', 'sender')
+    const betaLedgerMember = {
+      memberId: 'member:beta-peer' as never,
+      sessionId: SessionId('session:beta-peer'),
+      workspaceId: beta,
+      handle: 'beta-peer', description: 'Beta peer', presetId: 'team-member',
+      privateMemoryPath: '/tmp/beta-peer', state: 'enabled' as const,
+    }
+    await ledger.addMember({ requestId: requestId('add-beta'), actor: agentTeamHumanActor(), member: betaLedgerMember, handle: betaLedgerMember.handle,
+      description: betaLedgerMember.description, presetId: betaLedgerMember.presetId, workspaceId: beta,
+      channelRefs: [betaChannel.channel.channelRef] })
+    const receiver = await addLedgerMember(ledger, channel.channel.channelRef, 'member:receiver', 'receiver')
+
+    await expect(ledger.sendDm({ requestId: requestId('dm-cross'), workspaceId: alpha,
+      recipientMemberId: 'member:beta-peer' as never, body: 'hi', actor: sender.actor })).rejects.toThrow(/not in Workspace/)
+    await expect(ledger.sendDm({ requestId: requestId('dm-human'), workspaceId: alpha,
+      recipientMemberId: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi', actor: sender.actor })).rejects.toThrow(/Agent Member/)
+    await expect(ledger.sendDm({ requestId: requestId('dm-self'), workspaceId: alpha,
+      recipientMemberId: sender.member.memberId, body: 'hi', actor: sender.actor })).rejects.toThrow(/themselves/)
+    await expect(ledger.sendDm({ requestId: requestId('dm-empty'), workspaceId: alpha,
+      recipientMemberId: receiver.member.memberId, body: '   ', actor: sender.actor })).rejects.toThrow(/empty/)
+  })
+
   it('closes an unclaimed todo Task through the close path, not acceptance', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

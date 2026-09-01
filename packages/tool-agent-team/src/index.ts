@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import AgentTeam, { markAgentTeamPreset } from '@wowyuarm/dsh-agent-team/host'
+import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@wowyuarm/dsh-agent-team/host'
 import type {
   AgentTeamClaimRef,
   AgentTeamMemberId,
@@ -150,12 +150,13 @@ function threadResult(
 
 const teamMessage = markAgentTeamPreset(defineTool({
   name: 'team_message',
-  description: 'Start a top-level Thread or reply to an existing Thread. start defaults to a taskless Thread; pass asTask true to create a Task in the same send. Read the Thread first; replies require its current revision (an internal concurrency token carried by baseRevision, never quoted in bodies). A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips.',
+  description: 'Start a top-level Thread, reply to an existing Thread, or send a direct message (DM). start defaults to a taskless Thread; pass asTask true to create a Task in the same send. Read the Thread first; replies require its current revision (an internal concurrency token carried by baseRevision, never quoted in bodies). A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips. dm sends a private direct message to one enabled Agent Member in your Workspace: use it for quick clarifications and status syncs — never for task work, decisions, or anything that needs team visibility or traceability (use a Thread); if a DM exchange with the same Member exceeds about 3 exchanges, move it to a Thread, because every DM costs the recipient a full agent turn.',
   parameters: {
-    action: { type: 'string', required: true, enum: ['start', 'reply'] },
+    action: { type: 'string', required: true, enum: ['start', 'reply', 'dm'] },
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
     threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix." },
     taskRef: { type: 'string', description: "Optional Task ref alias for reply on a Taskful Thread. Prefer threadRef." },
+    memberRef: { type: 'string', description: "Full branded Member ref exactly as returned by Team tools, including the 'member:' prefix. Required for dm; the Member must be an enabled Agent in your Workspace (the Human cannot be DMed)." },
     asTask: { type: 'boolean', description: 'When true, start creates a Task with the Thread. Default false creates a taskless Thread.' },
     body: { type: 'string', required: true, description: "Markdown body. Cite Team refs exactly as returned, as bare text with one colon (e.g. task:0f0a…) — never a double colon, never inside backticks or quotes. Spell each mentioned Member's handle in the prose so the mention renders inline." }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Thread. The revision is an internal concurrency token, not a citable fact." },
     mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
@@ -165,8 +166,10 @@ const teamMessage = markAgentTeamPreset(defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       kind: { type: 'string', required: true }, taskRef: { type: 'string' }, threadRef: { type: 'string' }, revision: { type: 'number' },
       expectedRevision: { type: 'number' }, messageRef: { type: 'string' }, memberIds: { type: 'array', items: { type: 'string' } }, unreadCount: { type: 'number' }, directCount: { type: 'number' },
+      recipientMemberId: { type: 'string' }, recipientHandle: { type: 'string' }, delivered: { type: 'boolean' }, deliveryNote: { type: 'string' },
     } },
-    render: (_args, value) => [{ type: 'text', text: value.kind === 'committed' ? `Message ${value.messageRef} committed at revision ${value.revision}.`
+    render: (_args, value) => [{ type: 'text', text: value.kind === 'dm-sent' ? `DM ${value.delivered === false ? 'recorded but not delivered' : 'delivered'} to @${value.recipientHandle} (${value.recipientMemberId})${value.deliveryNote === undefined ? '' : `: ${value.deliveryNote}`}`
+      : value.kind === 'committed' ? `Message ${value.messageRef} committed at revision ${value.revision}.`
       : `${value.kind}: ${value.memberIds?.join(', ') ?? `${value.threadRef ?? ''}${value.taskRef === undefined ? '' : ` · Task ${value.taskRef}`} revision ${value.revision ?? ''}`}` }],
   },
   async execute(args, exec) {
@@ -183,6 +186,22 @@ const teamMessage = markAgentTeamPreset(defineTool({
       const result = await host.sendMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
         channelRef: args.channelRef as never, body: args.body, asTask: args.asTask === true, ...(mentions === undefined ? {} : { recipients: mentions }), ...paths })
       return messageOutcome(result)
+    }
+    if (args.action === 'dm') {
+      if (args.memberRef === undefined || args.channelRef !== undefined || args.threadRef !== undefined || args.taskRef !== undefined
+        || args.baseRevision !== undefined || args.asTask !== undefined || mentions !== undefined || attachmentPaths !== undefined) {
+        throw new Error('dm requires memberRef and body only; it does not accept channelRef, threadRef, taskRef, baseRevision, asTask, mentions, or attachments')
+      }
+      try {
+        const result = await host.dmForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
+          recipientMemberId: args.memberRef as AgentTeamMemberId, body: args.body })
+        return { kind: 'dm-sent', recipientMemberId: result.recipient.memberId, recipientHandle: result.recipient.handle, delivered: true }
+      } catch (error) {
+        if (error instanceof AgentTeamDmDeliveryError) {
+          return { kind: 'dm-sent', recipientMemberId: error.recipientMemberId, recipientHandle: error.recipientMemberId, delivered: false, deliveryNote: error.message }
+        }
+        throw error
+      }
     }
     const baseRevision = args.baseRevision
     if ((args.threadRef === undefined && args.taskRef === undefined) || args.channelRef !== undefined || args.asTask !== undefined || typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) {

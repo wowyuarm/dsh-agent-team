@@ -68,6 +68,8 @@ import type {
   AgentTeamRecoverMemberResult,
   AgentTeamClearMemberContextRequest,
   AgentTeamClearMemberContextResult,
+  AgentTeamDmRequest,
+  AgentTeamDmResult,
   AgentTeamRemoveChannelMemberRequest,
   AgentTeamRemoveChannelMemberResult,
   AgentTeamRemoveMemberRequest,
@@ -139,6 +141,19 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
 
 export interface AgentTeamCommitted {
   readonly receipt: AgentTeamOperationReceipt
+}
+
+/**
+ * A DM was durably recorded but its session injection could not run (no live
+ * handle, or the wake itself failed). The recorded DM stays durable; the
+ * sender should not blindly retry — the recipient recovers it through its DM
+ * history once its session is live again.
+ */
+export class AgentTeamDmDeliveryError extends Error {
+  constructor(readonly recipientMemberId: AgentTeamMemberId, message: string) {
+    super(message)
+    this.name = 'AgentTeamDmDeliveryError'
+  }
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -828,6 +843,47 @@ export default class AgentTeam extends TypertRemoteService {
     const result = await this.requireLedger().readThread({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
+  }
+
+  /**
+   * Agent-only direct message: append the audit-only dm-sent operation, then
+   * inject the body into the recipient's live session. The ledger commit is
+   * the durable fact; the injection is a transient runtime effect, so a
+   * missing handle or a failed wake returns a structured delivery error while
+   * the recorded DM stays durable for the recipient's recovery path.
+   */
+  async dmForAgent(agent: Agent, request: AgentTeamDmRequest): Promise<AgentTeamDmResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().sendDm({ ...request, actor })
+    if (!result.committed) return result.value
+    this.emitCommitted(result.value.receipt)
+    const recipient = result.value.recipient
+    const handle = this.handles.get(recipient.memberId)
+    if (handle === undefined) {
+      throw new AgentTeamDmDeliveryError(recipient.memberId, `DM recorded but not delivered: Agent Member '${recipient.handle}' has no live session; it will find the message in its DM history after recovery`)
+    }
+    try {
+      const message = createUserMessage({
+        content: [{ type: 'text', text: this.dmRelayText(agent, recipient, request.body.trim()) }],
+        source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'relay' },
+      })
+      // An idle recipient gets one ordinary turn; a busy one is steered into
+      // its current turn — the same wake split subagent continuations use.
+      if (handle.agent.status === 'idle') handle.agent.followup(message)
+      else handle.agent.steer(message)
+    } catch (error) {
+      throw new AgentTeamDmDeliveryError(recipient.memberId, `DM recorded but not delivered: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return result.value
+  }
+
+  /** Relay body: the DM itself plus one bounded line of adjacent context. */
+  private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string): string {
+    const sender = this.memberForAgent(senderAgent)
+    const prior = this.requireLedger().dmHistoryBetween(senderAgent.id, recipient.memberId)
+    const header = `Direct message from @${sender?.handle ?? 'a Team Member'}:`
+    const context = prior === undefined ? '' : `\n\n[most recent prior DM between you: ${prior}]`
+    return `${header}\n\n${body}${context}`
   }
 
   threadHistoryForAgent(agent: Agent, request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {

@@ -30,6 +30,9 @@ import type {
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
   AgentTeamDirectMarker,
+  AgentTeamDmRequest,
+  AgentTeamDmResult,
+  AgentTeamDmSentOperation,
   AgentTeamHumanActor,
   AgentTeamInbox,
   AgentTeamInboxRequest,
@@ -201,6 +204,10 @@ export interface AgentTeamAuthorizedUpdateChannelRequest extends AgentTeamUpdate
 
 export interface AgentTeamAuthorizedUpdateMemberRequest extends AgentTeamUpdateMemberRequest {
   readonly actor: AgentTeamHumanActor
+}
+
+export interface AgentTeamAuthorizedDmRequest extends AgentTeamDmRequest {
+  readonly actor: AgentTeamMemberActor
 }
 
 /** Construction hooks used to make durable operation creation deterministic in tests. */
@@ -872,6 +879,61 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * Append one Member-to-Member direct message as an audit-only operation.
+   * A DM is pure delivery: no Channel, Thread, revision, attention, or
+   * markers change, so apply() is a marker and no projection state moves.
+   */
+  sendDm(request: AgentTeamAuthorizedDmRequest): Promise<AgentTeamLedgerResult<AgentTeamDmResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameDm(existing, request)
+        return this.resolved(this.dmResult(existing))
+      }
+      // Only an enabled Member in this Workspace may send a DM; the Human is
+      // not a sendable peer, and Members in other Workspaces are unreachable.
+      const sender = this.assertActorForWorkspace(request.actor, request.workspaceId)
+      if (sender.kind !== 'member') throw new Error('agent-team DM requires Member authority')
+      const body = request.body.trim()
+      if (body === '') throw new Error('DM body must not be empty')
+      const recipient = this.requireMember(request.recipientMemberId)
+      if (recipient.workspaceId !== request.workspaceId) throw new Error(`Agent Member '${recipient.memberId}' is not in Workspace '${request.workspaceId}'`)
+      if (recipient.state !== 'enabled') throw new Error(`Agent Member '${recipient.memberId}' is ${recipient.state}; DM delivery requires an enabled Member`)
+      if (recipient.memberId === AGENT_TEAM_HUMAN_MEMBER_ID || !recipient.sessionId) throw new Error('DM recipient must be an Agent Member')
+      if (recipient.memberId === sender.memberId) throw new Error('Members cannot DM themselves')
+      const operation: AgentTeamDmSentOperation = Object.freeze({
+        ...this.operationBase(request, this.nextSequence()), kind: 'team/dm-sent',
+        data: Object.freeze({ workspaceId: request.workspaceId, senderMemberId: sender.memberId,
+          recipientMemberId: recipient.memberId, body }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.dmResult(operation))
+    })
+  }
+
+  /**
+   * Bounded adjacent context for a DM relay: the truncated body of the most
+   * recent earlier DM between the two sessions, newest first. Returns
+   * undefined when this is their first exchange.
+   */
+  dmHistoryBetween(senderSessionId: SessionId, recipientMemberId: AgentTeamMemberId): string | undefined {
+    const sender = [...this.state.members.values()].find(member => member.sessionId === senderSessionId)
+    if (sender === undefined) return undefined
+    for (let index = this.state.ordered.length - 1; index >= 0; index -= 1) {
+      const operation = this.state.ordered[index]!
+      if (operation.kind !== 'team/dm-sent') continue
+      const pair = operation.data.senderMemberId === sender.memberId && operation.data.recipientMemberId === recipientMemberId
+      const mirror = operation.data.senderMemberId === recipientMemberId && operation.data.recipientMemberId === sender.memberId
+      if (!pair && !mirror) continue
+      const direction = pair ? 'you → them' : 'them → you'
+      const truncated = operation.data.body.length > 160 ? `${operation.data.body.slice(0, 160)}…` : operation.data.body
+      return `(${direction}) ${truncated}`
+    }
+    return undefined
+  }
+
   attentionStatus(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: {
     workspaceId: WorkspaceId
     threadRef?: AgentTeamThreadRef | undefined
@@ -1172,6 +1234,10 @@ export class AgentTeamLedger {
         // A read advances only the reader's private watermark; no projection
         // visible to other participants changes, so nobody is woken.
         return []
+      case 'team/dm-sent':
+        // A DM changes no shared projection: delivery is a session-level
+        // runtime effect, so no change waiter has anything to refetch.
+        return []
       default:
         return assertUnhandledKind(operation)
     }
@@ -1224,6 +1290,7 @@ export class AgentTeamLedger {
       case 'team/member-updated':
       case 'team/channel-member-added':
       case 'team/thread-read':
+      case 'team/dm-sent':
         return []
       default:
         return assertUnhandledKind(operation)
@@ -1551,6 +1618,18 @@ export class AgentTeamLedger {
       this.validateInboxDelta(operation.data.inbox, projection, refs, [], [], [activity])
       return
     }
+    if (operation.kind === 'team/dm-sent') {
+      const sender = assertMember()
+      const recipient = projection.members.get(operation.data.recipientMemberId)
+      if (recipient === undefined || recipient.workspaceId !== operation.data.workspaceId
+        || recipient.state !== 'enabled' || recipient.memberId === AGENT_TEAM_HUMAN_MEMBER_ID
+        || operation.data.senderMemberId !== sender.memberId
+        || operation.data.recipientMemberId === sender.memberId
+        || operation.data.body.trim() === '' || operation.data.body !== operation.data.body.trim()) {
+        throw new Error('invalid DM operation')
+      }
+      return
+    }
     assertUnhandledKind(operation)
   }
 
@@ -1816,6 +1895,11 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/thread-attention-changed' || operation.kind === 'team/thread-read') {
       this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/dm-sent') {
+      // Audit-only: delivery is a transient runtime effect, so the durable
+      // projection deliberately does not change.
       return
     }
     assertUnhandledKind(operation)
@@ -2539,6 +2623,18 @@ export class AgentTeamLedger {
   private assertSameChannelMemberRemoval(operation: AgentTeamOperation, request: AgentTeamAuthorizedRemoveChannelMemberRequest): asserts operation is AgentTeamChannelMemberRemovedOperation {
     if (operation.kind !== 'team/channel-member-removed' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId || operation.data.channelRef !== request.channelRef || operation.data.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameDm(operation: AgentTeamOperation, request: AgentTeamAuthorizedDmRequest): asserts operation is AgentTeamDmSentOperation {
+    if (operation.kind !== 'team/dm-sent' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId
+      || operation.data.senderMemberId !== request.actor.memberId
+      || operation.data.recipientMemberId !== request.recipientMemberId
+      || operation.data.body !== request.body.trim()) this.throwRequestCollision(request.requestId)
+  }
+
+  private dmResult(operation: AgentTeamDmSentOperation): AgentTeamDmResult {
+    return Object.freeze({ receipt: this.receipt(operation), recipient: this.requireMember(operation.data.recipientMemberId) })
   }
 
   private assertSameMessage(operation: AgentTeamOperation, request: AgentTeamAuthorizedSendMessageRequest, recipients: readonly AgentTeamMemberId[]): asserts operation is AgentTeamMessageSentOperation {
