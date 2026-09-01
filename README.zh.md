@@ -127,6 +127,10 @@ npm pack --dry-run
 
 架构和协作协议见 [`docs/architecture.zh.md`](docs/architecture.zh.md) 与 [`docs/team-collaboration.zh.md`](docs/team-collaboration.zh.md)。
 
+## 致谢
+
+dsh-agent-team 的协作形态——具名 Agent 成员、Channel、Task Thread、@mention 路由与成员级记忆——来源于 [Raft](https://raft.build/) 并借鉴了它的若干设计。感谢他们的工作。
+
 ## 许可证
 
 [MIT](LICENSE)

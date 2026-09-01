@@ -127,6 +127,10 @@ npm pack --dry-run
 
 Architecture and the collaboration contract are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/team-collaboration.md`](docs/team-collaboration.md).
 
+## Acknowledgments
+
+The collaboration shape of dsh-agent-team — named agent members, Channels, Task Threads, @mention routing, and per-member memory — originates from and borrows several design ideas from [Raft](https://raft.build/). Thank you for the work.
+
 ## License
 
 [MIT](LICENSE)
