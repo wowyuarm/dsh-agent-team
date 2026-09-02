@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AgentTeamChannel, AgentTeamChannelMembership, AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { Button, IconChevronDownOutline14, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import { useChannelMembership } from './team-membership.ts'
 import { mintRequestId } from './requests.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
@@ -135,16 +134,12 @@ export function ModelPickerField({ model, onModelChange, loadModels, disabled, t
 
 /**
  * Agent editor: handle, description, and per-Member model selection commit
- * through one durable update; Channel membership below keeps its own
- * immediate add/remove flow.
+ * through one durable update. Channel membership is managed from the Channel
+ * side, not here.
  */
-export function AgentEditorDialog({ status, channels, loadChannels, updateMember, joinChannel, removeChannelMember, loadModels, onCommitted, onClose, t }: {
+export function AgentEditorDialog({ status, updateMember, loadModels, onCommitted, onClose, t }: {
   readonly status: AgentTeamClientMemberStatus
-  readonly channels: readonly AgentTeamChannel[]
-  readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly updateMember: TeamSidebarProps['updateMember']
-  readonly joinChannel: TeamSidebarProps['joinChannel']
-  readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly onCommitted: () => Promise<void> | void
   readonly onClose: () => void
@@ -157,41 +152,6 @@ export function AgentEditorDialog({ status, channels, loadChannels, updateMember
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const pendingRequest = useRef<AgentTeamUpdateMemberRequest>()
-  // Membership comes from a fresh projection at open time so stale checkbox
-  // state never flips a committed fact backwards.
-  const [memberships, setMemberships] = useState<readonly AgentTeamChannelMembership[]>()
-  const [loadError, setLoadError] = useState<string>()
-
-  useEffect(() => {
-    let mounted = true
-    void loadChannels({ workspaceId: status.member.workspaceId, topLevelOnly: true, includeActivities: false, limit: 1 }).then(result => {
-      if (!mounted) return
-      if (result.ok) {
-        setMemberships(result.value.members)
-        setLoadError(undefined)
-      } else {
-        setLoadError(result.error.message)
-      }
-    })
-    return () => { mounted = false }
-  }, [loadChannels, status.member.workspaceId])
-
-  const membership = useChannelMembership(
-    { joinChannel, removeChannelMember },
-    change => change.channelRef,
-    change => {
-      setMemberships(current => {
-        const base = current ?? []
-        return change.joined
-          ? base.filter(item => !(item.channelRef === change.channelRef && item.memberId === change.memberId))
-          : [...base, { channelRef: change.channelRef, memberId: change.memberId }]
-      })
-    },
-  )
-
-  // A successful join appends the durable fact; removal filters it out above.
-  const joinedChannels = new Set((memberships ?? []).filter(item => item.memberId === memberId).map(item => item.channelRef))
-
   const dirty = handle.trim() !== status.member.handle || description.trim() !== status.member.description
     || !sameModel(model, status.member.model)
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -254,22 +214,6 @@ export function AgentEditorDialog({ status, channels, loadChannels, updateMember
           <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); pendingRequest.current = undefined }} disabled={saving} />
         </label>
         <ModelPickerField model={model} onModelChange={choice => { pendingRequest.current = undefined; setModel(choice) }} loadModels={loadModels} disabled={saving} t={t} />
-        <fieldset className={createCss.memberPicker} disabled={saving}>
-          <legend>{t('channelMembersSection')}</legend>
-          {channels.map(channel => {
-            const joined = joinedChannels.has(channel.channelRef)
-            const rowPending = membership.pending.has(channel.channelRef)
-            const disabled = rowPending || (!joined && status.presence === 'unavailable')
-            const rowError = membership.errors.get(channel.channelRef)
-            return <div className={`${css.editMemberRow} ${css.editMemberRowChannels}`} key={channel.channelRef}>
-              <strong className={css.editChannelName}># {channel.name}</strong>
-              <Button size="sm" variant="outline" disabled={disabled} onClick={() => { void membership.change({ workspaceId: status.member.workspaceId, channelRef: channel.channelRef, memberId, joined }) }}>{rowPending ? t('membershipUpdating') : joined ? t('removeFromChannel') : t('addToChannel')}</Button>
-              {rowError !== undefined && <p className={css.rowError} role="alert">{rowError}</p>}
-            </div>
-          })}
-          {channels.length === 0 && <small>{t('noChannelsForAgent')}</small>}
-          {loadError !== undefined && <p className={css.rowError} role="alert">{loadError}</p>}
-        </fieldset>
         {error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
       </form>
     </Modal>

@@ -3,7 +3,6 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamClientMemberStatus,
   AgentTeamModelSelection,
-  AgentTeamChannel,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import { Button, IconEditOutline16, IconNewChatOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -15,7 +14,6 @@ import { useSidebarSectionOpen, setSidebarSectionOpen } from './sidebar-sections
 import { mintRequestId } from './requests.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
-import { MultiMenuField } from './multi-menu-field.tsx'
 import { AgentEditorDialog, ModelPickerField, sameModel } from './TeamMemberEditor.tsx'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
@@ -24,13 +22,10 @@ interface TeamAgentsPanelProps {
   readonly workspaceId: WorkspaceId
   readonly loadMembers: TeamSidebarProps['loadMembers']
   readonly subscribeChanges: TeamSidebarProps['subscribeChanges']
-  readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly addMember: TeamSidebarProps['addMember']
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
-  readonly joinChannel: TeamSidebarProps['joinChannel']
-  readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
@@ -39,10 +34,8 @@ interface TeamAgentsPanelProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, loadChannels, addMember, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, clearMemberContext, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
-  const [channels, setChannels] = useState<readonly AgentTeamChannel[]>([])
-  const [channelRefs, setChannelRefs] = useState<AgentTeamAddMemberRequest['channelRefs']>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [formOpen, setFormOpen] = useState(false)
@@ -79,21 +72,15 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
   }, [loadMembers, workspaceId])
 
   useEffect(() => { void refresh() }, [refresh])
-  const loadWorkspaceChannels = useCallback(async () => {
-    const result = await loadChannels({ workspaceId, topLevelOnly: true, includeActivities: false, limit: 1 })
-    if (result.ok) setChannels(result.value.channels)
-  }, [loadChannels, workspaceId])
-  useEffect(() => { void loadWorkspaceChannels() }, [loadWorkspaceChannels])
   useEffect(() => subscribeChanges({ kind: 'workspace', workspaceId }, update => {
     if (update.type === 'failed') {
       setError(update.message)
       return
     }
-    // The section stays mounted across Channel creation, so both the Member
-    // roster and the Channel list ride every workspace invalidation.
+    // The section stays mounted across Channel creation, so the Member roster
+    // rides every workspace invalidation.
     void refresh()
-    void loadWorkspaceChannels()
-  }), [subscribeChanges, refresh, loadWorkspaceChannels, workspaceId])
+  }), [subscribeChanges, refresh, workspaceId])
 
   const closeForm = () => {
     if (creating) return
@@ -116,7 +103,6 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         setHandle('')
         setDescription('')
         setModel(undefined)
-        setChannelRefs([])
         setFormOpen(false)
         if (result.value.status.presence === 'unavailable') {
           setError(result.value.status.diagnostic ?? t('statusUnavailable'))
@@ -144,14 +130,16 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
     const sameRequest = retryRequest !== undefined && retryRequest.workspaceId === workspaceId
       && retryRequest.handle === normalizedHandle && retryRequest.description === normalizedDescription
       && sameModel(retryRequest.model, model)
-      && retryRequest.channelRefs.length === channelRefs.length && retryRequest.channelRefs.every(ref => channelRefs.includes(ref))
+      && retryRequest.channelRefs.length === 0
     void provision(sameRequest ? retryRequest : {
       requestId: mintRequestId(),
       workspaceId,
       handle: normalizedHandle,
       description: normalizedDescription,
       presetId: 'team-member',
-      channelRefs,
+      // No initial Channels at creation: the Member joins Channels later from
+      // the Channel side and stays reachable through its DM view meanwhile.
+      channelRefs: [],
       ...(model === undefined ? {} : { model }),
     })
   }
@@ -176,16 +164,6 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
             <Input className={createCss.input!} value={description} placeholder={t('agentDescriptionPlaceholder')} onChange={event => { setDescription(event.target.value); setRetryRequest(undefined) }} disabled={creating} />
           </label>
           <ModelPickerField model={model} onModelChange={choice => { setModel(choice); setRetryRequest(undefined) }} loadModels={loadModels} disabled={creating} t={t} />
-          <MultiMenuField label={`${t('initialChannels')}${t('optionalSuffix')}`} disabled={creating}
-            options={channels.map(channel => ({ id: channel.channelRef, label: channel.name }))}
-            selected={channelRefs}
-            onToggle={ref => {
-              setChannelRefs(current => current.includes(ref) ? current.filter(item => item !== ref) : [...current, ref])
-              setRetryRequest(undefined)
-            }}
-            emptyText={t('noChannelsForAgent')}
-            triggerEmptyLabel={t('channelsPickerEmpty')}
-            formatCount={count => t('channelsPickerCount', { count })} />
           {formOpen && error !== undefined && <p className={createCss.error} role="alert">{error}</p>}
         </form>
       </Modal>
@@ -206,7 +184,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} channels={channels} loadChannels={loadChannels} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} joinChannel={joinChannel} removeChannelMember={removeChannelMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
+              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -226,17 +204,13 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, lo
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, channels, loadChannels, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, updateMember, recoverMember, clearMemberContext, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
-  readonly channels: readonly AgentTeamChannel[]
-  readonly loadChannels: TeamSidebarProps['loadChannels']
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
-  readonly joinChannel: TeamSidebarProps['joinChannel']
-  readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onUpdated: () => Promise<void> | void
@@ -347,11 +321,7 @@ function AgentRow({ status, current, channels, loadChannels, updateMember, recov
       {editing && (
         <AgentEditorDialog
           status={status}
-          channels={channels}
-          loadChannels={loadChannels}
           updateMember={updateMember}
-          joinChannel={joinChannel}
-          removeChannelMember={removeChannelMember}
           loadModels={loadModels}
           onCommitted={onUpdated}
           onClose={() => { setEditing(false) }}

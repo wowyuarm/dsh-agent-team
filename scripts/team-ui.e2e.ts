@@ -94,9 +94,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     const dialog = page.getByRole('dialog', { name: '添加 Agent' })
     await dialog.getByLabel('名称').fill(name)
     await dialog.getByLabel('说明').fill(description)
-    // Initial Channels ride the shared multi-select Menu now.
-    await dialog.getByRole('button', { name: '初始频道' }).click()
-    await page.getByRole('menuitem', { name: 'engineering' }).click()
+    // Creation has no Channel page anymore: membership is Channel-side.
+    expect(await dialog.getByRole('button', { name: '初始频道' }).count()).toBe(0)
     if (name === 'builder') {
       await page.screenshot({ path: join(UI03_SHOTS, 'agent-create-modal.png'), fullPage: true })
       // The model picker caps its card and scrolls internally.
@@ -119,6 +118,20 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     await dialog.getByRole('button', { name: '创建 Agent' }).click()
     await page.getByText(name, { exact: true }).waitFor({ timeout: 20_000 })
   }
+  // Membership is managed from the Channel side now: add both Members to
+  // engineering through the Channel editor before any membership-dependent
+  // flow runs.
+  await page.getByRole('button', { name: '# engineering' }).hover()
+  await page.getByRole('button', { name: 'engineering 的操作' }).click()
+  await page.getByRole('menuitem', { name: '编辑频道' }).click()
+  const joinEditor = page.getByRole('dialog', { name: '编辑频道' })
+  await joinEditor.waitFor()
+  for (const handle of ['builder', 'reviewer']) {
+    const row = joinEditor.locator('[class*="editMemberRow"]').filter({ hasText: `@${handle}` })
+    await row.getByRole('button', { name: '添加' }).click()
+  }
+  await expect.poll(async () => await joinEditor.getByRole('button', { name: '移除', exact: true }).count()).toBe(2)
+  await joinEditor.getByRole('button', { name: '关闭', exact: true }).click()
   // Narrow-viewport create form with every field optional.
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('button', { name: '添加 Agent' }).click()
@@ -250,9 +263,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('menuitem', { name: '编辑 Agent' }).click()
   const agentEditor = page.getByRole('dialog', { name: '编辑 Agent' })
   await agentEditor.waitFor()
-  // builder joined engineering at provision time and delivery as an initial
-  // member, so exactly those two Channel rows offer Remove once loaded.
-  await expect.poll(() => agentEditor.getByRole('button', { name: '移除' }).count()).toBe(2)
+  // The Agent editor carries no Channel section anymore: handle,
+  // description, and model only (membership lives on the Channel side).
+  await expect.poll(() => agentEditor.getByRole('button', { name: '移除' }).count()).toBe(0)
+  await expect.poll(() => agentEditor.getByRole('button', { name: '添加' }).count()).toBe(0)
   // The per-Member model picker rides the shared Menu primitive: the trigger
   // echoes the current selection and opening lists the Host catalog grouped
   // by provider without any live Session round-trip. Re-selecting the

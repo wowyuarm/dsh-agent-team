@@ -76,11 +76,9 @@ describe('Team agent surfaces', () => {
     await waitFor(() => expect(document.activeElement).toBe(agentName))
     fireEvent.change(agentName, { target: { value: 'reviewer' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'Reviews changes' } })
-    // Channels ride the shared multi-select Menu now: open, check, leave open.
-    fireEvent.click(b.view.getByRole('button', { name: /初始频道/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'engineering' }))
-    // The trigger keeps its aria-label; the count renders as content.
-    expect(b.view.getByText('已选 1 个频道')).toBeTruthy()
+    // Creation has no Channel page: the Member joins Channels later from the
+    // Channel side and stays reachable through its DM view meanwhile.
+    expect(b.view.queryByRole('button', { name: /初始频道/ })).toBeNull()
     b.addMember.mockResolvedValueOnce({ ok: false, error: { message: 'connection lost' } } as never)
     fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
     expect((await b.view.findByRole('alert')).textContent).toContain('connection lost')
@@ -90,7 +88,7 @@ describe('Team agent surfaces', () => {
 
     expect(await b.view.findByText('reviewer')).toBeTruthy()
     expect(b.addMember).toHaveBeenLastCalledWith(expect.objectContaining({
-      workspaceId: 'w1', channelRefs: ['channel:engineering'], handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
+      workspaceId: 'w1', channelRefs: [], handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member',
     }))
     expect(b.addMember.mock.calls[0]![0].requestId).toBe(b.addMember.mock.calls[1]![0].requestId)
     await waitFor(() => expect(document.activeElement).toBe(addAgentTrigger))
@@ -114,8 +112,8 @@ describe('Team agent surfaces', () => {
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'DeepSeek Chat' }))
     fireEvent.click(b.view.getByRole('button', { name: /推理强度/ }))
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'high' }))
-    // Channels stay untouched: the picker shows the empty prompt.
-    expect(b.view.getByText('选择初始频道')).toBeTruthy()
+    // No Channel picker exists at creation; Channels join later from the Channel side.
+    expect(b.view.queryByText('选择初始频道')).toBeNull()
     fireEvent.click(b.view.getByRole('button', { name: '创建 Agent' }))
     expect(await b.view.findByText('bare')).toBeTruthy()
     expect(b.addMember).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -386,7 +384,7 @@ describe('Team agent surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('edits an Agent Channel membership from the sidebar row menu', async () => {
+  it('edits Agent facts without a Channel membership section', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await b.view.findByText('builder')
@@ -394,15 +392,18 @@ describe('Team agent surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
     fireEvent.click(await b.view.findByRole('menuitem', { name: '编辑 Agent' }))
     const editor = b.view.getByRole('dialog', { name: '编辑 Agent' })
-    // No membership yet: every Channel row offers Add and the offline Agent stays blocked.
-    expect(within(editor).getByRole('button', { name: '添加' })).toBeTruthy()
-    fireEvent.click(within(editor).getByRole('button', { name: '添加' }))
-    await waitFor(() => { expect(b.joinChannel).toHaveBeenCalledWith(expect.objectContaining({
-      channelRef: 'channel:engineering', memberId: 'member:builder', workspaceId: 'w1',
+    // Channel membership is managed from the Channel side: the editor carries
+    // only handle, description, and model.
+    expect(within(editor).queryByRole('button', { name: '添加' })).toBeNull()
+    expect(within(editor).queryByRole('button', { name: '移除' })).toBeNull()
+    expect(within(editor).queryByText(/频道成员/)).toBeNull()
+    expect(within(editor).getByLabelText('名称')).toBeTruthy()
+    fireEvent.change(within(editor).getByLabelText(/说明/), { target: { value: 'Edited description' } })
+    fireEvent.click(within(editor).getByRole('button', { name: '保存' }))
+    await waitFor(() => { expect(b.updateMember).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: 'member:builder', handle: 'builder', description: 'Edited description',
     })) })
-    await waitFor(() => { expect(within(editor).getByRole('button', { name: '移除' })).toBeTruthy() })
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(b.view.queryByRole('dialog', { name: '编辑 Agent' })).toBeNull()
+    await waitFor(() => expect(b.view.queryByRole('dialog', { name: '编辑 Agent' })).toBeNull())
     await b.runtime.dispose()
   })
 
