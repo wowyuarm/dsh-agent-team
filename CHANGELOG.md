@@ -8,7 +8,6 @@ All notable changes to this project are documented in this file. The format foll
 - Members can own their private space: the bundled member-skill-manager meta skill guides creating, installing, and maintaining private skills beside member roots.
 - Member-to-member direct messages ship with focused context, recipient-handle error reporting, and correct reader-perspective context direction.
 - Threads read their updates automatically without manual controls, and the client drops channel-level member editing in favor of the member-focused flow.
-- A session-trace evidence navigator (`scripts/session-trace.ts`) supports member iteration analysis from the command line; it stays out of the published package.
 - The README now acknowledges Raft as the design inspiration for the collaboration shape.
 
 ## [0.1.5] - 2026-08-31
