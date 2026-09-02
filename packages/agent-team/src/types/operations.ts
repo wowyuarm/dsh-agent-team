@@ -60,6 +60,27 @@ export interface AgentTeamMemberResumedOperation extends AgentTeamOperationBase 
 }
 
 /**
+ * Durable archival of one Agent Member: the Member leaves every surface while
+ * its Session log and private memory stay recoverable. Like removal, the
+ * operation records the full cleanup snapshot — released Claims, public
+ * release Activities, and the Member's Inbox delta — so replay recomputes the
+ * same projection without runtime state.
+ */
+export interface AgentTeamMemberArchivedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-archived'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+    /** Claims released because this Member became hidden. */
+    readonly claims: readonly AgentTeamClaim[]
+    /** Public release summaries for the affected Threads. */
+    readonly activities: readonly AgentTeamClaimsReleasedActivity[]
+    readonly tasks: readonly AgentTeamTask[]
+    readonly threads: readonly AgentTeamThread[]
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
+/**
  * Audit record of one in-place Member session restart. The restart changes no
  * projection state — the Member keeps identity, transcript, and memory — so
  * apply() treats this operation as a marker only.
@@ -298,6 +319,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberAddedOperation
   | AgentTeamMemberSuspendedOperation
   | AgentTeamMemberResumedOperation
+  | AgentTeamMemberArchivedOperation
   | AgentTeamMemberSessionRestartedOperation
   | AgentTeamMemberContextClearedOperation
   | AgentTeamMemberSessionRenewedOperation

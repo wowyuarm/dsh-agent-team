@@ -80,7 +80,7 @@ const memberSchema = z.object({
   // Ledgers written before member capabilities existed omit the field.
   capabilities: memberCapabilitiesSchema.optional(),
   privateMemoryPath: z.string().min(1),
-  state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive')]),
+  state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive'), z.literal('archived')]),
 }).strict()
 
 const channelSchema = z.object({
@@ -292,6 +292,19 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/member-resumed'),
     data: z.object({ member: memberSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-archived'),
+    data: z.object({
+      member: memberSchema,
+      claims: z.array(claimSchema),
+      activities: z.array(claimsReleasedActivitySchema),
+      tasks: z.array(taskSchema),
+      threads: z.array(threadSchema),
+      inbox: inboxDeltaSchema,
+    }).strict(),
   }).strict(),
   z.object({
     ...operationBase,

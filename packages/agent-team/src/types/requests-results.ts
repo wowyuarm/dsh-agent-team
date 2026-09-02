@@ -107,6 +107,24 @@ export interface AgentTeamSetMemberStateRequest {
   readonly memberId: AgentTeamMemberId
 }
 
+/** Human intent to archive one Agent Member: hidden everywhere, data kept. */
+export interface AgentTeamArchiveMemberRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly memberId: AgentTeamMemberId
+}
+
+/**
+ * Result of archival: the Member is hidden with its data recoverable. Active
+ * Claims the Member held were released, so those Tasks are no longer stuck
+ * in progress behind a hidden Member.
+ */
+export interface AgentTeamArchiveMemberResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly member: AgentTeamAgentMember
+  readonly releasedClaims: readonly AgentTeamClaim[]
+  readonly removedAttention: readonly AgentTeamThreadAttentionKey[]
+}
+
 /** Result of a Member lifecycle operation. */
 export interface AgentTeamMemberResult {
   readonly receipt: AgentTeamOperationReceipt

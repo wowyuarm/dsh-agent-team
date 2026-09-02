@@ -99,7 +99,14 @@ export interface AgentTeamAgentMember {
   readonly capabilities?: AgentTeamMemberCapabilities | undefined
   /** Host-internal namespace; never exposed through Client projections. */
   readonly privateMemoryPath: string
-  readonly state: 'enabled' | 'suspended' | 'inactive'
+  /**
+   * Durable lifecycle state. `enabled`/`suspended` are the reversible working
+   * pair; `archived` hides the Member from every surface while keeping its
+   * Session log and private memory recoverable (no restore entry point yet,
+   * mirroring archived dsh sessions); `inactive` is irreversible removal with
+   * data cleanup.
+   */
+  readonly state: 'enabled' | 'suspended' | 'inactive' | 'archived'
 }
 
 /**
@@ -118,7 +125,7 @@ export interface AgentTeamCapabilityWarning {
 /** Host projection combining durable intent with process-local availability. */
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
-  readonly availability: 'active' | 'suspended' | 'inactive' | 'unavailable'
+  readonly availability: 'active' | 'suspended' | 'inactive' | 'archived' | 'unavailable'
   readonly presence: 'available' | 'working' | 'error' | 'unavailable'
   readonly diagnostic?: string
   /**

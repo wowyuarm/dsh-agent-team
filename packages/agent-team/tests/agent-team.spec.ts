@@ -772,3 +772,78 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(() => replayLedger(test).validate()).not.toThrow()
   })
 })
+
+describe('AgentTeam Member archival ledger', () => {
+  it('archives a Member: claims release, attention clears, view hides, removal still available', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('archive-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('archive-start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    committed((await ledger.changeClaim({ requestId: requestId('archive-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    expect(ledger.view({ workspaceId: alpha }).members).toEqual([expect.objectContaining({ memberId: member.memberId })])
+    expect(ledger.view({ workspaceId: alpha }).tasks[0]).toMatchObject({ status: 'in_progress' })
+    const archived = (await ledger.archiveMember({ requestId: requestId('archive'), memberId: member.memberId, actor: agentTeamHumanActor() })).value
+    expect(archived.member.state).toBe('archived')
+    expect(archived.member.sessionId).toBe(member.sessionId)
+    expect(archived.releasedClaims).toEqual([expect.objectContaining({ claimRef: expect.any(String), owner: member.memberId, state: 'released' })])
+    expect(archived.removedAttention).toEqual([expect.objectContaining({ memberId: member.memberId, threadRef: started.thread.threadRef })])
+
+    // Hidden from the view members projection; the released claim drops the
+    // Task back to todo; the archived Member's attention and markers are gone.
+    expect(ledger.view({ workspaceId: alpha }).members).toEqual([])
+    expect(ledger.view({ workspaceId: alpha }).tasks[0]).toMatchObject({ status: 'todo' })
+    const activity = ledger.view({ workspaceId: alpha }).activities.find(fact => fact.kind === 'claims_released')
+    expect(activity).toMatchObject({ kind: 'claims_released', actor: member.memberId })
+
+    // Guards: double archive, suspend/resume, edit, mention, and DM all reject.
+    await expect(ledger.archiveMember({ requestId: requestId('archive-again'), memberId: member.memberId, actor: agentTeamHumanActor() })).rejects.toThrow(/already archived/)
+    await expect(ledger.suspendMember({ requestId: requestId('archive-suspend'), memberId: member.memberId, actor: agentTeamHumanActor() })).rejects.toThrow(/already archived/)
+    await expect(ledger.resumeMember({ requestId: requestId('archive-resume'), memberId: member.memberId, actor: agentTeamHumanActor() })).rejects.toThrow(/already archived/)
+    await expect(ledger.updateMember({ requestId: requestId('archive-edit'), memberId: member.memberId, handle: member.handle, description: 'new', actor: agentTeamHumanActor() })).rejects.toThrow(/archived and can no longer be edited/)
+    const second = await addLedgerMember(ledger, channel.channel.channelRef, 'member:blocker')
+    await expect(ledger.sendMessage({ requestId: requestId('archive-mention'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'ping', recipients: [member.memberId], actor: agentTeamHumanActor() })).rejects.toThrow(/not authorized for Channel/)
+    await expect(ledger.sendDm({ requestId: requestId('archive-dm'), workspaceId: alpha, recipientMemberId: member.memberId,
+      body: 'still there?', actor: second.actor })).rejects.toThrow(/archived; DM delivery requires an enabled Member/)
+
+    // Removal stays available from archived: the data hygiene path.
+    const removed = (await ledger.removeMember({ requestId: requestId('archive-remove'), memberId: member.memberId, actor: agentTeamHumanActor() })).value
+    expect(removed.member.state).toBe('inactive')
+    ledger.validate()
+  })
+
+  it('archives a suspended Member and replays archival across a cold restart', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('susp-archive-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering Work' })
+    const ledger = replayLedger(test)
+    const { member } = await addLedgerMember(ledger, channel.channel.channelRef)
+    await ledger.suspendMember({ requestId: requestId('susp-archive-suspend'), memberId: member.memberId, actor: agentTeamHumanActor() })
+    const archived = (await ledger.archiveMember({ requestId: requestId('susp-archive'), memberId: member.memberId, actor: agentTeamHumanActor() })).value
+    expect(archived.member.state).toBe('archived')
+    ledger.validate()
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const replayed = await harness(storedPool(records))
+    expect(() => replayLedger(replayed).validate()).not.toThrow()
+    const cold = replayLedger(replayed)
+    expect(cold.getMember(member.memberId)?.state).toBe('archived')
+  })
+
+  it('rejects a forged archival release snapshot during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('forge-archive-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('forge-archive-start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    committed((await ledger.changeClaim({ requestId: requestId('forge-archive-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    await ledger.archiveMember({ requestId: requestId('forge-archive'), memberId: member.memberId, actor: agentTeamHumanActor() })
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/member-archived') return [id, typed] as [string, unknown]
+      return [id, { ...typed, data: { ...typed.data, claims: [] } }] as [string, unknown]
+    })
+    await expect(harness(storedPool(records))).rejects.toThrow(/invalid released Claim projection/)
+  })
+})
