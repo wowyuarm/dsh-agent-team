@@ -182,6 +182,14 @@ export interface AgentTeamChannel {
   readonly name: string
   readonly description: string
   readonly createdAtSequence: number
+  /**
+   * Durable lifecycle state. `archived` hides the Channel and its Threads from
+   * every surface while keeping all facts recoverable (no restore entry point
+   * yet, mirroring archived dsh sessions). Ledgers written before Channel
+   * archival existed omit the field; the record schema normalizes it to
+   * `active` at load time.
+   */
+  readonly state: 'active' | 'archived'
 }
 
 /** One durable Channel membership fact derived from the operation ledger. */

@@ -89,6 +89,8 @@ const channelSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   createdAtSequence: z.number().int().positive(),
+  // Ledgers written before Channel archival existed omit the field.
+  state: z.enum(['active', 'archived']).default('active'),
 }).strict()
 
 // Ledgers written before message occurredAt or attachments existed store bare
@@ -350,6 +352,20 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       workspaceId: workspaceIdSchema,
       channelRef: channelRefSchema,
       memberId: memberIdSchema,
+      claims: z.array(claimSchema),
+      activities: z.array(claimsReleasedActivitySchema),
+      tasks: z.array(taskSchema),
+      threads: z.array(threadSchema),
+      inbox: inboxDeltaSchema,
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/channel-archived'),
+    data: z.object({
+      workspaceId: workspaceIdSchema,
+      channel: channelSchema,
       claims: z.array(claimSchema),
       activities: z.array(claimsReleasedActivitySchema),
       tasks: z.array(taskSchema),

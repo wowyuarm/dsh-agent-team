@@ -32,6 +32,8 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
+  AgentTeamArchiveChannelRequest,
+  AgentTeamArchiveChannelResult,
   AgentTeamArchiveMemberRequest,
   AgentTeamArchiveMemberResult,
   AgentTeamChangeScope,
@@ -412,6 +414,21 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const result = await this.requireLedger().updateChannel({ ...request, actor: agentTeamHumanActor() })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
+  /**
+   * Archive one Channel: hidden from every surface with all facts kept. Pure
+   * ledger projection change — Member sessions stay live (they may work in
+   * other Channels), every active Claim on the Channel's Threads releases,
+   * and affected Members' Attention clears.
+   */
+  @Remote('archiveChannel')
+  async archiveChannel(request: AgentTeamArchiveChannelRequest): Promise<AgentTeamArchiveChannelResult> {
+    this.requireAccepting()
+    this.requireWorkspace(request.workspaceId)
+    const result = await this.requireLedger().archiveChannel({ ...request, actor: agentTeamHumanActor() })
     if (result.committed) this.emitCommitted(result.value.receipt)
     return result.value
   }

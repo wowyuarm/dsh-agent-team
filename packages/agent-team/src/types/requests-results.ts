@@ -85,6 +85,23 @@ export interface AgentTeamUpdateChannelResult {
   readonly channel: AgentTeamChannel
 }
 
+/** Human intent to archive one Channel: hidden everywhere, facts kept. */
+export interface AgentTeamArchiveChannelRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly channelRef: AgentTeamChannelRef
+}
+
+/**
+ * Result of Channel archival: the Channel is hidden with every fact
+ * recoverable. Active Claims on the Channel's Threads were released.
+ */
+export interface AgentTeamArchiveChannelResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly channel: AgentTeamChannel
+  readonly releasedClaims: readonly AgentTeamClaim[]
+}
+
 /**
  * Human intent to edit one Member's mutable facts; absent optional facts
  * clear any override. Callers that do not manage capabilities must echo the

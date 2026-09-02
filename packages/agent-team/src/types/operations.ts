@@ -161,6 +161,30 @@ export interface AgentTeamChannelMemberRemovedOperation extends AgentTeamOperati
   }
 }
 
+/**
+ * Durable archival of one Channel: the Channel and its Threads leave every
+ * surface while all facts stay recoverable. Every active Claim on the
+ * Channel's Threads releases (any owner), and every affected Member's
+ * Attention and markers for those Threads clear — a hidden Channel must not
+ * leave Tasks stuck in progress or phantom unread counts.
+ */
+export interface AgentTeamChannelArchivedOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/channel-archived'
+  readonly data: {
+    readonly workspaceId: WorkspaceId
+    /** The Channel with its state moved to `archived`. */
+    readonly channel: AgentTeamChannel
+    /** Claims released across every Member with an active Claim here. */
+    readonly claims: readonly AgentTeamClaim[]
+    /** Public release summaries for the affected Threads. */
+    readonly activities: readonly AgentTeamClaimsReleasedActivity[]
+    readonly tasks: readonly AgentTeamTask[]
+    readonly threads: readonly AgentTeamThread[]
+    /** Attention and marker cleanup for every affected Member. */
+    readonly inbox: AgentTeamInboxDelta
+  }
+}
+
 /** Durable top-level Message, Thread, optional Task, and initial inbox facts. */
 export interface AgentTeamMessageSentOperation extends AgentTeamOperationBase {
   readonly kind: 'team/message-sent'
@@ -327,6 +351,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation
   | AgentTeamChannelMemberRemovedOperation
+  | AgentTeamChannelArchivedOperation
   | AgentTeamMessageSentOperation
   | AgentTeamThreadRepliedOperation
   | AgentTeamThreadPromotedOperation

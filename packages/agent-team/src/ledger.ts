@@ -10,10 +10,13 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamAttachmentId,
   AgentTeamAgentMember,
+  AgentTeamArchiveChannelRequest,
+  AgentTeamArchiveChannelResult,
   AgentTeamArchiveMemberRequest,
   AgentTeamArchiveMemberResult,
   AgentTeamChannel,
   AgentTeamChangeScope,
+  AgentTeamChannelArchivedOperation,
   AgentTeamChannelCreatedOperation,
   AgentTeamChannelMemberAddedOperation,
   AgentTeamChannelMemberRemovedOperation,
@@ -210,6 +213,10 @@ export interface AgentTeamAuthorizedUpdateChannelRequest extends AgentTeamUpdate
   readonly actor: AgentTeamHumanActor
 }
 
+export interface AgentTeamAuthorizedArchiveChannelRequest extends AgentTeamArchiveChannelRequest {
+  readonly actor: AgentTeamHumanActor
+}
+
 export interface AgentTeamAuthorizedUpdateMemberRequest extends AgentTeamUpdateMemberRequest {
   readonly actor: AgentTeamHumanActor
 }
@@ -377,7 +384,7 @@ export class AgentTeamLedger {
       for (const memberId of memberIds) this.assertJoinableMember(request.workspaceId, memberId)
       const sequence = this.nextSequence()
       const channel: AgentTeamChannel = Object.freeze({
-        channelRef: this.ref('channel'), workspaceId: request.workspaceId, name, description, createdAtSequence: sequence,
+        channelRef: this.ref('channel'), workspaceId: request.workspaceId, name, description, createdAtSequence: sequence, state: 'active' as const,
       })
       const operation: AgentTeamChannelCreatedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/channel-created',
@@ -401,7 +408,7 @@ export class AgentTeamLedger {
       const name = request.name.trim()
       const description = request.description.trim()
       if (name === '') throw new Error('channel name must not be empty')
-      const channel = Object.freeze({ ...this.requireChannel(request.workspaceId, request.channelRef), name, description })
+      const channel = Object.freeze({ ...this.requireActiveChannel(request.workspaceId, request.channelRef), name, description })
       const operation: AgentTeamChannelUpdatedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/channel-updated',
         data: Object.freeze({ workspaceId: request.workspaceId, channel }),
@@ -428,7 +435,7 @@ export class AgentTeamLedger {
       // Description and initial Channels are optional: a Member with neither is
       // still drivable through its DM view, and joins Channels later.
       const channelRefs = this.normalizeUnique(request.channelRefs, 'initial Member Channels')
-      for (const channelRef of channelRefs) this.requireChannel(request.workspaceId, channelRef)
+      for (const channelRef of channelRefs) this.requireActiveChannel(request.workspaceId, channelRef)
       this.assertHandleAvailable(request.workspaceId, handle)
       this.assertModelSelection(request.member.model)
       this.assertCapabilities(request.member.capabilities)
@@ -536,7 +543,7 @@ export class AgentTeamLedger {
         return this.resolved(this.joinResult(existing))
       }
       this.assertHumanActor(request.actor)
-      const channel = this.requireChannel(request.workspaceId, request.channelRef)
+      const channel = this.requireActiveChannel(request.workspaceId, request.channelRef)
       const member = this.requireMember(request.memberId)
       if (member.workspaceId !== request.workspaceId) throw new Error('Member and Channel must belong to one Workspace')
       if (member.state !== 'enabled') throw new Error(`Agent Member '${member.memberId}' is ${member.state}; only enabled Members can join a Channel`)
@@ -588,6 +595,47 @@ export class AgentTeamLedger {
     })
   }
 
+  /**
+   * Archive one Channel: hidden from every surface, facts kept recoverable.
+   * Every active Claim on the Channel's Threads releases with one public
+   * Activity per (owner, Thread), and every Member's Attention and markers
+   * for those Threads clear — a hidden Channel must not leave Tasks stuck in
+   * progress behind it or phantom unread counts.
+   */
+  archiveChannel(request: AgentTeamAuthorizedArchiveChannelRequest): Promise<AgentTeamLedgerResult<AgentTeamArchiveChannelResult>> {
+    return this.enqueue(async () => {
+      const existing = this.state.byRequest.get(request.requestId)
+      if (existing !== undefined) {
+        this.assertSameChannelArchival(existing, request)
+        return this.resolved(this.channelArchivalResult(existing))
+      }
+      this.assertHumanActor(request.actor)
+      const channel = this.requireChannel(request.workspaceId, request.channelRef)
+      if (channel.state === 'archived') throw new Error(`Channel '${channel.channelRef}' is already archived`)
+      const nextChannel = Object.freeze({ ...channel, state: 'archived' as const })
+      const threadRefs = this.channelThreadRefs(channel.channelRef)
+      const releasedClaims = [...this.state.claims.values()]
+        .filter(claim => claim.state === 'active' && threadRefs.has(claim.threadRef))
+        .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
+      const nextClaims = new Map(this.state.claims)
+      for (const claim of releasedClaims) nextClaims.set(claim.claimRef, claim)
+      const sequence = this.nextSequence()
+      const owners = [...new Set(releasedClaims.map(claim => claim.owner))].sort()
+      const activities = Object.freeze(owners.flatMap(owner => this.releaseSummaries(releasedClaims.filter(claim => claim.owner === owner), owner, sequence)))
+      const threads = this.threadsForActivities(activities)
+      const tasks = this.tasksForClaims(releasedClaims, nextClaims)
+      const inbox = this.channelArchivalInbox(threadRefs)
+      const operation: AgentTeamChannelArchivedOperation = Object.freeze({
+        ...this.operationBase(request, sequence), kind: 'team/channel-archived',
+        data: Object.freeze({ workspaceId: request.workspaceId, channel: nextChannel,
+          claims: Object.freeze(releasedClaims), activities, tasks, threads, inbox }),
+      })
+      await this.table.put(operation.operationId, operation)
+      this.apply(operation)
+      return this.committed(this.channelArchivalResult(operation))
+    })
+  }
+
   sendMessage(request: AgentTeamAuthorizedSendMessageRequest): Promise<AgentTeamLedgerResult<AgentTeamSendMessageResult>> {
     return this.enqueue(async () => {
       const recipients = this.normalizeRecipients(request.actor, request.recipients)
@@ -597,7 +645,7 @@ export class AgentTeamLedger {
         return this.resolved(this.messageResult(existing))
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
-      const channel = this.requireChannel(request.workspaceId, request.channelRef)
+      const channel = this.requireActiveChannel(request.workspaceId, request.channelRef)
       if (actor.kind === 'member') this.requireMemberChannel(this.requireMember(actor.memberId), channel.channelRef)
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
@@ -644,6 +692,7 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const { task, thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
+      this.assertThreadChannelActive(channelRef)
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       this.assertMentionTargets(this.requireChannel(request.workspaceId, channelRef), recipients)
@@ -692,6 +741,7 @@ export class AgentTeamLedger {
       }
       this.assertHumanActor(request.actor)
       const { task: existingTask, thread, channelRef } = this.threadContextForActor(request.actor, request.workspaceId, request)
+      this.assertThreadChannelActive(channelRef)
       if (existingTask !== undefined) throw new Error(`Thread '${thread.threadRef}' already has Task '${existingTask.taskRef}'`)
       const deferred = this.deferredThreadWrite(request.actor.memberId, undefined, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
@@ -723,6 +773,7 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const { task, thread } = this.threadForActor(actor, request.workspaceId, request.taskRef)
+      this.assertThreadChannelActive(task.channelRef)
       const deferred = this.deferredThreadWrite(actor.memberId, task, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
       if (task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is ${task.status}; reopen it before changing Claims`)
@@ -788,6 +839,7 @@ export class AgentTeamLedger {
       }
       this.assertHumanActor(request.actor)
       const { task, thread } = this.threadForActor(request.actor, request.workspaceId, request.taskRef)
+      this.assertThreadChannelActive(task.channelRef)
       const deferred = this.deferredThreadWrite(request.actor.memberId, task, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
       if (request.action === 'accept' && task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is already ${task.resolution}`)
@@ -919,6 +971,8 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const { task, thread } = this.threadContextForActor(actor, request.workspaceId, request)
+      const channelRef = this.channelRefForThread(thread.threadRef)
+      if (channelRef !== undefined) this.assertThreadChannelActive(channelRef)
       const current = this.attentionFor(actor.memberId, thread.threadRef)
       if (request.action === 'follow') {
         if (task?.resolution === 'closed') throw new Error(`Task '${task.taskRef}' is closed; reopen it before following`)
@@ -1177,7 +1231,7 @@ export class AgentTeamLedger {
       if (member.workspaceId !== request.workspaceId) throw new Error('Member cannot view another Workspace')
     }
     if (request.channelRef !== undefined) {
-      this.requireChannel(request.workspaceId, request.channelRef)
+      this.requireActiveChannel(request.workspaceId, request.channelRef)
       if (memberId !== undefined && !this.isChannelMember(request.channelRef, memberId)) throw new Error(`Agent Member '${memberId}' is not authorized for Channel '${request.channelRef}'`)
     }
     if (request.threadRef !== undefined) {
@@ -1189,6 +1243,7 @@ export class AgentTeamLedger {
       if (memberId !== undefined && !this.isChannelMember(channelRef, memberId)) throw new Error(`Agent Member '${memberId}' is not authorized for Channel '${channelRef}'`)
     }
     const channels = [...this.state.channels.values()].filter(channel => channel.workspaceId === request.workspaceId
+      && channel.state !== 'archived'
       && (memberId === undefined || this.isChannelMember(channel.channelRef, memberId)))
     const channelRefs = new Set(channels.map(channel => channel.channelRef))
     const allFacts = this.state.orderedFacts.filter(fact => {
@@ -1308,6 +1363,14 @@ export class AgentTeamLedger {
         }
         return scopes
       }
+      case 'team/channel-archived': {
+        const scopes: AgentTeamChangeScope[] = [
+          { kind: 'workspace', workspaceId: operation.data.workspaceId },
+          { kind: 'channel', channelRef: operation.data.channel.channelRef },
+        ]
+        for (const activity of operation.data.activities) scopes.push({ kind: 'thread', threadRef: activity.threadRef })
+        return scopes
+      }
       case 'team/message-sent':
       case 'team/thread-replied':
         return [{ kind: 'channel', channelRef: operation.data.message.channelRef }, { kind: 'thread', threadRef: operation.data.message.threadRef }]
@@ -1366,6 +1429,7 @@ export class AgentTeamLedger {
       case 'team/thread-attention-changed':
         return [operation.data.thread.threadRef]
       case 'team/channel-member-removed':
+      case 'team/channel-archived':
       case 'team/member-removed':
       case 'team/member-archived':
         return operation.data.activities.map(activity => activity.threadRef)
@@ -1497,7 +1561,8 @@ export class AgentTeamLedger {
       assertHuman()
       const prior = projection.channels.get(operation.data.channel.channelRef)
       if (prior === undefined || prior.workspaceId !== operation.data.workspaceId
-        || operation.data.channel.workspaceId !== prior.workspaceId || operation.data.channel.createdAtSequence !== prior.createdAtSequence) {
+        || operation.data.channel.workspaceId !== prior.workspaceId || operation.data.channel.createdAtSequence !== prior.createdAtSequence
+        || operation.data.channel.state !== prior.state) {
         throw new Error('invalid Channel update')
       }
       return
@@ -1532,6 +1597,17 @@ export class AgentTeamLedger {
         || member.workspaceId !== channel.workspaceId || !projection.memberships.get(channel.channelRef)?.has(member.memberId)) throw new Error('invalid Channel membership removal')
       const threadRefs = new Set([...projection.threads.keys()].filter(threadRef => this.channelRefForThreadFrom(projection, threadRef) === channel.channelRef))
       this.validateReleaseCleanup(operation.data, projection, member.memberId, threadRefs, operation.sequence, refs)
+      return
+    }
+    if (operation.kind === 'team/channel-archived') {
+      assertHuman()
+      const prior = projection.channels.get(operation.data.channel.channelRef)
+      if (prior === undefined || prior.state !== 'active' || operation.data.channel.state !== 'archived'
+        || operation.data.channel.workspaceId !== prior.workspaceId || operation.data.workspaceId !== prior.workspaceId
+        || operation.data.channel.name !== prior.name || operation.data.channel.description !== prior.description
+        || operation.data.channel.createdAtSequence !== prior.createdAtSequence) throw new Error('invalid Channel archival')
+      const threadRefs = new Set([...projection.threads.keys()].filter(threadRef => this.channelRefForThreadFrom(projection, threadRef) === prior.channelRef))
+      this.validateChannelArchivalCleanup(operation.data, projection, threadRefs, operation.sequence, refs)
       return
     }
     if (operation.kind === 'team/member-removed') {
@@ -1853,6 +1929,73 @@ export class AgentTeamLedger {
     this.validateInboxDelta(data.inbox, projection, refs)
   }
 
+  /** Replay validation of one Channel archival's release snapshot across every owner. */
+  private validateChannelArchivalCleanup(
+    data: AgentTeamChannelArchivedOperation['data'],
+    projection: Projection,
+    threadRefs: ReadonlySet<AgentTeamThreadRef>,
+    sequence: number,
+    refs: Set<string>,
+  ): void {
+    const releasedClaims = [...projection.claims.values()]
+      .filter(claim => claim.state === 'active' && threadRefs.has(claim.threadRef))
+      .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
+    if (data.claims.length !== releasedClaims.length || data.claims.some((claim, index) => {
+      const expected = releasedClaims[index]
+      return expected === undefined || !this.sameClaim(expected, claim)
+    })) throw new Error('invalid released Claim projection')
+
+    // One activity per (owner, Thread), owners sorted like the commit path.
+    const byOwner = new Map<AgentTeamMemberId, Map<AgentTeamThreadRef, AgentTeamClaim[]>>()
+    for (const claim of releasedClaims) {
+      const byThread = byOwner.get(claim.owner) ?? new Map<AgentTeamThreadRef, AgentTeamClaim[]>()
+      byOwner.set(claim.owner, byThread)
+      byThread.set(claim.threadRef, [...(byThread.get(claim.threadRef) ?? []), claim])
+    }
+    const expectedActivities = [...byOwner.keys()].sort().flatMap(owner =>
+      [...byOwner.get(owner)!.entries()].map(([threadRef, claims]) => ({
+        kind: 'claims_released' as const, taskRef: claims[0]!.taskRef, threadRef, actor: owner, sequence,
+        claimRefs: claims.map(claim => claim.claimRef).sort(),
+      })))
+    if (data.activities.length !== expectedActivities.length || data.activities.some((activity, index) => {
+      const expected = expectedActivities[index]
+      return expected === undefined || activity.kind !== expected.kind || activity.taskRef !== expected.taskRef
+        || activity.threadRef !== expected.threadRef || activity.actor !== expected.actor || activity.sequence !== expected.sequence
+        || !this.sameList(activity.claimRefs, expected.claimRefs)
+    })) throw new Error('invalid released Claim activities')
+    for (const claim of data.claims) {
+      const prior = projection.claims.get(claim.claimRef)
+      if (prior === undefined) throw new Error('invalid released Claim reference')
+    }
+    for (const activity of data.activities) this.addRef(refs, activity.activityRef)
+
+    const projectedClaims = new Map(projection.claims)
+    for (const claim of releasedClaims) projectedClaims.set(claim.claimRef, claim)
+    const expectedTasks = [...new Set(releasedClaims.map(claim => claim.taskRef))].map(taskRef => {
+      const task = projection.tasks.get(taskRef)!
+      return Object.freeze({ ...task, status: this.deriveResolvedTaskStatus(task, projectedClaims.values()) })
+    })
+    const expectedThreads = expectedActivities.map(activity => {
+      const thread = projection.threads.get(activity.threadRef)!
+      return Object.freeze({ ...thread, revision: sequence })
+    })
+    if (!isDeepStrictEqual(data.tasks, expectedTasks) || !isDeepStrictEqual(data.threads, expectedThreads)) {
+      throw new Error('invalid released Claim Task or Thread projection')
+    }
+
+    // Attention and marker cleanup covers EVERY Member on the archived Threads.
+    const expectedAttention = [...projection.attention.values()]
+      .filter(attention => threadRefs.has(attention.threadRef))
+      .map(attention => ({ memberId: attention.memberId, threadRef: attention.threadRef }))
+    const expectedMarkers = [...projection.directMarkers.values()]
+      .filter(marker => threadRefs.has(marker.threadRef))
+    const expectedActivityMarkers = [...projection.activityMarkers.values()]
+      .filter(marker => threadRefs.has(marker.threadRef))
+    const expectedInbox = this.inboxDelta([], expectedAttention, [], expectedMarkers, [], expectedActivityMarkers)
+    if (!isDeepStrictEqual(data.inbox, expectedInbox)) throw new Error('invalid Channel archival inbox cleanup')
+    this.validateInboxDelta(data.inbox, projection, refs)
+  }
+
   private validateMessageInbox(operation: AgentTeamMessageSentOperation | AgentTeamThreadRepliedOperation, projection: Projection): void {
     const { message, mentions } = operation.data
     const mentionedAgents = mentions.filter(memberId => projection.members.has(memberId))
@@ -1941,6 +2084,18 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/channel-member-removed') {
       target.memberships.get(operation.data.channelRef)?.delete(operation.data.memberId)
+      for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
+      for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
+      for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
+      this.applyInboxDelta(target, operation.data.inbox)
+      return
+    }
+    if (operation.kind === 'team/channel-archived') {
+      // Archival keeps Memberships: hidden state, not departure — a future
+      // restore returns every Member to the Channel. Visibility filters by
+      // channel state instead.
+      target.channels.set(operation.data.channel.channelRef, operation.data.channel)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
       for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
@@ -2238,6 +2393,15 @@ export class AgentTeamLedger {
       .map(attention => Object.freeze({ memberId, threadRef: attention.threadRef }))
     const markers = [...this.state.directMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
     const activityMarkers = [...this.state.activityMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    return this.inboxDelta([], removed, [], markers, [], activityMarkers)
+  }
+
+  /** Attention and marker cleanup for EVERY Member on the given Threads. */
+  private channelArchivalInbox(threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
+    const removed = [...this.state.attention.values()].filter(attention => threadRefs.has(attention.threadRef))
+      .map(attention => Object.freeze({ memberId: attention.memberId, threadRef: attention.threadRef }))
+    const markers = [...this.state.directMarkers.values()].filter(marker => threadRefs.has(marker.threadRef))
+    const activityMarkers = [...this.state.activityMarkers.values()].filter(marker => threadRefs.has(marker.threadRef))
     return this.inboxDelta([], removed, [], markers, [], activityMarkers)
   }
 
@@ -2612,6 +2776,20 @@ export class AgentTeamLedger {
     return channel
   }
 
+  /** Guard for every mutating or Channel-scoped surface flow: archived Channels reject. */
+  private requireActiveChannel(workspaceId: WorkspaceId, channelRef: AgentTeamChannelRef): AgentTeamChannel {
+    const channel = this.requireChannel(workspaceId, channelRef)
+    if (channel.state === 'archived') throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
+    return channel
+  }
+
+  /** Thread-mutation guard: the Channel owning the Thread must still be active. */
+  private assertThreadChannelActive(channelRef: AgentTeamChannelRef): void {
+    if (this.state.channels.get(channelRef)?.state === 'archived') {
+      throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
+    }
+  }
+
   private requireMember(memberId: AgentTeamMemberId): AgentTeamAgentMember {
     const member = this.state.members.get(memberId)
     if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
@@ -2749,6 +2927,11 @@ export class AgentTeamLedger {
   private assertSameChannelMemberRemoval(operation: AgentTeamOperation, request: AgentTeamAuthorizedRemoveChannelMemberRequest): asserts operation is AgentTeamChannelMemberRemovedOperation {
     if (operation.kind !== 'team/channel-member-removed' || !this.sameActor(operation.actor, request.actor)
       || operation.data.workspaceId !== request.workspaceId || operation.data.channelRef !== request.channelRef || operation.data.memberId !== request.memberId) this.throwRequestCollision(request.requestId)
+  }
+
+  private assertSameChannelArchival(operation: AgentTeamOperation, request: AgentTeamAuthorizedArchiveChannelRequest): asserts operation is AgentTeamChannelArchivedOperation {
+    if (operation.kind !== 'team/channel-archived' || !this.sameActor(operation.actor, request.actor)
+      || operation.data.workspaceId !== request.workspaceId || operation.data.channel.channelRef !== request.channelRef) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameDm(operation: AgentTeamOperation, request: AgentTeamAuthorizedDmRequest): asserts operation is AgentTeamDmSentOperation {
@@ -2920,6 +3103,11 @@ export class AgentTeamLedger {
   private channelMemberRemovalResult(operation: AgentTeamChannelMemberRemovedOperation): AgentTeamRemoveChannelMemberResult {
     return Object.freeze({ receipt: this.receipt(operation), channelRef: operation.data.channelRef, memberId: operation.data.memberId,
       releasedClaims: operation.data.claims, removedAttention: operation.data.inbox.attention.removed })
+  }
+
+  private channelArchivalResult(operation: AgentTeamChannelArchivedOperation): AgentTeamArchiveChannelResult {
+    return Object.freeze({ receipt: this.receipt(operation), channel: operation.data.channel,
+      releasedClaims: operation.data.claims })
   }
 
   private messageResult(operation: AgentTeamMessageSentOperation): Extract<AgentTeamSendMessageResult, { kind: 'committed' }> {
