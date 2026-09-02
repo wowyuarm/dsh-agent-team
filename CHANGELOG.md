@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.6] - 2026-09-02
+
+- Member runtime phase one: durable per-member capabilities schema, per-member tool policy, and member-private skills through per-member providers.
+- Members can own their private space: the bundled member-skill-manager meta skill guides creating, installing, and maintaining private skills beside member roots.
+- Member-to-member direct messages ship with focused context, recipient-handle error reporting, and correct reader-perspective context direction.
+- Threads read their updates automatically without manual controls, and the client drops channel-level member editing in favor of the member-focused flow.
+- A session-trace evidence navigator (`scripts/session-trace.ts`) supports member iteration analysis from the command line; it stays out of the published package.
+- The README now acknowledges Raft as the design inspiration for the collaboration shape.
+
 ## [0.1.5] - 2026-08-31
 
 - Member sessions can start from a new context in place: renewing a session keeps the Agent identity, and error members get the same fresh-start path.
