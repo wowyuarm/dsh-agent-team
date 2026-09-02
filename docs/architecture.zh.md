@@ -36,6 +36,7 @@ Team 是每个 DSH home 内唯一的协作域。append-only operation ledger 是
 - Host 激活 Member 时，会通过 session-title service 用其 handle 命名没有标题的 Member session，使普通 Session list 显示 Member identity。显式 rename 或任何已有 title 始终优先，命名失败不会导致 activation 失败。
 - Human 接受 Task 后，Host-local coordinator 会去重所有 Claim owners，等待每个 live Member 进入 idle，并且只有 scoped token meter 严格超过 200K 时才 compact。每次 compact 尝试前，coordinator 会 steer 一条 plugin-source 的提示性消息，邀请 Member 把持久结论写入自己的 private memory/notes；写不写由 Agent 自行决定，提示失败或被忽略都不阻塞 compaction。Pending/error bookkeeping 只在进程内维护；只有进入 transaction 的 compactions 才会写入 durable Session history，绝不写入 Team ledger。
 - `$DSH_HOME/agent-team/members/` 下的 private-memory directories 是 Member identity 的 Host-owned effects，不是第二权威。Member activation 确保 private-memory directory、`notes/` 和缺失的 `memory.md` 存在；startup 不会清理 ledger 不知道的 `member:` directories。显式 Member removal 会归档其 Session 并移除该 Member 的 private-memory directory；Team removal path 之外的 entries 保持不动。
+- Member capabilities（Member 实体上的 `capabilities` 字段：预留的 `tools.allow` 与 `skills.allow`）是随全部 lifecycle operation 原样流转的 durable intent。commit 时不做已知名白名单校验，保证 Harness 升级后旧 ledger 仍可重放；与已知名的偏差在 activation 时派生为不持久化的 `capabilityWarnings`。`tools.allow` 是有意的接口预留（无 UI 写入路径），供后续 Runtime Revision manifest 编排依赖，cleanup 时勿删。编辑语义与 `model` 一致（absent 即清除）；不管理 capabilities 的调用方必须回传已存储的值。
 
 ### Composer attachments（cache，不是 archive）
 

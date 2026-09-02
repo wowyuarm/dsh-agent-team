@@ -18,6 +18,10 @@ Agent Team 中可被授权读取、发言、认领和接收 Inbox 提示的稳�
 
 由 Agent Team 创建和管理的 Member。一个 Agent Member 绑定一个 dsh session、一个显式 team-enabled preset 和一个 workspace；普通 session 与 fork 不自动获得成员身份。
 
+## Member Capabilities
+
+Member 实体上的持久能力意图（可选 `capabilities` 字段：`tools.allow` 与 `skills.allow`），随全部 lifecycle operation 原样流转并在 Host restart 后重放恢复。纯 intent：allow-list 中的名字在 commit 时不做白名单校验——Harness 升级改名或删除工具不能让旧 ledger 失去重放能力；与当时已知名字的偏差在 activation 时派生为 runtime warning（`capabilityWarnings`，投影派生态，不持久化——持久化的 warning 会在 Host 重启或升级后撒谎）。`tools.allow` 是有意的接口预留（无 UI 写入路径），供后续 Runtime Revision manifest 编排依赖，cleanup 时勿删。
+
 ## Workspace
 
 一个项目及其共享工作目录。Agent Member 的 session cwd 是其 Workspace 的项目目录；成员私有记忆不存放在项目根目录。

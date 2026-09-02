@@ -9,6 +9,7 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import AgentTeam from '../src/index.ts'
 import { AgentTeamLedger } from '../src/ledger.ts'
+import { agentTeamDomainSpec } from '../src/spec.ts'
 import * as agentTeamInvariant from '../src/invariant.ts'
 import type { AgentTeamChannelRef, AgentTeamOperation, AgentTeamOperationId, AgentTeamRequestId } from '../src/types.ts'
 
@@ -20,10 +21,10 @@ afterEach(async () => {
   await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
 })
 
-async function harness(): Promise<{ readonly ctx: Context; readonly facility: DomainFacility }> {
+async function harness(pool = new MemoryMediaPool()): Promise<{ readonly ctx: Context; readonly facility: DomainFacility }> {
   const ctx = new Context()
   await ctx.plugin(Storage)
-  ctx.storage.backend.register('memory', new MemoryStorageBackend(new MemoryMediaPool()))
+  ctx.storage.backend.register('memory', new MemoryStorageBackend(pool))
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', facility)
   ctx.provide('storageDomain', facility)
@@ -47,6 +48,14 @@ async function harness(): Promise<{ readonly ctx: Context; readonly facility: Do
 /** A cold ledger over the same table: sequential-replay validation must accept the update records. */
 function replayLedger(facility: DomainFacility): AgentTeamLedger {
   return new AgentTeamLedger(facility.get('agent_team')!.table('operations') as unknown as KvTable<AgentTeamOperationId, AgentTeamOperation>)
+}
+
+/** A media pool preloaded with stored operations, standing in for Host restart. */
+function storedPool(records: Array<[string, unknown]>): MemoryMediaPool {
+  const pool = new MemoryMediaPool()
+  pool.versions.set('agent_team', agentTeamDomainSpec.version)
+  pool.media.set('agent_team', { tables: new Map([['operations', new Map(records)]]), global: null })
+  return pool
 }
 
 async function seedMember(ctx: Context, channelRef: AgentTeamChannelRef, label: string) {
@@ -157,5 +166,69 @@ describe('Agent Team display-fact updates', () => {
     expect(stored).toMatchObject({ handle: 'architect', description: 'Designs systems' })
     expect(stored?.model).toBeUndefined()
     expect(replayed.listMembers().find(member => member.memberId === reviewer.status.member.memberId)?.state).toBe('inactive')
+  })
+
+  it('carries Member capabilities through lifecycle operations, edits, replay, and Host restart', async () => {
+    const { ctx, facility } = await harness()
+    const created = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const capabilities = {
+      tools: { allow: ['bash', 'read', 'web-search'] },
+      skills: { allow: ['code-review'] },
+    } as const
+    const added = await ctx.agentTeam.addMember({
+      requestId: requestId('capabilities-add'), workspaceId: alpha, handle: 'builder', description: 'Builds changes',
+      presetId: 'team-member', channelRefs: [created.channel.channelRef], capabilities,
+    })
+    const memberId = added.status.member.memberId
+    expect(added.status.member.capabilities).toEqual(capabilities)
+
+    // Pure intent: unknown tool names commit anyway (divergence is derived at
+    // activation, never rejected here), and the status projection exposes the
+    // warnings channel empty while capabilities resolve cleanly.
+    const hostile = await ctx.agentTeam.addMember({
+      requestId: requestId('drift-add'), workspaceId: alpha, handle: 'drift', description: 'Old ledger entry',
+      presetId: 'team-member', channelRefs: [], capabilities: { tools: { allow: ['tool-renamed-away'] } },
+    })
+    expect(hostile.status.member.capabilities).toEqual({ tools: { allow: ['tool-renamed-away'] } })
+    expect(hostile.status.capabilityWarnings).toBeUndefined()
+
+    // Lifecycle operations carry the overlay verbatim: suspend and resume
+    // rebuild the entity without dropping or duplicating capabilities.
+    const suspended = await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId })
+    expect(suspended.status.member.capabilities).toEqual(capabilities)
+    const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume'), memberId })
+    expect(resumed.status.member.capabilities).toEqual(capabilities)
+
+    // An edit echoing the stored overlay keeps it; the collision guard
+    // compares capabilities like model drift.
+    const echoed = await ctx.agentTeam.updateMember({ requestId: requestId('echo'), memberId, handle: 'builder', description: 'Still builds', capabilities })
+    expect(echoed.status.member.capabilities).toEqual(capabilities)
+    await expect(ctx.agentTeam.updateMember({ requestId: requestId('echo'), memberId, handle: 'builder', description: 'Different after commit', capabilities })).rejects.toThrow(/was reused with a different operation or payload/)
+
+    // Absent capabilities clear the override, mirroring the model semantics;
+    // a second update then re-pins a skills-only overlay.
+    const cleared = await ctx.agentTeam.updateMember({ requestId: requestId('clear-capabilities'), memberId, handle: 'builder', description: 'Still builds' })
+    expect(cleared.status.member.capabilities).toBeUndefined()
+    const pinned = await ctx.agentTeam.updateMember({ requestId: requestId('pin-skills'), memberId, handle: 'builder', description: 'Still builds', capabilities: { skills: { allow: ['code-review'] } } })
+    expect(pinned.status.member.capabilities).toEqual({ skills: { allow: ['code-review'] } })
+
+    // Whitespace-only allow-list names are rejected before any record lands.
+    await expect(ctx.agentTeam.updateMember({ requestId: requestId('blank-name'), memberId, handle: 'builder', description: 'Still builds', capabilities: { skills: { allow: ['   '] } } })).rejects.toThrow(/must not be empty/)
+
+    // Cold replay reproduces the overlay and validates the update records.
+    const replayed = replayLedger(facility)
+    expect(() => replayed.validate()).not.toThrow()
+    expect(replayed.getMember(memberId)?.capabilities).toEqual({ skills: { allow: ['code-review'] } })
+    expect(replayed.getMember(hostile.status.member.memberId)?.capabilities).toEqual({ tools: { allow: ['tool-renamed-away'] } })
+
+    // Host restart: a fresh process replays the same ledger and restores the
+    // durable intent, warnings channel still absent.
+    const records = [...facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const revived = await harness(storedPool(records))
+    expect(revived.ctx.agentTeam.status()).toMatchObject({ agentMemberCount: 2 })
+    const restored = revived.ctx.agentTeam.membersForClient({ workspaceId: alpha }).find(status => status.member.memberId === memberId)
+    expect(restored?.member.capabilities).toEqual({ skills: { allow: ['code-review'] } })
+    expect(restored?.capabilityWarnings).toBeUndefined()
+    expect(() => replayLedger(revived.facility).validate()).not.toThrow()
   })
 })

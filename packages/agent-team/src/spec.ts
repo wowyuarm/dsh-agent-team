@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { AgentTeamModelSelection } from './types.ts'
+import type { AgentTeamMemberCapabilities, AgentTeamModelSelection } from './types.ts'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -54,6 +54,20 @@ const modelSelectionSchema = z.object({
   ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
 }))
 
+// Pure intent: allow-list entries are plain strings. They are never
+// validated against a known-name set here — committing must survive Harness
+// upgrades that rename or remove tools, so divergence is derived at
+// activation instead (see AgentTeamCapabilityWarning).
+const memberCapabilitiesSchema = z.object({
+  // Deliberate interface reservation, no UI writes it today: Runtime Revision
+  // manifests depend on this seam — do not remove during cleanup.
+  tools: z.object({ allow: z.array(z.string().min(1)) }).strict().transform(omitUndefined).optional(),
+  skills: z.object({ allow: z.array(z.string().min(1)) }).strict().transform(omitUndefined).optional(),
+}).strict().transform(({ tools, skills }): AgentTeamMemberCapabilities => ({
+  ...(tools === undefined ? {} : { tools }),
+  ...(skills === undefined ? {} : { skills }),
+}))
+
 const memberSchema = z.object({
   memberId: memberIdSchema,
   sessionId: sessionIdSchema,
@@ -63,6 +77,8 @@ const memberSchema = z.object({
   presetId: z.string().min(1),
   // Ledgers written before per-Member model selection existed omit the field.
   model: modelSelectionSchema.optional(),
+  // Ledgers written before member capabilities existed omit the field.
+  capabilities: memberCapabilitiesSchema.optional(),
   privateMemoryPath: z.string().min(1),
   state: z.union([z.literal('enabled'), z.literal('suspended'), z.literal('inactive')]),
 }).strict()

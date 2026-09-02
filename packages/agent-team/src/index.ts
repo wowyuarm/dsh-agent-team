@@ -52,6 +52,7 @@ import type {
   AgentTeamJoinChannelResult,
   AgentTeamHumanActor,
   AgentTeamMemberActor,
+  AgentTeamMemberCapabilities,
   AgentTeamMessageAttachment,
   AgentTeamMemberId,
   AgentTeamMemberResult,
@@ -123,6 +124,16 @@ function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope
   if (left.kind === 'channel' && right.kind === 'channel') return left.channelRef === right.channelRef
   if (left.kind === 'thread' && right.kind === 'thread') return left.threadRef === right.threadRef
   return false
+}
+
+/** Copy a Remote-supplied capability overlay into owned frozen storage. */
+function deepCopyCapabilities(capabilities: AgentTeamMemberCapabilities): AgentTeamMemberCapabilities {
+  const copyAllow = (allow: readonly string[] | undefined): { allow?: readonly string[] } =>
+    allow === undefined ? {} : { allow: [...allow] }
+  return {
+    ...(capabilities.tools === undefined ? {} : { tools: copyAllow(capabilities.tools.allow) }),
+    ...(capabilities.skills === undefined ? {} : { skills: copyAllow(capabilities.skills.allow) }),
+  }
 }
 
 /** Mark the preset's `team_message` definition as an Agent Team consumer. */
@@ -423,6 +434,7 @@ export default class AgentTeam extends TypertRemoteService {
         description: request.description,
         presetId: request.presetId,
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
+        ...(request.capabilities === undefined ? {} : { capabilities: Object.freeze(deepCopyCapabilities(request.capabilities)) }),
         privateMemoryPath: dshHomePath('agent-team', 'members', memberId),
         state: 'enabled',
       })
@@ -1129,6 +1141,9 @@ export default class AgentTeam extends TypertRemoteService {
     }
     const runtimeError = failures?.runtime ?? failures?.compaction
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
+    // Capability warnings are runtime-derived at activation (handles-scoped,
+    // like failures): absent while capabilities resolve cleanly, so the field
+    // is simply omitted until 02 computes real divergences.
     return Object.freeze({ member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available' })
   }
 

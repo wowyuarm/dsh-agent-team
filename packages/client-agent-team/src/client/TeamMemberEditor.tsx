@@ -204,6 +204,9 @@ export function AgentEditorDialog({ status, channels, loadChannels, updateMember
       handle: normalizedHandle,
       description: normalizedDescription,
       ...(model === undefined ? {} : { model }),
+      // The editor owns no capabilities UI, but an absent field would clear a
+      // Remote-written override; echo the stored intent through the edit.
+      ...(status.member.capabilities === undefined ? {} : { capabilities: status.member.capabilities }),
     }
     const samePending = pendingRequest.current !== undefined && pendingRequest.current.memberId === payload.memberId
       && pendingRequest.current.handle === payload.handle && pendingRequest.current.description === payload.description

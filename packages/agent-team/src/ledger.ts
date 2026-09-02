@@ -43,6 +43,7 @@ import type {
   AgentTeamJoinChannelResult,
   AgentTeamMemberActor,
   AgentTeamMemberAddedOperation,
+  AgentTeamMemberCapabilities,
   AgentTeamMemberId,
   AgentTeamMemberRemovedOperation,
   AgentTeamMemberResumedOperation,
@@ -292,6 +293,20 @@ function assertUnhandledKind(operation: never): never {
   throw new Error(`agent-team ledger does not handle operation kind '${(operation as AgentTeamOperation).kind}'`)
 }
 
+/** Deep-freeze a Member capability overlay; absent stays absent. */
+function freezeCapabilities(capabilities: AgentTeamMemberCapabilities | undefined): { capabilities?: AgentTeamMemberCapabilities } {
+  if (capabilities === undefined) return {}
+  const freezeAllow = (allow: readonly string[] | undefined): { allow?: readonly string[] } =>
+    allow === undefined ? {} : { allow: Object.freeze([...allow]) }
+  return {
+    capabilities: Object.freeze({
+      ...(capabilities.tools === undefined ? {} : { tools: Object.freeze(freezeAllow(capabilities.tools.allow)) }),
+      ...(capabilities.skills === undefined ? {} : { skills: Object.freeze(freezeAllow(capabilities.skills.allow)) }),
+    }),
+  }
+}
+
+
 /** Replay and append logic behind the Agent Team service interface. */
 export class AgentTeamLedger {
   /** Live projection; record validation replays build independent Projection values instead. */
@@ -409,9 +424,11 @@ export class AgentTeamLedger {
       for (const channelRef of channelRefs) this.requireChannel(request.workspaceId, channelRef)
       this.assertHandleAvailable(request.workspaceId, handle)
       this.assertModelSelection(request.member.model)
+      this.assertCapabilities(request.member.capabilities)
       const member = Object.freeze({
         ...request.member, handle, description, presetId, state: 'enabled' as const,
         ...(request.member.model === undefined ? {} : { model: Object.freeze({ ...request.member.model }) }),
+        ...freezeCapabilities(request.member.capabilities),
       })
       const operation: AgentTeamMemberAddedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-added',
@@ -439,12 +456,15 @@ export class AgentTeamLedger {
       if (handle === '') throw new Error('member handle must not be empty')
       if (handle !== prior.handle) this.assertHandleAvailable(prior.workspaceId, handle, prior.memberId)
       this.assertModelSelection(request.model)
-      // An absent model must CLEAR any override (inherit the Host default);
-      // spreading `prior` verbatim would silently keep the pinned selection.
-      const { model: _priorModel, ...priorWithoutModel } = prior
+      this.assertCapabilities(request.capabilities)
+      // An absent model or capabilities field must CLEAR any override
+      // (inherit the Host default / full standard capability surface);
+      // spreading `prior` verbatim would silently keep the pinned value.
+      const { model: _priorModel, capabilities: _priorCapabilities, ...priorWithoutOverlays } = prior
       const member = Object.freeze({
-        ...priorWithoutModel, handle, description,
+        ...priorWithoutOverlays, handle, description,
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
+        ...freezeCapabilities(request.capabilities),
       })
       const operation: AgentTeamMemberUpdatedOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-updated',
@@ -2566,6 +2586,19 @@ export class AgentTeamLedger {
     if (model.provider.trim() === '' || model.model.trim() === '') throw new Error('member model selection must name a provider route and a model id')
   }
 
+  /**
+   * Capability allow-list entries are exact identifiers (skill names,
+   * reserved tool names); only whitespace-only values are rejected. Unknown
+   * names are intent, not errors — committing must stay replayable across
+   * Harness upgrades, so divergence is derived at activation instead.
+   */
+  private assertCapabilities(capabilities: AgentTeamUpdateMemberRequest['capabilities']): void {
+    for (const surface of [capabilities?.tools?.allow, capabilities?.skills?.allow]) {
+      if (surface === undefined) continue
+      if (surface.some(name => name.trim() === '')) throw new Error('capability allow-list names must not be empty')
+    }
+  }
+
   private initialization(): AgentTeamInitializedOperation {
     const operation = this.state.ordered[0]
     if (operation === undefined) throw new Error('agent-team ledger is not initialized')
@@ -2595,6 +2628,7 @@ export class AgentTeamLedger {
       || operation.data.member.workspaceId !== request.workspaceId || operation.data.member.handle !== request.handle.trim()
       || operation.data.member.description !== request.description.trim() || operation.data.member.presetId !== request.presetId.trim()
       || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.member.model ?? undefined)
+      || !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.member.capabilities ?? undefined)
       || !this.sameList(operation.data.channelRefs, this.normalizeUnique(request.channelRefs, 'initial Member Channels'))) this.throwRequestCollision(request.requestId)
   }
 
@@ -2618,7 +2652,8 @@ export class AgentTeamLedger {
     if (operation.kind !== 'team/member-updated' || !this.sameActor(operation.actor, request.actor)
       || operation.data.member.memberId !== request.memberId || operation.data.member.handle !== request.handle.trim()
       || operation.data.member.description !== request.description.trim()
-      || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.model ?? undefined)) this.throwRequestCollision(request.requestId)
+      || !isDeepStrictEqual(operation.data.member.model ?? undefined, request.model ?? undefined)
+      || !isDeepStrictEqual(operation.data.member.capabilities ?? undefined, request.capabilities ?? undefined)) this.throwRequestCollision(request.requestId)
   }
 
   private assertSameChannelJoin(operation: AgentTeamOperation, request: AgentTeamAuthorizedJoinChannelRequest): asserts operation is AgentTeamChannelMemberAddedOperation {

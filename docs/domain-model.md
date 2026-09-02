@@ -18,6 +18,10 @@ The special Member corresponding to the current Harness user. It participates in
 
 A Member created and managed by Team. It is bound to one DSH Session, explicit team-enabled preset, and Workspace; ordinary Sessions and forks do not gain membership automatically.
 
+## Member Capabilities
+
+Durable capability intent on the Member entity (optional `capabilities` field: `tools.allow` and `skills.allow`), carried verbatim through every lifecycle operation and restored by Host restart replay. Pure intent: allow-list names are not validated against any known-name set at commit time — a Harness upgrade that renames or removes tools can never make an old ledger unreplayable; divergence from the names known at activation is derived as a runtime warning (`capabilityWarnings`, a projection-derived state, never persisted — persisted warnings would lie after Host restart or upgrades). `tools.allow` is a deliberate interface reservation (no UI write path) that future Runtime Revision manifest orchestration depends on; do not remove during cleanup.
+
 ## Workspace
 
 A project and shared working directory. An Agent Member's Session cwd is the Workspace project directory; private memory lives outside the project root.

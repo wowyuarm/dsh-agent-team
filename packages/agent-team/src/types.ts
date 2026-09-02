@@ -60,6 +60,31 @@ export interface AgentTeamModelSelection {
   readonly reasoningEffort?: ReasoningEffortId
 }
 
+/**
+ * Durable capability intent of one Member, carried verbatim on the Member
+ * entity through every lifecycle operation. Pure intent: names are not
+ * validated against any known-tool list at commit time, so a Harness upgrade
+ * that renames or removes tools can never make an old ledger unreplayable.
+ * Divergence surfaces at activation as runtime-derived warnings, never as
+ * persisted facts (stale persisted warnings would lie after Host restart or
+ * Harness upgrades).
+ */
+export interface AgentTeamMemberCapabilities {
+  /**
+   * Deliberate interface reservation, no UI writes it today: Runtime Revision
+   * manifests depend on this seam — do not remove during cleanup.
+   * Absent = the Member sees all standard tools; present = the activation
+   * allow-list (unknown names drop with a warning; the Host always unions
+   * the five Team tools over it).
+   */
+  readonly tools?: { readonly allow?: readonly string[] } | undefined
+  /**
+   * Absent = auto-load every skill in the Member's private skills directory;
+   * present = only the listed skill names.
+   */
+  readonly skills?: { readonly allow?: readonly string[] } | undefined
+}
+
 /** Durable identity and lifecycle intent of one team-managed Agent. */
 export interface AgentTeamAgentMember {
   readonly memberId: AgentTeamMemberId
@@ -70,9 +95,24 @@ export interface AgentTeamAgentMember {
   readonly presetId: string
   /** Absent inherits the Host default model selection at every activation. */
   readonly model?: AgentTeamModelSelection | undefined
+  /** Durable capability intent; see AgentTeamMemberCapabilities. */
+  readonly capabilities?: AgentTeamMemberCapabilities | undefined
   /** Host-internal namespace; never exposed through Client projections. */
   readonly privateMemoryPath: string
   readonly state: 'enabled' | 'suspended' | 'inactive'
+}
+
+/**
+ * Runtime-derived capability divergence between a Member's persisted intent
+ * and the names known at activation time (for example after a Harness
+ * upgrade renamed or removed a tool). Derived state only — never persisted;
+ * recomputed at every activation so warnings never go stale.
+ */
+export interface AgentTeamCapabilityWarning {
+  /** The persisted allow-list entry that resolved to no known capability. */
+  readonly name: string
+  /** Digest of the names that were known when the entry was dropped. */
+  readonly knownNames: readonly string[]
 }
 
 /** Host projection combining durable intent with process-local availability. */
@@ -81,6 +121,11 @@ export interface AgentTeamAgentMemberStatus {
   readonly availability: 'active' | 'suspended' | 'inactive' | 'unavailable'
   readonly presence: 'available' | 'working' | 'error' | 'unavailable'
   readonly diagnostic?: string
+  /**
+   * Runtime-derived, activation-scoped capability warnings (see
+   * AgentTeamCapabilityWarning); empty while capabilities resolve cleanly.
+   */
+  readonly capabilityWarnings?: readonly AgentTeamCapabilityWarning[] | undefined
 }
 
 /** Browser-safe Member identity with Host-only paths removed. */
@@ -642,6 +687,8 @@ export interface AgentTeamAddMemberRequest {
   readonly presetId: string
   /** Absent inherits the Host default model selection. */
   readonly model?: AgentTeamModelSelection
+  /** Durable capability intent; see AgentTeamMemberCapabilities. */
+  readonly capabilities?: AgentTeamMemberCapabilities
   /** Existing Channels in this Workspace; may be empty — the Member joins Channels later and stays reachable through its DM view. */
   readonly channelRefs: readonly AgentTeamChannelRef[]
 }
@@ -662,7 +709,11 @@ export interface AgentTeamUpdateChannelResult {
   readonly channel: AgentTeamChannel
 }
 
-/** Human intent to edit one Member's mutable facts; an absent model clears any override. */
+/**
+ * Human intent to edit one Member's mutable facts; absent optional facts
+ * clear any override. Callers that do not manage capabilities must echo the
+ * stored value back, or their edit would silently clear it.
+ */
 export interface AgentTeamUpdateMemberRequest {
   readonly requestId: AgentTeamRequestId
   readonly memberId: AgentTeamMemberId
@@ -670,6 +721,8 @@ export interface AgentTeamUpdateMemberRequest {
   /** Display purpose text; may be empty, matching creation. */
   readonly description: string
   readonly model?: AgentTeamModelSelection
+  /** Absent clears any capability override, matching `model`. */
+  readonly capabilities?: AgentTeamMemberCapabilities
 }
 
 /** Human intent to suspend or resume one Agent Member. */
