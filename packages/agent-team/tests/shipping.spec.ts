@@ -75,6 +75,14 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
+    // The persona guides the Member's private space: absolute paths (not
+    // cwd-relative), SKILL.md self-install into skills/, reusable-assets
+    // curation, and no forced skill-workflow triggers.
+    expect(preset).toContain('use the injected absolute paths')
+    expect(preset).toContain('write a SKILL.md file')
+    expect(preset).toContain('YAML front matter with name and description')
+    expect(preset).toContain('formal deliverables')
+    expect(preset).toContain('your own judgment per task')
     const toolSource = await readFile(resolve(root, 'packages/tool-agent-team/src/index.ts'), 'utf8')
     expect([...toolSource.matchAll(/name: '(team_[a-z]+)'/g)].map(match => match[1])).toEqual([
       'team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view',

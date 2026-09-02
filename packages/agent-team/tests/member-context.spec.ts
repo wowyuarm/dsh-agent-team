@@ -11,6 +11,13 @@ describe('Team Member private memory context', () => {
     expect(rendered).not.toContain('Maintenance warning')
   })
 
+  it('injects the private skills directory path beside the memory paths', () => {
+    const rendered = renderMemberMemory(Buffer.from('# Member memory\n'))
+    expect(rendered).toContain('Private skills directory: <private-memory-path>/skills')
+    // The absolute-path guidance covers the skills directory with the rest.
+    expect(rendered).toContain('use the absolute paths above')
+  })
+
   it('warns explicitly without injecting any body when the index exceeds its context budget', () => {
     const rendered = renderMemberMemory(Buffer.alloc(9 * 1024, 'x'))
     expect(rendered).toContain('exceeds the 8 KiB context budget')
