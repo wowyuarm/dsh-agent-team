@@ -846,6 +846,31 @@ describe('AgentTeam Member archival ledger', () => {
     })
     await expect(harness(storedPool(records))).rejects.toThrow(/invalid released Claim projection/)
   })
+
+  it('archives a Member that also follows a taskless Thread: attention clears there too', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('taskless-archive-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    // One taskful Thread (for the Claim) and one taskless Thread the Member
+    // follows: leaving must clear Attention on BOTH, not just taskful ones —
+    // the replay validator scopes cleanup to every Thread.
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('taskless-archive-task'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const plain = committed((await ledger.sendMessage({ requestId: requestId('taskless-archive-plain'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Plain conversation', asTask: false, actor: agentTeamHumanActor() })).value)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    committed((await ledger.changeClaim({ requestId: requestId('taskless-archive-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    await ledger.changeAttention({ requestId: requestId('taskless-archive-follow'), workspaceId: alpha,
+      threadRef: plain.thread.threadRef, action: 'follow', actor })
+    const archived = (await ledger.archiveMember({ requestId: requestId('taskless-archive'), memberId: member.memberId, actor: agentTeamHumanActor() })).value
+    expect(archived.removedAttention.map(entry => entry.threadRef).sort())
+      .toEqual([plain.thread.threadRef, started.task.threadRef].sort())
+    // The commit and the replay validator agree: cold replay validates clean.
+    ledger.validate()
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const replayed = await harness(storedPool(records))
+    expect(() => replayLedger(replayed).validate()).not.toThrow()
+  })
 })
 
 describe('AgentTeam Channel archival ledger', () => {

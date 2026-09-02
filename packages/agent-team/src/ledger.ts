@@ -908,7 +908,9 @@ export class AgentTeamLedger {
       const activities = this.releaseSummaries(releasedClaims, member.memberId, sequence)
       const threads = this.threadsForActivities(activities)
       const tasks = this.tasksForClaims(releasedClaims, projectedClaims)
-      const threadRefs = new Set([...this.state.tasks.values()].map(task => task.threadRef))
+      // The Member leaves entirely, so Attention and markers clear on every
+      // Thread — taskless ones too — matching the replay validator's scope.
+      const threadRefs = new Set(this.state.threads.keys())
       const inbox = this.removeMemberThreadInbox(member.memberId, threadRefs)
       const operation: AgentTeamMemberRemovedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/member-removed',
@@ -947,7 +949,9 @@ export class AgentTeamLedger {
       const activities = this.releaseSummaries(releasedClaims, member.memberId, sequence)
       const threads = this.threadsForActivities(activities)
       const tasks = this.tasksForClaims(releasedClaims, projectedClaims)
-      const threadRefs = new Set([...this.state.tasks.values()].map(task => task.threadRef))
+      // The Member leaves entirely, so Attention and markers clear on every
+      // Thread — taskless ones too — matching the replay validator's scope.
+      const threadRefs = new Set(this.state.threads.keys())
       const inbox = this.removeMemberThreadInbox(member.memberId, threadRefs)
       const operation: AgentTeamMemberArchivedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/member-archived',
