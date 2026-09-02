@@ -55,7 +55,7 @@ export function createTeamMemberSessionSources(options: TeamMemberSessionInputOp
       const members = await options.members()
       if (signal.aborted) return []
       return members
-        .filter(status => status.member.sessionId !== session.sessionId && status.member.state !== 'inactive')
+        .filter(status => status.member.sessionId !== session.sessionId && status.member.state !== 'inactive' && status.member.state !== 'archived')
         .filter(status => status.member.handle.toLocaleLowerCase().startsWith(normalized))
         .map(status => {
           labels.set(status.member.memberId, `@${status.member.handle}`)

@@ -408,3 +408,58 @@ describe('Team agent surfaces', () => {
   })
 
 })
+
+describe('Team archival surfaces', () => {
+  it('archives an Agent from the row menu behind a destructive confirm', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('builder')
+
+    // The danger entry sits in every Member's row menu.
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '归档' }))
+    expect(b.view.getByRole('dialog', { name: '归档 Agent：builder' })).toBeTruthy()
+    // The notice states the recoverability contract: data kept, no restore
+    // entry point yet.
+    expect(b.view.getByRole('dialog', { name: '归档 Agent：builder' }).textContent).toContain('暂无恢复入口')
+    expect(b.archiveMember).not.toHaveBeenCalled()
+    // Cancel closes without routing.
+    fireEvent.click(b.view.getByRole('button', { name: '取消' }))
+    expect(b.view.queryByRole('dialog', { name: '归档 Agent：builder' })).toBeNull()
+    expect(b.archiveMember).not.toHaveBeenCalled()
+    // Confirm routes the durable archive; the archived state arrives through
+    // the workspace refetch and the row disappears.
+    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '归档' }))
+    fireEvent.click(await b.view.findByRole('button', { name: /^归档$/ }))
+    await waitFor(() => {
+      expect(b.archiveMember).toHaveBeenCalledWith(expect.objectContaining({ memberId: 'member:builder' }))
+    })
+    await b.publishChannelUpdate()
+    await waitFor(() => expect(b.view.queryByRole('button', { name: 'builder 的操作' })).toBeNull())
+    await b.runtime.dispose()
+  })
+
+  it('archives a Channel from the row menu behind a destructive confirm', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await b.view.findByText('# engineering')
+
+    fireEvent.click(b.view.getByRole('button', { name: 'engineering 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '归档频道' }))
+    expect(b.view.getByRole('dialog', { name: '归档频道：engineering' })).toBeTruthy()
+    expect(b.view.getByRole('dialog', { name: '归档频道：engineering' }).textContent).toContain('暂无恢复入口')
+    expect(b.archiveChannel).not.toHaveBeenCalled()
+    fireEvent.click(b.view.getByRole('button', { name: '取消' }))
+    expect(b.view.queryByRole('dialog', { name: '归档频道：engineering' })).toBeNull()
+    fireEvent.click(b.view.getByRole('button', { name: 'engineering 的操作' }))
+    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '归档频道' }))
+    fireEvent.click(await b.view.findByRole('button', { name: /^归档频道$/ }))
+    await waitFor(() => {
+      expect(b.archiveChannel).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', channelRef: 'channel:engineering' }))
+    })
+    await b.publishChannelUpdate()
+    await waitFor(() => expect(b.view.queryByRole('button', { name: 'engineering 的操作' })).toBeNull())
+    await b.runtime.dispose()
+  })
+})

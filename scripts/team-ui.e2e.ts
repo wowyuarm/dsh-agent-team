@@ -999,6 +999,57 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await restoredComposer.fill('')
   await page.screenshot({ path: join(UI01_SHOTS, 'restored-conversations.png'), fullPage: true })
 
+  // Archival beats: both danger entries hide their entity behind a
+  // destructive confirm that states the no-restore contract. The archived
+  // Channel leaves the sidebar; the archived Member leaves the agents panel,
+  // and the Host side disposes its session and archives it from grouping
+  // surfaces while the private memory stays on disk.
+  await page.getByRole('button', { name: '团队' }).click()
+  // Restoration returns to the last open surface; the sidebar row is the
+  // stable entry back onto the Channel page regardless of the restored route.
+  await page.getByRole('button', { name: '# delivery' }).waitFor({ timeout: 20_000 })
+  await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByRole('heading', { name: '# delivery' }).waitFor({ timeout: 20_000 })
+  const rampRow = page.getByRole('button', { name: '# ramp' })
+  await rampRow.hover()
+  await page.getByRole('button', { name: 'ramp 的操作' }).click()
+  await page.getByRole('menuitem', { name: '归档频道' }).click()
+  const rampArchiveDialog = page.getByRole('dialog', { name: '归档频道：ramp' })
+  await rampArchiveDialog.waitFor()
+  expect(await rampArchiveDialog.textContent()).toContain('暂无恢复入口')
+  await page.screenshot({ path: join(UI06_SHOTS, 'channel-archive-modal.png'), fullPage: true })
+  await rampArchiveDialog.getByRole('button', { name: '归档频道', exact: true }).click()
+  await expect.poll(() => page.getByRole('button', { name: '# ramp' }).count()).toBe(0)
+  const archiveWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
+  const archivedChannel = scaffold.ctx.agentTeam.view({ workspaceId: archiveWorkspace.id }).channels.find((channel: { name: string }) => channel.name === 'ramp')
+  expect(archivedChannel).toBeUndefined()
+
+  const archiveableRow = page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).first()
+  await archiveableRow.hover()
+  await page.getByRole('button', { name: 'builder 的操作' }).click()
+  await page.getByRole('menuitem', { name: '归档', exact: true }).click()
+  const builderArchiveDialog = page.getByRole('dialog', { name: '归档 Agent：builder' })
+  await builderArchiveDialog.waitFor()
+  expect(await builderArchiveDialog.textContent()).toContain('暂无恢复入口')
+  await page.screenshot({ path: join(UI06_SHOTS, 'agent-archive-modal.png'), fullPage: true })
+  await builderArchiveDialog.getByRole('button', { name: '归档', exact: true }).click()
+  await expect.poll(() => page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).count()).toBe(0)
+  const archivedStatuses = scaffold.ctx.agentTeam.members({ workspaceId: archiveWorkspace.id })
+  const archivedBuilder = archivedStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
+  expect(archivedBuilder.availability).toBe('archived')
+  expect(archivedBuilder.member.state).toBe('archived')
+  // The Session archival settles behind the Client wake; poll the registry.
+  await expect.poll(() => scaffold.ctx.workspaceRegistry.archivedSessionIds.includes(archivedBuilder.member.sessionId)).toBe(true)
+  // The archived Member's row menu and mention candidates are gone, and the
+  // members modal roster no longer lists it.
+  await page.getByRole('button', { name: '成员', exact: true }).click()
+  const archiveMembersDialog = page.getByRole('dialog', { name: '成员' })
+  await archiveMembersDialog.waitFor()
+  expect(await archiveMembersDialog.getByText('@builder').count()).toBe(0)
+  await archiveMembersDialog.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: '对话' }).click()
+  await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
+
   const enterTeamKeyboard = page.getByRole('button', { name: '团队' })
   await enterTeamKeyboard.focus()
   await expect.poll(() => enterTeamKeyboard.evaluate(element => element === document.activeElement)).toBe(true)

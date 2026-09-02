@@ -3,6 +3,8 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
 import type { InputTriggerServiceContract } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {
   AgentTeamAddMemberRequest,
+  AgentTeamArchiveChannelRequest,
+  AgentTeamArchiveMemberRequest,
   AgentTeamClientMemberStatus,
   AgentTeamSendMessageRequest,
   AgentTeamThreadHistoryRequest,
@@ -96,9 +98,11 @@ function registerModeShadow<T extends object>(
     joinChannel: (request: AgentTeamJoinChannelRequest) => ctx.remote.agentTeam.joinChannel(request),
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => ctx.remote.agentTeam.removeChannelMember(request),
     updateChannel: (request: AgentTeamUpdateChannelRequest) => ctx.remote.agentTeam.updateChannel(request),
+    archiveChannel: (request: AgentTeamArchiveChannelRequest) => ctx.remote.agentTeam.archiveChannel(request),
     updateMember: (request: AgentTeamUpdateMemberRequest) => ctx.remote.agentTeam.updateMember(request),
     recoverMember: (request: AgentTeamRecoverMemberRequest) => ctx.remote.agentTeam.recoverMember(request),
     clearMemberContext: (request: AgentTeamClearMemberContextRequest) => ctx.remote.agentTeam.clearMemberContext(request),
+    archiveMember: (request: AgentTeamArchiveMemberRequest) => ctx.remote.agentTeam.archiveMember(request),
     // The Host-scoped catalog needs no live Member, so suspended ones stay editable too.
     loadModels: async () => {
       const connection = ctx.get('connection') as ConnectionHandle
@@ -244,7 +248,10 @@ function applyUi(ctx: ClientContext): void {
     const groups = await Promise.all(workspaces.map(async workspace => {
       const result = await ctx.remote.agentTeam.members({ workspaceId: workspace.workspaceId })
       if (!result.ok) throw new Error(result.error.message)
-      return { workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, members: result.value }
+      // The members modal is a listing surface: archived Members are hidden
+      // everywhere, and removed (inactive) ones never belong in a roster.
+      const members = result.value.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived')
+      return { workspaceId: workspace.workspaceId, workspaceTitle: workspace.title, members }
     }))
     return groups.filter(group => group.members.length > 0)
   }

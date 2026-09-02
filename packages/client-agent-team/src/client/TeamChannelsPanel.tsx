@@ -10,7 +10,7 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutline20, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { MultiMenuField } from './multi-menu-field.tsx'
@@ -32,6 +32,7 @@ interface TeamChannelsPanelProps {
   readonly subscribeChanges: TeamSidebarProps['subscribeChanges']
   readonly createChannel: TeamSidebarProps['createChannel']
   readonly updateChannel: TeamSidebarProps['updateChannel']
+  readonly archiveChannel: TeamSidebarProps['archiveChannel']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly creatingAgents: readonly AgentTeamAddMemberRequest[]
@@ -76,7 +77,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
     ])
     if (channelResult.ok && memberResult.ok) {
       setView(channelResult.value)
-      const visibleMembers = memberResult.value.filter(status => status.member.state !== 'inactive')
+      const visibleMembers = memberResult.value.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived')
       setMembers(visibleMembers)
       const selectable = new Set(visibleMembers.filter(status => status.presence !== 'unavailable')
         .map(status => status.member.memberId))
@@ -216,6 +217,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
                   joinedIds={joined}
                   selected={selectedChannelRef === channel.channelRef}
                   updateChannel={updateChannel}
+                  archiveChannel={props.archiveChannel}
                   joinChannel={props.joinChannel}
                   removeChannelMember={props.removeChannelMember}
                   onCommitted={() => { void refresh() }}
@@ -236,12 +238,13 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
  * One sidebar Channel row: the select button keeps the `#` identity while the
  * row menu carries the entry point; editing covers display facts and membership.
  */
-function ChannelRow({ channel, members, joinedIds, selected, updateChannel, joinChannel, removeChannelMember, onCommitted, selectChannel, t }: {
+function ChannelRow({ channel, members, joinedIds, selected, updateChannel, archiveChannel, joinChannel, removeChannelMember, onCommitted, selectChannel, t }: {
   readonly channel: AgentTeamChannel
   readonly members: readonly AgentTeamClientMemberStatus[]
   readonly joinedIds: ReadonlySet<AgentTeamMemberId>
   readonly selected: boolean
   readonly updateChannel: TeamSidebarProps['updateChannel']
+  readonly archiveChannel: TeamSidebarProps['archiveChannel']
   readonly joinChannel: TeamSidebarProps['joinChannel']
   readonly removeChannelMember: TeamSidebarProps['removeChannelMember']
   readonly onCommitted: () => Promise<void> | void
@@ -250,6 +253,23 @@ function ChannelRow({ channel, members, joinedIds, selected, updateChannel, join
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [archiving, setArchiving] = useState(false)
+  const [rowAlert, setRowAlert] = useState<string>()
+  const archive = async (): Promise<void> => {
+    try {
+      const result = await archiveChannel({
+        requestId: mintRequestId(),
+        workspaceId: channel.workspaceId,
+        channelRef: channel.channelRef,
+      })
+      await onCommitted()
+      if (!result.ok) {
+        setRowAlert(t('archiveChannelFailed', { message: result.error.message }))
+      }
+    } catch (cause) {
+      setRowAlert(t('archiveChannelFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
+  }
   return (
     <>
       <article className={css.channelRow} data-menu-open={menuOpen || undefined} aria-current={selected ? 'page' : undefined}>
@@ -259,12 +279,34 @@ function ChannelRow({ channel, members, joinedIds, selected, updateChannel, join
         <span className={css.rowMenu}>
           <TeamRowMenu
             label={t('actionsChannel', { name: channel.name })}
-            items={[{ id: 'edit', label: t('editChannel'), icon: <IconEditOutline16 /> }]}
-            onSelect={() => { setEditing(true) }}
+            items={[
+              { id: 'edit', label: t('editChannel'), icon: <IconEditOutline16 /> },
+              { id: 'archive', label: t('archiveChannel'), icon: <IconArchiveOutline20 size={16} />, danger: true },
+            ]}
+            onSelect={(id) => {
+              if (id === 'edit') setEditing(true)
+              else setArchiving(true)
+            }}
             onOpenChange={setMenuOpen}
           />
         </span>
       </article>
+      {rowAlert !== undefined && <div className={css.rowAlert} role="alert">{rowAlert}</div>}
+      {archiving && (
+        <Modal
+          open
+          onClose={() => { setArchiving(false) }}
+          title={t('archiveChannelTitle', { name: channel.name })}
+          closeLabel={t('close')}
+          contentClassName={createCss.dialogContent!}
+          footer={<>
+            <Button variant="outline" onClick={() => { setArchiving(false) }}>{t('cancel')}</Button>
+            <Button variant="primary" onClick={() => { setArchiving(false); void archive() }}>{t('archiveChannelConfirm')}</Button>
+          </>}
+        >
+          <p className={createCss.error}>{t('archiveChannelNotice', { name: channel.name })}</p>
+        </Modal>
+      )}
       {editing && (
         <ChannelEditorDialog
           channel={channel}

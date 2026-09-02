@@ -39,12 +39,13 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
   const normalized = query.toLocaleLowerCase()
   return members.filter(status => status.presence !== 'unavailable'
     && status.member.state !== 'inactive'
+    && status.member.state !== 'archived'
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
 /** Every member a manual handle pick could reach: the @all expansion snapshot. */
 function allMentionMembers(members: readonly AgentTeamClientMemberStatus[]): readonly AgentTeamClientMemberStatus[] {
-  return members.filter(status => status.presence !== 'unavailable' && status.member.state !== 'inactive')
+  return members.filter(status => status.presence !== 'unavailable' && status.member.state !== 'inactive' && status.member.state !== 'archived')
 }
 
 function containsAllMention(draft: string): boolean {

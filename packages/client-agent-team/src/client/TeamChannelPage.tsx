@@ -121,7 +121,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const timeline = useTimelineScroll(`${view?.items.length ?? 0}:${channelLastItem?.message.messageRef ?? ''}`)
   const channel = view?.channels.find(item => item.channelRef === channelRef)
   const channelMemberIds = new Set(view?.members.filter(item => item.channelRef === channelRef).map(item => item.memberId) ?? [])
-  const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive')
+  const channelMembers = members.filter(status => channelMemberIds.has(status.member.memberId) && status.member.state !== 'inactive' && status.member.state !== 'archived')
   // Presence counts ride the header meta line; error and unavailable do not count as online.
   const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
@@ -299,7 +299,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
 
     <Modal open={managingMembers} onClose={closeMembers} title={t('channelMembers')} {...(channel === undefined ? {} : { description: `# ${channel.name} · ${t('memberCount', { count: channelMembers.length })}` })} closeLabel={t('close')} contentClassName={channelCss.modalBody!}>
       <div ref={memberListRef} className={channelCss.memberList}>
-        {members.filter(status => status.member.state !== 'inactive').map(status => {
+        {members.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived').map(status => {
           const joined = channelMemberIds.has(status.member.memberId)
           const rowPending = membership.pending.has(status.member.memberId)
           const disabled = rowPending || (!joined && status.presence === 'unavailable')

@@ -130,6 +130,25 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
       value: { receipt: {}, status: memberRows.find(entry => entry.member.memberId === request.memberId) },
     }
   })
+  // Archival hides the row: the mock transitions the member the way the real
+  // archiveMember remote does (state archived, availability archived).
+  const archiveMember = vi.fn(async (request: { requestId: string; memberId: string }) => {
+    memberRows = memberRows.map(entry => entry.member.memberId === request.memberId
+      ? { ...entry, member: { ...entry.member, state: 'archived' }, availability: 'archived', presence: 'unavailable' }
+      : entry)
+    const archived = memberRows.find(entry => entry.member.memberId === request.memberId)
+    return {
+      ok: true as const,
+      value: { receipt: {}, member: archived?.member, releasedClaims: [], removedAttention: [] },
+    }
+  })
+  // Channel archival hides the row from every view; the mock drops it like
+  // the Host's workspace-scoped wake refetch would.
+  const archiveChannel = vi.fn(async (request: { requestId: string; workspaceId: string; channelRef: string }) => {
+    const archived = channels.find(channel => channel.channelRef === request.channelRef)
+    channels = channels.filter(channel => channel.channelRef !== request.channelRef)
+    return { ok: true as const, value: { receipt: {}, channel: archived, releasedClaims: [] } }
+  })
   const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
     groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
       { id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'low', name: 'low' }, { id: 'high', name: 'high' }] } },
@@ -246,7 +265,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, updateMember, recoverMember, clearMemberContext, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.provide('remote.agentTeam', {})
   runtime.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   runtime.provide('inputTriggers', {
@@ -271,5 +290,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }

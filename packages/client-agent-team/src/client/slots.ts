@@ -1,6 +1,10 @@
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   AgentTeamAddMemberRequest,
+  AgentTeamArchiveChannelRequest,
+  AgentTeamArchiveChannelResult,
+  AgentTeamArchiveMemberRequest,
+  AgentTeamArchiveMemberResult,
   AgentTeamChannelRef,
   AgentTeamClientMemberStatus,
   AgentTeamClearMemberContextRequest,
@@ -93,9 +97,11 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
     createChannel: (request: AgentTeamCreateChannelRequest) => Promise<RemoteResult<AgentTeamCreateChannelResult>>
     updateChannel: (request: AgentTeamUpdateChannelRequest) => Promise<RemoteResult<AgentTeamUpdateChannelResult>>
+    archiveChannel: (request: AgentTeamArchiveChannelRequest) => Promise<RemoteResult<AgentTeamArchiveChannelResult>>
     updateMember: (request: AgentTeamUpdateMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     recoverMember: (request: AgentTeamRecoverMemberRequest) => Promise<RemoteResult<AgentTeamRecoverMemberResult>>
     clearMemberContext: (request: AgentTeamClearMemberContextRequest) => Promise<RemoteResult<AgentTeamClearMemberContextResult>>
+    archiveMember: (request: AgentTeamArchiveMemberRequest) => Promise<RemoteResult<AgentTeamArchiveMemberResult>>
     joinChannel: (request: AgentTeamJoinChannelRequest) => Promise<RemoteResult<AgentTeamJoinChannelResult>>
     removeChannelMember: (request: AgentTeamRemoveChannelMemberRequest) => Promise<RemoteResult<AgentTeamRemoveChannelMemberResult>>
     /** Session-independent Host model catalog (`llm.models`); needs no live Member. */

@@ -5,7 +5,7 @@ import type {
   AgentTeamModelSelection,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import { Button, IconEditOutline16, IconNewChatOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutline20, IconEditOutline16, IconNewChatOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
@@ -26,6 +26,7 @@ interface TeamAgentsPanelProps {
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
+  readonly archiveMember: TeamSidebarProps['archiveMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   /** The Member Session currently embedded in the conversation seat, if any. */
   readonly memberSessionId?: AgentTeamClientMemberStatus['member']['sessionId']
@@ -34,7 +35,7 @@ interface TeamAgentsPanelProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, clearMemberContext, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, clearMemberContext, archiveMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -63,7 +64,9 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     setLoading(true)
     const result = await loadMembers({ workspaceId })
     if (result.ok) {
-      setMembers(result.value)
+      // Archived Members are hidden from every surface; the row disappears
+      // the moment the workspace-scope wake delivers the archived state.
+      setMembers(result.value.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived'))
       setError(undefined)
     } else {
       setError(result.error.message)
@@ -98,7 +101,9 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
       if (result.ok) {
         setMembers(current => {
           const retained = current.filter(status => status.member.memberId !== result.value.status.member.memberId)
-          return [...retained, result.value.status]
+          return result.value.status.member.state === 'inactive' || result.value.status.member.state === 'archived'
+            ? retained
+            : [...retained, result.value.status]
         })
         setHandle('')
         setDescription('')
@@ -184,7 +189,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
+              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -204,13 +209,14 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, updateMember, recoverMember, clearMemberContext, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, updateMember, recoverMember, clearMemberContext, archiveMember, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
   readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
+  readonly archiveMember: TeamSidebarProps['archiveMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
   readonly onUpdated: () => Promise<void> | void
@@ -219,6 +225,7 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [archiving, setArchiving] = useState(false)
   const [rowAlert, setRowAlert] = useState<string>()
   // Both row actions ride the same runtime remote: the Host steers a live
   // session, rebuilds an orphaned composition, or re-runs a failed activation.
@@ -273,6 +280,20 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
   // handle's error markers are dropped with it). Only a running turn or a
   // missing handle gates the entry.
   const contextClearable = status.presence === 'available' || status.presence === 'error'
+  const archive = async (): Promise<void> => {
+    try {
+      const result = await archiveMember({
+        requestId: mintRequestId(),
+        memberId: status.member.memberId,
+      })
+      await onUpdated()
+      if (!result.ok) {
+        setRowAlert(t('archiveAgentFailed', { message: result.error.message }))
+      }
+    } catch (cause) {
+      setRowAlert(t('archiveAgentFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    }
+  }
   return (
     <>
       <div className={css.agentRow} data-menu-open={menuOpen || undefined}>
@@ -292,10 +313,12 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
               ...(status.availability === 'unavailable' ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
               { id: 'clear-context', label: t('clearContextAgent'), icon: <IconNewChatOutline16 />, danger: true, disabled: !contextClearable },
               ...(!contextClearable ? [{ type: 'label' as const, id: 'clear-context-reason', text: status.presence === 'working' ? t('clearContextWorkingReason') : t('clearContextUnavailableReason') }] : []),
+              { id: 'archive', label: t('archiveAgent'), icon: <IconArchiveOutline20 size={16} />, danger: true },
             ]}
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)
               else if (id === 'clear-context') setClearing(true)
+              else if (id === 'archive') setArchiving(true)
               else void recover()
             }}
             onOpenChange={setMenuOpen}
@@ -316,6 +339,21 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
           </>}
         >
           <p className={createCss.error}>{t('clearContextNotice', { name: status.member.handle })}</p>
+        </Modal>
+      )}
+      {archiving && (
+        <Modal
+          open
+          onClose={() => { setArchiving(false) }}
+          title={t('archiveAgentTitle', { name: status.member.handle })}
+          closeLabel={t('close')}
+          contentClassName={createCss.dialogContent!}
+          footer={<>
+            <Button variant="outline" onClick={() => { setArchiving(false) }}>{t('cancel')}</Button>
+            <Button variant="primary" onClick={() => { setArchiving(false); void archive() }}>{t('archiveAgentConfirm')}</Button>
+          </>}
+        >
+          <p className={createCss.error}>{t('archiveAgentNotice', { name: status.member.handle })}</p>
         </Modal>
       )}
       {editing && (
