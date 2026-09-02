@@ -773,7 +773,6 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const { task, thread } = this.threadForActor(actor, request.workspaceId, request.taskRef)
-      this.assertThreadChannelActive(task.channelRef)
       const deferred = this.deferredThreadWrite(actor.memberId, task, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
       if (task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is ${task.status}; reopen it before changing Claims`)
@@ -839,7 +838,6 @@ export class AgentTeamLedger {
       }
       this.assertHumanActor(request.actor)
       const { task, thread } = this.threadForActor(request.actor, request.workspaceId, request.taskRef)
-      this.assertThreadChannelActive(task.channelRef)
       const deferred = this.deferredThreadWrite(request.actor.memberId, task, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
       if (request.action === 'accept' && task.resolution !== 'open') throw new Error(`Task '${task.taskRef}' is already ${task.resolution}`)
@@ -975,8 +973,6 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const { task, thread } = this.threadContextForActor(actor, request.workspaceId, request)
-      const channelRef = this.channelRefForThread(thread.threadRef)
-      if (channelRef !== undefined) this.assertThreadChannelActive(channelRef)
       const current = this.attentionFor(actor.memberId, thread.threadRef)
       if (request.action === 'follow') {
         if (task?.resolution === 'closed') throw new Error(`Task '${task.taskRef}' is closed; reopen it before following`)
@@ -1217,7 +1213,11 @@ export class AgentTeamLedger {
     const resolved: AgentTeamResolvedTaskRef[] = []
     for (const taskRef of taskRefs) {
       const task = this.state.tasks.get(taskRef)
-      if (task === undefined || this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+      const channel = task === undefined ? undefined : this.state.channels.get(task.channelRef)
+      // Archived Channels do not exist on Team API surfaces: their Tasks stop
+      // resolving, so live message bodies render the refs as plain
+      // non-navigable text through the existing unknown-ref path.
+      if (task === undefined || channel?.workspaceId !== workspaceId || channel?.state === 'archived') continue
       resolved.push(Object.freeze({ taskRef: task.taskRef, channelRef: task.channelRef, threadRef: task.threadRef, taskNumber: numbers.get(task.taskRef) ?? 0 }))
     }
     return resolved
@@ -1243,6 +1243,7 @@ export class AgentTeamLedger {
       const channelRef = this.channelRefForThread(thread.threadRef)
       if (channelRef === undefined) throw new Error(`unknown Thread ref '${request.threadRef}'`)
       if (this.state.channels.get(channelRef)?.workspaceId !== request.workspaceId) throw new Error(`Thread '${request.threadRef}' does not belong to Workspace '${request.workspaceId}'`)
+      this.assertThreadChannelActive(channelRef)
       if (request.channelRef !== undefined && channelRef !== request.channelRef) throw new Error(`Thread '${request.threadRef}' does not belong to Channel '${request.channelRef}'`)
       if (memberId !== undefined && !this.isChannelMember(channelRef, memberId)) throw new Error(`Agent Member '${memberId}' is not authorized for Channel '${channelRef}'`)
     }
@@ -2589,6 +2590,9 @@ export class AgentTeamLedger {
   private threadForActor(actor: AgentTeamHumanActor | AgentTeamMemberActor, workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): { readonly task: AgentTeamTask; readonly thread: AgentTeamThread } {
     const task = this.requireTask(workspaceId, taskRef)
     const thread = this.requireThread(task.threadRef)
+    // Archived Channels do not exist on Team API surfaces: their Tasks and
+    // Claims are unreachable for reads (listClaims) as for writes.
+    this.assertThreadChannelActive(task.channelRef)
     if (actor.kind === 'member') this.requireMemberChannel(this.requireMember(actor.memberId), task.channelRef)
     return { task, thread }
   }
@@ -2769,6 +2773,13 @@ export class AgentTeamLedger {
     const channelRef = this.channelRefForThreadFrom(projection, thread.threadRef)
     if (channelRef === undefined) throw new Error(`Thread '${thread.threadRef}' has no Channel`)
     if (projection.channels.get(channelRef)?.workspaceId !== workspaceId) throw new Error(`Thread '${thread.threadRef}' does not belong to Workspace '${workspaceId}'`)
+    // Archived Channels do not exist on Team API surfaces: their Threads are
+    // unreachable by ref, for reads as for writes. Replay stays honest —
+    // operations predating the archival resolve against the then-active
+    // Channel because replay applies in sequence.
+    if (projection.channels.get(channelRef)?.state === 'archived') {
+      throw new Error(`Channel '${channelRef}' is archived and no longer accepts Team work`)
+    }
     if (task !== undefined && task.channelRef !== channelRef) throw new Error(`Task '${task.taskRef}' does not belong to Thread '${thread.threadRef}'`)
     return { ...(task === undefined ? {} : { task }), thread, channelRef }
   }

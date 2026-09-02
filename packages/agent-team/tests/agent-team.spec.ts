@@ -972,3 +972,42 @@ describe('AgentTeam Channel archival ledger', () => {
     await expect(harness(storedPool(records))).rejects.toThrow(/invalid released Claim projection/)
   })
 })
+
+describe('AgentTeam archived read surfaces', () => {
+  it('hides archived-Channel Tasks from ref resolution and rejects direct thread reads', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('reads-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('reads-start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    await ledger.changeAttention({ requestId: requestId('reads-follow'), workspaceId: alpha, taskRef: started.task.taskRef, action: 'follow', actor })
+    await ledger.readThread({ requestId: requestId('reads-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor: agentTeamHumanActor() })
+    // Pre-archival everything resolves and reads.
+    expect(ledger.resolveTaskRefs(alpha, [started.task.taskRef])).toHaveLength(1)
+    expect(ledger.threadHistory(actor, { workspaceId: alpha, taskRef: started.task.taskRef })).toMatchObject({ thread: { threadRef: started.thread.threadRef } })
+    expect(ledger.threadObservations(agentTeamHumanActor(), { workspaceId: alpha, threadRef: started.thread.threadRef })).toBeTruthy()
+
+    await ledger.archiveChannel({ requestId: requestId('reads-archive'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })
+
+    // Archived Channels do not exist on Team API surfaces: refs stop
+    // resolving and every ref-addressed read rejects with the explicit
+    // archived error instead of an unknown-ref disguise.
+    expect(ledger.resolveTaskRefs(alpha, [started.task.taskRef])).toEqual([])
+    await expect(ledger.readThread({ requestId: requestId('reads-read-2'), workspaceId: alpha, taskRef: started.task.taskRef, actor: agentTeamHumanActor() })).rejects.toThrow(/archived and no longer accepts Team work/)
+    expect(() => ledger.threadHistory(actor, { workspaceId: alpha, taskRef: started.task.taskRef })).toThrow(/archived and no longer accepts Team work/)
+    expect(() => ledger.threadObservations(agentTeamHumanActor(), { workspaceId: alpha, threadRef: started.thread.threadRef })).toThrow(/archived and no longer accepts Team work/)
+    expect(() => ledger.view({ workspaceId: alpha, threadRef: started.thread.threadRef })).toThrow(/archived and no longer accepts Team work/)
+    await expect(ledger.changeAttention({ requestId: requestId('reads-unfollow'), workspaceId: alpha, taskRef: started.task.taskRef, action: 'unfollow', actor })).rejects.toThrow(/archived and no longer accepts Team work/)
+    expect(() => ledger.listClaims(actor, { workspaceId: alpha, taskRef: started.task.taskRef })).toThrow(/archived and no longer accepts Team work/)
+
+    // The durable layer stays whole: replay validates every pre-archival
+    // read against the then-active Channel, and the facts survive intact.
+    ledger.validate()
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const replayed = await harness(storedPool(records))
+    expect(() => replayLedger(replayed).validate()).not.toThrow()
+    const cold = replayLedger(replayed)
+    expect(cold.getTask(started.task.taskRef)).toMatchObject({ taskRef: started.task.taskRef })
+    expect(cold.resolveTaskRefs(alpha, [started.task.taskRef])).toEqual([])
+  })
+})
