@@ -227,6 +227,51 @@ async function realHarness(
 }
 
 describe('Agent Team Member lifecycle', () => {
+  it('archives a Member: session disposed and archived, private memory kept, claims released', async () => {
+    const { ctx, workspaceId, archived } = await realHarness()
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('archive-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('archive-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    await writeFile(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'), 'persistent note')
+
+    // Give the Member an active Claim so the release cleanup is observable
+    // end-to-end.
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('archive-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Build the feature', recipients: [memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const live = ctx.agents.get(added.status.member.sessionId)!
+    await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('archive-read'), workspaceId, taskRef: started.task!.taskRef })
+    const claimed = await ctx.agentTeam.changeClaimForAgent(live, { requestId: requestId('archive-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', direction: 'implements the feature', baseRevision: started.thread.revision })
+    if (claimed.kind !== 'committed') throw new Error(`expected committed claim, received ${claimed.kind}`)
+    expect(claimed.task.status).toBe('in_progress')
+
+    const result = await ctx.agentTeam.archiveMember({ requestId: requestId('archive'), memberId })
+    expect(result.member.state).toBe('archived')
+    expect(result.member.sessionId).toBe(added.status.member.sessionId)
+    expect(result.releasedClaims).toEqual([expect.objectContaining({ owner: memberId, state: 'released' })])
+    expect(result.removedAttention).toEqual([expect.objectContaining({ memberId, threadRef: started.task!.threadRef })])
+
+    // Runtime effects: the live session is disposed and its Session archived
+    // from grouping surfaces; private memory stays on disk.
+    expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
+    expect(archived).toContain(added.status.member.sessionId)
+    await expect(access(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'))).resolves.toBeUndefined()
+    expect(ctx.agentTeam.members().find(status => status.member.memberId === memberId)).toMatchObject({ availability: 'archived', presence: 'unavailable' })
+
+    // The released Claim drops the Task back to todo in the shared view.
+    const view = ctx.agentTeam.view({ workspaceId })
+    expect(view.tasks.find(task => task.taskRef === started.task!.taskRef)).toMatchObject({ status: 'todo' })
+    expect(view.members).toEqual([])
+
+    // Idempotent retry returns the same receipt; removal from archived stays
+    // available as the data hygiene path and deletes the private namespace.
+    const again = await ctx.agentTeam.archiveMember({ requestId: requestId('archive'), memberId })
+    expect(again.receipt.operationId).toBe(result.receipt.operationId)
+    const removed = await ctx.agentTeam.removeMember({ requestId: requestId('archive-remove'), memberId })
+    expect(removed.member.state).toBe('inactive')
+    await expect(access(added.status.member.privateMemoryPath)).rejects.toThrow()
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('creates, suspends, resumes, and removes an exact Team-owned Agent session', async () => {
     const { ctx, workspaceId, root, project } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })

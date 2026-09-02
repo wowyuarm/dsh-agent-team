@@ -32,6 +32,8 @@ import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
   AgentTeamAgentMemberStatus,
+  AgentTeamArchiveMemberRequest,
+  AgentTeamArchiveMemberResult,
   AgentTeamChangeScope,
   AgentTeamChangesRequest,
   AgentTeamChangesResult,
@@ -672,6 +674,23 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
+  /**
+   * Archive one Member: commit the archival, stop its live session (disposal
+   * only — private memory and the Session log stay on disk for a future
+   * restore), and archive the Session from every grouping surface. Like
+   * removal, all active Claims release and the Member's Attention clears.
+   */
+  @Remote('archiveMember')
+  async archiveMember(request: AgentTeamArchiveMemberRequest): Promise<AgentTeamArchiveMemberResult> {
+    return this.enqueueLifecycle(async () => {
+      const result = await this.requireLedger().archiveMember({ ...request, actor: agentTeamHumanActor() })
+      if (result.committed) this.emitCommitted(result.value.receipt)
+      await this.disposeMemberSession(request.memberId, result.value.member)
+      await this.ctx.workspaceRegistry.archiveSession(result.value.member.sessionId)
+      return result.value
+    })
+  }
+
   /** Human-only Task resolution. Business fences are returned as typed outcomes. */
   @Remote('changeTask')
   async changeTask(request: AgentTeamTaskRequest): Promise<AgentTeamTaskResult> {
@@ -1142,6 +1161,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
     if (member.state === 'inactive') return Object.freeze({ member, availability: 'inactive', presence: 'unavailable' })
+    if (member.state === 'archived') return Object.freeze({ member, availability: 'archived', presence: 'unavailable' })
     if (member.state === 'suspended') return Object.freeze({ member, availability: 'suspended', presence: 'unavailable' })
     const failures = this.memberFailures.get(member.memberId)
     if (failures?.activation !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic: failures.activation })
