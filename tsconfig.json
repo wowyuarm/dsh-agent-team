@@ -41,6 +41,9 @@
       "@wowyuarm/dsh-agent-team/member-context": [
         "./packages/agent-team/src/member-context.ts"
       ],
+      "@wowyuarm/dsh-agent-team/member-skills": [
+        "./packages/agent-team/src/member-skills.ts"
+      ],
       "@wowyuarm/dsh-agent-team/tools": [
         "./packages/tool-agent-team/src/index.ts"
       ],
@@ -49,6 +52,12 @@
       ],
       "@deepseek-ai/dsh-storage-sqlite": [
         "../deepseek-harness/packages/storage/storage-sqlite/src/index.ts"
+      ],
+      "@deepseek-ai/dsh-skill": [
+        "../deepseek-harness/packages/skill/skill/src/index.ts"
+      ],
+      "@deepseek-ai/dsh-skill-filesystem": [
+        "../deepseek-harness/packages/skill/skill-filesystem/src/index.ts"
       ],
       "@deepseek-ai/cordis": [
         "../deepseek-harness/vendor/cordis/src"

@@ -59,9 +59,12 @@ describe('Agent Team shipping contract', () => {
     expect(buildCommand.indexOf('npm run generate:typert')).toBeGreaterThan(buildCommand.indexOf('npm run clean:build-outputs'))
     for (const capability of [
       '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-pwsh', '@deepseek-ai/dsh-tool-fs',
-      '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-skill-filesystem',
-      '@deepseek-ai/dsh-tool-skill', '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-web',
+      '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-jobs', '@deepseek-ai/dsh-tool-skill',
+      '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-web',
     ]) expect(preset).toContain(`name: '${capability}'`)
+    // Skills are per-Member (Host-mounted private-directory provider), so the
+    // shared filesystem row is deliberately absent from the preset.
+    expect(preset).not.toContain('@deepseek-ai/dsh-skill-filesystem')
     const bundleManifest = JSON.parse(manifestText) as {
       peerDependencies: Record<string, string>
       exports: Record<string, { default?: string }>

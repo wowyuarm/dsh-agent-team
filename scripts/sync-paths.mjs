@@ -20,6 +20,7 @@ const own = {
   '@wowyuarm/dsh-agent-team/remote': ['./packages/agent-team/lib/typert.remote-client.js'],
   '@wowyuarm/dsh-agent-team/preset-roster': ['./packages/agent-team/src/preset-roster.ts'],
   '@wowyuarm/dsh-agent-team/member-context': ['./packages/agent-team/src/member-context.ts'],
+  '@wowyuarm/dsh-agent-team/member-skills': ['./packages/agent-team/src/member-skills.ts'],
   '@wowyuarm/dsh-agent-team/tools': ['./packages/tool-agent-team/src/index.ts'],
   '@wowyuarm/dsh-agent-team/client': ['./packages/client-agent-team/src/client/index.ts'],
 }
@@ -31,6 +32,8 @@ const ownTypes = {
 
 const harnessSrc = {
   '@deepseek-ai/dsh-storage-sqlite': ['../deepseek-harness/packages/storage/storage-sqlite/src/index.ts'],
+  '@deepseek-ai/dsh-skill': ['../deepseek-harness/packages/skill/skill/src/index.ts'],
+  '@deepseek-ai/dsh-skill-filesystem': ['../deepseek-harness/packages/skill/skill-filesystem/src/index.ts'],
 }
 for (const [key, value] of Object.entries(base.compilerOptions.paths)) {
   harnessSrc[key] = (Array.isArray(value) ? value : [value])
@@ -54,6 +57,7 @@ const buildOwn = {
   '@wowyuarm/dsh-agent-team/remote': ['./packages/agent-team/lib/typert.remote-client.d.ts'],
   '@wowyuarm/dsh-agent-team/preset-roster': ['./packages/agent-team/lib/types/preset-roster.d.ts'],
   '@wowyuarm/dsh-agent-team/member-context': ['./packages/agent-team/lib/types/member-context.d.ts'],
+  '@wowyuarm/dsh-agent-team/member-skills': ['./packages/agent-team/lib/types/member-skills.d.ts'],
   '@wowyuarm/dsh-agent-team/tools': ['./packages/tool-agent-team/lib/types/index.d.ts'],
   '@wowyuarm/dsh-agent-team/client': ['./packages/client-agent-team/lib/types/client/index.d.ts'],
 }

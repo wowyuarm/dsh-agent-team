@@ -49,9 +49,10 @@
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
 
-- id: skill-filesystem
-  name: '@deepseek-ai/dsh-skill-filesystem'
-
+# Skills are per-Member: the Host mounts a private-directory provider on each
+# Member's agent context at activation (member-skills). The shared filesystem
+# row stays out, so no Member inherits project/user/bundled skills and every
+# Member catalog starts empty until the Member installs a skill itself.
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
 

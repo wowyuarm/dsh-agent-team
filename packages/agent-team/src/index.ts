@@ -26,6 +26,8 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { acceptedTaskCompactionMembers, AutoCompactionCoordinator, PRE_COMPACTION_NOTICE_SUMMARY, preCompactionNoticeText } from './auto-compaction.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
+import * as memberSkills from './member-skills.ts'
+import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import type {
@@ -197,6 +199,10 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
   /** Live selection refs let model edits take effect without disposing the Session. */
   private readonly modelSelections = new Map<AgentTeamMemberId, ModelSelectionRef>()
+  /** Live skill selection refs let capability edits re-filter the catalog without disposing the Session. */
+  private readonly skillSelections = new Map<AgentTeamMemberId, MemberSkillSelectionRef>()
+  /** Per-Member private skill provider disposers; released with the Member's agent scope. */
+  private readonly skillProviderDisposals = new Map<AgentTeamMemberId, () => void>()
   /**
    * Why one Member shows error presence, per failure source. Reads prefer
    * activation, then runtime, then compaction; slots clear independently, so
@@ -318,6 +324,9 @@ export default class AgentTeam extends TypertRemoteService {
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
       this.modelSelections.clear()
+      this.skillSelections.clear()
+      for (const dispose of this.skillProviderDisposals.values()) dispose()
+      this.skillProviderDisposals.clear()
       for (const dispose of this.memberRestrictions.values()) dispose()
       this.memberRestrictions.clear()
       this.capabilityWarnings.clear()
@@ -561,7 +570,9 @@ export default class AgentTeam extends TypertRemoteService {
       await active.dispose()
       this.handles.delete(request.memberId)
       this.modelSelections.delete(request.memberId)
+      this.skillSelections.delete(request.memberId)
       this.releaseMemberToolPolicy(request.memberId)
+      this.releaseMemberSkillProvider(request.memberId)
       this.clearMemberFailure(request.memberId, 'activation')
       this.clearMemberNotificationState(request.memberId)
       // The previous log survives on disk; archiving hides it from every
@@ -656,7 +667,7 @@ export default class AgentTeam extends TypertRemoteService {
         selection.current = stored.model ?? this.ctx.agentDefaultModel.currentSelection()
       }
       if (active !== undefined && !isDeepStrictEqual(previous?.capabilities ?? undefined, stored.capabilities ?? undefined)) {
-        await this.applyToolPolicyEdit(active, stored)
+        await this.applyCapabilityEdit(active, stored)
       }
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
     })
@@ -664,13 +675,14 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Live-apply a capability edit at a turn boundary: while the Agent runs, the
-   * current turn keeps its schemas; the swap happens once idle, so the next
-   * step recomputes schemas from the new restriction and the same Session and
-   * history survive. Suspend/remove during the wait cancels the swap — the
-   * disposed handle released the old restriction already and no disposer
-   * leaks.
+   * current turn keeps its schemas and catalog; the swap happens once idle,
+   * so the next step recomputes schemas from the new restriction and the
+   * durable replacement skill catalog from the new selection, with the same
+   * Session and history surviving. Suspend/remove during the wait cancels
+   * the swap — the disposed handle released the old restriction already and
+   * no disposer leaks.
    */
-  private async applyToolPolicyEdit(active: AgentHandle, stored: AgentTeamAgentMember): Promise<void> {
+  private async applyCapabilityEdit(active: AgentHandle, stored: AgentTeamAgentMember): Promise<void> {
     const memberId = stored.memberId
     if (this.runningAgents.has(active.agent.id)) {
       await new Promise<void>(resolve => {
@@ -697,6 +709,8 @@ export default class AgentTeam extends TypertRemoteService {
       if (this.handles.get(memberId) !== active) return
     }
     this.reapplyMemberToolPolicy(stored)
+    const skillSelection = this.skillSelections.get(memberId)
+    if (skillSelection !== undefined) skillSelection.swap(stored.capabilities?.skills?.allow)
   }
 
   /** Irreversibly remove one Member, archive its Session, and delete its private namespace. */
@@ -1073,6 +1087,10 @@ export default class AgentTeam extends TypertRemoteService {
       const selection = member.model ?? this.ctx.agentDefaultModel.currentSelection()
       const agentOptions = { provider: selection.provider, model: selection.model }
       const selected: ModelSelectionRef = { current: selection, assembled: undefined }
+      // Absent skills.allow loads every discovered private skill; a present
+      // allow-list filters the catalog by name through the live ref below.
+      // `swap` is bound by the provider at activation (no-op until then).
+      const skillSelection: MemberSkillSelectionRef = { current: member.capabilities?.skills?.allow, swap: () => {} }
       const setup = async (agentCtx: Context) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.applyMemberToolPolicy(agentCtx, member)
@@ -1096,9 +1114,17 @@ export default class AgentTeam extends TypertRemoteService {
             agentOptions,
             setup,
           })
+      // The Member-private skill provider registers on the created agent's
+      // exact scope layer (the traceable-service seam, like the tool
+      // restriction): each Member scans only its own skills directory.
+      this.skillProviderDisposals.set(member.memberId, memberSkills.mountMemberSkillProvider(created.agent.ctx, {
+        skillsDirectory: join(member.privateMemoryPath, 'skills'),
+        selection: skillSelection,
+      }))
       await workspace.attachSession(member.sessionId)
       this.handles.set(member.memberId, created)
       this.modelSelections.set(member.memberId, selected)
+      this.skillSelections.set(member.memberId, skillSelection)
       this.clearMemberFailure(member.memberId, 'activation')
       this.nameMemberSession(member, created.agent)
       this.notifyMember(created.agent)
@@ -1106,7 +1132,9 @@ export default class AgentTeam extends TypertRemoteService {
     } catch (error) {
       await created?.dispose()
       this.modelSelections.delete(member.memberId)
+      this.skillSelections.delete(member.memberId)
       this.releaseMemberToolPolicy(member.memberId)
+      this.releaseMemberSkillProvider(member.memberId)
       this.setMemberFailure(member.memberId, 'activation', error instanceof Error ? error.message : String(error))
     } finally {
       // Activation only changes this Workspace's presence projection.
@@ -1133,7 +1161,9 @@ export default class AgentTeam extends TypertRemoteService {
       if (stale !== undefined) {
         this.handles.delete(memberId)
         this.modelSelections.delete(memberId)
+        this.skillSelections.delete(memberId)
         this.releaseMemberToolPolicy(memberId)
+        this.releaseMemberSkillProvider(memberId)
         // The composition-loss diagnostic this heal answers is stale once the
         // rebuild starts; a later activation must not resurface it.
         this.clearMemberFailure(memberId, 'compaction')
@@ -1229,6 +1259,14 @@ export default class AgentTeam extends TypertRemoteService {
     this.capabilityWarnings.delete(memberId)
   }
 
+  /** Release one Member's private skill provider; safe to call twice. */
+  private releaseMemberSkillProvider(memberId: AgentTeamMemberId): void {
+    const dispose = this.skillProviderDisposals.get(memberId)
+    if (dispose === undefined) return
+    this.skillProviderDisposals.delete(memberId)
+    dispose()
+  }
+
   private setCapabilityWarnings(memberId: AgentTeamMemberId, warnings: readonly AgentTeamCapabilityWarning[]): void {
     if (warnings.length === 0) this.capabilityWarnings.delete(memberId)
     else this.capabilityWarnings.set(memberId, Object.freeze([...warnings]))
@@ -1236,6 +1274,9 @@ export default class AgentTeam extends TypertRemoteService {
 
   private async initializePrivateMemory(path: string): Promise<void> {
     await mkdir(join(path, 'notes'), { recursive: true })
+    // The Member-private skills directory starts empty; the per-Member
+    // provider scans exactly this root (default roots excluded).
+    await mkdir(join(path, 'skills'), { recursive: true })
     try {
       await writeFile(join(path, 'memory.md'), '# Member memory\n\n## Stable facts\n- Add only verified, durable facts that help future work.\n\n## Notes index\n- Add focused `notes/*.md` entries here when a reusable detail needs on-demand reading.\n', { flag: 'wx' })
     } catch (error) {
@@ -1453,7 +1494,9 @@ export default class AgentTeam extends TypertRemoteService {
       this.handles.delete(memberId)
     }
     this.modelSelections.delete(memberId)
+    this.skillSelections.delete(memberId)
     this.releaseMemberToolPolicy(memberId)
+    this.releaseMemberSkillProvider(memberId)
     this.clearMemberFailure(memberId, 'activation')
   }
 
