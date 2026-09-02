@@ -53,6 +53,7 @@ import type {
   AgentTeamHumanActor,
   AgentTeamMemberActor,
   AgentTeamMemberCapabilities,
+  AgentTeamCapabilityWarning,
   AgentTeamMessageAttachment,
   AgentTeamMemberId,
   AgentTeamMemberResult,
@@ -211,6 +212,20 @@ export default class AgentTeam extends TypertRemoteService {
     /** Last non-busy automatic-compaction failure; entered transactions retain additional Session history. */
     compaction?: string
   }>()
+  /**
+   * Live per-Member tool restriction disposers, mirroring modelSelections:
+   * activation registers, disposal paths release, edits swap at a turn
+   * boundary. Deliberate interface reservation: the restriction seam is the
+   * primitive future Runtime Revision manifests orchestrate — do not remove
+   * during cleanup.
+   */
+  private readonly memberRestrictions = new Map<AgentTeamMemberId, () => void>()
+  /**
+   * Runtime-derived capability warnings, recomputed at every activation (like
+   * memberFailures, keyed by Member and never persisted): persisted warnings
+   * would lie after a Host restart or a Harness upgrade renames tools.
+   */
+  private readonly capabilityWarnings = new Map<AgentTeamMemberId, readonly AgentTeamCapabilityWarning[]>()
   private readonly autoCompaction: AutoCompactionCoordinator
   /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
@@ -303,6 +318,9 @@ export default class AgentTeam extends TypertRemoteService {
       await Promise.all([...this.handles.values()].map(handle => handle.dispose()))
       this.handles.clear()
       this.modelSelections.clear()
+      for (const dispose of this.memberRestrictions.values()) dispose()
+      this.memberRestrictions.clear()
+      this.capabilityWarnings.clear()
       this.runningAgents.clear()
       await domain.close()
     }, 'agentTeam.dispose')
@@ -543,6 +561,7 @@ export default class AgentTeam extends TypertRemoteService {
       await active.dispose()
       this.handles.delete(request.memberId)
       this.modelSelections.delete(request.memberId)
+      this.releaseMemberToolPolicy(request.memberId)
       this.clearMemberFailure(request.memberId, 'activation')
       this.clearMemberNotificationState(request.memberId)
       // The previous log survives on disk; archiving hides it from every
@@ -636,8 +655,48 @@ export default class AgentTeam extends TypertRemoteService {
         if (selection === undefined) throw new Error(`Agent Member '${stored.handle}' has no live model selection`)
         selection.current = stored.model ?? this.ctx.agentDefaultModel.currentSelection()
       }
+      if (active !== undefined && !isDeepStrictEqual(previous?.capabilities ?? undefined, stored.capabilities ?? undefined)) {
+        await this.applyToolPolicyEdit(active, stored)
+      }
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(stored) })
     })
+  }
+
+  /**
+   * Live-apply a capability edit at a turn boundary: while the Agent runs, the
+   * current turn keeps its schemas; the swap happens once idle, so the next
+   * step recomputes schemas from the new restriction and the same Session and
+   * history survive. Suspend/remove during the wait cancels the swap — the
+   * disposed handle released the old restriction already and no disposer
+   * leaks.
+   */
+  private async applyToolPolicyEdit(active: AgentHandle, stored: AgentTeamAgentMember): Promise<void> {
+    const memberId = stored.memberId
+    if (this.runningAgents.has(active.agent.id)) {
+      await new Promise<void>(resolve => {
+        const disposers: Array<() => void> = []
+        const settle = (): void => {
+          for (const dispose of disposers.splice(0)) dispose()
+          resolve()
+        }
+        disposers.push(
+          this.ctx.on('agent/status', (payload: { agent: Agent; status: string }) => {
+            if (payload.agent !== active.agent) return
+            // A turn that ends — clean idle or error — is the boundary; the
+            // next step recomputes schemas from the new restriction.
+            if (payload.status !== 'running') settle()
+          }),
+          // Disposal (suspend/remove/reactivation) resolves the wait: the old
+          // restriction went with the disposed scope, so only the ledger
+          // intent remains to apply at the next activation.
+          this.ctx.on('session/disposed', (session: { id: SessionId }) => {
+            if (session.id === active.agent.session.id) settle()
+          }),
+        )
+      })
+      if (this.handles.get(memberId) !== active) return
+    }
+    this.reapplyMemberToolPolicy(stored)
   }
 
   /** Irreversibly remove one Member, archive its Session, and delete its private namespace. */
@@ -1016,6 +1075,7 @@ export default class AgentTeam extends TypertRemoteService {
       const selected: ModelSelectionRef = { current: selection, assembled: undefined }
       const setup = async (agentCtx: Context) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
+        this.applyMemberToolPolicy(agentCtx, member)
         this.validateMemberPreset(agentCtx)
         installModelSelection(agentCtx, selected)
         return {
@@ -1046,6 +1106,7 @@ export default class AgentTeam extends TypertRemoteService {
     } catch (error) {
       await created?.dispose()
       this.modelSelections.delete(member.memberId)
+      this.releaseMemberToolPolicy(member.memberId)
       this.setMemberFailure(member.memberId, 'activation', error instanceof Error ? error.message : String(error))
     } finally {
       // Activation only changes this Workspace's presence projection.
@@ -1072,6 +1133,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (stale !== undefined) {
         this.handles.delete(memberId)
         this.modelSelections.delete(memberId)
+        this.releaseMemberToolPolicy(memberId)
         // The composition-loss diagnostic this heal answers is stale once the
         // rebuild starts; a later activation must not resurface it.
         this.clearMemberFailure(memberId, 'compaction')
@@ -1111,6 +1173,67 @@ export default class AgentTeam extends TypertRemoteService {
     if (missing.length > 0) throw new Error(`team-enabled preset is missing tools: ${missing.join(', ')}`)
   }
 
+  /**
+   * Apply one Member's persisted tool allow-list as a scoped restriction on
+   * the freshly composed preset surface, and derive activation-time warnings
+   * for entries the current tool surface no longer knows. Runs inside setup
+   * BEFORE validateMemberPreset so the validation observes the restricted
+   * view (the Host always unions the five Team tools over the configured
+   * list). Deliberate interface reservation: this restriction seam is the
+   * primitive future Runtime Revision manifests orchestrate — do not remove
+   * during cleanup.
+   */
+  private applyMemberToolPolicy(agentCtx: Context, member: AgentTeamAgentMember): void {
+    const scope = scopeOf(agentCtx)
+    const configured = member.capabilities?.tools?.allow
+    if (configured === undefined) {
+      this.capabilityWarnings.delete(member.memberId)
+      return
+    }
+    // Drop names the current surface does not know rather than failing the
+    // activation: a Harness upgrade renaming a tool must not make the Member
+    // unavailable. The warning carries the known-name digest so a distant
+    // future reader can diagnose the drift.
+    const known = this.ctx.tools.schemas(scope).map(tool => tool.name)
+    const knownSet = new Set(known)
+    const dropped = configured.filter(name => !knownSet.has(name))
+    this.setCapabilityWarnings(member.memberId, dropped.map(name => ({ name, knownNames: known })))
+    const allow = [...new Set([...configured.filter(name => knownSet.has(name)), ...AGENT_TEAM_TOOL_NAMES])]
+    if (allow.length === 0) return
+    // tools.restrict() requires a scoped context and rejects names outside
+    // the inherited surface; both errors surface as this Member's activation
+    // failure without touching any other Member.
+    const dispose = agentCtx.tools.restrict({ allow })
+    this.memberRestrictions.set(member.memberId, dispose)
+  }
+
+  /** Swap a live Member's tool policy at a turn boundary: dispose the old restriction, apply the new. */
+  private reapplyMemberToolPolicy(member: AgentTeamAgentMember): void {
+    this.releaseMemberToolPolicy(member.memberId)
+    this.applyMemberToolPolicy(this.requireLiveMemberContext(member.memberId), member)
+  }
+
+  private requireLiveMemberContext(memberId: AgentTeamMemberId): Context {
+    const handle = this.handles.get(memberId)
+    if (handle === undefined) throw new Error(`Agent Member '${this.memberLabel(memberId)}' has no live session for a tool-policy update`)
+    return handle.agent.ctx
+  }
+
+  /** Release one Member's restriction disposer and warning state; safe to call twice. */
+  private releaseMemberToolPolicy(memberId: AgentTeamMemberId): void {
+    const dispose = this.memberRestrictions.get(memberId)
+    if (dispose !== undefined) {
+      this.memberRestrictions.delete(memberId)
+      dispose()
+    }
+    this.capabilityWarnings.delete(memberId)
+  }
+
+  private setCapabilityWarnings(memberId: AgentTeamMemberId, warnings: readonly AgentTeamCapabilityWarning[]): void {
+    if (warnings.length === 0) this.capabilityWarnings.delete(memberId)
+    else this.capabilityWarnings.set(memberId, Object.freeze([...warnings]))
+  }
+
   private async initializePrivateMemory(path: string): Promise<void> {
     await mkdir(join(path, 'notes'), { recursive: true })
     try {
@@ -1142,9 +1265,12 @@ export default class AgentTeam extends TypertRemoteService {
     const runtimeError = failures?.runtime ?? failures?.compaction
     if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
     // Capability warnings are runtime-derived at activation (handles-scoped,
-    // like failures): absent while capabilities resolve cleanly, so the field
-    // is simply omitted until 02 computes real divergences.
-    return Object.freeze({ member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available' })
+    // like failures): absent while capabilities resolve cleanly.
+    const capabilityWarnings = this.capabilityWarnings.get(member.memberId)
+    return Object.freeze({
+      member, availability: 'active', presence: handle.agent.status === 'running' ? 'working' : 'available',
+      ...(capabilityWarnings === undefined ? {} : { capabilityWarnings }),
+    })
   }
 
   private setMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction', message: string): void {
@@ -1327,6 +1453,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.handles.delete(memberId)
     }
     this.modelSelections.delete(memberId)
+    this.releaseMemberToolPolicy(memberId)
     this.clearMemberFailure(memberId, 'activation')
   }
 
