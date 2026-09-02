@@ -49,3 +49,10 @@ Blocked by: 01-member-capabilities-schema.md
 - **端到端验证**：默认空（新 Member + 普通 Session 双断言）→ 自装 code-review.md → 发现（仅 owner）→ `skills.get` 全文加载 → sibling 不可见 → 移除随 Member 目录删除；显式勾选过滤（未勾选不可列/不可 load）+ 编辑 live-swap（收窄/放宽/清除回 auto）；suspend/resume/Host restart 恢复一致 catalog。
 - **依赖路径**：`@deepseek-ai/dsh-skill`（registry 类型）与 `@deepseek-ai/dsh-skill-filesystem`（provider 类）加入 `scripts/sync-paths.mjs` 的 harnessSrc 映射（dsh-storage-sqlite 同款），三份 tsconfig facade 重生成；`./member-skills` 加入 package.json exports。两包已是 peerDependencies（宿主 base bundle 提供 registry；skill-filesystem 仅 preset 时代引用，现在 Host 直接 import 类——peerDep 语义不变）。
 - **member-context**：注入块加 `Private skills directory: <path>/skills` 行（renderMemberMemory 与 unavailable 两处），05 在此基础上完善引导文案。
+
+## Follow-up（2026-09-02，Human 验收反馈：内置 meta-skill + skill 不止单 SKILL.md）
+
+- **双 root**：`customSkillDirs: [内置只读 core-skills, 私有 skills/]`——同名时实测（dual-root probe）第一个 customDir 胜出（同 CUSTOM_RANK 下 list 先到先得），内置跨升级稳定，Member 装变体换名字。
+- **内置 `member-skill-manager`**：`packages/agent-team/core-skills/`（**不能放 preset/ 下**——agent-presets 会把 preset root 下每个合法命名目录当 roster row，shipping roster 断言锁定单 preset）；SKILL.md + references/{writing-great-skills,auth-and-config}.md 目录形态，按私有空间语义改编自 Loom core-skills（绝对路径注入、Member 私有目录、DM 交 credentials、与 memory 纪律同源）。
+- **默认 catalog 语义变化**：不再是空，而是内置集（meta skill）；测试基线同步（default = ['member-skill-manager']，自装后 append，sibling 恰为内置集）。
+- **分发**：`core-skills/**/*` 加入 package files glob；`BUNDLED_SKILLS_DIRECTORY` 从模块发射位置 resolve（lib/ 与 src/ 均正确相对）。

@@ -1,8 +1,8 @@
 /**
  * Per-Member private skill provider: the Team-owned wrapper around the
  * Harness filesystem provider that scopes one Member's skill discovery to
- * exactly its private `skills/` directory (default roots excluded, catalog
- * empty until the Member installs something itself) and filters `list()`
+ * exactly the plugin's bundled read-only core skills plus that Member's
+ * private `skills/` directory (default roots excluded), and filters `list()`
  * output by that Member's selection ref.
  *
  * Deliberate interface reservation: this per-Member provider seam is the
@@ -25,8 +25,10 @@ export type MemberSkillSelectionRef = {
 
 /** Per-Member provider configuration; the private directory is provisioned before mounting. */
 export interface MemberSkillsConfig {
-  /** The Member's private skills directory; the only scanned root. */
+  /** The Member's private skills directory; the writable self-install root. */
   readonly skillsDirectory: string
+  /** Read-only bundled skills shipped with the plugin (e.g. the meta skill). */
+  readonly bundledSkillsDirectory: string | undefined
   /** Live selection ref; an edit swaps the array and invalidates the catalog. */
   readonly selection: MemberSkillSelectionRef
 }
@@ -65,7 +67,7 @@ export function mountMemberSkillProvider(agentCtx: Context, config: MemberSkills
   })
 }
 
-/** One Member's private skills directory wrapped as a filtered registry provider. */
+/** One Member's bundled-plus-private skill roots wrapped as a filtered registry provider. */
 class MemberPrivateSkillProvider implements SkillProvider {
   readonly name: string
   private readonly wrapped: FileSystemSkillProvider
@@ -77,14 +79,19 @@ class MemberPrivateSkillProvider implements SkillProvider {
     private readonly selection: MemberSkillSelectionRef,
   ) {
     this.name = `member-private:${config.skillsDirectory}`
+    // Two Team-owned roots, no project/user/global leakage: the bundled
+    // read-only core skills first, then the Member's writable private
+    // directory. Within one provider both roots share the custom rank, and
+    // discovery keeps the first root's same-name candidate, so a bundled
+    // skill stays stable across plugin upgrades while a Member installs
+    // its own additions under their own names.
+    const customSkillDirs = config.bundledSkillsDirectory === undefined
+      ? [config.skillsDirectory]
+      : [config.bundledSkillsDirectory, config.skillsDirectory]
     this.wrapped = new FileSystemSkillProvider(ctx, control, {
-      // The Member's private directory is the ONLY root: no project, user,
-      // or bundled skills leak into a Member's catalog. An empty catalog
-      // until the Member installs a skill itself is the intended product
-      // semantic, not a fallback.
       providerName: this.name,
       includeDefaultRoots: false,
-      customSkillDirs: [config.skillsDirectory],
+      customSkillDirs,
     })
   }
 

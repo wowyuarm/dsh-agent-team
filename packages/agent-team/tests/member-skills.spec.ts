@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -147,13 +147,14 @@ const SKILL_MD = (name: string, description: string, body: string): string =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`
 
 describe('Agent Team member-private skills', () => {
-  it('starts with an empty catalog and installs into only the owning Member catalog', async () => {
+  it('starts with the bundled core skills and self-installs into only the owning Member catalog', async () => {
     const { ctx, workspaceId } = await memberSkillsHarness()
     const member = await addMember(ctx, workspaceId, 'holder')
     const agent = liveAgent(ctx, member.sessionId)
 
-    // Default-empty semantics: no project/user/bundled skills leak in.
-    expect(await catalogNames(ctx, agent)).toEqual([])
+    // Default catalog = the plugin's bundled core skills (the meta skill);
+    // no project/user/global roots leak in. Ordinary sessions see nothing.
+    expect(await catalogNames(ctx, agent)).toEqual(['member-skill-manager'])
     const ordinary = await ctx.agents.create({ sessionId: SessionId('ordinary-skills') })
     cleanups.push(async () => { await ordinary.dispose() })
     expect(await catalogNames(ctx, ordinary.agent)).toEqual([])
@@ -164,18 +165,42 @@ describe('Agent Team member-private skills', () => {
     // discovery rather than racing it.
     await writeFile(join(member.privateMemoryPath, 'skills', 'code-review.md'), SKILL_MD('code-review', 'Review changes', 'Review the diff carefully.'))
     await vi.waitFor(async () => {
-      expect(await catalogNames(ctx, agent)).toEqual(['code-review'])
+      expect(await catalogNames(ctx, agent)).toEqual(['code-review', 'member-skill-manager'])
     })
 
-    // A sibling Member sees neither the skill nor the directory.
+    // A sibling Member keeps exactly the bundled set — neither the private
+    // skill nor the directory is shared.
     const sibling = await addMember(ctx, workspaceId, 'sibling')
     const siblingAgent = liveAgent(ctx, sibling.sessionId)
-    expect(await catalogNames(ctx, siblingAgent)).toEqual([])
+    expect(await catalogNames(ctx, siblingAgent)).toEqual(['member-skill-manager'])
 
-    // The installed skill loads with its full body for the owner.
+    // The installed skill loads with its full body for the owner alone.
     const loaded = await ctx.skills.get('code-review', { scope: agent as never })
     expect(loaded?.content).toContain('Review the diff carefully.')
     expect(await ctx.skills.get('code-review', { scope: siblingAgent as never })).toBeUndefined()
+  })
+
+  it('ships the bundled member-skill-manager with its references and directory form', async () => {
+    const { ctx, workspaceId } = await memberSkillsHarness()
+    const member = await addMember(ctx, workspaceId, 'reader')
+    const agent = liveAgent(ctx, member.sessionId)
+    const skills = await ctx.skills.list({ scope: agent as never })
+    const meta = skills.find(skill => skill.name === 'member-skill-manager')
+    expect(meta).toBeDefined()
+    // Directory form: the candidate's resource base is the skill directory,
+    // so relative references inside the skill resolve beside SKILL.md.
+    // Directory form: the summary's resource base is the skill directory.
+    const resourceBase = meta?.resourceBase
+    expect(resourceBase?.kind).toBe('directory')
+    const directory = resourceBase?.kind === 'directory' ? resourceBase : undefined
+    expect(directory?.path.endsWith('member-skill-manager')).toBe(true)
+    expect(meta?.description).toContain('private skills')
+    const loaded = await ctx.skills.get('member-skill-manager', { scope: agent as never })
+    expect(loaded?.content).toContain('## Configuration and credentials')
+    // The reference file the skill links actually exists on disk, resolved
+    // beside the SKILL.md inside the skill directory.
+    const reference = join(directory!.path, 'references', 'writing-great-skills.md')
+    expect((await readFile(reference, 'utf8'))).toContain('The description is the skill')
   })
 
   it('filters an explicit selection and live-applies selection edits', async () => {
@@ -186,7 +211,7 @@ describe('Agent Team member-private skills', () => {
     await writeFile(join(member.privateMemoryPath, 'skills', 'alpha.md'), SKILL_MD('alpha', 'Alpha skill', 'Alpha body.'))
     await writeFile(join(member.privateMemoryPath, 'skills', 'beta.md'), SKILL_MD('beta', 'Beta skill', 'Beta body.'))
     await vi.waitFor(async () => {
-      expect(await catalogNames(ctx, agent)).toEqual(['alpha', 'beta'])
+      expect(await catalogNames(ctx, agent)).toEqual(['alpha', 'beta', 'member-skill-manager'])
     })
 
     // Explicit selection: only the listed name is listed or loadable. The
@@ -208,11 +233,11 @@ describe('Agent Team member-private skills', () => {
     })
     expect(await catalogNames(ctx, agent)).toEqual(['alpha', 'beta'])
 
-    // Clearing the override returns to auto (all discovered skills).
+    // Clearing the override returns to auto (bundled plus discovered).
     await ctx.agentTeam.updateMember({
       requestId: requestId('select-auto'), memberId: member.memberId, handle: 'picky', description: 'Skills member',
     })
-    expect(await catalogNames(ctx, agent)).toEqual(['alpha', 'beta'])
+    expect(await catalogNames(ctx, agent)).toEqual(['alpha', 'beta', 'member-skill-manager'])
   })
 
   it('provisions skills/ on activation and removes it with the Member', async () => {
@@ -222,7 +247,7 @@ describe('Agent Team member-private skills', () => {
     await writeFile(join(skillsDir, 'ephemeral.md'), SKILL_MD('ephemeral', 'Ephemeral', 'Gone with the Member.'))
     const agent = liveAgent(ctx, member.sessionId)
     await vi.waitFor(async () => {
-      expect(await catalogNames(ctx, agent)).toEqual(['ephemeral'])
+      expect(await catalogNames(ctx, agent)).toEqual(['ephemeral', 'member-skill-manager'])
     })
 
     // Removal deletes the whole private namespace, skills included.
@@ -236,19 +261,19 @@ describe('Agent Team member-private skills', () => {
     await writeFile(join(member.privateMemoryPath, 'skills', 'keeper.md'), SKILL_MD('keeper', 'Keeper', 'Survives restarts.'))
     const agent = liveAgent(ctx, member.sessionId)
     await vi.waitFor(async () => {
-      expect(await catalogNames(ctx, agent)).toEqual(['keeper'])
+      expect(await catalogNames(ctx, agent)).toEqual(['keeper', 'member-skill-manager'])
     })
 
     await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: member.memberId })
     const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume'), memberId: member.memberId })
     expect(resumed.status.availability).toBe('active')
-    expect(await catalogNames(ctx, liveAgent(ctx, member.sessionId))).toEqual(['keeper'])
+    expect(await catalogNames(ctx, liveAgent(ctx, member.sessionId))).toEqual(['keeper', 'member-skill-manager'])
 
     // Host restart: the provider remounts at activation and re-discovers.
     await teamFiber.dispose()
     await ctx.plugin(AgentTeam)
     const restored = ctx.agentTeam.membersForClient({ workspaceId }).find(item => item.member.memberId === member.memberId)
     expect(restored?.availability).toBe('active')
-    expect(await catalogNames(ctx, liveAgent(ctx, member.sessionId))).toEqual(['keeper'])
+    expect(await catalogNames(ctx, liveAgent(ctx, member.sessionId))).toEqual(['keeper', 'member-skill-manager'])
   })
 })

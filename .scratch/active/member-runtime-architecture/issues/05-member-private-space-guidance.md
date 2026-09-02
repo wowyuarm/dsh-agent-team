@@ -38,3 +38,8 @@ Status: done (2026-09-02, Tars — persona 四要点 + member-context skills 路
 - **member-context**：注入块（renderMemberMemory 与 unavailable 两处）加 `Private skills directory: <path>/skills` 行——03 已落地，05 验收的"路径行存在"由新增测试断言锁定。
 - **测试**：member-context.spec 新增 skills 路径行断言；shipping.spec 新增 persona 四要点关键词断言（absolute paths / SKILL.md / YAML front matter / formal deliverables / own judgment per task）。
 - **验收对照**："真实自装并被发现"用例即 03 的端到端测试（vi.waitFor 发现 + get 加载），prompt 表述与该实测时序对得上；既有 persona 内容（Team 协作协议、DM 引导、memory 纪律）原样保留在前后段。
+
+## Follow-up（2026-09-02，Human 指示：preset 规则基本不提 skills，触发靠 meta-skill description）
+
+- **persona 再收缩**：删除全部 skill 装法教学（SKILL.md 格式/watch window/装法步骤）；保留私有空间物理事实（绝对路径、memory/notes 纪律、可复用资产边界、repo 只收正式交付）+ 一句"用不用 skill 自行判断"。shipping 断言同步：`not.toContain('SKILL.md')`、`not.toContain('YAML front matter')`。
+- **教学转移**：skill 写作/安装/修订/credentials 全部移入内置 `member-skill-manager`（其 description 承担"涉及 skill 管理先读我"的路由——Loom 模式）；member-context 的 skills/ 路径行保留（物理事实非教学）。

@@ -51,7 +51,7 @@ The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `chan
 
 The explicit `team-member` preset contains coding tools, background jobs, the skill loader tool, todo, compaction, all five Team tools, Workspace instruction discovery, and private-memory context. Harness `agent-instructions` remains the sole loader for `AGENTS.md`/`CLAUDE.md`. Each Member private root has `memory.md`, `notes/`, and `skills/`; only a bounded escaped reference index is injected. Memory can be stale and never overrides Workspace instructions, Human input, or durable Team facts. Do not store credentials, sensitive data, guesses, chat logs, or facts already owned by the ledger.
 
-The persona guides Members to treat that private root as their own workspace: the injected absolute paths (never cwd-relative ones), SKILL.md self-install into `skills/` with watcher-driven discovery, a reusable-assets curation standard (the repository receives only formal deliverables), and no forced skill-workflow triggers — installing or loading any skill stays the Member's own judgment per task.
+The persona states only the private-space physical facts: the injected absolute paths (never cwd-relative ones), the memory/notes discipline, and a reusable-assets boundary (the repository receives only formal deliverables). All skill craft — what deserves to be a skill, directory-form layout, writing quality, credentials — lives in the bundled `member-skill-manager` meta skill, whose description routes skill-management work to itself; loading any skill stays the Member's own judgment per task.
 
 ## Agent notification boundary
 

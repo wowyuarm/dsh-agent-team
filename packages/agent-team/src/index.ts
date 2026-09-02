@@ -8,7 +8,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
@@ -112,6 +113,14 @@ export { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_INITIALIZE_REQUEST_ID } from './
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
 
 const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+
+/**
+ * Read-only core skills shipped beside the preset (the meta skill first:
+ * its description routes any skill-management work to itself). Resolved
+ * from this module's emitted location so it follows the installed plugin,
+ * like the preset roster's own root.
+ */
+const BUNDLED_SKILLS_DIRECTORY = resolve(dirname(fileURLToPath(import.meta.url)), '../core-skills')
 const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
 const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
@@ -1116,9 +1125,11 @@ export default class AgentTeam extends TypertRemoteService {
           })
       // The Member-private skill provider registers on the created agent's
       // exact scope layer (the traceable-service seam, like the tool
-      // restriction): each Member scans only its own skills directory.
+      // restriction): bundled read-only core skills plus this Member's own
+      // private directory.
       this.skillProviderDisposals.set(member.memberId, memberSkills.mountMemberSkillProvider(created.agent.ctx, {
         skillsDirectory: join(member.privateMemoryPath, 'skills'),
+        bundledSkillsDirectory: BUNDLED_SKILLS_DIRECTORY,
         selection: skillSelection,
       }))
       await workspace.attachSession(member.sessionId)

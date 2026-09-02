@@ -75,14 +75,15 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
-    // The persona guides the Member's private space: absolute paths (not
-    // cwd-relative), SKILL.md self-install into skills/, reusable-assets
-    // curation, and no forced skill-workflow triggers.
+    // The persona keeps only the physical facts of the private space
+    // (absolute paths, memory/notes discipline, reusable-assets boundary);
+    // skill craft itself lives in the bundled member-skill-manager and its
+    // description routes skill work to it.
     expect(preset).toContain('use the injected absolute paths')
-    expect(preset).toContain('write a SKILL.md file')
-    expect(preset).toContain('YAML front matter with name and description')
     expect(preset).toContain('formal deliverables')
     expect(preset).toContain('your own judgment per task')
+    expect(preset).not.toContain('SKILL.md')
+    expect(preset).not.toContain('YAML front matter')
     const toolSource = await readFile(resolve(root, 'packages/tool-agent-team/src/index.ts'), 'utf8')
     expect([...toolSource.matchAll(/name: '(team_[a-z]+)'/g)].map(match => match[1])).toEqual([
       'team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view',
@@ -96,6 +97,7 @@ describe('Agent Team shipping contract', () => {
     }
     expect(manifest.dsh.bundle.patch).toBe('./cordis.patch.yml')
     expect(manifest.files).toContain('packages/agent-team/preset/**/*')
+    expect(manifest.files).toContain('packages/agent-team/core-skills/**/*')
     expect(manifest.files).toContain('packages/agent-team/lib/**/*')
     expect(manifest.files).toContain('packages/client-agent-team/lib/**/*')
     expect(manifest.name).toBe('@wowyuarm/dsh-agent-team')
