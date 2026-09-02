@@ -17,7 +17,7 @@ packages/agent-team
               typed Remote client + Team mode + browser presentation
 ```
 
-- `packages/agent-team` owns Team capability: `src/index.ts` assembles the service and declares Remote methods; `ledger.ts` commits operations; `spec.ts` defines records; `types.ts` contains shared types; `invariant.ts` checks relationships.
+- `packages/agent-team` owns Team capability: `src/index.ts` assembles the service and declares Remote methods; `member-runtime.ts` owns per-Member runtime state (tool-policy restrictions, capability warnings, private skill mounts and selections, private-memory provisioning) behind a three-dependency seam (`ctx`, live member context, shared running-agents set) — the service keeps ledger, handles, notifications, and recovery orchestration; `ledger.ts` commits operations; `spec.ts` defines records; `types.ts` re-exports the domain split (`types/entities.ts`, `types/operations.ts`, `types/requests-results.ts`) as the single public import path; `invariant.ts` checks relationships.
 - `packages/tool-agent-team` resolves the live Team service at execution time. It does not create another service or write projections directly.
 - `packages/client-agent-team` has a Node half (`src/index.ts`) and browser half (`src/client/`). The browser half reads Host projections through typed Remote and renders them through public Client slots.
 
