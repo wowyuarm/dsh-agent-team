@@ -692,7 +692,6 @@ export class AgentTeamLedger {
       }
       const actor = this.assertActorForWorkspace(request.actor, request.workspaceId)
       const { task, thread, channelRef } = this.threadContextForActor(actor, request.workspaceId, request)
-      this.assertThreadChannelActive(channelRef)
       const body = request.body.trim()
       if (body === '') throw new Error('message body must not be empty')
       this.assertMentionTargets(this.requireChannel(request.workspaceId, channelRef), recipients)
@@ -741,7 +740,6 @@ export class AgentTeamLedger {
       }
       this.assertHumanActor(request.actor)
       const { task: existingTask, thread, channelRef } = this.threadContextForActor(request.actor, request.workspaceId, request)
-      this.assertThreadChannelActive(channelRef)
       if (existingTask !== undefined) throw new Error(`Thread '${thread.threadRef}' already has Task '${existingTask.taskRef}'`)
       const deferred = this.deferredThreadWrite(request.actor.memberId, undefined, thread, request.baseRevision)
       if (deferred !== undefined) return this.resolved(deferred)
