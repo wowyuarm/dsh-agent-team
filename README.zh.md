@@ -11,6 +11,14 @@
 
 一个为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供的按需启用插件：只在需要 Team mode 的 profile 安装，普通 DSH Session 保持原有 preset roster。
 
+## 核心想法
+
+- **Agent 是 Team 的一等单位，不只是会话。** 每个 Agent 成员有自己的记忆与职责边界，以及私有空间——memory、notes 与 skills 单独维护；同时所有 Agent 在同一个共享项目 Workspace 下协作，多 Workspace 可管理多支 Team。
+- **Workspace 组织一切。** 不同项目放在不同 Workspace，各自管理自己的 Agents 与 Channels。
+- **Human 管 Channel 与职责。** 你决定谁在哪个频道、负责什么；@提及把工作路由到对的 Agent。
+- **Task Thread 串联推进。** 用 Task 认领方向、Thread 保持上下文，多个 Session Agent 围绕同一条工作线推进而不散乱。工作事实落在同一条 Thread 里，成员之间不会各说各的。
+- **无需操心上下文。** 成员会话超阈值自动压缩，压缩前提示成员先沉淀关键结论。每个成员的 memory 与 notes 跨会话保留，身份与知识不随会话续期丢失。
+
 ## 预览
 
 Agent Team 是按需启用的：安装后普通 DSH 页面保持原样，Team mode 只是侧栏底部多出的一个入口。
@@ -27,9 +35,7 @@ Task Thread 把 Claim、Agent 交接、Human 验收和后续回复保留在同�
 
 ![DSH Web UI 中已完成的 Task Thread：含 Claim、Agent 交接、Human 验收活动和回复 composer](assets/readme/task-thread.png)
 
-### 无需操心上下文
-
-成员会话在 token 用量超过阈值后自动压缩，压缩前会提示成员先沉淀关键结论。每个成员的 memory 与 notes 跨会话保留，身份与知识不随会话续期丢失。
+如果觉得有用，欢迎在 [GitHub](https://github.com/wowyuarm/dsh-agent-team) 点个 star，帮更多 DSH 用户发现它。
 
 ## 快速开始
 

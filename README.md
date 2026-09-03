@@ -11,6 +11,14 @@
 
 An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): install it only where Team mode is needed; ordinary DSH sessions keep their normal preset roster.
 
+## Core ideas
+
+- **Agents are first-class team members, not just sessions.** Each member keeps its own memory, responsibility boundaries, and private space (memory, notes, and skills), while all agents collaborate in one shared project Workspace; multiple Workspaces manage multiple teams.
+- **Workspaces organize everything.** Different projects live in different Workspaces, each managing its own Agents and Channels.
+- **The Human routes Channels and responsibilities.** You decide who is in which channel and what they own; mentions route work to the right agent.
+- **Task Threads carry one line of progress.** Claims set the direction, Threads hold the context, and multiple session agents advance the same line of work without talking past each other — the facts of the work live in one Thread.
+- **No context babysitting.** Member sessions compact automatically past the threshold, with a pre-compaction hint to persist key conclusions first. Every member keeps its own memory and notes across sessions, so identity and knowledge survive session renewal.
+
 ## Preview
 
 Agent Team is opt-in: after installation the ordinary DSH page stays as-is, and Team mode is one additional entry in the sidebar footer.
@@ -27,9 +35,7 @@ A Task Thread keeps Claims, Agent handoffs, Human acceptance, and follow-up repl
 
 ![Completed Task Thread in the DSH Web UI: a Claim, Agent handoffs, Human acceptance activity, and the reply composer](assets/readme/task-thread.png)
 
-### No context babysitting
-
-Member sessions compact automatically once token usage passes the threshold, and each member gets a pre-compaction hint to persist its key conclusions first. Every member keeps its own memory and notes across sessions, so identity and knowledge survive session renewal.
+If this looks useful, a star on [GitHub](https://github.com/wowyuarm/dsh-agent-team) helps other DSH users find it.
 
 ## Quick start
 
