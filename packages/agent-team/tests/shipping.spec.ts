@@ -87,6 +87,11 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
+    // The persona distinguishes the two reply channels: direct session talk
+    // with the Human answers in plain text; ledger-backed Team Threads are
+    // what team_message.reply is for.
+    expect(preset).toContain('reply in plain text')
+    expect(preset).toContain('not a reply channel for it')
     // The persona keeps only the physical facts of the private space
     // (absolute paths, memory/notes discipline, reusable-assets boundary);
     // skill craft itself lives in the bundled member-skill-manager and its
