@@ -470,18 +470,17 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     })
   }
 
-  // Branded-ref linkify: a UUID-shaped task ref in a plain body renders as a
-  // real link control (click-to-navigate is component-tested against the
-  // resolved selectThread call); non-UUID `channel:` prose stays literal.
+  // Branded-ref linkify: only refs the Host resolves become link controls.
+  // An unknown UUID-shaped task ref and non-UUID `channel:` prose both stay
+  // literal in the plain body; click-to-navigate is component-tested against
+  // the resolved selectThread call.
   await channelComposer.fill('请复核 task:c0ffee00-1234-4c05-8a9e-6f2b1c9d7e21 与 channel:engineering 的口径')
   await page.getByRole('button', { name: '发送' }).click()
   const refMessage = page.locator('[data-team-channel] article').filter({ hasText: '请复核' })
   await refMessage.waitFor()
-  const refLink = refMessage.getByRole('button', { name: /task:c0ffee00/ })
-  await refLink.waitFor()
-  expect(await refMessage.getByRole('button', { name: /channel:engineering/ }).count()).toBe(0)
-  expect((await refMessage.textContent())?.includes('channel:engineering')).toBe(true)
-  expect(await refLink.evaluate(element => getComputedStyle(element).cursor)).toBe('pointer')
+  expect(await refMessage.getByRole('button', { name: /task:c0ffee00|channel:engineering/ }).count()).toBe(0)
+  await expect.poll(() => refMessage.textContent()).toContain('task:c0ffee00-1234-4c05-8a9e-6f2b1c9d7e21')
+  expect(await refMessage.textContent()).toContain('channel:engineering')
   await page.screenshot({ path: join(UI04_SHOTS, 'message-ref-linkify.png'), fullPage: true })
 
   // Long-body clamp: a body past the deterministic character threshold starts
@@ -568,9 +567,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await pastedMessage.waitFor()
   await expect.poll(() => pastedMessage.locator('img[src^="data:image/png"]').count()).toBeGreaterThanOrEqual(1)
 
-  // Narrow-viewport linkify row.
+  // Narrow-viewport literal ref row: the unresolvable refs stay plain text
+  // and the row keeps its width without horizontal overflow.
   await page.setViewportSize({ width: 390, height: 844 })
-  await refMessage.getByRole('button', { name: /task:c0ffee00/ }).waitFor()
+  expect(await refMessage.getByRole('button', { name: /task:c0ffee00|channel:engineering/ }).count()).toBe(0)
+  expect((await refMessage.textContent())?.includes('task:c0ffee00-1234-4c05-8a9e-6f2b1c9d7e21')).toBe(true)
   await page.screenshot({ path: join(UI04_SHOTS, 'message-ref-linkify-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
   await page.setViewportSize({ width: 390, height: 844 })

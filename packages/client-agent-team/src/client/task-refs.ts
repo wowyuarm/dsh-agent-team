@@ -46,7 +46,18 @@ export const rememberResolvedTaskRef = (entry: ResolvedTaskRef): void => {
   emit()
 }
 
-/** Click-path Host lookup: remember every resolved entry and hand them back for immediate navigation. */
+/** Compare refs by branded prefix plus hyphen-stripped UUID, so abbreviated spellings line up with their full form. */
+function refKeyOf(ref: string): string {
+  return ref.toLowerCase().replaceAll('-', '')
+}
+
+/**
+ * Click-path Host lookup: remember every resolved entry and hand them back
+ * for immediate navigation. The Host keeps `resolved` in the same order as
+ * the input `taskRefs` (one entry per resolvable input, unknowns omitted);
+ * the pairing walk below relies on that contract, so it must be preserved
+ * together with this implementation.
+ */
 export const hostTaskRefLookup = (
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>,
   workspaceId: AgentTeamResolveTaskRefsRequest['workspaceId'],
@@ -54,8 +65,19 @@ export const hostTaskRefLookup = (
   async taskRefs => {
     const result = await resolveTaskRefs({ workspaceId, taskRefs })
     if (!result.ok) return []
-    for (const entry of result.value.resolved) rememberResolvedTaskRef(entry)
-    return result.value.resolved
+    const entries = result.value.resolved
+    // The Host answers with full refs even for abbreviated inputs; the
+    // returned entries keep the input order, so walk both sides and remember
+    // each authored spelling as an alias of its resolution.
+    let entryIndex = 0
+    for (const requested of taskRefs) {
+      const entry = entries[entryIndex]
+      if (entry === undefined || !refKeyOf(entry.taskRef).startsWith(refKeyOf(requested))) continue
+      if (entry.taskRef !== requested) rememberResolvedTaskRef({ ...entry, taskRef: requested })
+      rememberResolvedTaskRef(entry)
+      entryIndex += 1
+    }
+    return entries
   }
 
 /** Resolve one Task ref through the Host and jump to its home Channel Thread. */

@@ -118,8 +118,9 @@ describe('Team conversation surfaces', () => {
     })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     // The Agent body has no mentions, so it previously fell through to the
-    // Markdown renderer and dropped the ref link entirely.
-    const link = await b.view.findByRole('button', { name: taskRef })
+    // Markdown renderer and dropped the ref link entirely. The known Task
+    // resolves to its number and links at the authored position.
+    const link = await b.view.findByRole('button', { name: 'Task #1' })
     fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
     await b.runtime.dispose()
@@ -133,14 +134,31 @@ describe('Team conversation surfaces', () => {
       seededMessages: [{ body: `看 ${citedRef}`, occurredAt: '2026-08-21T09:00:00.000Z' }],
     })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
-    // The cited ref is not in the loaded timeline: it renders raw, resolves
-    // through the Host lookup, and relabels to the human-facing number.
-    const link = await b.view.findByRole('button', { name: citedRef })
+    // The cited ref is not in the loaded timeline: it stays plain text until
+    // the Host lookup resolves it, then relabels to the human-facing number.
+    const link = await b.view.findByRole('button', { name: 'Task #2' })
     await waitFor(() => { expect(b.resolveTaskRefs).toHaveBeenCalled() })
     // The Host knows the cited Task: the label becomes the human-facing
     // number with the full ref on hover.
-    await waitFor(() => { expect(link.textContent).toBe('Task #2') })
     expect(link.getAttribute('title')).toBe(citedRef)
+    fireEvent.click(link)
+    await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef: citedRef })))
+    await b.runtime.dispose()
+  })
+
+  it('resolves abbreviated task refs in agent bodies and navigates with the full ref', async () => {
+    const citedRef = 'task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e51', seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e52',
+      seededMessages: [{ body: '审计来源 task:9c1b02，对照散文 task:cafe 保持纯文本', occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    // The 6-hex abbreviation resolves uniquely through the Host lookup; the
+    // link relabels to the number and jumps to the full ref's Thread.
+    const link = await b.view.findByRole('button', { name: 'Task #2' })
+    expect(link.getAttribute('title')).toBe('task:9c1b02')
+    expect(b.view.getByText('task:cafe', { exact: false })).toBeTruthy()
     fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef: citedRef })))
     await b.runtime.dispose()
@@ -871,10 +889,11 @@ describe('Team conversation surfaces', () => {
       seededMessages: [{ body: `see ${taskRef} and channel:engineering for prose`, occurredAt: '2026-08-21T09:00:00.000Z' }],
     })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
-    // Only the fixed-prefix + UUID shape linkifies; `channel:engineering`
-    // stays literal prose.
+    // Only the fixed-prefix ref shape resolves; `channel:engineering` stays
+    // literal prose. The known Task relabels to its number once resolved.
     expect(b.view.queryByText(taskRef)).toBeNull()
-    const link = await b.view.findByRole('button', { name: taskRef })
+    const link = await b.view.findByRole('button', { name: 'Task #1' })
+    expect(link.getAttribute('title')).toBe(taskRef)
     fireEvent.click(link)
     await waitFor(() => expect(b.readThread).toHaveBeenCalledWith(expect.objectContaining({ taskRef })))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()

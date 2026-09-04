@@ -793,7 +793,7 @@ export class AgentTeamLedger {
         activityKind = 'claim'
       } else {
         if (request.direction !== undefined) throw new Error(`${request.action} action does not accept direction`)
-        const previous = request.claimRef === undefined ? undefined : this.state.claims.get(request.claimRef)
+        const previous = request.claimRef === undefined ? undefined : this.state.claims.get(this.requireRefKey(this.state.claims, request.claimRef, 'claim', 'Claim'))
         if (previous === undefined) {
           throw new Error(`unknown Claim '${request.claimRef ?? ''}'${request.claimRef === undefined ? '' : this.unknownRefHint(request.claimRef, 'claim', 'Claim')}`)
         }
@@ -1210,7 +1210,8 @@ export class AgentTeamLedger {
     const numbers = this.taskNumbers(workspaceId)
     const resolved: AgentTeamResolvedTaskRef[] = []
     for (const taskRef of taskRefs) {
-      const task = this.state.tasks.get(taskRef)
+      const key = this.uniqueRefKey(this.state.tasks, taskRef, 'task')
+      const task = key === undefined ? undefined : this.state.tasks.get(key)
       const channel = task === undefined ? undefined : this.state.channels.get(task.channelRef)
       // Archived Channels do not exist on Team API surfaces: their Tasks stop
       // resolving, so live message bodies render the refs as plain
@@ -2708,21 +2709,64 @@ export class AgentTeamLedger {
     return member
   }
 
-  /** Agents sometimes strip the branded prefix when echoing refs; point at the fix instead of a bare lookup failure. */
+  /** Shortest accepted UUID abbreviation after the branded prefix. */
+  private static readonly MIN_REF_UUID_PREFIX = 6
+
+  private isRefAbbreviationTail(tail: string): boolean {
+    return tail.length >= AgentTeamLedger.MIN_REF_UUID_PREFIX && /^[0-9a-f]+$/i.test(tail)
+  }
+
+  /**
+   * Full map key for one branded ref, tolerating a unique UUID abbreviation.
+   * Exact refs win; an abbreviated ref (prefix plus at least 6 hex chars,
+   * hyphens ignored) resolves only when it matches exactly one key. Returns
+   * undefined for unknown or ambiguous refs so lenient callers can degrade
+   * without throwing.
+   */
+  private uniqueRefKey<TKey extends string>(map: ReadonlyMap<TKey, unknown>, ref: string, prefix: string): TKey | undefined {
+    if (map.has(ref as TKey)) return ref as TKey
+    const tail = ref.startsWith(`${prefix}:`) ? ref.slice(prefix.length + 1).replaceAll('-', '') : undefined
+    if (tail === undefined || !this.isRefAbbreviationTail(tail)) return undefined
+    const lower = tail.toLowerCase()
+    const candidates = [...map.keys()].filter(key => key.slice(prefix.length + 1).replaceAll('-', '').startsWith(lower))
+    return candidates.length === 1 ? candidates[0] : undefined
+  }
+
+  /** uniqueRefKey with the established unknown/ambiguous error contract and hints. */
+  private requireRefKey<TKey extends string>(map: ReadonlyMap<TKey, unknown>, ref: string, prefix: string, label: string): TKey {
+    const key = this.uniqueRefKey(map, ref, prefix)
+    if (key !== undefined) return key
+    const tail = ref.startsWith(`${prefix}:`) ? ref.slice(prefix.length + 1).replaceAll('-', '') : undefined
+    if (tail !== undefined && this.isRefAbbreviationTail(tail)) {
+      const lower = tail.toLowerCase()
+      const candidates = [...map.keys()].filter(candidate => candidate.slice(prefix.length + 1).replaceAll('-', '').startsWith(lower))
+      if (candidates.length > 1) {
+        throw new Error(`ambiguous ${label} ref '${ref}' matches ${candidates.map(candidate => `'${candidate}'`).join(', ')}; reuse a longer prefix or the full ref exactly as returned by Team tools`)
+      }
+    }
+    throw new Error(`unknown ${label} ref '${ref}'${this.unknownRefHint(ref, prefix, label)}`)
+  }
+
+  /** Agents strip the branded prefix or abbreviate UUIDs when echoing refs; point at the fix instead of a bare lookup failure. */
   private unknownRefHint(ref: string, prefix: string, label: string): string {
-    return ref.startsWith(`${prefix}:`) ? ''
-      : ` A ${label} ref must start with '${prefix}:'; reuse the full ref exactly as returned by Team tools ('${prefix}:${ref}').`
+    if (!ref.startsWith(`${prefix}:`)) {
+      return ` A ${label} ref must start with '${prefix}:'; reuse the full ref exactly as returned by Team tools ('${prefix}:${ref}').`
+    }
+    const tail = ref.slice(prefix.length + 1).replaceAll('-', '')
+    return this.isRefAbbreviationTail(tail)
+      ? ` No ${label} matches this UUID prefix; reuse the full ref exactly as returned by Team tools.`
+      : ` A ${label} ref needs at least 6 hex characters after '${prefix}:', or the full ref exactly as returned by Team tools.`
   }
 
   private requireTask(workspaceId: WorkspaceId, taskRef: AgentTeamTaskRef): AgentTeamTask {
-    const task = this.state.tasks.get(taskRef)
+    const task = this.state.tasks.get(this.requireRefKey(this.state.tasks, taskRef, 'task', 'Task'))
     if (task === undefined) throw new Error(`unknown Task ref '${taskRef}'${this.unknownRefHint(taskRef, 'task', 'Task')}`)
     if (this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) throw new Error(`Task '${taskRef}' does not belong to Workspace '${workspaceId}'`)
     return task
   }
 
   private requireThread(threadRef: AgentTeamThreadRef): AgentTeamThread {
-    const thread = this.state.threads.get(threadRef)
+    const thread = this.state.threads.get(this.requireRefKey(this.state.threads, threadRef, 'thread', 'Thread'))
     if (thread === undefined) throw new Error(`unknown Thread ref '${threadRef}'${this.unknownRefHint(threadRef, 'thread', 'Thread')}`)
     return thread
   }
@@ -2754,12 +2798,14 @@ export class AgentTeamLedger {
     let thread: AgentTeamThread | undefined
     let task: AgentTeamTask | undefined
     if (request.threadRef !== undefined) {
-      thread = projection.threads.get(request.threadRef)
+      const threadKey = this.requireRefKey(projection.threads, request.threadRef, 'thread', 'Thread')
+      thread = projection.threads.get(threadKey)
       if (thread === undefined) throw new Error(`unknown Thread ref '${request.threadRef}'${this.unknownRefHint(request.threadRef, 'thread', 'Thread')}`)
       task = thread.taskRef === undefined ? undefined : projection.tasks.get(thread.taskRef)
     }
     if (request.taskRef !== undefined) {
-      const byTask = projection.tasks.get(request.taskRef)
+      const taskKey = this.requireRefKey(projection.tasks, request.taskRef, 'task', 'Task')
+      const byTask = projection.tasks.get(taskKey)
       if (byTask === undefined) throw new Error(`unknown Task ref '${request.taskRef}'${this.unknownRefHint(request.taskRef, 'task', 'Task')}`)
       if (task !== undefined && task.taskRef !== byTask.taskRef) throw new Error(`Task '${request.taskRef}' does not belong to Thread '${request.threadRef}'`)
       if (thread !== undefined && byTask.threadRef !== thread.threadRef) throw new Error(`Task '${request.taskRef}' does not belong to Thread '${thread.threadRef}'`)
@@ -2783,7 +2829,7 @@ export class AgentTeamLedger {
   }
 
   private requireChannel(workspaceId: WorkspaceId, channelRef: AgentTeamChannelRef): AgentTeamChannel {
-    const channel = this.state.channels.get(channelRef)
+    const channel = this.state.channels.get(this.requireRefKey(this.state.channels, channelRef, 'channel', 'Channel'))
     if (channel === undefined) throw new Error(`unknown Channel ref '${channelRef}'${this.unknownRefHint(channelRef, 'channel', 'Channel')}`)
     if (channel.workspaceId !== workspaceId) throw new Error(`Channel '${channelRef}' does not belong to Workspace '${workspaceId}'`)
     return channel
@@ -2804,7 +2850,7 @@ export class AgentTeamLedger {
   }
 
   private requireMember(memberId: AgentTeamMemberId): AgentTeamAgentMember {
-    const member = this.state.members.get(memberId)
+    const member = this.state.members.get(this.requireRefKey(this.state.members, memberId, 'member', 'Agent Member'))
     if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
     return member
   }
