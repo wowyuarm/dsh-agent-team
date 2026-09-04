@@ -44,6 +44,21 @@ export function createTeamMemberSessionSources(options: TeamMemberSessionInputOp
       }
       return { claim }
     },
+    // Typing the full `/compact` line without picking from the menu still
+    // routes through the Team claim inside an embedded Member Session. The
+    // shipped command source answers first for its own vocabulary; unknown
+    // slash lines fall through here, where a Member Session claims only its
+    // one supported token and ordinary Sessions decline.
+    async matchEnter(session, line) {
+      if (!options.isEmbeddedMemberSession(session.sessionId)) return undefined
+      const trimmed = line.trim()
+      if (trimmed !== '/compact') return undefined
+      const claim: CommandClaim = {
+        token: '/compact',
+        submit: async () => options.executeCompact(session.sessionId),
+      }
+      return { claim }
+    },
   }
   const member: InputTriggerSource = {
     trigger: '@',

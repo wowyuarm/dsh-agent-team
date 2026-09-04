@@ -22,6 +22,9 @@ async function bench(persisted: string | null = null) {
   ctx.provide('locale', new LocaleRuntime(ctx))
   ctx.provide('remote', { $mount: async () => async () => {} } as never)
   ctx.provide('remote.agentTeam', {})
+  // rc.1: the client declares the model-catalog sub-namespace; the bench
+  // supplies it so the takeover fiber is not left pending on inject.
+  ctx.provide('remote.session', { modelCatalog: vi.fn(async () => ({ ok: true, value: { groups: [], failures: [] } })) })
   ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   const triggerSources: unknown[] = []
   ctx.provide('inputTriggers', {
@@ -61,6 +64,7 @@ async function bench(persisted: string | null = null) {
   slots.register({ name: 'sidebar.settings', priority: 0 }, root)
   slots.register({ name: 'conversation', priority: 0, children: {
     'conversation.composer.bar': { kind: 'single', scope: 'session-maybe' },
+    'conversation.composer.dock': { kind: 'list', scope: 'session' },
   } } as never, root)
   return { ctx, slots, triggerSources }
 }
@@ -156,16 +160,18 @@ describe('Team Client slot takeover', () => {
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder', returnToSessionId: 'session:human-origin' })
     // The conversation seat yields to the shipped root while both sidebars stay.
     expect(slots.entries('conversation')).toHaveLength(1)
-    // C takeover is registered only for the embedded Member view; ordinary
-    // Sessions retain the resident composer entry once the view exits.
-    expect(slots.entries('conversation.composer.bar')).toHaveLength(1)
-    const memberComposer = slots.entriesOfSlot('conversation.composer.bar')[0]!
+    // rc.1: the Member view no longer shadows the composer bar (the shipped
+    // InputBar owns it and its trigger overlay); the Team surface is a dock
+    // entry under it, registered only for the embedded Member view.
+    expect(slots.entries('conversation.composer.bar')).toHaveLength(0)
+    expect(slots.entries('conversation.composer.dock')).toHaveLength(1)
+    const memberDock = slots.entriesOfSlot('conversation.composer.dock')[0]!
     // Direct Member-to-Member navigation replaces the entry instead of
     // retaining a selector closed over the earlier builder session.
     sessions.list.getSnapshot = () => ({ current: 'session:reviewer' })
     ctx.teamNavigation.actions().enterMemberSession('session:reviewer' as never)
-    expect(slots.entries('conversation.composer.bar')).toHaveLength(1)
-    expect(slots.entriesOfSlot('conversation.composer.bar')[0]).not.toBe(memberComposer)
+    expect(slots.entries('conversation.composer.dock')).toHaveLength(1)
+    expect(slots.entriesOfSlot('conversation.composer.dock')[0]).not.toBe(memberDock)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(2)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
     expect(slots.entriesOfSlot('sidebar.settings')[0]!.options.priority).toBe(-100)
@@ -178,7 +184,7 @@ describe('Team Client slot takeover', () => {
 
     expect(sessions.open).toHaveBeenLastCalledWith('session:human-origin')
     expect(ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
-    expect(slots.entries('conversation.composer.bar')).toHaveLength(0)
+    expect(slots.entries('conversation.composer.dock')).toHaveLength(0)
     expect(slots.entriesOfSlot('conversation')).toHaveLength(1)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
 

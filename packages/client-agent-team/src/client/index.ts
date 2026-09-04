@@ -41,7 +41,7 @@ import { TeamFooterAction } from './TeamFooterAction.tsx'
 import { TeamSettings } from './TeamSettings.tsx'
 import { TeamConversation } from './TeamConversation.tsx'
 import { TeamWorkspaceBrowser } from './TeamWorkspaceBrowser.tsx'
-import { TeamMemberSessionComposer } from './TeamMemberSessionComposer.tsx'
+import { TeamMemberDock } from './TeamMemberDock.tsx'
 import { admitTeamCompact, createTeamMemberSessionSources } from './member-session-input.ts'
 import { en, zh, type TeamKey } from './locales.ts'
 
@@ -158,8 +158,13 @@ function registerModeShadow<T extends object>(
   })
 }
 
-function registerMemberSessionComposer(ctx: ClientContext, navigation: TeamNavigation): void {
-  ctx.slots.inject('conversation.composer.bar', () => {
+function registerMemberSessionDock(ctx: ClientContext, navigation: TeamNavigation): void {
+  // rc.1: the shipped InputBar owns `conversation.composer.bar` and with it
+  // the trigger-menu overlay; shadowing it stranded the menus inside a hidden
+  // subtree. The Team surface moves to the public dock list slot under the
+  // shipped bar — the vocabulary hint and Member prompt status only. The
+  // standard kit supplies useSession; no Team injection is needed.
+  ctx.slots.inject('conversation.composer.dock', () => {
     let dispose: (() => void) | undefined
     let registeredSessionId: AgentTeamClientMemberStatus['member']['sessionId'] | undefined
     const reconcile = (): void => {
@@ -172,24 +177,16 @@ function registerMemberSessionComposer(ctx: ClientContext, navigation: TeamNavig
       }
       if (active && dispose === undefined) {
         registeredSessionId = memberSessionId
+        const sessions = ctx.sessions as unknown as ISessions
         dispose = ctx.slots.register({
-          name: 'conversation.composer.bar',
-          priority: -100,
+          name: 'conversation.composer.dock',
+          id: 'agent-team-member',
+          locale: NS,
           // The registration may remain live during a session transition, but
-          // it elects only when the shell's current Session is the embedded
-          // Member. This avoids taking an ordinary Session if selection races.
-          select: () => (ctx.sessions as unknown as ISessions).list.getSnapshot().current === memberSessionId ? {} : null,
-          inject: (sessionId: AgentTeamClientMemberStatus['member']['sessionId']) => {
-            const actx = (ctx.sessions as unknown as ISessions).scope(sessionId)
-            if (actx === undefined) throw new Error(`agent-team: Member session ${String(sessionId)} has no client scope`)
-            const sessions = ctx.sessions as unknown as ISessions
-            return {
-              controller: (ctx.get('inputTriggers') as InputTriggerServiceContract).sessionOf(actx),
-              stop: () => { void sessions.sessionOf(actx)?.cancel() },
-              submitInput: (mode: 'queue' | 'steer') => ctx.conversation.input.for(actx).submit(mode),
-            }
-          },
-        } as never, TeamMemberSessionComposer as never)
+          // it shows only when the shell's current Session is the embedded
+          // Member. This avoids stamping an ordinary Session if selection races.
+          select: () => sessions.list.getSnapshot().current === memberSessionId ? {} : null,
+        } as never, TeamMemberDock as never)
       }
     }
     const offNavigation = navigation.subscribe(reconcile)
@@ -200,7 +197,6 @@ function registerMemberSessionComposer(ctx: ClientContext, navigation: TeamNavig
     }
   })
 }
-
 function applyUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'agent-team: dictionaries')
 
@@ -281,7 +277,7 @@ function applyUi(ctx: ClientContext): void {
 
   registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
   registerModeShadow(ctx, navigation, changes, drafts, 'conversation', TeamConversation as never)
-  registerMemberSessionComposer(ctx, navigation)
+  registerMemberSessionDock(ctx, navigation)
   registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 

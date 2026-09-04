@@ -41,8 +41,10 @@ describe('Team Member session trigger sources', () => {
     expect(await command.candidates({ sessionId: memberSession }, request(''))).toEqual([
       expect.objectContaining({ name: '/compact' }),
     ])
-    expect(command.matchEnter).toBeUndefined()
+    // matchEnter exists only on the command source; the member source never
+    // adjudicates Enter.
     expect(member.matchEnter).toBeUndefined()
+    expect(command.matchEnter).toBeDefined()
   })
 
   it('executes /compact through its source claim and refuses unknown leading slash submit', async () => {
@@ -57,6 +59,22 @@ describe('Team Member session trigger sources', () => {
     expect(allowsMemberSessionSubmit('/compact', '/compact')).toBe(true)
     expect(allowsMemberSessionSubmit('/skill', undefined)).toBe(false)
     expect(allowsMemberSessionSubmit('ordinary message', undefined)).toBe(true)
+  })
+
+  it('claims a typed /compact line inside a Member Session and declines everything else', async () => {
+    const { executeCompact, sources: registered } = sources()
+    const command = registered.find(source => source.name === TEAM_COMMAND_SOURCE)!
+    const signal = new AbortController().signal
+    const envelope = { images: 0 } as never
+    const outcome = await command.matchEnter!({ sessionId: memberSession }, '/compact', signal, envelope)
+    expect(outcome).toMatchObject({ claim: { token: '/compact' } })
+    if (outcome === undefined || outcome === 'handled' || !('claim' in outcome)) throw new Error('typed /compact did not produce a claim')
+    await outcome.claim.submit('', {} as never, [])
+    expect(executeCompact).toHaveBeenCalledWith(memberSession)
+    // Unknown slash lines and ordinary sessions stay with the shipped vocabulary.
+    await expect(command.matchEnter!({ sessionId: memberSession }, '/skill', signal, envelope)).resolves.toBeUndefined()
+    await expect(command.matchEnter!({ sessionId: memberSession }, 'plain message', signal, envelope)).resolves.toBeUndefined()
+    await expect(command.matchEnter!({ sessionId: ordinarySession }, '/compact', signal, envelope)).resolves.toBeUndefined()
   })
 
   it('offers only other active workspace Members and serializes a stable structured ref', async () => {

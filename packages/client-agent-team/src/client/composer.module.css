@@ -376,3 +376,18 @@
     transition: none;
   }
 }
+
+/* Dock strip under the shipped composer while a Member Session is embedded.
+   The shipped InputBar owns the input surface; this only carries Team status. */
+.memberSessionDock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 2px 0;
+}
+
+.memberSessionHint {
+  color: var(--dsw-alias-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}

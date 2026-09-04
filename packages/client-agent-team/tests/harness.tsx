@@ -271,6 +271,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
+  // rc.1: the client injects the model-catalog sub-namespace explicitly.
+  runtime.ctx.provide('remote.session', { modelCatalog })
   runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.ctx.provide('remote.agentTeam', {})
   runtime.ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
