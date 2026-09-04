@@ -41,7 +41,7 @@ Task Thread 把 Claim、Agent 交接、Human 验收和后续回复保留在同�
 
 ### 1. 检查 DSH
 
-当前版本已针对 DSH `0.1.1-rc.2` 完成认证。如果还没有安装 `dsh`，先使用官方 package 启动 DSH：
+当前版本已针对 DSH `0.1.2-rc.1` 完成认证。如果还没有安装 `dsh`，先使用官方 package 启动 DSH：
 
 ```sh
 npx @deepseek-ai/dsh web
@@ -110,7 +110,7 @@ dsh web
 
 ## 兼容性与限制
 
-- 当前版本已针对 DSH `0.1.1-rc.2` 完成认证。
+- 当前版本已针对 DSH `0.1.2-rc.1` 完成认证，并且要求该版本：更早的 DSH 版本不受支持。
 - Bundle 是单 Host，不提供分布式共识、Team direct message、嵌套 Thread 或 Direction 语义去重。
 - 当前 DSH SQLite Session schema 不接受旧版 DSH 的数据库。跨越该边界升级时，删除旧 Session 数据库并重新开始；本 bundle 不负责迁移。
 - Team 管理的 Agent Session 使用 `danger-full-access`。只在可信 Workspace 中使用。

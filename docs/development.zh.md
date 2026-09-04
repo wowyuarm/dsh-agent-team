@@ -138,7 +138,7 @@ dsh web
 
 每次发布后随即在稳定 profile 执行上述 update 命令。稳定 profile 与开发 profile 共享全局 ledger 存储（`$DSH_HOME/storages/`）：稳定 profile 停留在旧版而 ledger 已被新版写入时，启动会因记录 schema 校验失败而崩溃（2026-08 的 0.1.1 即是这种"写得出、读不回"的中间版本）。
 
-本 bundle 的最低兼容版本是 DSH `0.1.1-rc.2`。当前 DSH SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
+本 bundle 的最低兼容版本是 DSH `0.1.2-rc.1`。当前 DSH SQLite Session schema 不兼容旧版本；升级时删除旧 SQLite Session 数据库后重新开始。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
 ## Team ledger 存储路由
 

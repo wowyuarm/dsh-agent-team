@@ -185,4 +185,8 @@ npm run test:browser
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.1-rc.2`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、65 个测试、构建、打包检查和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。没有发现 Host、typed Remote、Client slot 或 `team-member` preset 的接口不兼容。
+当前 Team bundle 的已认证基线是 DSH `0.1.2-rc.1`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、262 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
+
+这个候选版本落在旧 peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.2-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.1-rc.2` 上。三处上游移除决定了这一点：`effectiveSandboxMode` 从 `dsh-sandbox-policy` 移除（改为读取 `sandboxMode` session projection）、`session.events` 变为 `snapshotEvents(SessionLogOffset, SessionLogOffset)`、`AgentPresets` 增加 `includeShippedRoot`。`@deepseek-ai/dsh-client-runtime` 已被上游删除，因此它的 peer 与 `dsh.client.inject` 顺序行一并移除；把它留在旧区间会直接导致安装失败。
+
+两条上游事实只记录、不修补：`@deepseek-ai/dsh-api-workspace-controller` 的声明在 `skipLibCheck: false` 下报错（`TypertClientRemote` 上没有 `workspace` 属性），单独 import 该包即可复现；Member Session 现在内嵌的 shipped composer 会暴露全部全局命令词汇，这是单独跟踪的产品决策，不是兼容性缺陷。

@@ -126,4 +126,8 @@ Record candidate tag, symptom, affected interface, reproduction command, and nex
 
 ## 6. Current baseline
 
-The current certified baseline is DSH `0.1.1-rc.2`. Certification covered Typert generation, full typecheck, 65 tests, build, pack checks, and real browser composition with published-layout installation, Remote mount, Team entry/exit, and ordinary DSH restoration. No incompatibility was found in Host, typed Remote, Client slots, or the `team-member` preset.
+The current certified baseline is DSH `0.1.2-rc.1`. Certification covered Typert generation, full typecheck, 262 tests (1 skipped), build, pack checks, lint, and real browser composition with published-layout installation, Remote mount, Team entry/exit, and ordinary DSH restoration.
+
+This candidate fell outside the previous peers and required source adaptation, so peers moved as a hard cut to `>=0.1.2-rc.1 <0.2.0`; the bundle no longer runs on `0.1.1-rc.2`. Three upstream removals forced it: `effectiveSandboxMode` left `dsh-sandbox-policy` (the mode is now read from the `sandboxMode` session projection), `session.events` became `snapshotEvents(SessionLogOffset, SessionLogOffset)`, and `AgentPresets` gained `includeShippedRoot`. `@deepseek-ai/dsh-client-runtime` was deleted upstream, so its peer and its `dsh.client.inject` ordering row were removed; keeping it at the old range blocks installation outright.
+
+Two upstream facts were recorded without patching: `@deepseek-ai/dsh-api-workspace-controller` ships a declaration that fails under `skipLibCheck: false` (`TypertClientRemote` has no `workspace` property), reproducible by importing that package alone; and the shipped composer that Member Sessions now embed exposes the whole global command vocabulary, which is a product decision tracked separately, not a compatibility defect.

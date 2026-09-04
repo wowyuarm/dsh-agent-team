@@ -72,8 +72,15 @@ describe('Agent Team shipping contract', () => {
       exports: Record<string, { default?: string }>
       dsh: { client: { platform: string; inject: string[] } }
     }
-    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.1-rc.2 <0.2.0')
-    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-command-compact']).toBe('>=0.1.1-rc.2 <0.2.0')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.2-rc.1 <0.2.0')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-command-compact']).toBe('>=0.1.2-rc.1 <0.2.0')
+    // The certified baseline moves as one cut: every DSH peer and the routed
+    // storage dependency carry the same range, or an install resolves two DSH
+    // generations at once.
+    const dshPeerRanges = new Set(Object.entries(bundleManifest.peerDependencies)
+      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+      .map(([, range]) => range))
+    expect([...dshPeerRanges]).toEqual(['>=0.1.2-rc.1 <0.2.0'])
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
@@ -103,11 +110,15 @@ describe('Agent Team shipping contract', () => {
     expect(manifest.files).toContain('packages/agent-team/lib/**/*')
     expect(manifest.files).toContain('packages/client-agent-team/lib/**/*')
     expect(manifest.name).toBe('@wowyuarm/dsh-agent-team')
-    expect(manifest.dependencies).toEqual({ '@deepseek-ai/dsh-storage-sqlite': '>=0.1.1-rc.2 <0.2.0', zod: '^4.4.3' })
+    expect(manifest.dependencies).toEqual({ '@deepseek-ai/dsh-storage-sqlite': '>=0.1.2-rc.1 <0.2.0', zod: '^4.4.3' })
     expect(bundleManifest.dsh.client).toEqual({
       platform: 'web',
       inject: expect.not.arrayContaining(['@wowyuarm/dsh-agent-team/host']),
     })
+    // An ordering hint for a package DSH no longer publishes is dead weight in
+    // the manifest and a hard install failure as a peer.
+    expect(bundleManifest.dsh.client.inject).not.toContain('@deepseek-ai/dsh-client-runtime')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-client-runtime']).toBeUndefined()
     expect(bundleManifest.exports['./client']?.default).toBe('./packages/client-agent-team/lib/client.js')
 
     const ctx = new Context()

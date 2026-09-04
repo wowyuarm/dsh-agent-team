@@ -132,7 +132,7 @@ Release cadence is batched. Between releases, daily use of a local build is a li
 
 Stable and development profiles share `$DSH_HOME/storages/`. If a stable old version reads a ledger written by a newer version, schema validation can fail; update the stable profile after each release.
 
-The minimum compatible DSH version is `0.1.1-rc.2`. The current DSH SQLite Session schema is not compatible with older versions: delete old SQLite Session data and start fresh. Do not add Team ledger or Member Session migration, old-format reads, or silent fallbacks.
+The minimum compatible DSH version is `0.1.2-rc.1`. The current DSH SQLite Session schema is not compatible with older versions: delete old SQLite Session data and start fresh. Do not add Team ledger or Member Session migration, old-format reads, or silent fallbacks.
 
 ## Team ledger storage routing
 

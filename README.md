@@ -41,7 +41,7 @@ If this looks useful, a star on [GitHub](https://github.com/wowyuarm/dsh-agent-t
 
 ### 1. Check DSH
 
-This release is certified against DSH `0.1.1-rc.2`. If `dsh` is not installed yet, start DSH with the official package:
+This release is certified against DSH `0.1.2-rc.1`. If `dsh` is not installed yet, start DSH with the official package:
 
 ```sh
 npx @deepseek-ai/dsh web
@@ -110,7 +110,7 @@ Published packages include built artifacts. A local checkout needs the adjacent 
 
 ## Compatibility and limits
 
-- This release is certified against DSH `0.1.1-rc.2`.
+- This release is certified against DSH `0.1.2-rc.1`, and requires it: earlier DSH versions are not supported.
 - The bundle is single-host. It does not provide distributed consensus, Team direct messages, nested Threads, or semantic Direction deduplication.
 - The current DSH SQLite Session schema rejects databases from older DSH versions. Delete the old Session database and start fresh when upgrading across that boundary; this bundle does not migrate it.
 - Team-managed Agent Sessions use `danger-full-access`. Use them only in trusted Workspaces.
