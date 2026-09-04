@@ -51,7 +51,13 @@ function refKeyOf(ref: string): string {
   return ref.toLowerCase().replaceAll('-', '')
 }
 
-/** Click-path Host lookup: remember every resolved entry and hand them back for immediate navigation. */
+/**
+ * Click-path Host lookup: remember every resolved entry and hand them back
+ * for immediate navigation. The Host keeps `resolved` in the same order as
+ * the input `taskRefs` (one entry per resolvable input, unknowns omitted);
+ * the pairing walk below relies on that contract, so it must be preserved
+ * together with this implementation.
+ */
 export const hostTaskRefLookup = (
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>,
   workspaceId: AgentTeamResolveTaskRefsRequest['workspaceId'],
