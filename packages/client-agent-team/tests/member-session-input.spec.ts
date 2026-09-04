@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { admitTeamCompact, createTeamMemberSessionSources, allowsMemberSessionSubmit, TEAM_COMMAND_SOURCE, TEAM_MEMBER_SOURCE } from '../src/client/member-session-input.ts'
+import { admitTeamCompact, createTeamMemberSessionSources, TEAM_COMMAND_SOURCE, TEAM_MEMBER_SOURCE } from '../src/client/member-session-input.ts'
 
 const memberSession = 'session:builder' as never
 const ordinarySession = 'session:ordinary' as never
@@ -56,9 +56,6 @@ describe('Team Member session trigger sources', () => {
     if (picked === undefined || picked === 'handled' || !('claim' in picked)) throw new Error('compact pick did not produce a claim')
     await picked.claim.submit('', {} as never, [])
     expect(executeCompact).toHaveBeenCalledWith(memberSession)
-    expect(allowsMemberSessionSubmit('/compact', '/compact')).toBe(true)
-    expect(allowsMemberSessionSubmit('/skill', undefined)).toBe(false)
-    expect(allowsMemberSessionSubmit('ordinary message', undefined)).toBe(true)
   })
 
   it('claims a typed /compact line inside a Member Session and declines everything else', async () => {

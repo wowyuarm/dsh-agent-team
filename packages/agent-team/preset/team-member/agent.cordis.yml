@@ -84,8 +84,10 @@
     - id: compaction-basic
       name: '@deepseek-ai/dsh-compaction-basic'
 
-    # The Team composer exposes this command as its only slash action; the
-    # shipped command owns lifecycle, result classification and persistence.
+    # The member session keeps the shipped composer, whose global command
+    # vocabulary is fully available; this row routes the member's own
+    # /compact through the shipped lifecycle, result classification and
+    # persistence, and the Team client's trigger source claims it in the UI.
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
 

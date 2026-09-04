@@ -992,7 +992,9 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const restoredComposer = page.locator('[data-composer-input][contenteditable="true"]').first()
   await restoredComposer.waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
-  await expect.poll(() => page.locator('[data-team-member-composer="true"]').count()).toBe(0)
+  // The Team dock strip is registered only for an embedded Member Session;
+  // the restored ordinary shell must not carry it.
+  await expect.poll(() => page.locator('[data-team-member-dock="true"]').count()).toBe(0)
   // Team's globally registered sources return no ordinary candidates; shipped
   // command/skill discovery takes the restored ordinary Session back over.
   await restoredComposer.fill('/')

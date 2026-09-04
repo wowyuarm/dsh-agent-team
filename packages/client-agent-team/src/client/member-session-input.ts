@@ -108,12 +108,6 @@ export function createTeamMemberSessionSources(options: TeamMemberSessionInputOp
   return [command, member]
 }
 
-/** Unknown leading slash must never fall into the shipped global palette. */
-export function allowsMemberSessionSubmit(draft: string, claimToken: string | undefined): boolean {
-  const trimmed = draft.trimStart()
-  return !trimmed.startsWith('/') || claimToken === '/compact'
-}
-
 function escapeText(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }
