@@ -1,7 +1,7 @@
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 
 /** Public composer-dock slot currency for the Member Session strip. */
-export type TeamMemberDockProps = PropsRuntime<'conversation.composer.dock'> & PropsLocale<'team'>
+export type TeamMemberDockProps = PropsRuntime<'conversation.input.dock'> & PropsLocale<'team'>
 
 /**
  * Team-owned strip under the shipped composer while a Member Session is

@@ -161,10 +161,10 @@ function registerModeShadow<T extends object>(
 function registerMemberSessionDock(ctx: ClientContext, navigation: TeamNavigation): void {
   // rc.1: the shipped InputBar owns `conversation.composer.bar` and with it
   // the trigger-menu overlay; shadowing it stranded the menus inside a hidden
-  // subtree. The Team surface moves to the public dock list slot under the
-  // shipped bar — the vocabulary hint and Member prompt status only. The
-  // standard kit supplies useSession; no Team injection is needed.
-  ctx.slots.inject('conversation.composer.dock', () => {
+  // subtree. The Team surface moves to the public input-dock list slot above
+  // the shipped bar — it renders in both the hero (blank session) and active
+  // composer forms, so the strip stays visible from the very first turn.
+  ctx.slots.inject('conversation.input.dock', () => {
     let dispose: (() => void) | undefined
     let registeredSessionId: AgentTeamClientMemberStatus['member']['sessionId'] | undefined
     const reconcile = (): void => {
@@ -179,7 +179,7 @@ function registerMemberSessionDock(ctx: ClientContext, navigation: TeamNavigatio
         registeredSessionId = memberSessionId
         const sessions = ctx.sessions as unknown as ISessions
         dispose = ctx.slots.register({
-          name: 'conversation.composer.dock',
+          name: 'conversation.input.dock',
           id: 'agent-team-member',
           locale: NS,
           // The registration may remain live during a session transition, but
