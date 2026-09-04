@@ -1,5 +1,6 @@
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId, AgentTeamTask, AgentTeamTaskRef } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
+import type { TeamStateDotState } from './TeamStateDot.tsx'
 
 export function formatTaskStatus(status: AgentTeamTask['status'], t: TeamConversationProps['t']): string {
   return t(({
@@ -20,13 +21,13 @@ export function formatClaimState(state: AgentTeamClaim['state'], t: TeamConversa
 }
 
 /**
- * Status indicator variant for a Task status. Active states map to StateDot
- * variants; every status renders a dot so all Task chips share one shape
- * language — todo is a hollow ring (not started), closed a quiet gray dot
- * (archived).
+ * Status indicator for a Task status, the dot every Task surface renders.
+ * Active states map to StateDot variants; every status renders a dot so they
+ * share one shape language — todo is a hollow ring (not started), closed a
+ * quiet gray dot (archived).
  */
-export function taskStatusDot(status: AgentTeamTask['status']): 'ongoing' | 'warning' | 'done' | 'todo' | 'closed' {
-  return ({ todo: 'todo', in_progress: 'ongoing', in_review: 'warning', done: 'done', closed: 'closed' } as const)[status]
+export function taskStatusDot(status: AgentTeamTask['status']): TeamStateDotState {
+  return ({ todo: 'todo', in_progress: 'ongoing', in_review: 'warning', done: 'done', closed: 'quiet' } as const)[status]
 }
 
 /** One-line title snippet derived from the Task's root Message body. */

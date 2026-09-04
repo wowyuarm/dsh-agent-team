@@ -336,7 +336,7 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                     aria-hidden="true"
                                     class="dot"
                                     data-state="done"
-                                    style="width: 8px; height: 8px;"
+                                    style="width: 10px; height: 10px;"
                                   />
                                 </span>
                               </span>
@@ -404,10 +404,10 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                     class="matrix"
                                     data-content="46e5b206"
                                     data-state="ongoing"
-                                    height="8"
+                                    height="10"
                                     shape-rendering="crispEdges"
                                     viewBox="0 0 10 10"
-                                    width="8"
+                                    width="10"
                                   />
                                 </span>
                               </span>
@@ -474,7 +474,7 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                     aria-hidden="true"
                                     class="dot"
                                     data-state="error"
-                                    style="width: 8px; height: 8px;"
+                                    style="width: 10px; height: 10px;"
                                   />
                                 </span>
                               </span>
@@ -539,7 +539,10 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                   class="agentAvatarBadge"
                                 >
                                   <span
-                                    class="unavailableDot"
+                                    aria-hidden="true"
+                                    class="quiet"
+                                    data-variant="quiet"
+                                    style="width: 10px; height: 10px;"
                                   />
                                 </span>
                               </span>

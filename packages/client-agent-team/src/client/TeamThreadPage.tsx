@@ -20,7 +20,8 @@ import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
-import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf } from './team-formatters.ts'
+import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf, taskStatusDot } from './team-formatters.ts'
+import { TeamStateDot } from './TeamStateDot.tsx'
 import { mintRequestId } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
@@ -665,7 +666,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         <div className={css.headerCopy}>
           <div className={threadCss.titleLine}>
             <h1>{task === undefined ? t('threadLabel') : t('taskLabel', { number: resolvedTaskNumber ?? '…' })}</h1>
-            {task !== undefined && <Pill>{formatTaskStatus(task.status, t)}</Pill>}
+            {task !== undefined && <Pill><TeamStateDot size={8} state={taskStatusDot(task.status)} />{formatTaskStatus(task.status, t)}</Pill>}
           </div>
           {taskTitle !== undefined && taskTitle !== '' && <p className={threadCss.taskTitle} title={taskTitle}>{taskTitle}</p>}
         </div>

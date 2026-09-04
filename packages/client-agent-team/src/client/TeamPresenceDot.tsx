@@ -1,7 +1,8 @@
-import { StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamClientMemberStatus } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
+import { TeamStateDot } from './TeamStateDot.tsx'
+import type { TeamStateDotState } from './TeamStateDot.tsx'
 import css from './presence.module.css'
 
 export function presenceLabel(status: AgentTeamClientMemberStatus, t: TeamSidebarProps['t']): string {
@@ -12,8 +13,8 @@ export function presenceLabel(status: AgentTeamClientMemberStatus, t: TeamSideba
 }
 
 /** Shared presence → indicator mapping for dots and avatar badges. */
-export function presenceDotState(presence: AgentTeamClientMemberStatus['presence']): StateDotState | 'gray' {
-  return presence === 'available' ? 'done' : presence === 'working' ? 'ongoing' : presence === 'error' ? 'error' : 'gray'
+export function presenceDotState(presence: AgentTeamClientMemberStatus['presence']): TeamStateDotState {
+  return presence === 'available' ? 'done' : presence === 'working' ? 'ongoing' : presence === 'error' ? 'error' : 'quiet'
 }
 
 export function TeamPresenceDot({ status, t }: {
@@ -21,13 +22,10 @@ export function TeamPresenceDot({ status, t }: {
   readonly t: TeamSidebarProps['t']
 }) {
   const label = presenceLabel(status, t)
-  const state = presenceDotState(status.presence)
   return (
     <Tooltip label={label} delayMs={300}>
       <span className={css.target} role="img" aria-label={label}>
-        {state === 'gray'
-          ? <span className={css.unavailableDot} aria-hidden="true" />
-          : <StateDot state={state} />}
+        <TeamStateDot state={presenceDotState(status.presence)} />
       </span>
     </Tooltip>
   )

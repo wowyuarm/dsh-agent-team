@@ -217,7 +217,7 @@ describe('Team presentation formatters', () => {
     expect(taskStatusDot('in_progress')).toBe('ongoing')
     expect(taskStatusDot('in_review')).toBe('warning')
     expect(taskStatusDot('done')).toBe('done')
-    expect(taskStatusDot('closed')).toBe('closed')
+    expect(taskStatusDot('closed')).toBe('quiet')
   })
 
   it('clamps bodies purely by their displayed character count', () => {

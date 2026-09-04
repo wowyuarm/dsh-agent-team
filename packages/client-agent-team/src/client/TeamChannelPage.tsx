@@ -3,7 +3,7 @@ import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberI
   AgentTeamTaskRef, AgentTeamThreadRef,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
 import { mintRequestId } from './requests.ts'
@@ -14,6 +14,7 @@ import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
+import { TeamStateDot } from './TeamStateDot.tsx'
 import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { hostTaskRefLookup, jumpToTaskThread } from './task-refs.ts'
@@ -355,12 +356,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
               >
                 {item.message.topLevel && item.task !== undefined && item.taskNumber !== undefined && <button type="button" className={channelCss.taskFooter} aria-label={t('openTask', { number: item.taskNumber })} onClick={() => { selectThread(item.thread.threadRef, channelRef, item.task?.taskRef, item.taskNumber) }}>
                   <span className={channelCss.taskDot}>
-                    {(() => {
-                      const dot = taskStatusDot(item.task.status)
-                      return dot === 'ongoing' || dot === 'warning' || dot === 'done'
-                        ? <StateDot size={8} state={dot} />
-                        : <span className={channelCss.taskDotQuiet} data-variant={dot} />
-                    })()}
+                    <TeamStateDot size={8} state={taskStatusDot(item.task.status)} />
                   </span>
                   <span className={channelCss.taskNumber}>{t('taskLabel', { number: item.taskNumber })}</span>
                   <span className={channelCss.taskStatus}>{formatTaskStatus(item.task.status, t)}</span>

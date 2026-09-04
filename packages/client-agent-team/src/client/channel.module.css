@@ -56,46 +56,14 @@
   line-height: 18px;
 }
 
-/* Status label carries an optional StateDot (running/review-pending/done). */
+/* Status label carries the shared Team status dot (running/review-pending/
+   done, todo ring, closed quiet). */
 .taskDot {
   align-items: center;
   display: inline-flex;
   /* Fixed seat keeps every Task #N on one vertical axis across statuses. */
   flex: none;
   width: 8px;
-}
-
-/* Quiet statuses mirror the StateDot geometry without its color semantics:
-   todo is a hollow ring (not started), closed a solid tertiary dot with the
-   same 10% halo as StateDot (archived). */
-.taskDotQuiet {
-  border-radius: 50%;
-  flex: none;
-  height: 8px;
-  position: relative;
-  width: 8px;
-}
-
-.taskDotQuiet[data-variant='todo'] {
-  border: 1px solid var(--dsw-alias-label-tertiary);
-}
-
-.taskDotQuiet[data-variant='closed'] { color: var(--dsw-alias-label-tertiary); }
-.taskDotQuiet[data-variant='closed']::before {
-  background: currentColor;
-  border-radius: 50%;
-  content: '';
-  inset: 0;
-  opacity: 0.1;
-  position: absolute;
-}
-
-.taskDotQuiet[data-variant='closed']::after {
-  background: currentColor;
-  border-radius: 50%;
-  content: '';
-  inset: 20%;
-  position: absolute;
 }
 
 /* The chevron rides inside a fixed-size seat so every card's arrow sits at

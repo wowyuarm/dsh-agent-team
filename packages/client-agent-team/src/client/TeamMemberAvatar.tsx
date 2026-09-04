@@ -1,9 +1,10 @@
 import type { CSSProperties } from 'react'
-import { StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamClientMemberStatus } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { memberHue } from './team-formatters.ts'
 import { presenceDotState, presenceLabel } from './TeamPresenceDot.tsx'
+import { TeamStateDot } from './TeamStateDot.tsx'
 import css from './sidebar.module.css'
 
 /**
@@ -27,7 +28,7 @@ export function TeamMemberAvatar({ status, t }: {
       >
         {status.member.handle.replace('@', '').slice(0, 1).toUpperCase()}
         <span className={css.agentAvatarBadge} aria-hidden="true">
-          {state === 'gray' ? <span className={css.unavailableDot} /> : <StateDot state={state} size={8} />}
+          <TeamStateDot state={state} />
         </span>
       </span>
     </Tooltip>
