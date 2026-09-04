@@ -85,7 +85,7 @@
 - textarea 自增高（上限 180px），Channel / Thread composer 出现时自动聚焦且不滚动时间线；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。发送期间输入框保持聚焦但只读，避免重复提交；发送按钮点击不抢走焦点，发送完成后可直接继续输入。未关注成员的首次发送返回确认提醒时，保留草稿与收件人，输入框自动恢复焦点，第二次 Enter 可直接确认发送。composer 卡片沿用 DSH 默认静态边框，不因 `focus-within` 改色。
 - mention 弹层向上展开，`role="listbox"`，textarea 以 `aria-controls/aria-activedescendant/aria-expanded` 关联；↑↓ 循环、Tab/Enter 接受候选、Escape 关闭；外点关闭复用 `useDismissOnOutsidePointer`；高度钳制复用 `useAnchoredMaxHeight`（cap 320px）。
 - 接受候选后光标落点精确到插入文本之后；删除提及文本会同步收缩 recipients。
-- Member Session 输入面（rc.1 起不接管 `conversation.composer.bar`，shipped InputBar 完整渲染）：键盘合同由 shipped composer 提供——Enter 提交（运行中转 steer）、Shift+Enter 换行、IME composition 期间不触发；`/` 与 `@` 候选菜单是 shipped trigger 体系（`conversation.input.overlay`），↑↓/Enter/Tab 由 MenuView 原生处理。两个 Team trigger sources（`/compact`、`@成员`）经公开 trigger registry 全局注册、按会话过滤，`matchEnter` 让整行输入的 `/compact` 也认领 Team compact 事务。Team 自有表面是 `conversation.input.dock` 中的提示 strip（`TeamMemberDock`：词汇提示 + 成员回合 promptError，标准 `useSession` hook 读取），hero 空态与活跃态都渲染。
+- Member Session 输入面即 shipped composer 本身，不做任何修改：Team 不注册任何成员会话的 composer 表面——无接管、无 trigger sources、无 dock 提示条。键盘合同、命令与引用菜单、附件与普通会话完全一致。
 - 收件人显式化：recipients 非空时草稿与工具栏之间渲染 quiet 提示行（`.notifyRow`，`composerNotify` 文案 + `{ids}` 句柄列表），发送前即可看到"将通知谁"；空集合不占位。
 - 草稿缓存：draft/recipients 不在页面局部，而是按 `channel:<channelRef>` / `thread:<threadRef>` 键存入每 Client 上下文一份的 `TeamDraftStore`（`drafts.ts`，单一 localStorage 键 `dsh.agent-team.drafts.v1`，写穿持久化、按 savedAt 淘汰最旧 ~50 条）。切换视图或刷新后草稿与收件人原样恢复；发送提交成功即清除对应键，失败保留；Composer 挂载收敛会剔除不再匹配文本/已失效的收件人。Channel 的「作为任务」意图不进入草稿缓存：默认关闭，成功提交后再次复位关闭。
 - taskless Thread 的「转为任务」是 Human-only durable mutation，不做乐观 overlay。成功后重新读取 Thread 与补充 Channel/Member 投影；unread/stale fence 时保留 Host 返回错误并重新读取相关事实。

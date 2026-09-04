@@ -320,26 +320,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await builderRow.getByRole('button', { name: '打开 builder 的会话' }).click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.agentTeamMode ?? null)).toBe('team')
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
-  // rc.1: the shipped InputBar owns the composer (and its trigger menus);
-  // the Team surface under it is the dock strip.
-  const memberDock = page.locator('[data-team-member-dock="true"]')
-  await expect.poll(() => memberDock.count()).toBe(1)
+  // rc.1: the shipped InputBar owns the composer entirely — the Team manages
+  // no member-session input surface, so the journey only asserts the shipped
+  // composer renders for the embedded Member Session.
   const memberInput = page.locator('[data-composer-input][contenteditable="true"]')
   await expect.poll(() => memberInput.count()).toBe(1)
-  const compactEventsBefore = builderAgent.session.snapshotEvents().filter(event => event.type === 'command/run' || event.type === 'command/done').length
-  await memberInput.fill('/co')
-  await page.getByRole('option', { name: '/compact' }).waitFor()
-  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-compact-menu.png'), fullPage: true })
-  await page.getByRole('option', { name: '/compact' }).click()
-  await memberInput.press('Enter')
-  await expect.poll(() => builderAgent.session.snapshotEvents().filter(event => event.type === 'command/run' || event.type === 'command/done').length).toBe(compactEventsBefore + 2)
-  const compactLifecycle = builderAgent.session.snapshotEvents().filter(event => event.type === 'command/run' || event.type === 'command/done').slice(-2)
-  expect(compactLifecycle[0]).toMatchObject({ type: 'command/run', data: { name: 'compact', source: { kind: 'user' } } })
-  expect(compactLifecycle[1]).toMatchObject({ type: 'command/done', data: { commandId: (compactLifecycle[0] as { data: { commandId: string } }).data.commandId } })
-  // The Host lifecycle acknowledgment and Client InputMachine settlement arrive
-  // independently. Do not begin the next DOM edit until the compact claim has
-  // consumed its own draft, or its late success could clear that next draft.
-  await expect.poll(() => memberInput.textContent()).toBe('')
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-composer.png'), fullPage: true })
 
   // 「从全新上下文开始」executes for real while the Member Session is embedded:
   // the Host moves the Member onto a fresh Session id, and the right pane
@@ -358,13 +344,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await executeClearDialog.getByRole('button', { name: '开始全新上下文' }).click()
   await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
   // The embedded pane navigates onto the renewed Session (hero composer, no
-  // rows): the compact transcript is gone while the Member composer stays live.
-  await expect.poll(() => page.getByText('/compact').count()).toBe(0)
+  // rows): the shipped composer stays live for the fresh context.
   await expect.poll(() => page.evaluate(() => ({
     channel: document.querySelectorAll('[data-team-channel]').length,
-    dock: document.querySelectorAll('[data-team-member-dock="true"]').length,
     mode: document.documentElement.dataset.agentTeamMode ?? null,
-  })), { timeout: 10_000 }).toEqual({ channel: 0, dock: 1, mode: 'team' })
+  })), { timeout: 10_000 }).toEqual({ channel: 0, mode: 'team' })
   await expect.poll(() => memberInput.isEnabled()).toBe(true)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-cleared.png'), fullPage: true })
   // Host side: the Member moved onto a fresh Session id; the previous log
@@ -379,27 +363,16 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(freshBuilderAgent.session.snapshotEvents().filter(event => event.type === 'user/message' || event.type === 'command/run' || event.type === 'turn/start')).toHaveLength(0)
   expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(builderMember.member.sessionId)
 
-  // The fresh session is immediately usable: the member-composer mention flow
-  // runs against the recreated Session and its structured prompt lands there.
-  // Tab accepts the highlighted candidate, mirroring the team-mode composer.
-  await memberInput.fill('@rev')
-  await page.getByRole('option', { name: '@reviewer' }).waitFor()
-  await memberInput.press('Tab')
-  await expect.poll(() => memberInput.textContent()).toBe('@reviewer ')
+  // The fresh session is immediately usable through the shipped composer: a
+  // plain prompt lands on the recreated Session (the Team manages no
+  // member-session input surface, so no structured mention flow remains).
+  await memberInput.fill('fresh context hello')
   await memberInput.press('Enter')
-  const isStructuredReviewerPrompt = (event: ReturnType<typeof freshBuilderAgent.session.snapshotEvents>[number]): boolean => event.type === 'user/message'
+  const isPlainFreshPrompt = (event: ReturnType<typeof freshBuilderAgent.session.snapshotEvents>[number]): boolean => event.type === 'user/message'
     && event.data.source.kind === 'user'
-    && event.data.content.some(block => block.type === 'text' && block.text === `<team-member ref="${reviewerMember.member.memberId}">@reviewer</team-member>`)
-  await expect.poll(() => freshBuilderAgent.session.snapshotEvents().some(isStructuredReviewerPrompt)).toBe(true)
+    && event.data.content.some(block => block.type === 'text' && block.text === 'fresh context hello')
+  await expect.poll(() => freshBuilderAgent.session.snapshotEvents().some(isPlainFreshPrompt)).toBe(true)
   await freshBuilderAgent.whenIdle()
-  const mentionPrompt = freshBuilderAgent.session.snapshotEvents().findLast(isStructuredReviewerPrompt)
-  expect(mentionPrompt).toBeDefined()
-  await memberInput.fill('newline')
-  await memberInput.press('Shift+Enter')
-  // Shift+Enter is a native newline in the contenteditable: the draft stays
-  // multiline and nothing was submitted.
-  expect(await memberInput.textContent()).toContain('newline')
-  await expect.poll(() => page.getByText('team-member', { exact: true }).count()).toBe(1)
   await expect.poll(() => page.locator('[class*="agentRow"]').count()).toBeGreaterThan(0)
   // The single positioning highlight sits on the selected Agent card; the
   // workspace overview row stays quiet while the Member view is open.
@@ -992,9 +965,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const restoredComposer = page.locator('[data-composer-input][contenteditable="true"]').first()
   await restoredComposer.waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
-  // The Team dock strip is registered only for an embedded Member Session;
-  // the restored ordinary shell must not carry it.
-  await expect.poll(() => page.locator('[data-team-member-dock="true"]').count()).toBe(0)
   // Team's globally registered sources return no ordinary candidates; shipped
   // command/skill discovery takes the restored ordinary Session back over.
   await restoredComposer.fill('/')

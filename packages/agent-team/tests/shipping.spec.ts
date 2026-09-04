@@ -32,6 +32,9 @@ describe('Agent Team shipping contract', () => {
     // duplicate the shipped row and fail the boot sweep.
     expect(patch).toContain("name: '@deepseek-ai/dsh-storage-sqlite'")
     const composed = applyEntryPatches([], [
+      // rc.1 moved the storage rows from web-app into the base bundle; the
+      // real layer stack is base → web-app → this bundle.
+      ...loadOverlayPatches('shipping contract', resolve(root, '../deepseek-harness/packages/bundle/base/cordis.patch.yml')),
       ...loadOverlayPatches('shipping contract', resolve(root, '../deepseek-harness/packages/bundle/web-app/cordis.patch.yml')),
       ...loadOverlayPatches('shipping contract', resolve(root, 'cordis.patch.yml')),
     ], () => {})

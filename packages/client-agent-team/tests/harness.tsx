@@ -276,10 +276,6 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.ctx.provide('remote.agentTeam', {})
   runtime.ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
-  runtime.ctx.provide('inputTriggers', {
-    registerSource: () => () => {},
-    sessionOf: () => ({ menu: { getSnapshot: () => ({ open: false }) }, dismiss() {}, toggleSource() {}, arbitrate: () => 'pass' }),
-  } as never)
   runtime.ctx.provide('connection', { isLoopback: true, generation: { getSnapshot: () => ({}) }, state: { getSnapshot: () => ({}) }, rpc: {}, reconnect: vi.fn(), registerGenerationSource: vi.fn(), start: vi.fn(), stop: vi.fn() })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
