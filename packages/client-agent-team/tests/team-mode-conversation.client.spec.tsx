@@ -716,10 +716,69 @@ describe('Team conversation surfaces', () => {
     expect(await b.view.findByText('↓ 1 条新更新')).toBeTruthy()
     expect(b.view.queryByRole('button', { name: '标记为已读' })).toBeNull()
 
-    // The hint click only scrolls to the tail; it performs no read itself.
+    // The hint click scrolls to the tail, performs no read itself, and is
+    // the reader's answer: the hint clears immediately on the click.
     fireEvent.click(b.view.getByRole('button', { name: '↓ 1 条新更新' }))
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(b.readThread).toHaveBeenCalledTimes(2)
+    expect(b.view.queryByText(/↓ \d+ 条新更新/)).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('drops the jump hint the moment the reader returns to the tail', async () => {
+    const b = await runtimeWithTeam({ initialChannels: true })
+    fireEvent.click(b.view.getByRole('button', { name: '团队' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[aria-current="page"]')?.textContent).toContain('Alpha') })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
+    const messageInput = b.view.getByRole('textbox', { name: '消息内容' }) as HTMLTextAreaElement
+    fireEvent.change(messageInput, { target: { value: 'first task' } })
+    fireEvent.click(b.view.getByRole('button', { name: '作为任务' }))
+    fireEvent.click(b.view.getByRole('button', { name: '发送' }))
+    expect(await b.view.findByText('first task')).toBeTruthy()
+    fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
+    expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+
+    const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
+      sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
+    const newFact = { kind: 'message', sequence: 9, message: { messageRef: 'message:new-9', channelRef: 'channel:1', threadRef: 'thread:1',
+      taskRef: 'task:1', sender: 'member:builder', body: 'fresh arrival one', topLevel: false, sequence: 9, occurredAt: '' }, mentions: [] }
+    const nextFact = { kind: 'message', sequence: 10, message: { messageRef: 'message:new-10', channelRef: 'channel:1', threadRef: 'thread:1',
+      taskRef: 'task:1', sender: 'member:builder', body: 'fresh arrival two', topLevel: false, sequence: 10, occurredAt: '' }, mentions: [] }
+    const historyWith = (facts: unknown[]) => b.loadThreadHistory.mockImplementation(async () => ({ ok: true as const, value: {
+      task: { taskRef: 'task:1', channelRef: 'channel:1', status: 'todo', resolution: 'open' },
+      thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts, cursor: 0, hasMore: false,
+    } } as never))
+
+    // The change stream swallows one wake inside its initial silent probe;
+    // flush that probe so later wakes reach the listener.
+    historyWith([])
+    b.publishAgentReply()
+    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
+
+    const timelineSection = document.querySelector('section[aria-label="消息时间线"]') as HTMLElement
+    Object.defineProperty(timelineSection, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(timelineSection, 'clientHeight', { configurable: true, value: 120 })
+    fireEvent.scroll(timelineSection)
+
+    // A reader away from the tail gets the hint for the arrival...
+    historyWith([newFact])
+    b.publishAgentReply()
+    await waitFor(() => expect(b.view.findByText('↓ 1 条新更新')).toBeTruthy())
+
+    // ...and scrolling back within the follow margin clears it via the scroll
+    // event alone, without any other re-render in between.
+    Object.defineProperty(timelineSection, 'scrollHeight', { configurable: true, value: 120 })
+    fireEvent.scroll(timelineSection)
+    await waitFor(() => expect(b.view.queryByText(/↓ \d+ 条新更新/)).toBeNull())
+
+    // A fresh arrival while the reader is at the tail stays invisible to the
+    // hint: the reader is watching the bottom, so the timeline follows them.
+    historyWith([nextFact])
+    b.publishAgentReply()
+    expect(await b.view.findByText('fresh arrival two')).toBeTruthy()
+    await waitFor(() => expect(b.view.queryByText(/↓ \d+ 条新更新/)).toBeNull())
     await b.runtime.dispose()
   })
 
@@ -819,11 +878,21 @@ describe('Team conversation surfaces', () => {
 
     b.publishAgentReply()
     await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
+
+    // The reader sits away from the tail, so the arrival raises the hint;
+    // the failed acknowledgment must not rob them of it — the hint is the
+    // only affordance (with no manual read control to substitute for the
+    // retry).
+    const timelineSection = document.querySelector('section[aria-label="消息时间线"]') as HTMLElement
+    Object.defineProperty(timelineSection, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(timelineSection, 'clientHeight', { configurable: true, value: 120 })
+    fireEvent.scroll(timelineSection)
+
     b.readThread.mockRejectedValueOnce(new Error('acknowledgment transport failed') as never)
     b.publishChannelUpdate()
     // The durable read failed: the arrivals stay visible, the durable
     // acknowledgment surfaces as an error, and the pure jump hint remains
-    // (with no manual read control to substitute for the retry).
+    // — still counting the arrival batch exactly once.
     await waitFor(() => { expect(b.view.getByText('↓ 1 条新更新')).toBeTruthy() })
     expect(await b.view.findByText('unacknowledged')).toBeTruthy()
     expect(await b.view.findByRole('alert')).toBeTruthy()
