@@ -9,7 +9,7 @@ import type {
   AgentTeamUpdateChannelRequest,
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button, IconArchiveOutline20, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'

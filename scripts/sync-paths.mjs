@@ -3,7 +3,10 @@
 // public subpaths resolve to their maintained implementation directories.
 import { readFileSync, writeFileSync } from 'node:fs'
 
-const HARNESS = new URL('../../deepseek-harness/', import.meta.url)
+// Certification runs point this at an isolated checkout at the candidate tag
+// (see docs/dsh-release-compatibility.md); default stays the daily sibling.
+const HARNESS_NAME = process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'
+const HARNESS = new URL(`../../${HARNESS_NAME}/`, import.meta.url)
 const raw = readFileSync(new URL('tsconfig.base.json', HARNESS), 'utf8')
 const cleaned = raw
   .split('\n')
@@ -31,13 +34,13 @@ const ownTypes = {
 }
 
 const harnessSrc = {
-  '@deepseek-ai/dsh-storage-sqlite': ['../deepseek-harness/packages/storage/storage-sqlite/src/index.ts'],
-  '@deepseek-ai/dsh-skill': ['../deepseek-harness/packages/skill/skill/src/index.ts'],
-  '@deepseek-ai/dsh-skill-filesystem': ['../deepseek-harness/packages/skill/skill-filesystem/src/index.ts'],
+  '@deepseek-ai/dsh-storage-sqlite': [`../${HARNESS_NAME}/packages/storage/storage-sqlite/src/index.ts`],
+  '@deepseek-ai/dsh-skill': [`../${HARNESS_NAME}/packages/skill/skill/src/index.ts`],
+  '@deepseek-ai/dsh-skill-filesystem': [`../${HARNESS_NAME}/packages/skill/skill-filesystem/src/index.ts`],
 }
 for (const [key, value] of Object.entries(base.compilerOptions.paths)) {
   harnessSrc[key] = (Array.isArray(value) ? value : [value])
-    .map(path => path.replace(/^\.\//, '../deepseek-harness/'))
+    .map(path => path.replace(/^\.\//, `../${HARNESS_NAME}/`))
 }
 
 const toTypes = path => path

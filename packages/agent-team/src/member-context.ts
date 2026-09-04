@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { AgentTeamAgentMember } from './types.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
@@ -31,7 +32,10 @@ export function apply(ctx: Context): void {
     }
     const text = `${renderMemberIdentity(member)}\n\n${memory}`
     const latestText = agent.session.surface.nodes.toReversed().flatMap(sequence => {
-      const event = agent.session.events[sequence]
+      // `nodes` are event identities (SessionSeq); snapshotEvents takes log
+      // offsets. Re-entering through the validating constructor keeps the two
+      // number domains explicit (the seq = log.length contiguity contract).
+      const event = agent.session.snapshotEvents(SessionLogOffset(sequence), SessionLogOffset(sequence + 1))[0]
       return event?.type === 'user/message'
         && event.data.source.kind === 'plugin'
         && event.data.source.plugin === name

@@ -10,7 +10,7 @@ import type {
   AgentTeamRequestId,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
 /** One idempotent membership intent: `joined` rows leave, others join. */
 export interface ChannelMembershipChange {

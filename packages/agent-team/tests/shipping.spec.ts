@@ -111,7 +111,7 @@ describe('Agent Team shipping contract', () => {
     const ctx = new Context()
     await ctx.plugin(Loader)
     await ctx.plugin(AgentPresets, { default: 'team-member',
-      roots: [{ path: resolve(root, 'packages/agent-team/preset'), trust: 'system' }], includeUserRoot: false })
+      roots: [{ path: resolve(root, 'packages/agent-team/preset'), trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
     const roster = await ctx.agentPresets.list()
     expect(roster).toEqual([expect.objectContaining({ id: 'team-member', trust: 'system' })])
     expect(roster[0]?.broken).toBeUndefined()

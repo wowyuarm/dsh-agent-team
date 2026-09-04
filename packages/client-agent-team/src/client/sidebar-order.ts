@@ -10,7 +10,7 @@
  * results for `useSyncExternalStore`.
  */
 import { useCallback, useSyncExternalStore } from 'react'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
 /** Which sidebar list an order belongs to; the two ledgers are independent. */
 export type TeamSidebarListKind = 'channels' | 'agents'

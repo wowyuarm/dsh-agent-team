@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import { useState } from 'react'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
@@ -33,9 +33,9 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   }
   const runtime = await SlotTestRuntime.create()
   const locale = new LocaleRuntime(runtime.ctx)
-  runtime.provide('locale', locale)
+  runtime.ctx.provide('locale', locale)
   runtime.slots.installLocale(locale)
-  runtime.provide('layout', { toggleSidebar: vi.fn() })
+  runtime.ctx.provide('layout', { toggleSidebar: vi.fn() })
   const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: string) => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
@@ -265,14 +265,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
-  runtime.provide('remote.agentTeam', {})
-  runtime.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
-  runtime.provide('inputTriggers', {
+  runtime.ctx.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.ctx.provide('remote.agentTeam', {})
+  runtime.ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
+  runtime.ctx.provide('inputTriggers', {
     registerSource: () => () => {},
     sessionOf: () => ({ menu: { getSnapshot: () => ({ open: false }) }, dismiss() {}, toggleSource() {}, arbitrate: () => 'pass' }),
   } as never)
-  runtime.provide('connection', { api: { llm: { models: loadModels } } })
+  runtime.ctx.provide('connection', { api: { llm: { models: loadModels } } })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [

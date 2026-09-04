@@ -102,7 +102,7 @@ async function memberSkillsHarness(): Promise<{
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
-  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false })
+  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })

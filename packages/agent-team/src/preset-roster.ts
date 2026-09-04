@@ -12,6 +12,7 @@ export function apply(ctx: Context): void {
   ctx.plugin(AgentPresets, {
     default: 'team-member',
     roots: [{ path: root, trust: 'system' }],
+    includeShippedRoot: false,
     includeUserRoot: false,
   })
 }

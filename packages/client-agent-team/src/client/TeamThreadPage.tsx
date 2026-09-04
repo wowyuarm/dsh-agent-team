@@ -12,7 +12,7 @@ import type {
   AgentTeamThreadRef,
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'

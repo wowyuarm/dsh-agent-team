@@ -10,11 +10,10 @@ import Group from '@deepseek-ai/cordis-plugin-group'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets, { type AgentPreset } from '@deepseek-ai/dsh-agent-presets'
-import LlmRuntime, { CallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import SqliteSessionPersistence from '@deepseek-ai/dsh-session-persistence-sqlite'
 import SessionTitle from '@deepseek-ai/dsh-session-title'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
@@ -78,7 +77,7 @@ class GatedAdapter extends ScriptedAdapter {
 }
 
 function toolCallResponse(rawCallId: string, name: string, args: object): StreamChunk[] {
-  const id = CallId(rawCallId)
+  const id = ToolCallId(rawCallId)
   const argumentsJson = JSON.stringify(args)
   return [
     { type: 'block-start', index: 0, blockType: 'tool-call' },
@@ -109,7 +108,7 @@ function waitForIdle(ctx: Context, agent: NonNullable<ReturnType<Context['agents
   })
 }
 
-type PersistenceBackend = 'jsonl' | 'sqlite'
+type PersistenceBackend = 'jsonl'
 
 /**
  * The real roster with one test seam: agents armed here resolve no preset
@@ -149,7 +148,6 @@ async function realHarness(
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
   const persistence = join(root, 'sessions')
-  const sqlite = join(root, 'sessions.sqlite')
   const presetRoot = join(root, 'presets')
   const presetDir = join(presetRoot, 'team-member')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
@@ -203,10 +201,9 @@ async function realHarness(
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
-  else await ctx.plugin(SqliteSessionPersistence, { path: sqlite, journalMode: 'delete' })
   await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
-  const presetsConfig = (): { default: string; roots: { path: string; trust: 'system' }[]; includeUserRoot: boolean } => ({
-    default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false,
+  const presetsConfig = (): { default: string; roots: { path: string; trust: 'system' }[]; includeShippedRoot: boolean; includeUserRoot: boolean } => ({
+    default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false,
   })
   await ctx.plugin(TestablePresets, presetsConfig())
   await ctx.plugin(Storage)
@@ -282,7 +279,7 @@ describe('Agent Team Member lifecycle', () => {
     await expect(access(join(added.status.member.privateMemoryPath, 'notes'))).resolves.toBeUndefined()
     const live = ctx.agents.get(added.status.member.sessionId)
     expect(live?.session.header.cwd).toBe(project)
-    expect(live?.session.events).toContainEqual(expect.objectContaining({ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }))
+    expect(live?.session.ownEvents()).toContainEqual(expect.objectContaining({ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }))
     expect(ctx.agentTeam.memberForAgent(live!)).toEqual(added.status.member)
     expect(ctx.agentTeam.membersForClient({ workspaceId })[0]?.member).not.toHaveProperty('privateMemoryPath')
     const sessionTitle = ctx.get('sessionTitle')
@@ -316,7 +313,7 @@ describe('Agent Team Member lifecycle', () => {
     if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
     await idle
     expect(adapter.requests).toHaveLength(1)
-    expect(liveBefore.session.events.some(event => event.type === 'user/message' || event.type === 'turn/start')).toBe(true)
+    expect(liveBefore.session.ownEvents().some(event => event.type === 'user/message' || event.type === 'turn/start')).toBe(true)
     // Consume the durable unread so the Member settles to available; the clear
     // guard requires an idle Member.
     await ctx.agentTeam.readThreadForAgent(liveBefore, { requestId: requestId('clear-read'), workspaceId, taskRef: started.task!.taskRef })
@@ -341,8 +338,8 @@ describe('Agent Team Member lifecycle', () => {
     expect(liveAfter).not.toBe(liveBefore)
     expect(liveAfter.session.header.cwd).toBe(liveBefore.session.header.cwd)
     expect(liveAfter.session.header.parentSession).toBe(added.status.member.sessionId)
-    expect(liveAfter.session.events.filter(event => event.type === 'user/message' || event.type === 'turn/start')).toHaveLength(0)
-    expect(liveAfter.session.events.length).toBeLessThan(liveBefore.session.events.length)
+    expect(liveAfter.session.ownEvents().filter(event => event.type === 'user/message' || event.type === 'turn/start')).toHaveLength(0)
+    expect(liveAfter.session.ownEvents().length).toBeLessThan(liveBefore.session.ownEvents().length)
     const sessionTitle = ctx.get('sessionTitle')
     expect(sessionTitle?.get(liveAfter.session)).toMatchObject({ title: 'builder', source: { kind: 'user' } })
 
@@ -470,21 +467,6 @@ describe('Agent Team Member lifecycle', () => {
       items: [expect.objectContaining({ task: expect.objectContaining({ taskRef: after.task!.taskRef }), directCount: 1 })] })
   })
 
-  it('creates, suspends, resumes, and removes a Member with a current DSH SQLite Session database', async () => {
-    const { ctx, workspaceId } = await realHarness(new EmptyAdapter(), 'sqlite')
-    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('sqlite-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
-    const added = await ctx.agentTeam.addMember({ requestId: requestId('sqlite-add'), workspaceId, handle: 'sqlite-builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
-    expect(added.status.availability).toBe('active')
-
-    await ctx.agentTeam.suspendMember({ requestId: requestId('sqlite-suspend'), memberId: added.status.member.memberId })
-    const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('sqlite-resume'), memberId: added.status.member.memberId })
-    expect(resumed.status.availability).toBe('active')
-    expect(resumed.status.member.sessionId).toBe(added.status.member.sessionId)
-
-    const removed = await ctx.agentTeam.removeMember({ requestId: requestId('sqlite-remove'), memberId: added.status.member.memberId })
-    expect(removed.member.state).toBe('inactive')
-  })
-
   it('requires referenced Channel authority and rejects an incomplete Team preset before publication', async () => {
     const { ctx, workspaceId } = await realHarness()
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -502,7 +484,7 @@ describe('Agent Team Member lifecycle', () => {
     const agent = ctx.agents.get(builder.status.member.sessionId)!
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
-      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-protocol-${++callNumber}`), name, arguments: args, agent })
+      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name, arguments: args, agent })
       expect(result.isError).toBe(false)
       expect(result.concludesTurn).toBeUndefined()
       if (result.isError) throw new Error(result.error.message)
@@ -532,7 +514,7 @@ describe('Agent Team Member lifecycle', () => {
     const shotFact = shotHistory.facts.find(fact => fact.kind === 'message' && fact.message.attachments !== undefined)
     expect(shotFact).toBeDefined()
     expect(shotHistory.facts.some(fact => fact.kind === 'message' && /\[attachment\] .*attachments\/v1\//.test(fact.message?.body ?? ''))).toBe(true)
-    const rejected = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-protocol-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'start', channelRef: channel.channel.channelRef, body: 'Never committed', attachments: ['relative/shot.png'] }, agent })
+    const rejected = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'start', channelRef: channel.channel.channelRef, body: 'Never committed', attachments: ['relative/shot.png'] }, agent })
     expect(rejected.isError).toBe(true)
     expect(rejected.error?.message ?? rejected.value).toMatch(/must be absolute/)
     expect(ctx.agentTeam.threadHistory({ workspaceId, threadRef: shotThreadRef as never }).facts.some(fact => fact.kind === 'message' && fact.message?.body === 'Never committed')).toBe(false)
@@ -625,7 +607,7 @@ describe('Agent Team Member lifecycle', () => {
     const recipient = ctx.agents.get(reviewer.status.member.sessionId)!
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
-      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-${++callNumber}`), name, arguments: args, agent: sender })
+      const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-${++callNumber}`), name, arguments: args, agent: sender })
       expect(result.isError).toBe(false)
       if (result.isError) throw new Error(result.error.message)
       return result.value as Record<string, any>
@@ -639,7 +621,7 @@ describe('Agent Team Member lifecycle', () => {
     // plugin relay source; it is durable in the recipient's session log.
     adapter.enqueue(textResponse('Build is green.'))
     await waitForIdle(ctx, recipient)
-    const relay = recipient.session.events.findLast(event => event.type === 'user/message'
+    const relay = recipient.session.ownEvents().findLast(event => event.type === 'user/message'
       && (event.data as { source?: { form?: string } }).source?.form === 'relay')
     expect(relay).toBeDefined()
     const relayData = relay!.data as { content: Array<{ type: string; text: string }>; source: { kind: string; plugin: string; form: string } }
@@ -663,7 +645,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(second).toMatchObject({ kind: 'dm-sent', delivered: true })
     adapter.enqueue(textResponse('Still green.'))
     await waitForIdle(ctx, recipient)
-    const relays = recipient.session.events.filter(event => event.type === 'user/message'
+    const relays = recipient.session.ownEvents().filter(event => event.type === 'user/message'
       && (event.data as { source?: { form?: string } }).source?.form === 'relay')
     expect(relays).toHaveLength(2)
     const secondText = (relays[1]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text
@@ -676,30 +658,30 @@ describe('Agent Team Member lifecycle', () => {
     // latest prior exchange from the reader's own side is the builder's own
     // 'still green?', so the reader (builder) reads (you → them).
     adapter.enqueue(textResponse('Thanks.'))
-    const replyFromReviewer = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-mirror-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: builder.status.member.memberId, body: 'yes, all green' }, agent: recipient })
+    const replyFromReviewer = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-mirror-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: builder.status.member.memberId, body: 'yes, all green' }, agent: recipient })
     expect(replyFromReviewer.isError).toBe(false)
     adapter.enqueue(textResponse('Noted.'))
     await waitForIdle(ctx, sender)
-    const senderRelays = sender.session.events.filter(event => event.type === 'user/message'
+    const senderRelays = sender.session.ownEvents().filter(event => event.type === 'user/message'
       && (event.data as { source?: { form?: string } }).source?.form === 'relay')
     expect(senderRelays).toHaveLength(1)
     const mirrorText = (senderRelays[0]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text
     expect(mirrorText).toContain('(you → them) still green?')
 
     // Parameter matrix: human recipients, unknown Members, and stray fields.
-    const bad = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
+    const bad = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
     expect(bad.isError).toBe(true)
     expect(bad.error?.message ?? '').toMatch(/Agent Member/)
-    const unknown = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-unknown-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: 'member:nobody', body: 'hi' }, agent: sender })
+    const unknown = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-unknown-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: 'member:nobody', body: 'hi' }, agent: sender })
     expect(unknown.isError).toBe(true)
-    const stray = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-stray-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'hi', channelRef: channel.channel.channelRef }, agent: sender })
+    const stray = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-stray-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'hi', channelRef: channel.channel.channelRef }, agent: sender })
     expect(stray.isError).toBe(true)
     expect(stray.error?.message ?? '').toMatch(/does not accept/)
 
     // A suspended peer is not a sendable target: the ledger rejects the send
     // outright (nothing is recorded), which is the pre-delivery guard.
     await ctx.agentTeam.suspendMember({ requestId: requestId('dm-suspend'), memberId: reviewer.status.member.memberId })
-    const suspended = await ctx.tools.execute({ signal: new AbortController().signal, callId: CallId(`team-dm-suspended-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'are you back?' }, agent: sender })
+    const suspended = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-suspended-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: reviewer.status.member.memberId, body: 'are you back?' }, agent: sender })
     expect(suspended.isError).toBe(true)
     expect(suspended.error?.message ?? '').toMatch(/suspended/)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
@@ -743,7 +725,7 @@ describe('Agent Team Member lifecycle', () => {
     const afterRejection = JSON.stringify(adapter.requests[2]!.messages)
     expect(afterRejection).toContain(started.task!.taskRef)
     expect(afterRejection).toContain('unread_required')
-    const results = agent.session.events.filter(event => event.type === 'tool/result')
+    const results = agent.session.ownEvents().filter(event => event.type === 'tool/result')
     expect(results).toHaveLength(2)
     expect(results.map(result => result.data.message.content[0])).toEqual([
       expect.objectContaining({ type: 'tool-result', isError: false }),
@@ -781,7 +763,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(safeBoundaryRequest).toContain('2 unread updates')
     expect(safeBoundaryRequest).not.toContain('First hidden update')
     expect(safeBoundaryRequest).not.toContain('Second hidden update')
-    const hints = agent.session.events.filter(event => event.type === 'user/message'
+    const hints = agent.session.ownEvents().filter(event => event.type === 'user/message'
       && JSON.stringify(event.data).includes('Team Inbox has unread work'))
     expect(hints).toHaveLength(1)
   })
@@ -821,7 +803,7 @@ describe('Agent Team Member lifecycle', () => {
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
       const result = await ctx.tools.execute({ signal: new AbortController().signal,
-        callId: CallId(`peer-mention-${++callNumber}`), name, arguments: args, agent: starterAgent })
+        callId: ToolCallId(`peer-mention-${++callNumber}`), name, arguments: args, agent: starterAgent })
       if (result.isError) throw new Error(result.error.message)
       return result.value as Record<string, any>
     }

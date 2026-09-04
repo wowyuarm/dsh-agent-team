@@ -1,5 +1,6 @@
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { InputTriggerServiceContract } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {
   AgentTeamAddMemberRequest,
@@ -105,9 +106,9 @@ function registerModeShadow<T extends object>(
     archiveMember: (request: AgentTeamArchiveMemberRequest) => ctx.remote.agentTeam.archiveMember(request),
     // The Host-scoped catalog needs no live Member, so suspended ones stay editable too.
     loadModels: async () => {
-      const connection = ctx.get('connection') as ConnectionHandle
-      const response = await connection.api.llm.models({})
-      return response.result
+      const response = await ctx.remote.session.modelCatalog()
+      if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`)
+      return response.value
     },
     openMemberSession: openMemberSessionImpl,
   }

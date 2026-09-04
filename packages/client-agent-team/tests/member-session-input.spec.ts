@@ -21,7 +21,7 @@ function sources() {
   }
 }
 
-const request = (query: string) => ({ query, position: 'leading' as const, signal: new AbortController().signal })
+const request = (query: string) => ({ query, position: 'leading' as const, drilled: false, signal: new AbortController().signal })
 
 describe('Team Member session trigger sources', () => {
   it('uses the public Session command admission, preserving matched handler errors', async () => {
@@ -49,7 +49,7 @@ describe('Team Member session trigger sources', () => {
     const { executeCompact, sources: registered } = sources()
     const command = registered.find(source => source.name === TEAM_COMMAND_SOURCE)!
     const candidate = (await command.candidates({ sessionId: memberSession }, request('')))[0]!
-    const picked = command.onPick({ candidate, session: { sessionId: memberSession }, position: 'leading', via: 'menu', span: { start: 0, end: 8, draftRev: 3 } })
+    const picked = command.onPick({ candidate, session: { sessionId: memberSession }, position: 'leading', via: 'menu', action: 'pick', span: { start: 0, end: 8, draftRev: 3 } })
     expect(picked).toMatchObject({ claim: { token: '/compact' } })
     if (picked === undefined || picked === 'handled' || !('claim' in picked)) throw new Error('compact pick did not produce a claim')
     await picked.claim.submit('', {} as never, [])
@@ -64,7 +64,7 @@ describe('Team Member session trigger sources', () => {
     const member = registered.find(source => source.name === TEAM_MEMBER_SOURCE)!
     const candidates = await member.candidates({ sessionId: memberSession }, { ...request('rev'), position: 'inline' })
     expect(candidates).toEqual([expect.objectContaining({ name: '@reviewer', description: '引用成员 · 不会通知', value: 'member:reviewer' })])
-    const picked = member.onPick({ candidate: candidates[0]!, session: { sessionId: memberSession }, position: 'inline', via: 'menu', span: { start: 3, end: 7, draftRev: 4 } })
+    const picked = member.onPick({ candidate: candidates[0]!, session: { sessionId: memberSession }, position: 'inline', via: 'menu', action: 'pick', span: { start: 3, end: 7, draftRev: 4 } })
     expect(picked).toEqual({ insert: expect.objectContaining({ source: TEAM_MEMBER_SOURCE, ref: 'member:reviewer', label: 'reviewer', clipboardText: '@reviewer' }) })
     await expect(member.codec!.serialize('member:reviewer', new AbortController().signal)).resolves.toBe('<team-member ref="member:reviewer">@reviewer</team-member>')
     // If the cache is cold, stable identity remains; it never guesses a handle.

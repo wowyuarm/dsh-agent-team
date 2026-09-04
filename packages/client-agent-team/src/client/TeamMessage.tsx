@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { MarkdownText, MessageText, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
 import { cachedAttachmentDataUrl, formatByteSize, loadAttachmentDataUrl } from './attachment-preview.ts'
@@ -57,6 +58,13 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
   }, [onResolveTaskRefs, bodyTaskRefKey, refVersion])
   const taskLabel = useCallback((taskNumber: number): string => t?.('taskLabel', { number: taskNumber }) ?? `Task #${taskNumber}`, [t])
   const refLabel = useCallback((ref: string): string => ref.startsWith('thread:') ? (t?.('threadLabel') ?? 'Thread') : ref.startsWith('channel:') ? (t?.('channels') ?? 'Channels') : ref, [t])
+  // Markdown chrome (code-copy buttons, footnotes heading) is locale copy the
+  // cordis-free primitive receives via props. Stable per locale revision — a
+  // fresh object per render would rebuild the component table every chunk.
+  const markdownLabels = useMemo<MarkdownLabels>(() => ({
+    code: { copyLabel: t?.('copyCode') ?? 'Copy', copiedLabel: t?.('copiedCode') ?? 'Copied' },
+    footnotes: t?.('markdownFootnotes') ?? 'Footnotes',
+  }), [t])
   // Long bodies start clamped behind the expand control. The default derives
   // from the body alone; the toggle itself is per-mount view state nothing
   // persists.
@@ -104,7 +112,7 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
       </div>
     : plan.render === 'literal'
       ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel, refLabel)}</div>
-      : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} /></div>
+      : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} labels={markdownLabels} /></div>
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>
       <div className={css.messageIdentity} style={avatarStyle} aria-hidden="true">{senderName.replace('@', '').slice(0, 1).toUpperCase()}</div>
@@ -276,7 +284,7 @@ function TeamAttachmentStrip({ attachments, loadAttachment, t }: {
       {...(t === undefined ? {} : { t })}
       onZoom={setZoomed}
     />)}
-    {zoomed !== undefined && <Modal open {...(css.attachmentModal === undefined ? {} : { className: css.attachmentModal })} title={zoomed.name} onClose={() => { setZoomed(undefined) }}>
+    {zoomed !== undefined && <Modal open {...(css.attachmentModal === undefined ? {} : { className: css.attachmentModal })} title={zoomed.name} closeLabel={t?.('close') ?? 'Close'} onClose={() => { setZoomed(undefined) }}>
       <img className={css.attachmentZoom} src={cachedAttachmentDataUrl(zoomed.attachmentId) ?? undefined} alt={zoomed.name} />
     </Modal>}
   </div>

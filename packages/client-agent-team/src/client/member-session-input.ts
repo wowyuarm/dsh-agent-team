@@ -1,5 +1,5 @@
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import type { ISession } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ISession } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
   ClientSessionContext, CommandClaim, InputTriggerSource, ReferenceInsert, SubmitOutcome,
 } from '@deepseek-ai/dsh-client-ui-input-trigger/client'

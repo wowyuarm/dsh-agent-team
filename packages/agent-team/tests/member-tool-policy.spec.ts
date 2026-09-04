@@ -11,7 +11,7 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
-import LlmRuntime, { CallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -79,7 +79,7 @@ class GatedAdapter extends ScriptedAdapter {
 }
 
 function toolCallResponse(rawCallId: string, name: string, args: object): StreamChunk[] {
-  const id = CallId(rawCallId)
+  const id = ToolCallId(rawCallId)
   const argumentsJson = JSON.stringify(args)
   return [
     { type: 'block-start', index: 0, blockType: 'tool-call' },
@@ -168,7 +168,7 @@ async function policyHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
-  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeUserRoot: false })
+  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
@@ -405,7 +405,7 @@ describe('Agent Team member tool policy', () => {
 
     // The tool executes against the Member-scoped engine instance.
     const result = await holderAgent.ctx.tools.execute({
-      callId: CallId('spike-call'),
+      callId: ToolCallId('spike-call'),
       name: 'session_search',
       arguments: { query: 'anything' },
       agent: holderAgent as never,

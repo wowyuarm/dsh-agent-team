@@ -17,7 +17,7 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { effectiveSandboxMode, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
+import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
@@ -1084,7 +1084,13 @@ export default class AgentTeam extends TypertRemoteService {
           commit: () => {
             const agent = agentCtx.agent
             if (agent === undefined) throw new Error('agent-team setup has no unpublished Agent')
-            if (effectiveSandboxMode(agent.session.events) !== 'danger-full-access') setSandboxMode(agent.session, 'danger-full-access')
+            // The member scope composes no sandbox-policy service (the preset
+            // owns no sandbox row), so read the last logged mode straight from
+            // the session log; `sandbox/mode` is log-only and never joins the
+            // model-visible surface. Re-appending only when the effective mode
+            // differs keeps resumed members from growing redundant events.
+            const logged = agent.session.ownEvents().toReversed().find(event => event.type === 'sandbox/mode')
+            if (logged?.data.mode !== 'danger-full-access') setSandboxMode(agent.session, 'danger-full-access')
           },
         }
       }

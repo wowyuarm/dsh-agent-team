@@ -1,5 +1,5 @@
 import { IconFolderClose16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import css from './sidebar.module.css'
 
 export function TeamWorkspaceRow({ workspaceId, title, path, selected, current, onSelect }: {

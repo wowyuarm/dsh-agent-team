@@ -18,9 +18,9 @@ export type TeamMemberSessionComposerProps = PropsRuntime<'conversation.composer
 /**
  * Narrow, Team-owned member-session composer. It deliberately uses the public
  * input state/actions and trigger controller rather than the shipped InputBar;
- * owner-provided overlay remains inside the card so the shared menu renders.
+ * owner-provided accessory remains inside the card so the shared menu renders.
  */
-export function TeamMemberSessionComposer({ controller, inputActions, overlay, placeholder, disabled, blocked, stop, submitInput, useInput, useSession }: TeamMemberSessionComposerProps) {
+export function TeamMemberSessionComposer({ controller, inputActions, accessory, placeholder, disabled, blocked, stop, submitInput, useInput, useSession }: TeamMemberSessionComposerProps) {
   const input = useInput(state => state)
   const session = useSession(state => state)
   const textarea = useRef<HTMLTextAreaElement>(null)
@@ -134,7 +134,7 @@ export function TeamMemberSessionComposer({ controller, inputActions, overlay, p
         <textarea ref={textarea} value={draft} disabled={isLocked} placeholder={blocked?.reason ?? placeholder ?? '给成员发送直接消息'}
           onChange={onChange} onKeyDown={onKeyDown}
           onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }} />
-        {overlay}
+        {accessory}
       </div>
       <div className={`${css.toolbar} ${css.memberSessionToolbar}`}>
         <button className={`${css.sendButton} ${css.memberSessionPrimary}`} type="button" aria-label={running ? '停止生成' : '发送消息'} disabled={isLocked || (!running && draft.trim() === '')}

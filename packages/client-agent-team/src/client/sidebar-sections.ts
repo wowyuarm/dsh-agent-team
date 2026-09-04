@@ -8,7 +8,7 @@
  * when storage is unavailable.
  */
 import { useCallback, useSyncExternalStore } from 'react'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
 /** Which sidebar section a collapse state belongs to. */
 export type TeamSidebarSectionKind = 'workspaces' | 'channels' | 'agents'
