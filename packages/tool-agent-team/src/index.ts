@@ -70,7 +70,7 @@ const teamThread = defineTool({
   description: 'Read or manage your Attention on one Thread. read acknowledges one chronological batch; history does not change read state. Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.',
   parameters: {
     action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history'] },
-    threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix." },
+    threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     taskRef: { type: 'string', description: "Optional Task ref alias for released clients. Prefer threadRef; if both are given they must identify the same Thread." },
     beforeSequence: { type: 'number' }, limit: { type: 'number' },
   },
@@ -153,12 +153,12 @@ const teamMessage = markAgentTeamPreset(defineTool({
   description: 'Start a top-level Thread, reply to an existing Thread, or send a direct message (DM). start defaults to a taskless Thread; pass asTask true to create a Task in the same send. Read the Thread first; replies require its current revision (an internal concurrency token carried by baseRevision, never quoted in bodies). A top-level start may mention related Agents directly; in replies, only a Human can invite an unfollowed Agent. Pass Member refs in mentions and spell their handles inside the body; only mentioned Members render as mention chips. dm sends a private direct message to one enabled Agent Member in your Workspace: use it for quick clarifications and status syncs — never for task work, decisions, or anything that needs team visibility or traceability (use a Thread); if a DM exchange with the same Member exceeds about 3 exchanges, move it to a Thread, because every DM costs the recipient a full agent turn.',
   parameters: {
     action: { type: 'string', required: true, enum: ['start', 'reply', 'dm'] },
-    channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
-    threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix." },
-    taskRef: { type: 'string', description: "Optional Task ref alias for reply on a Taskful Thread. Prefer threadRef." },
-    memberRef: { type: 'string', description: "Full branded Member ref exactly as returned by Team tools, including the 'member:' prefix. Required for dm; the Member must be an enabled Agent in your Workspace (the Human cannot be DMed)." },
+    channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
+    threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
+    taskRef: { type: 'string', description: "Optional Task ref alias for reply on a Taskful Thread. Prefer threadRef; an unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
+    memberRef: { type: 'string', description: "Full branded Member ref exactly as returned by Team tools, including the 'member:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves. Required for dm; the Member must be an enabled Agent in your Workspace (the Human cannot be DMed)." },
     asTask: { type: 'boolean', description: 'When true, start creates a Task with the Thread. Default false creates a taskless Thread.' },
-    body: { type: 'string', required: true, description: "Markdown body. Cite Team refs exactly as returned, as bare text with one colon (e.g. task:0f0a…) — never a double colon, never inside backticks or quotes. Spell each mentioned Member's handle in the prose so the mention renders inline." }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Thread. The revision is an internal concurrency token, not a citable fact." },
+    body: { type: 'string', required: true, description: "Markdown body. Cite Team refs exactly as returned, as bare text with one colon (e.g. task:0f0a…) — never a double colon, never inside backticks or quotes. Unambiguous UUID abbreviations (first 6+ hex chars) also resolve. Spell each mentioned Member's handle in the prose so the mention renders inline." }, baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Thread. The revision is an internal concurrency token, not a citable fact." },
     mentions: { type: 'array', items: { type: 'string' }, description: 'Member refs to mention. Mentioned Agents receive the Message directly; write their handles in the body (any casing, optional @) so the mention renders inline.' },
     attachments: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths to share, e.g. screenshots or generated artifacts; images render as thumbnails for recipients. The Host validates each path and copies the file into the attachment cache, and members also receive one cached path per attachment; if any path fails validation the whole send is rejected.' },
   },
@@ -234,9 +234,9 @@ const teamClaim = defineTool({
   description: 'List or mutate your Direction Claims. Read the Thread first; every mutation uses the current Thread revision. A Claim is your one-sentence direction statement on a Task — "the angle I am taking" — so others can spot collisions and track progress: Tasks define scope (owned by Humans), Claims declare the angle (owned by you). Good direction: "Unify the four form dialogs on shared field components before wiring submits." Bad direction: a multi-paragraph plan with step order, file lists, or acceptance criteria — those belong in Thread messages, not the Claim.',
   parameters: {
     action: { type: 'string', required: true, enum: ['list', 'claim', 'done', 'release'] },
-    taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix." },
+    taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     baseRevision: { type: 'number', description: "Positive integer; use the current Thread revision as shown by the latest team_inbox or team_thread result for this Task. The revision is an internal concurrency token, not a citable fact." }, direction: { type: 'string' },
-    claimRef: { type: 'string', description: "Full branded Claim ref exactly as returned by team_claim, including the 'claim:' prefix." },
+    claimRef: { type: 'string', description: "Full branded Claim ref exactly as returned by team_claim, including the 'claim:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
@@ -281,7 +281,7 @@ const teamView = defineTool({
   name: 'team_view',
   description: 'Discover authorized Team Channels, Tasks, and Members. It is not a substitute for team_thread reading.',
   parameters: {
-    channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix." },
+    channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     limit: { type: 'number' }, cursor: { type: 'number' },
   },
   output: {

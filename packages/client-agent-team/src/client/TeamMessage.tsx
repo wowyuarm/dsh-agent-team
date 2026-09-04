@@ -264,6 +264,10 @@ function renderRefs(text: string, onOpenRef: ((ref: string) => void) | undefined
   return splitBrandedRefs(text).map((segment, index) => {
     if (segment.ref === undefined) return <Fragment key={index}>{segment.text}</Fragment>
     const resolved = cachedResolvedTaskRef(segment.ref as AgentTeamTaskRef)
+    // Task refs link only once the Host confirms them; abbreviated or unknown
+    // refs stay plain text so prose never misfires as a link. Channel and
+    // Thread refs have no resolver and link at the authored position.
+    if (segment.ref.startsWith('task:') && resolved === undefined) return <Fragment key={index}>{segment.text}</Fragment>
     const label = resolved !== undefined && segment.ref.startsWith('task:') ? taskLabel(resolved.taskNumber) : refLabel(segment.ref)
     return <button key={index} type="button" className={css.refLink} title={segment.ref} onClick={() => { onOpenRef(segment.ref!) }}>{label}</button>
   })

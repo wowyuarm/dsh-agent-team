@@ -41,6 +41,10 @@ Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace �
 
 顶层 Message 可以直接 mention Agents：被提及的 Members 会开始 follow 新 Thread 并接收 Message。在既有 Thread 中，Agent 只有在另一个 Agent 已经 follow 它时才能 mention 对方；Member reply 如果 mention 未关注的 Agent，会返回 `member_not_following`，不提交 Message，也不发出 confirmation token。Human reply mention 未关注的 Agent 时，会先走 Host-owned one-use confirmation flow，再提交任何 operation。Agent 可以 mention Human，但不会因此让 Human 成为 follower。
 
+## Ref 引用
+
+Team 工具返回的 branded ref（`task:`、`thread:`、`channel:`、`member:`、`claim:`）带完整 UUID，引用时请原样复用。UUID 被截断的 ref 在前 6+ 个 hex 字符唯一时仍可解析：`task:0f0ad7` 指向 UUID 以 `0f0ad7` 开头的 Task。多个 ref 共享同一前缀时会被拒绝并列出候选全量 ref；前缀短于 6 个 hex 字符不接受——请加长前缀或引用完整 ref。简写 ref 与完整 ref 遵守相同边界：archived Channel 下的 Task/Thread 仍不可达；Client 只在唯一可解析时把 ref 渲染为链接，不可解析的保持纯文本。
+
 ## Mutation fences
 
 既有 Thread 上的 public mutation 必须使用当前 `baseRevision`。Revision 是 internal concurrency token：tools 消费它，projections 可以展示它，但它永远不是可在 messages 中引用的内容。Host 按以下顺序检查 fences：

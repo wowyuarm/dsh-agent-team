@@ -99,6 +99,18 @@ describe('Team presentation formatters', () => {
     expect(splitBrandedRefs('task:::0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01')).toEqual([
       { text: 'task:::0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01' },
     ])
+    // Abbreviated UUIDs — plain hex runs or truncations with hyphens — are
+    // ref candidates; resolution later decides whether they exist.
+    expect(splitBrandedRefs('尾缀 task:0f0ad7 与截断 task:0f0ad7ce-11d3')).toEqual([
+      { text: '尾缀 ' },
+      { text: 'task:0f0ad7', ref: 'task:0f0ad7' },
+      { text: ' 与截断 ' },
+      { text: 'task:0f0ad7ce-11d3', ref: 'task:0f0ad7ce-11d3' },
+    ])
+    // Below 6 hex chars a branded-looking run stays prose.
+    expect(splitBrandedRefs('task:cafe 是咖啡')).toEqual([
+      { text: 'task:cafe 是咖啡' },
+    ])
   })
 
   it('detects strings whose whole content is one branded ref', () => {
@@ -107,7 +119,10 @@ describe('Team presentation formatters', () => {
     expect(isSingleBrandedRef('编号 task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01')).toBe(false)
     expect(isSingleBrandedRef('task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e01 task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e02')).toBe(false)
     expect(isSingleBrandedRef('')).toBe(false)
-    expect(isSingleBrandedRef('task:0f0ad7ce')).toBe(false)
+    // Abbreviated UUID prefixes count as ref candidates once they carry the
+    // branded prefix plus at least 6 hex chars; length decides below that.
+    expect(isSingleBrandedRef('task:0f0ad7ce')).toBe(true)
+    expect(isSingleBrandedRef('task:cafe')).toBe(false)
   })
 
   it('maps mention refs to canonical handles through the member table', () => {
@@ -157,6 +172,9 @@ describe('Team presentation formatters', () => {
     const task = planMessageBody('请看 task:0123abcd-0000-0000-0000-000000000000', { human: false, canOpenRefs: true })
     expect(task.render).toBe('literal')
     expect(task.taskRefs).toEqual(['task:0123abcd-0000-0000-0000-000000000000'])
+    const abbreviated = planMessageBody('请看 task:0123abcd', { human: false, canOpenRefs: true })
+    expect(abbreviated.render).toBe('literal')
+    expect(abbreviated.taskRefs).toEqual(['task:0123abcd'])
   })
 
   it('keeps rich Agent bodies on Markdown and paints their refs inline when navigation is available', () => {

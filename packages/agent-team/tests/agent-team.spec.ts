@@ -719,8 +719,73 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha,
       taskRef: started.task.taskRef, action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
     await expect(ledger.changeClaim({ requestId: requestId('done'), workspaceId: alpha, taskRef: started.task.taskRef,
-      action: 'done', baseRevision: claimed.thread.revision, claimRef: 'abc' as never, actor })).rejects.toThrow(/unknown Claim 'abc' A Claim ref must start with 'claim:'/)
+      action: 'done', baseRevision: claimed.thread.revision, claimRef: 'abc' as never, actor })).rejects.toThrow(/unknown Claim ref 'abc' A Claim ref must start with 'claim:'/)
     await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef })).resolves.toBeDefined()
+  })
+
+  it('resolves unambiguous UUID-prefix refs across ledger entry points', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const taskRef = started.task.taskRef
+    const threadRef = started.thread.threadRef
+    // Plain 6-hex prefix, a hyphenated truncated form, and the full ref all resolve.
+    const taskPrefix = `${taskRef.slice(0, 'task:'.length + 6)}` as never
+    const hyphenated = `${taskRef.slice(0, taskRef.indexOf('-') + 7)}` as never
+    const threadPrefix = `${threadRef.slice(0, threadRef.indexOf('-') + 7)}` as never
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read-prefix'), workspaceId: alpha, taskRef: taskPrefix })).resolves.toBeDefined()
+    expect(() => test.ctx.agentTeam.threadHistory({ workspaceId: alpha, taskRef: taskPrefix })).not.toThrow()
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read-hyphen'), workspaceId: alpha, taskRef: hyphenated })).resolves.toBeDefined()
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read-thread'), workspaceId: alpha, threadRef: threadPrefix })).resolves.toBeDefined()
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim-prefix'), workspaceId: alpha,
+      taskRef: taskPrefix, action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    await expect(ledger.changeClaim({ requestId: requestId('done-prefix'), workspaceId: alpha, taskRef: taskPrefix,
+      action: 'done', baseRevision: claimed.thread.revision, claimRef: `${claimed.claim.claimRef.slice(0, 'claim:'.length + 10)}` as never, actor })).resolves.toBeDefined()
+  })
+
+  it('rejects refs that are too short, unknown, or from another Workspace', async () => {
+    const test = await harness(undefined, [alpha, beta])
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const taskRef = started.task.taskRef
+    const shortPrefix = `${taskRef.slice(0, 'task:'.length + 5)}` as never
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read-short'), workspaceId: alpha, taskRef: shortPrefix }))
+      .rejects.toThrow(/unknown Task ref '.+' A Task ref needs at least 6 hex characters/)
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read-miss'), workspaceId: alpha, taskRef: 'task:deadbe' as never }))
+      .rejects.toThrow(/No Task matches this UUID prefix/)
+    await expect(test.ctx.agentTeam.readThread({ requestId: requestId('read-beta'), workspaceId: beta, taskRef: `${taskRef.slice(0, 'task:'.length + 6)}` as never }))
+      .rejects.toThrow(/does not belong to Workspace/)
+  })
+
+  it('reports ambiguous abbreviated refs with candidate full refs', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    let refs = 0
+    const ledger = new AgentTeamLedger(test.facility.get('agent_team')!.table('operations') as unknown as KvTable<AgentTeamOperationId, AgentTeamOperation>, {
+      ref: kind => `${kind}:aaaaaa${String(refs++).padStart(2, '0')}-0000-0000-0000-000000000000` as never,
+    })
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    await ledger.sendMessage({ requestId: requestId('first'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'First', actor })
+    await ledger.sendMessage({ requestId: requestId('second'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Second', actor })
+    await expect(ledger.readThread({ requestId: requestId('amb'), workspaceId: alpha, taskRef: 'task:aaaaaa' as never, actor }))
+      .rejects.toThrow(/ambiguous Task ref 'task:aaaaaa' matches 'task:aaaaaa\d\d-0000-0000-0000-000000000000', 'task:aaaaaa\d\d-0000-0000-0000-000000000000'; reuse a longer prefix or the full ref exactly as returned by Team tools/)
+    await expect(ledger.readThread({ requestId: requestId('amb-thread'), workspaceId: alpha, threadRef: 'thread:aaaaaa' as never, actor }))
+      .rejects.toThrow(/ambiguous Thread ref 'thread:aaaaaa' matches/)
+  })
+
+  it('keeps archived Channel Task and Thread refs unreachable under abbreviation', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    await ledger.archiveChannel({ requestId: requestId('ch-arch'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })
+    const taskPrefix = `${started.task.taskRef.slice(0, 'task:'.length + 6)}` as never
+    const threadPrefix = `${started.thread.threadRef.slice(0, 'thread:'.length + 6)}` as never
+    await expect(ledger.readThread({ requestId: requestId('read-task'), workspaceId: alpha, taskRef: taskPrefix, actor: agentTeamHumanActor() })).rejects.toThrow(/archived/)
+    await expect(ledger.readThread({ requestId: requestId('read-thread'), workspaceId: alpha, threadRef: threadPrefix, actor: agentTeamHumanActor() })).rejects.toThrow(/archived/)
+    expect(ledger.resolveTaskRefs(alpha, [taskPrefix])).toEqual([])
   })
 
   it('creates a taskless Thread, keeps Inbox visible, and promotes with a Task activity', async () => {

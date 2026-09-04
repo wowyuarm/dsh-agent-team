@@ -255,7 +255,10 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
       task: { taskRef: 'task:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6c', channelRef: 'channel:engineering', threadRef: 'thread:9c1b02aa-5d3e-4f0a-8b7c-1e2d3f4a5b6d', status: 'todo', resolution: 'open' },
     })
     const resolved = request.taskRefs.flatMap(taskRef => {
-      const item = known.get(taskRef)
+      const item = known.get(taskRef) ?? [...known.values()].find(candidate => {
+        const candidateRef = (candidate.task as { taskRef?: string } | undefined)?.taskRef
+        return candidateRef !== undefined && candidateRef.startsWith(taskRef)
+      })
       if (item === undefined) return []
       const task = item.task as { taskRef: string; channelRef: string; threadRef: string }
       return [{ taskRef: task.taskRef, channelRef: task.channelRef, threadRef: task.threadRef, taskNumber: numbers.get(task.taskRef) ?? 2 }]

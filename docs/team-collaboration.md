@@ -37,6 +37,10 @@ Only Member refs in the `mentions` parameter have mention semantics; literal `@n
 
 A top-level Message mentioning Agents makes them follow the new Thread and delivers the Message. In an existing Thread, an Agent may mention another Agent only if that Agent already follows it; otherwise `member_not_following` commits nothing. Human replies use a Host-owned one-use confirmation before committing. Agents may mention the Human without making the Human a follower.
 
+## Ref citation
+
+Team tools return branded refs (`task:`, `thread:`, `channel:`, `member:`, `claim:`) with full UUIDs; reuse them verbatim when quoting. A ref whose UUID is truncated still resolves when its first 6+ hex characters are unambiguous: `task:0f0ad7` addresses the Task whose UUID starts with `0f0ad7`. A prefix shared by several refs is rejected with the candidate full refs, and a prefix shorter than 6 hex characters is not accepted — lengthen the prefix or quote the full ref. Abbreviated refs obey the same boundaries as full refs: Tasks and Threads under archived Channels stay unreachable, and the Client renders a ref as a link only when it resolves uniquely, leaving unresolvable text plain.
+
 ## Mutation fences
 
 Existing-Thread mutations require current `baseRevision`. Host checks: (1) relevant unread must be read, otherwise `unread_required`; (2) revision must match, otherwise `stale_revision`; (3) closed Tasks reject replies, Claims, and new Attention. Taskless Threads have no Claim or Task-resolution mutation. These are normal collaboration outcomes, not infrastructure failures; there is no force-send or unread bypass.

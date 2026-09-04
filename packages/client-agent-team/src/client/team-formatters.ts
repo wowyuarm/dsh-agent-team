@@ -49,7 +49,10 @@ export interface RefSegment {
   readonly ref?: string
 }
 
-const BRANDED_REF_PATTERN = /\b(task|channel|thread):{1,2}[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
+// Full UUIDs and abbreviated forms (prefix plus the first 6+ hex chars, with
+// or without the original hyphens) both match; resolution decides whether an
+// abbreviation is real, so unresolvable matches stay plain text.
+const BRANDED_REF_PATTERN = /\b(task|channel|thread):{1,2}[0-9a-f]{6,}(?:-[0-9a-f]{1,})*\b/gi
 
 /**
  * Canonical form of one matched ref: models occasionally double the colon or
@@ -62,11 +65,11 @@ function canonicalBrandedRef(match: string): string {
 
 /**
  * Split a literal text run into plain and branded-ref segments. The pattern
- * anchors on the fixed ref prefixes plus the UUID shape, so ordinary prose
- * containing a colon never linkifies; a doubled colon from model output is
- * tolerated. Segment refs are always canonical, so resolution and navigation
- * work regardless of how the ref was spelled; text without any ref comes
- * back as one untouched segment.
+ * anchors on the fixed ref prefixes plus a UUID shape (full or abbreviated),
+ * so ordinary prose containing a colon never linkifies; a doubled colon from
+ * model output is tolerated. Segment refs are always canonical, so resolution
+ * and navigation work regardless of how the ref was spelled; text without any
+ * ref comes back as one untouched segment.
  */
 export function splitBrandedRefs(text: string): readonly RefSegment[] {
   const segments: RefSegment[] = []
