@@ -1,6 +1,6 @@
 {
   "name": "@wowyuarm/dsh-agent-team",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "A persistent agent team for long-running collaboration in DeepSeek Harness",
   "repository": {
     "type": "git",
