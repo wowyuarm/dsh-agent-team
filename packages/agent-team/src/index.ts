@@ -26,7 +26,6 @@ import { acceptedTaskCompactionMembers, AutoCompactionCoordinator, PRE_COMPACTIO
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, MemberRuntime } from './member-runtime.ts'
 import { ProgressNudgeCoordinator } from './progress-nudge.ts'
-import type { ProgressNudgeAgent } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
@@ -133,14 +132,6 @@ function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope
   return false
 }
 
-/** Agent view whose steer defers past an in-flight session append. */
-function deferredSteerAgent(agent: Agent): ProgressNudgeAgent {
-  return {
-    inbox: agent.inbox,
-    steer: message => { queueMicrotask(() => { agent.steer(message) }) },
-  }
-}
-
 /** Mark the preset's `team_message` definition as an Agent Team consumer. */
 export function markAgentTeamPreset<T extends object>(definition: T): T {
   Object.defineProperty(definition, AGENT_TEAM_PRESET_MARKER, { value: true })
@@ -244,7 +235,12 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly progressNudge = new ProgressNudgeCoordinator({
     agentForMember: memberId => this.handles.get(memberId)?.agent,
     targetsForMember: memberId => this.requireLedger().progressNudgeTargets(memberId),
-    log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
+    sessionLogForMember: (memberId, sessionId) => {
+      const handle = this.handles.get(memberId)
+      if (handle === undefined || handle.agent.session.id !== sessionId) return undefined
+      return { events: handle.agent.session.ownEvents() }
+    },
+    log: message => { this.ctx.logger.warn(message) },
   })
   private lifecycleTail: Promise<void> = Promise.resolve()
   private accepting = true
@@ -327,12 +323,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (memberId === undefined) return
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
-      // The event arrives inside the session's own append publication; a
-      // synchronous steer would reenter that append and be rejected. The
-      // deferred adapter below steers one microtask later — the Member's
-      // turn is still running (the model awaits the tool result), so the
-      // notice still lands at the same next-step boundary.
-      this.progressNudge.onSessionEvent(memberId, session.id, deferredSteerAgent(handle.agent), event)
+      this.progressNudge.onSessionEvent(memberId, session.id, handle.agent, event)
     })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
@@ -603,6 +594,7 @@ export default class AgentTeam extends TypertRemoteService {
       // The fresh Session may re-earn one Claim suggestion per Thread; the
       // old Session's one-shot records must not leak into it.
       this.progressNudge.stopTracking(request.memberId)
+      this.memberBySessionId.delete(previousSessionId)
       await active.dispose()
       this.handles.delete(request.memberId)
       this.modelSelections.delete(request.memberId)

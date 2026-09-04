@@ -46,15 +46,13 @@
 
 ## 当前前沿
 
-调研阶段完成；设计细化已写入 `spec.md`。推荐落一个深的 `ProgressNudgeCoordinator`，通过 Agent setup 内 scoped `session/event` 监听计数，通过 `emitCommitted()` 的真实 operation 重置/校正；ledger 只新增 `progressNudgeTargets(memberId)` 查询，不公开内部 `touchedThreadRefs()`。
-
-Human 已在 task Thread 同意最后三项：多 Thread 合并 notice；Nudge-B 以当前 Member Session 为一次性边界；Nudge-B 只催 `todo`。生产实现尚未开始，需另行认领。
+已完结。设计阶段的推荐方向（`ProgressNudgeCoordinator` + `emitCommitted()` 重置/校正 + ledger 只读 `progressNudgeTargets(memberId)` 查询）已按 spec 落地为生产实现（commit `32bf407` 及后续审查修复）；两处与设计稿的实证差异见 `spec.md` 末尾实现附记。
 
 ## 结束条件
 
-- 将已确认设计交给生产实现者。
-- 实现完成后把稳定 Host 行为同步到 `docs/architecture.md` 与 `docs/team-collaboration.md`；实现、测试和维护文档不在 Reeve 的设计方向内。
+- 将已确认设计交给生产实现者。✅ 已完成。
+- 实现完成后把稳定 Host 行为同步到 `docs/architecture.md` 与 `docs/team-collaboration.md`（中英双份）。✅ 已完成。
 
 ## 正式文档出口
 
-实施完成后若形成新的宿主机制（第四个 nudge 家族成员），需在 `docs/architecture.md` Host 行为节补充一段；本工作项只留决策快照。
+`docs/architecture(.zh).md` Host authority 节与 `docs/team-collaboration(.zh).md` Progress-visibility nudges 节已记录稳定行为；本工作项保留决策快照与实现附记。

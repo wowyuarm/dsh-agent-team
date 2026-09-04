@@ -324,3 +324,15 @@ Human 在 Main-Dev Task Thread 同意三项推荐：
 2. **同步 steer 会重入 session append**：`tool/call` 事件在 session 自身 append publication 期间分发，监听器内同步 `agent.steer()` 触发 inbox splice 的第二次 append，被 `session append cannot reenter while another append is being published` 拒绝。实现将 steer 延迟一个 microtask（`deferredSteerAgent` adapter）：turn 仍在运行（模型在等 tool result），notice 仍落在同一 turn 的下一 step boundary。
 
 其余状态机、阈值、重置集、一次性恢复、合并 notice、优先级让位与飞行撤销均按 spec 实现；测试矩阵 18 条全部落地（coordinator 单测 14 + ledger 投影 5 + Host 集成 5）。
+
+## 审查修复附记（Tars，2026-09-05 第二轮）
+
+Reeve 审查 `32bf407` 提出 5 个 blocker，全部已修（随修复提交落地）：
+
+1. **真实 SessionEvent 契约**：coordinator 与单测全部改用 typed `SessionEvent`（`{type, seq, time, data}` 包络），turn 读 `event.data.turn`，消费的 notice 是 `event.data` 本身。原实现的扁平 `{type, turn}` 假包络导致生产路径 `turn=0` 恒定、`user/message` 永不匹配。
+2. **B 的 Session 内恢复**：新增 `sessionLogForMember` 依赖；同 Session 跟踪首次建立时从 `session.ownEvents()` 扫描 exact self-source notice 恢复 `claimSuggested`。Host restart / suspend→resume 不重发；Human 新上下文（新 sessionId）为空。realHarness suspend→resume 回归已覆盖。
+3. **按原目标 reconcile**：`PendingNotice` 记录 notice 正文实际列出的 progress/claim threadRefs；任一列出的目标失效即整条撤销（部分消失也撤），不再"任一存活即保留"。部分消失单测已覆盖。
+4. **档位跳进**：成功投递 A 后 `while (threshold <= silentToolCalls) threshold += step` 一次跳到当前档之上，长阻塞解除后不再逐 turn 补发 20/40/60…。80 次阻塞 + 解除回归已覆盖。
+5. **延迟 steer 归一 owner**：`scheduleSteer` 注入点进 Coordinator，延迟执行、`canceled` 检查、真实 steer 失败处理都在同一个 `PendingNotice` 对象上；revoke 在 microtask 前到达时闭包 no-op，不再有孤儿 notice。deferred-throw 与 defer-before-revoke 单测已覆盖。
+
+另修：`clearMemberContext` 清理旧 `memberBySessionId` entry；Host log 前缀去重；删除无调用者的 `onEligibilityChanged`。

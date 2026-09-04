@@ -11,18 +11,19 @@
  *   claimed is reminded — once per (Member, Thread) within the current Member
  *   Session — that team_claim exists.
  *
- * The Coordinator owns counting, thresholds, notice formatting, dedupe and
- * in-flight revocation. It consumes only facts the Host already holds: live
- * `tool/call`/`user/message` session events, committed ledger operations, and
- * a ledger-owned eligibility projection (`progressNudgeTargets`). It never
- * writes Team facts and never wakes idle agents on its own — a nudge rides
- * the member's next tool call.
+ * The Coordinator owns counting, thresholds, notice formatting, dedupe,
+ * in-flight revocation, and the deferred steer. It consumes only facts the
+ * Host already holds: live `tool/call`/`user/message` session events in their
+ * real `{type, seq, time, data}` envelope, the Session log for one-time
+ * recovery, committed ledger operations, and a ledger-owned eligibility
+ * projection (`progressNudgeTargets`). It never writes Team facts and never
+ * wakes idle agents on its own — a nudge rides the member's next tool call.
  *
  * @module @wowyuarm/dsh-agent-team/progress-nudge
  */
 
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { AgentTeamMemberId, AgentTeamProgressNudgeTargets, AgentTeamThreadRef } from './types.ts'
 
 const PROGRESS_NUDGE_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
@@ -35,7 +36,7 @@ export const PROGRESS_NUDGE_TOOL_CALLS_STEP = 20
 export const CLAIM_SUGGESTION_TOOL_CALLS = 5
 /** Stable line prefix marking Claim-suggestion targets inside a nudge notice; the only text this module ever parses back. */
 const CLAIM_TARGET_LINE_PREFIX = '- Claim target: Task '
-const CLAIM_TARGET_LINE = new RegExp(`^- Claim target: Task (task:[0-9a-f-]+) — Thread (thread:[0-9a-f-]+)$`)
+const CLAIM_TARGET_LINE = /^- Claim target: Task (task:[0-9a-f-]+) — Thread (thread:[0-9a-f-]+)$/
 
 /** Minimal Agent surface the Coordinator depends on; real Agents satisfy it, tests fake it. */
 export interface ProgressNudgeAgent {
@@ -47,17 +48,19 @@ export interface ProgressNudgeAgent {
   steer(message: UserMessage): void
 }
 
+/**
+ * Read-only view of one Session log used to recover consumed one-time Claim
+ * suggestions when a Member Session's tracking is (re)established.
+ */
+export interface ProgressNudgeSessionLog {
+  /** Durable events in sequence order; the real `Session.ownEvents()`. */
+  readonly events: readonly SessionEvent[]
+}
+
 /** Minimal operation fact the Coordinator consumes; the ledger's full record satisfies it structurally. */
 export interface ProgressNudgeOperation {
   readonly actor: { readonly kind: string; readonly memberId?: AgentTeamMemberId | undefined }
   readonly kind: string
-}
-
-/** One live session event, structurally; the Session's own event map satisfies it. */
-export interface ProgressNudgeSessionEvent {
-  readonly type: string
-  readonly turn?: number | undefined
-  readonly message?: UserMessage | undefined
 }
 
 export interface ProgressNudgeCoordinatorOptions {
@@ -65,14 +68,35 @@ export interface ProgressNudgeCoordinatorOptions {
   readonly agentForMember: (memberId: AgentTeamMemberId) => ProgressNudgeAgent | undefined
   /** Current eligibility projection from the ledger. */
   readonly targetsForMember: (memberId: AgentTeamMemberId) => AgentTeamProgressNudgeTargets
+  /** Durable Session log lookup for one-time recovery on (re)activation. */
+  readonly sessionLogForMember: (memberId: AgentTeamMemberId, sessionId: SessionId) => ProgressNudgeSessionLog | undefined
   /** Log one line when steer fails; the Host wires its logger. */
   readonly log?: (message: string) => void
+  /**
+   * Schedule the actual steer past an in-flight session append publication.
+   * The default defers one microtask; tests may substitute a synchronous or
+   * manually triggered scheduler. The callback runs the real steer.
+   */
+  readonly scheduleSteer?: (run: () => void) => void
   /** Initial ladder start; tests override to keep runs small. */
   readonly progressThresholdStart?: number
   /** Ladder step; tests override to keep runs small. */
   readonly progressThresholdStep?: number
   /** Claim-suggestion threshold; tests override to keep runs small. */
   readonly claimSuggestionThreshold?: number
+}
+
+/** What one injected notice is about — the exact target set for revocation. */
+interface PendingNotice {
+  readonly messageId: UserMessage['id']
+  /** Progress (A) threads listed in the notice body. */
+  readonly progressThreadRefs: readonly AgentTeamThreadRef[]
+  /** Claim (B) threads listed in the notice body. queued = consumed = false. */
+  readonly claimThreadRefs: readonly AgentTeamThreadRef[]
+  /** Set once the scheduled steer actually ran without throwing. */
+  steered: boolean
+  /** Set when revoked before the steer ran; the scheduled steer must no-op. */
+  canceled: boolean
 }
 
 interface MemberNudgeState {
@@ -83,10 +107,8 @@ interface MemberNudgeState {
   lastNudgeTurn?: number | undefined
   /** Threads whose Claim suggestion the model actually consumed, not merely queued. */
   readonly claimSuggested: Set<AgentTeamThreadRef>
-  /** Threads whose suggestion is queued but not yet consumed; revocable without consuming the one chance. */
-  readonly pendingClaimTargets: Set<AgentTeamThreadRef>
-  /** Ids of injected, not-yet-consumed notices; at most one live at a time per Member. */
-  pendingNoticeId?: UserMessage['id'] | undefined
+  /** The single live queued-or-injected notice, if any. */
+  pending?: PendingNotice | undefined
 }
 
 /** Ledger operation kinds that count as committed public communication and reset silence. */
@@ -105,13 +127,16 @@ export function isProgressNudgeNotice(message: UserMessage): boolean {
 /**
  * Event-driven per-Member nudge state machine. All state is in-process and
  * scoped to one Member Session; nothing is persisted. The Host feeds it live
- * session events, committed operations, and lifecycle stop points.
+ * session events in their real envelope, committed operations, and lifecycle
+ * stop points.
  */
 export class ProgressNudgeCoordinator {
   private readonly members = new Map<AgentTeamMemberId, MemberNudgeState>()
   private readonly agentForMember: ProgressNudgeCoordinatorOptions['agentForMember']
   private readonly targetsForMember: ProgressNudgeCoordinatorOptions['targetsForMember']
+  private readonly sessionLogForMember: ProgressNudgeCoordinatorOptions['sessionLogForMember']
   private readonly log: ((message: string) => void) | undefined
+  private readonly scheduleSteer: (run: () => void) => void
   private readonly progressThresholdStart: number
   private readonly progressThresholdStep: number
   private readonly claimSuggestionThreshold: number
@@ -119,44 +144,49 @@ export class ProgressNudgeCoordinator {
   constructor(options: ProgressNudgeCoordinatorOptions) {
     this.agentForMember = options.agentForMember
     this.targetsForMember = options.targetsForMember
+    this.sessionLogForMember = options.sessionLogForMember
     this.log = options.log
+    this.scheduleSteer = options.scheduleSteer ?? (run => { queueMicrotask(run) })
     this.progressThresholdStart = options.progressThresholdStart ?? PROGRESS_NUDGE_TOOL_CALLS_START
     this.progressThresholdStep = options.progressThresholdStep ?? PROGRESS_NUDGE_TOOL_CALLS_STEP
     this.claimSuggestionThreshold = options.claimSuggestionThreshold ?? CLAIM_SUGGESTION_TOOL_CALLS
   }
 
   /**
-   * One live session event for a Member. Only `tool/call` counts toward
-   * silence; a `user/message` whose source is exactly this module's own notice
-   * records that the model consumed the nudge (a Claim suggestion becomes
-   * final only then). The live `agent` is passed in by the caller because it
-   * exists at event time even before the Host finishes publishing the handle.
+   * One live session event for a Member, in its real `{type, seq, time, data}`
+   * envelope. Only `tool/call` counts toward silence; a `user/message` whose
+   * source is exactly this module's own notice records that the model consumed
+   * the nudge (a Claim suggestion becomes final only then). The live `agent`
+   * is passed in by the caller because it exists at event time even before
+   * the Host finishes publishing the handle.
    */
-  onSessionEvent(memberId: AgentTeamMemberId, sessionId: SessionId, agent: ProgressNudgeAgent, event: ProgressNudgeSessionEvent): void {
+  onSessionEvent(memberId: AgentTeamMemberId, sessionId: SessionId, agent: ProgressNudgeAgent, event: SessionEvent): void {
     if (event.type === 'user/message') {
-      const message = event.message
-      if (message === undefined || !isProgressNudgeNotice(message)) return
+      if (!isProgressNudgeNotice(event.data)) return
       const state = this.members.get(memberId)
       if (state === undefined) return
-      if (state.pendingNoticeId === message.id) state.pendingNoticeId = undefined
-      state.pendingClaimTargets.clear()
-      for (const threadRef of claimTargetThreadRefs(message)) state.claimSuggested.add(threadRef)
+      const notice = state.pending
+      if (notice !== undefined && notice.messageId === event.data.id) state.pending = undefined
+      for (const threadRef of claimTargetThreadRefs(event.data)) state.claimSuggested.add(threadRef)
       return
     }
     if (event.type !== 'tool/call') return
     let state = this.members.get(memberId)
     if (state === undefined || state.sessionId !== sessionId) {
       // First event of this Member Session (or a generation the Host did not
-      // stop explicitly): fresh tracking replaces whatever was there.
+      // stop explicitly): fresh tracking replaces whatever was there, and
+      // consumed one-time suggestions are recovered from the durable log so a
+      // Host restart or suspend/resume within the same Session cannot repeat
+      // them. A Human-initiated new Session has a different id and starts
+      // empty, exactly as specified.
       this.dropState(memberId, state)
       state = { sessionId, silentToolCalls: 0, nextProgressThreshold: this.progressThresholdStart,
-        claimSuggested: new Set(), pendingClaimTargets: new Set() }
+        claimSuggested: this.recoverClaimSuggestions(memberId, sessionId), }
       this.members.set(memberId, state)
     }
     state.silentToolCalls += 1
-    const turn = event.turn ?? 0
-    if (state.lastNudgeTurn === turn) return
-    this.maybeNudge(memberId, state, agent, turn)
+    if (state.lastNudgeTurn === event.data.turn) return
+    this.maybeNudge(memberId, state, agent, event.data.turn)
   }
 
   /**
@@ -178,11 +208,6 @@ export class ProgressNudgeCoordinator {
     this.reconcileAll()
   }
 
-  /** Attention/promotion changes make pending notices worth re-checking against current eligibility. */
-  onEligibilityChanged(): void {
-    this.reconcileAll()
-  }
-
   /** Revoke one Member's queued-but-unconsumed nudge, e.g. when a higher-priority Team notice is injected. */
   revokePendingNotice(memberId: AgentTeamMemberId): void {
     const state = this.members.get(memberId)
@@ -200,6 +225,19 @@ export class ProgressNudgeCoordinator {
     for (const memberId of this.members.keys()) this.stopTracking(memberId)
   }
 
+  /** Rebuild the consumed one-time suggestion set from this Session's durable log. */
+  private recoverClaimSuggestions(memberId: AgentTeamMemberId, sessionId: SessionId): Set<AgentTeamThreadRef> {
+    const suggested = new Set<AgentTeamThreadRef>()
+    const log = this.sessionLogForMember(memberId, sessionId)
+    if (log === undefined) return suggested
+    for (const event of log.events) {
+      if (event.type !== 'user/message') continue
+      if (!isProgressNudgeNotice(event.data)) continue
+      for (const threadRef of claimTargetThreadRefs(event.data)) suggested.add(threadRef)
+    }
+    return suggested
+  }
+
   private dropState(memberId: AgentTeamMemberId, state: MemberNudgeState | undefined): void {
     if (state === undefined) return
     this.revokePending(memberId, state)
@@ -207,30 +245,39 @@ export class ProgressNudgeCoordinator {
   }
 
   private revokePending(memberId: AgentTeamMemberId, state: MemberNudgeState): void {
-    if (state.pendingNoticeId !== undefined) {
-      const agent = this.agentForMember(memberId)
-      const pending = agent === undefined ? undefined
-        : [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message => message.id === state.pendingNoticeId)
-      // A just-consumed notice is simply gone; remove() returning false is expected.
-      if (pending !== undefined) agent!.inbox.remove(pending.id)
+    const notice = state.pending
+    if (notice !== undefined) {
+      notice.canceled = true
+      if (notice.steered) {
+        const agent = this.agentForMember(memberId)
+        const pending = agent === undefined ? undefined
+          : [...agent.inbox.nextStep, ...agent.inbox.nextTurn].find(message => message.id === notice.messageId)
+        // A just-consumed notice is simply gone; remove() returning false is expected.
+        if (pending !== undefined) agent!.inbox.remove(pending.id)
+      }
     }
-    state.pendingNoticeId = undefined
-    state.pendingClaimTargets.clear()
+    state.pending = undefined
   }
 
-  /** Re-check every live Member's pending notice against current eligibility. */
+  /** Re-check every live Member's pending notice against the targets it actually listed. */
   private reconcileAll(): void {
     for (const [memberId, state] of this.members) {
-      if (state.pendingNoticeId === undefined) continue
+      const notice = state.pending
+      if (notice === undefined) continue
       const agent = this.agentForMember(memberId)
       if (agent === undefined) {
         this.dropState(memberId, state)
         continue
       }
       const targets = this.targetsForMember(memberId)
-      const stillValid = targets.progress.length > 0
-        || targets.claim.some(target => state.pendingClaimTargets.has(target.threadRef))
-      if (!stillValid) this.revokePending(memberId, state)
+      // The notice is stale when ANY target it listed is no longer eligible:
+      // the body names threads whose work may be finished, so a partial
+      // survival must not keep the whole stale notice alive.
+      const progressAlive = notice.progressThreadRefs.length === 0
+        || notice.progressThreadRefs.every(threadRef => targets.progress.some(target => target.threadRef === threadRef))
+      const claimAlive = notice.claimThreadRefs.length === 0
+        || notice.claimThreadRefs.every(threadRef => targets.claim.some(target => target.threadRef === threadRef))
+      if (!progressAlive || !claimAlive) this.revokePending(memberId, state)
     }
   }
 
@@ -238,25 +285,46 @@ export class ProgressNudgeCoordinator {
     const targets = this.targetsForMember(memberId)
     const progressDue = state.silentToolCalls >= state.nextProgressThreshold && targets.progress.length > 0
     const freshClaimTargets = targets.claim
-      .filter(target => !state.claimSuggested.has(target.threadRef) && !state.pendingClaimTargets.has(target.threadRef))
+      .filter(target => !state.claimSuggested.has(target.threadRef) && state.pending?.claimThreadRefs.includes(target.threadRef) !== true)
     const claimDue = state.silentToolCalls >= this.claimSuggestionThreshold && freshClaimTargets.length > 0
     if (!progressDue && !claimDue) return
     if (this.hasBlockingNotice(agent)) return
+    const progressTargets = progressDue ? targets.progress : []
+    const claimTargets = claimDue ? freshClaimTargets : []
     const notice = createUserMessage({
-      content: [{ type: 'text', text: nudgeNoticeText(state.silentToolCalls, progressDue ? targets.progress : [], claimDue ? freshClaimTargets : []) }],
+      content: [{ type: 'text', text: nudgeNoticeText(state.silentToolCalls, progressTargets, claimTargets) }],
       source: { kind: 'plugin', plugin: PROGRESS_NUDGE_PLUGIN_ID, form: 'notice', summary: PROGRESS_NUDGE_NOTICE_SUMMARY },
     })
-    try {
-      agent.steer(notice)
-    } catch (error) {
-      this.log?.(`agent-team: progress nudge steer failed for member '${memberId}': ${error instanceof Error ? error.message : String(error)}`)
-      this.stopTracking(memberId)
-      return
+    const pending: PendingNotice = {
+      messageId: notice.id,
+      progressThreadRefs: progressTargets.map(target => target.threadRef),
+      claimThreadRefs: claimTargets.map(target => target.threadRef),
+      steered: false,
+      canceled: false,
     }
+    // Record intent first: the scheduled steer, its cancellation check, and
+    // its failure handling all live on this single PendingNotice object, so a
+    // revoke between queueing and the microtask leaves no orphan injection.
+    state.pending = pending
     state.lastNudgeTurn = turn
-    if (progressDue) state.nextProgressThreshold += this.progressThresholdStep
-    state.pendingNoticeId = notice.id
-    if (claimDue) for (const target of freshClaimTargets) state.pendingClaimTargets.add(target.threadRef)
+    if (progressDue) {
+      // Advance the ladder past the current count in one move: a long silence
+      // held back by higher-priority notices must not replay every skipped
+      // rung on successive tool calls after the blocker clears.
+      while (state.nextProgressThreshold <= state.silentToolCalls) state.nextProgressThreshold += this.progressThresholdStep
+    }
+    this.scheduleSteer(() => {
+      if (pending.canceled) return
+      try {
+        agent.steer(notice)
+      } catch (error) {
+        this.log?.(`progress nudge steer failed for member '${memberId}': ${error instanceof Error ? error.message : String(error)}`)
+        pending.canceled = true
+        if (state.pending === pending) state.pending = undefined
+        return
+      }
+      pending.steered = true
+    })
   }
 
   /**

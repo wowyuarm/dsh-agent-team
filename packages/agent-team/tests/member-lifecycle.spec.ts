@@ -1372,4 +1372,41 @@ describe('Agent Team progress nudge Host wiring', () => {
     const pendingNudge = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].filter(isNudgeNotice)
     expect(pendingNudge).toHaveLength(0)
   })
+
+  it('keeps consumed claim suggestions across a host restart within the same member session', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('n7-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('n7-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('n7-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('n7-read'), workspaceId, taskRef: started.task!.taskRef })
+
+    for (let index = 0; index < 5; index += 1) {
+      adapter.enqueue(toolCallResponse(`silent-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+    }
+    expect(deliveredNudgeTexts(agent).filter(text => text.includes('Claim visibility reminder'))).toHaveLength(1)
+    const suggestionsBeforeResume = deliveredNudgeTexts(agent).filter(text => text.includes('Claim visibility reminder')).length
+    expect(suggestionsBeforeResume).toBe(1)
+
+    // Suspend, then resume: the same sessionId comes back with its durable
+    // log; a full new threshold of tool calls must not re-suggest.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('n7-suspend'), memberId: builder.status.member.memberId })
+    await ctx.agentTeam.resumeMember({ requestId: requestId('n7-resume'), memberId: builder.status.member.memberId })
+    const resumedAgent = ctx.agents.get(builder.status.member.sessionId)!
+    expect(resumedAgent).toBeDefined()
+    for (let index = 0; index < 25; index += 1) {
+      adapter.enqueue(toolCallResponse(`post-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      resumedAgent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await resumedAgent.whenIdle()
+    }
+    // The durable log still carries the consumed notice; no NEW suggestion
+    // may appear on top of it within the same Session.
+    expect(deliveredNudgeTexts(resumedAgent).filter(text => text.includes('Claim visibility reminder'))).toHaveLength(1)
+  })
 })
