@@ -1,6 +1,5 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { InputTriggerServiceContract } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {
   AgentTeamAddMemberRequest,
@@ -53,7 +52,7 @@ export { TeamNavigation } from './navigation.ts'
 const NS = 'team'
 
 export const inject = [
-  'slots', 'workspaces', 'locale', 'remote', 'sessions', 'connection', 'conversation', 'inputTriggers',
+  'slots', 'workspaces', 'locale', 'remote', 'remote.session', 'sessions', 'connection', 'conversation', 'inputTriggers',
 ]
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

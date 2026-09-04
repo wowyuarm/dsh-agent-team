@@ -54,9 +54,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   browser = await chromium.launch({ headless: true, executablePath: CHROME })
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
   const consoleWatch = watchConsole(page)
-  await page.goto(scaffold.baseUrl)
+  // rc.1: the web server gates the browser surface behind a process-token
+  // exchange; the scaffold's authenticatedUrl establishes the session cookie.
+  await page.goto(scaffold.authenticatedUrl)
   await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'team-workspace')
-  const ordinaryComposer = page.locator('textarea:enabled[placeholder="描述你想要构建的内容"]')
+  const ordinaryComposer = page.locator('[data-composer-input][contenteditable="true"][data-placeholder="描述你想要构建的内容… / 调用指令 @ 文件或对话"]')
   await expect.poll(() => ordinaryComposer.count()).toBe(1)
 
   expect(scaffold.ctx.clientModules.graph().entries.some(entry => entry.id === '@wowyuarm/dsh-agent-team')).toBe(true)
@@ -88,7 +90,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await initialChannelDialog.getByLabel('名称').fill('engineering')
   await initialChannelDialog.getByLabel('说明').fill('Agent membership')
   await initialChannelDialog.getByRole('button', { name: '创建频道' }).click()
-
   for (const [name, description] of [['builder', '实现功能'], ['reviewer', '检查结果']] as const) {
     await page.getByRole('button', { name: '添加 Agent' }).click()
     const dialog = page.getByRole('dialog', { name: '添加 Agent' })
@@ -326,14 +327,14 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // This restricted Member composer intentionally has no attachment seam or
   // fake "+" control; Channel/Thread attachment flows stay separate.
   await expect.poll(() => memberComposer.getByRole('button', { name: '添加附件' }).count()).toBe(0)
-  const compactEventsBefore = builderAgent.session.events.filter(event => event.type === 'command/run' || event.type === 'command/done').length
+  const compactEventsBefore = builderAgent.session.snapshotEvents().filter(event => event.type === 'command/run' || event.type === 'command/done').length
   await memberInput.fill('/co')
   await page.getByRole('option', { name: '/compact' }).waitFor()
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-compact-menu.png'), fullPage: true })
   await page.getByRole('option', { name: '/compact' }).click()
   await memberInput.press('Enter')
-  await expect.poll(() => builderAgent.session.events.filter(event => event.type === 'command/run' || event.type === 'command/done').length).toBe(compactEventsBefore + 2)
-  const compactLifecycle = builderAgent.session.events.filter(event => event.type === 'command/run' || event.type === 'command/done').slice(-2)
+  await expect.poll(() => builderAgent.session.snapshotEvents().filter(event => event.type === 'command/run' || event.type === 'command/done').length).toBe(compactEventsBefore + 2)
+  const compactLifecycle = builderAgent.session.snapshotEvents().filter(event => event.type === 'command/run' || event.type === 'command/done').slice(-2)
   expect(compactLifecycle[0]).toMatchObject({ type: 'command/run', data: { name: 'compact', source: { kind: 'user' } } })
   expect(compactLifecycle[1]).toMatchObject({ type: 'command/done', data: { commandId: (compactLifecycle[0] as { data: { commandId: string } }).data.commandId } })
   // The Host lifecycle acknowledgment and Client InputMachine settlement arrive
@@ -376,7 +377,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const freshBuilderAgent = scaffold.ctx.agents.get(clearedBuilder.member.sessionId)!
   expect(freshBuilderAgent).not.toBe(builderAgent)
   expect(freshBuilderAgent.session.header.parentSession).toBe(builderMember.member.sessionId)
-  expect(freshBuilderAgent.session.events.filter(event => event.type === 'user/message' || event.type === 'command/run' || event.type === 'turn/start')).toHaveLength(0)
+  expect(freshBuilderAgent.session.snapshotEvents().filter(event => event.type === 'user/message' || event.type === 'command/run' || event.type === 'turn/start')).toHaveLength(0)
   expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(builderMember.member.sessionId)
 
   // The fresh session is immediately usable: the member-composer mention flow
@@ -387,12 +388,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await memberInput.press('Tab')
   await expect.poll(() => memberInput.inputValue()).toBe('@reviewer ')
   await memberInput.press('Enter')
-  const isStructuredReviewerPrompt = (event: (typeof freshBuilderAgent.session.events)[number]): boolean => event.type === 'user/message'
+  const isStructuredReviewerPrompt = (event: ReturnType<typeof freshBuilderAgent.session.snapshotEvents>[number]): boolean => event.type === 'user/message'
     && event.data.source.kind === 'user'
     && event.data.content.some(block => block.type === 'text' && block.text === `<team-member ref="${reviewerMember.member.memberId}">@reviewer</team-member>`)
-  await expect.poll(() => freshBuilderAgent.session.events.some(isStructuredReviewerPrompt)).toBe(true)
+  await expect.poll(() => freshBuilderAgent.session.snapshotEvents().some(isStructuredReviewerPrompt)).toBe(true)
   await freshBuilderAgent.whenIdle()
-  const mentionPrompt = freshBuilderAgent.session.events.findLast(isStructuredReviewerPrompt)
+  const mentionPrompt = freshBuilderAgent.session.snapshotEvents().findLast(isStructuredReviewerPrompt)
   expect(mentionPrompt).toBeDefined()
   await memberInput.fill('newline')
   await memberInput.press('Shift+Enter')
@@ -987,7 +988,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // Leaving Team closes any embedded Member Session view and restores the
   // session the Human came from, so the ordinary shell shows an ordinary
   // conversation composer rather than a stranded Member Session.
-  const restoredComposer = page.locator('textarea:enabled').first()
+  const restoredComposer = page.locator('[data-composer-input][contenteditable="true"]').first()
   await restoredComposer.waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
   await expect.poll(() => page.locator('[data-team-member-composer="true"]').count()).toBe(0)
@@ -1095,7 +1096,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await leaveTeamKeyboard.press('Space')
   // Leaving Team restores the Human's original session (see the Member view
   // above), so the ordinary shell renders a conversation composer.
-  await page.locator('textarea:enabled').first().waitFor({ timeout: 20_000 })
+  await page.locator('[data-composer-input][contenteditable="true"]').first().waitFor({ timeout: 20_000 })
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
