@@ -53,7 +53,7 @@ Changes affecting browser bundles, Client modules, slots, Remote activation, bun
 npm run test:browser
 ```
 
-This builds first, copies built packages into a temporary profile, starts the official Harness Web scaffold, and runs the real journey with `/usr/bin/google-chrome` (override with `CHROME_PATH`). It cleans the temporary profile and Harness test files afterward.
+This builds first, copies built packages into a temporary profile, starts the official Harness Web scaffold, and runs the real journey with `/usr/bin/google-chrome` (override with `CHROME_PATH`). The sandbox setup provisions Playwright's own chromium at that path when the base image ships no browser. It cleans the temporary profile and Harness test files afterward.
 
 There are three explicit preview/verification paths:
 
@@ -110,8 +110,9 @@ The test and type systems are not self-contained: they resolve 40+ `@deepseek-ai
 1. Clone `../deepseek-harness`, check out the latest certified release tag (currently `dsh-v0.1.2-rc.1`; advance it per certification), then run `corepack pnpm install` (one workspace-wide install) and `corepack pnpm build:lib`. Always use `corepack pnpm` — both repositories pin `pnpm@11.7.0` through `packageManager`, and a bare `pnpm` depends on whatever the environment preinstalled. Do not reuse stale `lib/` or `node_modules/` from an earlier build — old artifacts can conceal declaration or runtime incompatibility.
 2. Build the Harness `apps/web` dist with `corepack pnpm build:web` if the workflow needs `test:browser`; the workspace install already provisioned its dependencies.
 3. Inside this repository, install with `corepack pnpm install`. Never run `npm install`: it silently breaks the workspace symlinks into the adjacent checkout's vendor packages, and the failure surfaces later as a misleading `Cannot find module 'zod'`.
-4. Regenerate the TypeScript path facades against the fresh checkout with `node scripts/sync-paths.mjs`. A fresh clone must not trust the committed facades: `sync-paths` is not part of any npm script, and skipping it leaves the facades pointing at the paths baked in at generation time.
-5. Smoke-check with `npm run typecheck && npm test`. Green means the environment is right; mass false failures (see below) mean it is not — fix the environment before debugging the diff.
+4. Link the Harness workspace and vendor packages into this repository's `node_modules` with `node scripts/link-harness-packages.mjs`, then build the bundle with `npm run build`. Host tests resolve preset rows and the bundle's own unpublished rows (for example `@wowyuarm/dsh-agent-team/member-context`) through real `node_modules` lookups from this repository root, exactly as a profile install of the published bundle would.
+5. Regenerate the TypeScript path facades against the fresh checkout with `node scripts/sync-paths.mjs`. A fresh clone must not trust the committed facades: `sync-paths` is not part of any npm script, and skipping it leaves the facades pointing at the paths baked in at generation time. `sync-paths` also emits the `@deepseek-ai/dsh-client-locale/src/*` wildcard the test harness's locale-table import needs.
+6. Smoke-check with `npm run typecheck && npm test`. Green means the environment is right; mass false failures (see below) mean it is not — fix the environment before debugging the diff.
 
 **Environment variables:**
 

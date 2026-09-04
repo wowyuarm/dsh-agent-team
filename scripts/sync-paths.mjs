@@ -43,6 +43,11 @@ for (const [key, value] of Object.entries(base.compilerOptions.paths)) {
   harnessSrc[key] = (Array.isArray(value) ? value : [value])
     .map(path => path.replace(/^\.\//, `../${HARNESS_NAME}/`))
 }
+// dsh-client-locale is the one client package whose source dictionaries are
+// reachable only through its verified "./src/*" export (the test harness
+// loads the zh/en tables from source). The bare-name mapping above is
+// exact-match only, so deep imports need a wildcard mirroring the export.
+harnessSrc['@deepseek-ai/dsh-client-locale/src/*'] = [`../${HARNESS_NAME}/packages/client/locale/src/*`]
 
 const toTypes = path => path
   .replace(/\/src\/(.+)\.ts$/, '/lib/types/$1.d.ts')
