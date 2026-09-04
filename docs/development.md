@@ -99,6 +99,30 @@ node scripts/sync-paths.mjs
 
 The `tsconfig*.json` facades must not gain `include` or `files`; they must continue matching repository files and adjacent Harness source/declarations.
 
+## Sandbox and CI environments
+
+The test and type systems are not self-contained: they resolve 40+ `@deepseek-ai/dsh-*` packages from the adjacent Harness checkout (both `src/` and a built `lib/`). Sandboxed agents and CI runners must reproduce that layout instead of improvising their own.
+
+**Checkout naming is the contract.** Clone the Harness as the sibling `../deepseek-harness` — the default directory name every script falls back to — and check out the latest certified release tag. Sibling checkouts with tag-suffixed names (`../deepseek-harness-<tag>/`) belong to isolated certification environments only (see [dsh-release-compatibility.md](dsh-release-compatibility.md) §3.2); pointing tooling at one is the root cause of mass false test failures. A checkout with a non-default name must be selected explicitly with `DSH_HARNESS_DIR`.
+
+**Setup, in order:**
+
+1. Clone `../deepseek-harness`, check out the latest certified release tag (currently `dsh-v0.1.2-rc.1`; advance it per certification), then run `corepack pnpm install` (one workspace-wide install) and `corepack pnpm build:lib`. Always use `corepack pnpm` — both repositories pin `pnpm@11.7.0` through `packageManager`, and a bare `pnpm` depends on whatever the environment preinstalled. Do not reuse stale `lib/` or `node_modules/` from an earlier build — old artifacts can conceal declaration or runtime incompatibility.
+2. Build the Harness `apps/web` dist with `corepack pnpm build:web` if the workflow needs `test:browser`; the workspace install already provisioned its dependencies.
+3. Inside this repository, install with `corepack pnpm install`. Never run `npm install`: it silently breaks the workspace symlinks into the adjacent checkout's vendor packages, and the failure surfaces later as a misleading `Cannot find module 'zod'`.
+4. Regenerate the TypeScript path facades against the fresh checkout with `node scripts/sync-paths.mjs`. A fresh clone must not trust the committed facades: `sync-paths` is not part of any npm script, and skipping it leaves the facades pointing at the paths baked in at generation time.
+5. Smoke-check with `npm run typecheck && npm test`. Green means the environment is right; mass false failures (see below) mean it is not — fix the environment before debugging the diff.
+
+**Environment variables:**
+
+| Variable | Required for | Notes |
+| --- | --- | --- |
+| `CHROME_PATH` | `test:browser` (optional) | Defaults to `/usr/bin/google-chrome`; set only when the sandbox Chrome lives elsewhere |
+| `DSH_HARNESS_DIR` | certification escapes only | Points at a tag-suffixed sibling checkout; unset for everyday work — the default name is the contract |
+| `DEEPSEEK_API_KEY` | `npm run preview` | Real-model preview fails fast without it; test and browser paths never need it |
+
+**Symptoms of a wrong environment, not wrong code:** mass `TypeError ... reading 'UNLOADING'` / `FiberState` undefined failures mean Vitest resolved a stale or missing Harness checkout; `Cannot find module 'zod'` means npm broke the pnpm links. Fix the environment before debugging the diff.
+
 ## External installation verification
 
 The published layout is the root bundle:
