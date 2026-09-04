@@ -414,6 +414,8 @@ describe('AgentTeam durable Thread Attention ledger', () => {
         expect.objectContaining({ memberId: AGENT_TEAM_HUMAN_MEMBER_ID, action: 'unfollow', taskRef: started.task.taskRef }),
         expect.objectContaining({ memberId: AGENT_TEAM_HUMAN_MEMBER_ID, action: 'follow', taskRef: started.task.taskRef }),
       ],
+      // The observation history keeps both transitions; followers is the current state they lead to.
+      followers: [AGENT_TEAM_HUMAN_MEMBER_ID],
     })
     expect(test.ctx.agentTeam.view({ workspaceId: alpha, threadRef: started.thread.threadRef }).activities).toEqual([])
     expect(test.ctx.agentTeam.inbox({ workspaceId: alpha })).toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })

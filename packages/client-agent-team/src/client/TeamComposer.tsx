@@ -43,6 +43,12 @@ function mentionCandidates(members: readonly AgentTeamClientMemberStatus[], quer
     && status.member.handle.toLocaleLowerCase().startsWith(normalized))
 }
 
+/** Thread followers rank first: mentioning them delivers directly, while a non-follower enters the two-send invite flow. */
+function rankMentionCandidates(candidates: readonly AgentTeamClientMemberStatus[], followers: ReadonlySet<AgentTeamMemberId> | undefined): readonly AgentTeamClientMemberStatus[] {
+  if (followers === undefined || followers.size === 0) return candidates
+  return [...candidates].sort((left, right) => Number(followers.has(right.member.memberId)) - Number(followers.has(left.member.memberId)))
+}
+
 /** Every member a manual handle pick could reach: the @all expansion snapshot. */
 function allMentionMembers(members: readonly AgentTeamClientMemberStatus[]): readonly AgentTeamClientMemberStatus[] {
   return members.filter(status => status.presence !== 'unavailable' && status.member.state !== 'inactive' && status.member.state !== 'archived')
@@ -65,8 +71,10 @@ function draftPreviewUrl(file: File): string | undefined {
   return url
 }
 
-export function TeamComposer({ members, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, placeholder, pendingFiles, onFilesChange, asTask, onAsTaskChange, t }: {
+export function TeamComposer({ members, followerMemberIds, recipients, draft, pending, confirmation, error, onDraftChange, onRecipientsChange, onSubmit, placeholder, pendingFiles, onFilesChange, asTask, onAsTaskChange, t }: {
   readonly members: readonly AgentTeamClientMemberStatus[]
+  /** Current Thread followers; the Thread surface passes them so they rank above other candidates. */
+  readonly followerMemberIds?: ReadonlySet<AgentTeamMemberId>
   readonly recipients: ReadonlySet<AgentTeamMemberId>
   readonly draft: string
   readonly pending: boolean
@@ -89,17 +97,19 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLFormElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const activeOptionRef = useRef<HTMLButtonElement>(null)
   const composingRef = useRef(false)
   const [mention, setMention] = useState<MentionMatch>()
   const [highlight, setHighlight] = useState(0)
   // @all is a composer-layer expansion of the same eligibility filter a
   // handle pick uses; the fixed row stays on top of the matching members.
-  const memberCandidates = mention === undefined ? [] : mentionCandidates(members, mention.query)
+  const memberCandidates = mention === undefined ? [] : rankMentionCandidates(mentionCandidates(members, mention.query), followerMemberIds)
   const options: readonly MentionOption[] = mention !== undefined && 'all'.startsWith(mention.query.toLocaleLowerCase())
     ? [{ kind: 'all' }, ...memberCandidates.map(status => ({ kind: 'member' as const, status }))]
     : memberCandidates.map(status => ({ kind: 'member' as const, status }))
   const menuOpen = mention !== undefined && options.length > 0
   const activeOption = options[highlight]
+  const activeOptionKey = activeOption === undefined ? undefined : activeOption.kind === 'all' ? 'all' : activeOption.status.member.memberId
   const allCount = allMentionMembers(members).length
   const listId = 'team-mention-suggestions'
   const menuMaxHeight = useAnchoredMaxHeight(menuRef, 320, menuOpen ? draft : null)
@@ -120,6 +130,14 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
     }
     setHighlight(current => Math.min(current, options.length - 1))
   }, [mention, options.length])
+
+  // The anchored height cap keeps long rosters scrollable; without this the
+  // keyboard-highlighted row can stay hidden below the fold.
+  useLayoutEffect(() => {
+    if (!menuOpen) return
+    // Optional call: jsdom renders the menu without a layout engine.
+    activeOptionRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [menuOpen, highlight, activeOptionKey])
 
   // Match the resident DSH composer without stealing a later user choice: Team
   // data can load after navigation, so a dialog or another control may already
@@ -275,6 +293,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
                   role="option"
                   aria-selected={selected}
                   className={css.mentionOption}
+                  ref={selected ? activeOptionRef : undefined}
                   onMouseDown={event => { event.preventDefault() }}
                   onClick={() => { selectOption(option) }}
                 >
@@ -289,6 +308,7 @@ export function TeamComposer({ members, recipients, draft, pending, confirmation
                   role="option"
                   aria-selected={selected}
                   className={css.mentionOption}
+                  ref={selected ? activeOptionRef : undefined}
                   onMouseDown={event => { event.preventDefault() }}
                   onClick={() => { selectOption(option) }}
                 >

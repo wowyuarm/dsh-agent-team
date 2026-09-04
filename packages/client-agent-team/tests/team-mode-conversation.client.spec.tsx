@@ -536,6 +536,7 @@ describe('Team conversation surfaces', () => {
 
     b.readThread.mockClear()
     b.loadThreadHistory.mockClear()
+    b.threadObservations.mockClear()
     b.members.mockClear()
     b.viewChannels.mockClear()
     b.changes.mockClear()
@@ -543,6 +544,7 @@ describe('Team conversation surfaces', () => {
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
     expect(b.readThread).toHaveBeenCalledTimes(1)
+    expect(b.threadObservations).toHaveBeenCalledTimes(1)
 
     // The durable read no longer wakes any scope, so the first round is the
     // whole load: no second members/view/history wave may follow it.
@@ -561,6 +563,46 @@ describe('Team conversation surfaces', () => {
     expect(scopes.some(scope => scope.kind === 'workspace')).toBe(false)
     for (const [, signal] of scopedCalls) expect(signal).toBeInstanceOf(AbortSignal)
     await b.runtime.dispose()
+  })
+
+  it('ranks Thread followers first among mention candidates and scrolls the highlighted row into view', async () => {
+    const taskRef = 'task:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e71'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialChannels: true,
+      seedTaskRef: taskRef, seedThreadRef: 'thread:0f0ad7ce-11d3-4c05-8a9e-6f2b1c9d7e72',
+      seedFollowers: ['member:worker'],
+      seededMessages: [{ body: 'rank task', occurredAt: '2026-08-21T09:00:00.000Z' }],
+    })
+    // jsdom has no layout engine, so the scroll fix is observed through the
+    // call the highlighted row makes, not through real offsets.
+    const prototype = window.HTMLElement.prototype as { scrollIntoView?: (options?: { block?: string }) => void }
+    const originalScrollIntoView = prototype.scrollIntoView
+    const scrollIntoView = vi.fn()
+    prototype.scrollIntoView = scrollIntoView
+    try {
+      fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+      fireEvent.click(await b.view.findByRole('button', { name: '打开 Task #1' }))
+      const replyInput = await b.view.findByRole('textbox', { name: '消息内容' })
+      fireEvent.change(replyInput, { target: { value: '@' } })
+      const replyMenu = await b.view.findByRole('listbox')
+      // The seeded Channel has no membership rows, so the Thread composer sees
+      // the whole roster; the follower ranks above that roster order once the
+      // observation read from the first paint round lands.
+      await waitFor(() => expect(within(replyMenu).getAllByRole('option').map(option => option.textContent)).toEqual([
+        expect.stringContaining('@all'),
+        expect.stringContaining('@worker'),
+        expect.stringContaining('@builder'),
+        expect.stringContaining('@failed'),
+      ]))
+      fireEvent.keyDown(replyInput, { key: 'ArrowDown' })
+      fireEvent.keyDown(replyInput, { key: 'ArrowDown' })
+      expect(within(replyMenu).getAllByRole('option')[2]?.getAttribute('aria-selected')).toBe('true')
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
+    } finally {
+      if (originalScrollIntoView === undefined) delete prototype.scrollIntoView
+      else prototype.scrollIntoView = originalScrollIntoView
+      await b.runtime.dispose()
+    }
   })
 
   it('restores persisted Team mode, reconciles a stale Workspace, renders the rail, and unloads cleanly', async () => {

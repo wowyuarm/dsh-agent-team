@@ -1158,7 +1158,7 @@ export class AgentTeamLedger {
           memberId: next.memberId, action: 'follow' }))
       }
     }
-    return Object.freeze({ items: Object.freeze(observations.slice(-limit)) })
+    return Object.freeze({ items: Object.freeze(observations.slice(-limit)), followers: Object.freeze([...current.keys()]) })
   }
 
   /** Every operation carrying an inbox delta drives the Inbox projection; the payload shape decides, not a per-kind list. */

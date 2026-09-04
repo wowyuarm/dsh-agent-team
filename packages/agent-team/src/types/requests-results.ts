@@ -561,6 +561,8 @@ export interface AgentTeamThreadObservationsRequest {
 
 export interface AgentTeamThreadObservations {
   readonly items: readonly AgentTeamThreadAttentionObservation[]
+  /** Members whose Attention currently follows the Thread — the state the replayed observations lead to. */
+  readonly followers: readonly AgentTeamMemberId[]
 }
 
 /** One bounded Workspace view item. */
