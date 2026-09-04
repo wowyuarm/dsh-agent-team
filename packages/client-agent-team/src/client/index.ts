@@ -8,6 +8,7 @@ import type {
   AgentTeamClientMemberStatus,
   AgentTeamSendMessageRequest,
   AgentTeamThreadHistoryRequest,
+  AgentTeamThreadObservationsRequest,
   AgentTeamThreadReadRequest,
   AgentTeamCreateChannelRequest,
   AgentTeamGetAttachmentRequest,
@@ -129,6 +130,7 @@ function registerModeShadow<T extends object>(
             ...(name === 'conversation' ? {
               readThread: (request: AgentTeamThreadReadRequest) => ctx.remote.agentTeam.readThread(request),
               loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
+              threadObservations: (request: AgentTeamThreadObservationsRequest) => ctx.remote.agentTeam.threadObservations(request),
               sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
               putAttachment: (request: AgentTeamPutAttachmentRequest) => ctx.remote.agentTeam.putAttachment(request),
               getAttachment: (request: AgentTeamGetAttachmentRequest) => ctx.remote.agentTeam.getAttachment(request),

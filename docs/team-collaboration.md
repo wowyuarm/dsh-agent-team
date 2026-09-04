@@ -45,7 +45,7 @@ Human close releases active Claims and ends Attention. Reopen restores an open T
 
 ## Human Remote boundary
 
-The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`; it does not use a Human Inbox projection. Attention observations and controls remain available for later UI, while the current Thread UI does not render them. Browser storage keeps only navigation mode and Workspace selection; unread, Attention, revisions, and observations remain Host-owned.
+The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`; it does not use a Human Inbox projection. `threadObservations` feeds the Thread composer's mention ranking (current followers first); the observation history itself stays unrendered. Browser storage keeps only navigation mode and Workspace selection; unread, Attention, revisions, and observations remain Host-owned.
 
 ## Team Member context boundary
 

@@ -55,7 +55,7 @@ Human close 会 release active Claims、结束 Attention 并停止 ordinary deli
 
 ## Human Remote boundary
 
-Human Client 使用 `readThread`、`threadHistory`、`threadObservations`、`changeAttention` 和 `changes`，不调用 Host 的 Human Inbox projection。`threadObservations` 是针对一个 Thread 的、只读的 Human-only follow/unfollow Attention transitions projection；`changeAttention` 修改该 durable state。当前 Thread UI 不调用或渲染这两条 Attention control/observation paths；它们留给后续 UI 和 Agent workflows。Client 只在本地保存 navigation mode 与 Workspace selection；unread state、Attention、revisions 和 observations 仍由 Host 持有。
+Human Client 使用 `readThread`、`threadHistory`、`threadObservations`、`changeAttention` 和 `changes`，不调用 Host 的 Human Inbox projection。`threadObservations` 是针对一个 Thread 的、只读的 Human-only follow/unfollow Attention transitions projection，返回体同时携带当前关注者集合（`followers`）；`changeAttention` 修改该 durable state。Thread composer 用该读取为 mention 候选排序（当前关注者优先），observation 历史本身暂不渲染。Client 只在本地保存 navigation mode 与 Workspace selection；unread state、Attention、revisions 和 observations 仍由 Host 持有。
 
 ## Team Member context boundary
 

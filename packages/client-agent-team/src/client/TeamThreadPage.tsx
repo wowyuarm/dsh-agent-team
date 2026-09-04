@@ -39,6 +39,7 @@ interface TeamThreadPageProps {
   readonly loadChannels: TeamConversationProps['loadChannels']
   readonly readThread: TeamConversationProps['readThread']
   readonly loadThreadHistory: TeamConversationProps['loadThreadHistory']
+  readonly threadObservations: TeamConversationProps['threadObservations']
   readonly subscribeChanges: TeamConversationProps['subscribeChanges']
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly drafts: TeamDraftStore
@@ -84,13 +85,16 @@ function readMeta(facts: readonly AgentTeamThreadReadFact[]): ReadonlyMap<Thread
 export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, channelRef, taskRef, threadRef, taskNumber, backToWorkspace, selectChannel, selectThread, resolveTaskRefs, putAttachment,
-    loadChannels, readThread, loadThreadHistory,
+    loadChannels, readThread, loadThreadHistory, threadObservations,
     subscribeChanges, loadMembers, drafts, getAttachment, reply, changeTask, promoteThread, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projection, setProjection] = useState<ReadProjection>()
   const [channelView, setChannelView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
+  // Current Thread followers; the composer ranks them first because a mention
+  // to a follower delivers directly instead of entering the invite detour.
+  const [followerIds, setFollowerIds] = useState<ReadonlySet<AgentTeamMemberId>>(() => new Set())
   const [currentFacts, setCurrentFacts] = useState<readonly AgentTeamThreadFact[]>([])
   const [olderFacts, setOlderFacts] = useState<readonly AgentTeamThreadFact[]>([])
   const [readFacts, setReadFacts] = useState<readonly AgentTeamThreadReadFact[]>([])
@@ -243,12 +247,25 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     }
   }
 
+  // Follower ranking is an enhancement, not a page fact: a failed observation
+  // read leaves the roster order in place instead of surfacing an error.
+  const refreshFollowers = async (): Promise<void> => {
+    try {
+      const result = await threadObservations({ workspaceId, ...threadRequest })
+      if (!mountedRef.current || !result.ok) return
+      setFollowerIds(new Set(result.value.followers))
+    } catch {
+      // The next thread-scope wake retries; ranking falls back to roster order.
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true
     projectionRef.current = undefined
     setProjection(undefined)
     setChannelView(undefined)
     setMembers([])
+    setFollowerIds(new Set())
     setCurrentFacts([])
     currentFactsRef.current = []
     setOlderFacts([])
@@ -265,9 +282,10 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     void (async () => {
       // One parallel round covers the whole first paint. The durable read no
       // longer wakes any change scope, so no second wave follows it.
-      const [read, history] = await Promise.all([
+      const [read, history, observations] = await Promise.all([
         readThread({ requestId: readRequestIdRef.current, workspaceId, ...threadRequest }),
         loadThreadHistory({ workspaceId, ...threadRequest, limit: 20 }).catch(() => undefined),
+        threadObservations({ workspaceId, ...threadRequest }).catch(() => undefined),
       ])
       if (!mountedRef.current || sequence !== sequenceRef.current) return
       if (!read.ok) {
@@ -288,6 +306,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setHistoryCursor(history.value.cursor)
         setHistoryHasMore(history.value.hasMore)
       }
+      if (observations !== undefined && observations.ok) setFollowerIds(new Set(observations.value.followers))
       setError(undefined)
       setLoading(false)
       await drainUnread()
@@ -298,6 +317,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setError(update.message); return }
         void refreshPassiveFacts()
+        // Attention changes wake this scope too; keep the mention ranking current.
+        void refreshFollowers()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
         if (!mountedRef.current) return
@@ -745,6 +766,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         : <TeamComposer
       key={draftKey}
       members={channelMembers}
+      followerMemberIds={followerIds}
       recipients={recipients}
       draft={draft}
       pending={pending}

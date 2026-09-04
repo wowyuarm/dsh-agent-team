@@ -30,6 +30,8 @@ import type {
   AgentTeamConfirmationRequired,
   AgentTeamThreadHistory,
   AgentTeamThreadHistoryRequest,
+  AgentTeamThreadObservations,
+  AgentTeamThreadObservationsRequest,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
   AgentTeamPromoteThreadRequest,
@@ -129,6 +131,8 @@ export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'
   promoteThread: (request: AgentTeamPromoteThreadRequest) => Promise<RemoteResult<AgentTeamPromoteThreadResult>>
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+  /** Human-only Thread Attention observations; the Thread composer ranks the returned followers first. */
+  threadObservations: (request: AgentTeamThreadObservationsRequest) => Promise<RemoteResult<AgentTeamThreadObservations>>
 }
 
 export type TeamSettingsProps = PropsRuntime<'sidebar.settings'> & PropsLocale<'team'> & {
