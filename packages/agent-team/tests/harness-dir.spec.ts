@@ -35,8 +35,9 @@ describe('harness checkout pointer', () => {
     expect(result.stderr).toContain('deepseek-harness-does-not-exist')
     // The error must point at the fix instead of surfacing as a far-away
     // runtime symptom: it names the daily default, lists the harness
-    // checkouts that do exist, and references the compatibility doc.
-    expect(result.stderr).toContain('deepseek-harness-dsh-v0.1.2-rc.1')
+    // checkouts that do exist, and references the compatibility doc. The
+    // daily sibling is the stable listing anchor; cert copies come and go.
+    expect(result.stderr).toContain('deepseek-harness')
     expect(result.stderr).toContain('Harness checkouts that DO exist as siblings')
     expect(result.stderr).toContain('docs/dsh-release-compatibility.md')
   })
