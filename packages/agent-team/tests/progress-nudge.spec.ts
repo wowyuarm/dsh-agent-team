@@ -438,4 +438,60 @@ describe('ProgressNudgeCoordinator', () => {
     expect(agent.steerCount).toBe(0)
     expect(agent.nextStep).toHaveLength(0)
   })
+
+  it('a revoke between queueing and the deferred steer leaves the rung due for the next turn', () => {
+    const agent = new FakeAgent()
+    const scheduled: Array<() => void> = []
+    const coordinator = new ProgressNudgeCoordinator({
+      agentForMember: () => agent,
+      targetsForMember: () => progressEligible,
+      sessionLogForMember: () => ({ events: [] }),
+      scheduleSteer: run => { scheduled.push(run) },
+    })
+    coordinator.onSessionEvent(MEMBER, SESSION, agent, toolCallEvent(1))
+    for (const event of toolCallTurns(19, 2)) coordinator.onSessionEvent(MEMBER, SESSION, agent, event)
+    expect(scheduled).toHaveLength(1)
+    // The revoke happens after queueing but before the steer ran. The
+    // threshold must NOT have committed: the reminder stays due.
+    coordinator.revokePendingNotice(MEMBER)
+    scheduled[0]!()
+    expect(agent.steerCount).toBe(0)
+    // A new turn's tool call (call 21) re-schedules the still-due rung and,
+    // with no blocker anymore, the steer goes through this time.
+    coordinator.onSessionEvent(MEMBER, SESSION, agent, toolCallEvent(50))
+    expect(scheduled).toHaveLength(2)
+    scheduled[1]!()
+    expect(agent.steerCount).toBe(1)
+  })
+
+  it('a deferred claim-suggestion steer that throws stops tracking: the next four calls stay quiet, the fifth retries', async () => {
+    const agent = new FakeAgent()
+    let shouldThrow = false
+    agent.steer = (message: UserMessage): void => {
+      if (shouldThrow) throw new Error('target gone')
+      FakeAgent.prototype.steer.call(agent, message)
+    }
+    const coordinator = new ProgressNudgeCoordinator({
+      agentForMember: () => agent,
+      targetsForMember: () => claimEligible,
+      sessionLogForMember: () => ({ events: [] }),
+      scheduleSteer: run => { queueMicrotask(run) },
+      claimSuggestionThreshold: 5,
+    })
+    // Five calls schedule the suggestion; the deferred steer throws.
+    for (const event of toolCallTurns(5)) coordinator.onSessionEvent(MEMBER, SESSION, agent, event)
+    shouldThrow = true
+    await new Promise<void>(resolve => queueMicrotask(resolve))
+    expect(agent.steerCount).toBe(0)
+    // The failure stopped tracking: the counter restarts, so the next four
+    // calls stay quiet and only the fifth schedules again.
+    shouldThrow = false
+    for (const event of toolCallTurns(4, 100)) coordinator.onSessionEvent(MEMBER, SESSION, agent, event)
+    await new Promise<void>(resolve => queueMicrotask(resolve))
+    expect(agent.steerCount).toBe(0)
+    coordinator.onSessionEvent(MEMBER, SESSION, agent, toolCallEvent(200))
+    await new Promise<void>(resolve => queueMicrotask(resolve))
+    expect(agent.steerCount).toBe(1)
+    expect((agent.steered[0]!.content[0] as { type: string; text: string }).text).toContain('Claim visibility reminder')
+  })
 })

@@ -305,14 +305,11 @@ export class ProgressNudgeCoordinator {
     // Record intent first: the scheduled steer, its cancellation check, and
     // its failure handling all live on this single PendingNotice object, so a
     // revoke between queueing and the microtask leaves no orphan injection.
+    // lastNudgeTurn stays as the same-turn intent guard, but the A threshold
+    // only commits after the real steer succeeds — a canceled or failed
+    // schedule leaves the rung due so the next tool call retries it.
     state.pending = pending
     state.lastNudgeTurn = turn
-    if (progressDue) {
-      // Advance the ladder past the current count in one move: a long silence
-      // held back by higher-priority notices must not replay every skipped
-      // rung on successive tool calls after the blocker clears.
-      while (state.nextProgressThreshold <= state.silentToolCalls) state.nextProgressThreshold += this.progressThresholdStep
-    }
     this.scheduleSteer(() => {
       if (pending.canceled) return
       try {
@@ -321,9 +318,17 @@ export class ProgressNudgeCoordinator {
         this.log?.(`progress nudge steer failed for member '${memberId}': ${error instanceof Error ? error.message : String(error)}`)
         pending.canceled = true
         if (state.pending === pending) state.pending = undefined
+        this.stopTracking(memberId)
         return
       }
       pending.steered = true
+      if (pending.progressThreadRefs.length > 0) {
+        // Advance the ladder past the count at real success in one move: a
+        // long silence held back by higher-priority notices must not replay
+        // every skipped rung on successive tool calls after the blocker
+        // clears.
+        while (state.nextProgressThreshold <= state.silentToolCalls) state.nextProgressThreshold += this.progressThresholdStep
+      }
     })
   }
 
