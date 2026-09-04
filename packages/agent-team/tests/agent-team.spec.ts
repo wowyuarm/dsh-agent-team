@@ -1078,3 +1078,113 @@ describe('AgentTeam archived read surfaces', () => {
     expect(cold.resolveTaskRefs(alpha, [started.task.taskRef])).toEqual([])
   })
 })
+
+describe('AgentTeam progress nudge targets projection', () => {
+  it('derives A from an active claim and removes it on done/release', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const started = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Task', recipients: [member.memberId], actor: agentTeamHumanActor() })).value))
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [], claim: [{ threadRef: started.thread.threadRef, taskRef: started.task.taskRef }] })
+    const memberRead = (await ledger.readThread({ requestId: requestId('member-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'ship it', baseRevision: memberRead.thread.revision, actor })).value)
+    expect(claimed.task.status).toBe('in_progress')
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [{ reason: 'active-claim', threadRef: started.thread.threadRef, taskRef: started.task.taskRef }], claim: [] })
+    const read = (await ledger.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: started.task.taskRef, actor: agentTeamHumanActor() })).value
+    const released = committed((await ledger.changeClaim({ requestId: requestId('release'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'release', baseRevision: read.thread.revision, claimRef: claimed.claim.claimRef, actor })).value)
+    expect(released.task.status).toBe('todo')
+    // Released: no active claim, and the lifetime claim history suppresses B.
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [], claim: [] })
+  })
+
+  it('derives A for a taskless follower and removes it on unfollow; promotion converts to taskful candidacy', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const sent = committed((await ledger.sendMessage({ asTask: false, requestId: requestId('chat'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'plain conversation', recipients: [member.memberId], actor: agentTeamHumanActor() })).value)
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [{ reason: 'taskless-follower', threadRef: sent.thread.threadRef }], claim: [] })
+    await ledger.changeAttention({ requestId: requestId('unfollow'), workspaceId: alpha, threadRef: sent.thread.threadRef, action: 'unfollow', actor })
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [], claim: [] })
+    const followed = (await ledger.changeAttention({ requestId: requestId('follow'), workspaceId: alpha, threadRef: sent.thread.threadRef,
+      action: 'follow', actor })).value
+    const promoted = committed((await ledger.promoteThread({ requestId: requestId('promote'), workspaceId: alpha, threadRef: sent.thread.threadRef,
+      baseRevision: followed.thread.revision, actor: agentTeamHumanActor() })).value)
+    // After promotion the follower has never claimed: B candidacy, not A.
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [], claim: [{ threadRef: sent.thread.threadRef, taskRef: promoted.task.taskRef }] })
+  })
+
+  it('suppresses B once the task leaves todo, and drops everything on accept/close/archive', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const first = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('first'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'first task', recipients: [member.memberId], actor: agentTeamHumanActor() })).value))
+    const second = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('second'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'second task', recipients: [member.memberId], actor: agentTeamHumanActor() })).value))
+    // Another member claims the first task: in_progress suppresses B for the follower.
+    const { actor: other } = await addLedgerMember(ledger, channel.channel.channelRef, `member:agent-${crypto.randomUUID()}`)
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim-other'), workspaceId: alpha, taskRef: first.task.taskRef,
+      action: 'claim', direction: 'other direction', baseRevision: first.thread.revision, actor: other })).value)
+    expect(claimed.task.status).toBe('in_progress')
+    const targets = ledger.progressNudgeTargets(member.memberId)
+    expect(targets.claim).toEqual([{ threadRef: second.thread.threadRef, taskRef: second.task.taskRef }])
+    // Accept the second task: resolved tasks produce no candidacy at all.
+    const read = (await ledger.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: second.task.taskRef, actor: agentTeamHumanActor() })).value
+    await ledger.changeTask({ requestId: requestId('accept'), workspaceId: alpha, taskRef: second.task.taskRef, action: 'accept', baseRevision: read.thread.revision, actor: agentTeamHumanActor() })
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [], claim: [] })
+    // Archive the channel: even the other member's active claim loses A candidacy.
+    expect(ledger.progressNudgeTargets(other.memberId).progress).toEqual([{ reason: 'active-claim', threadRef: first.thread.threadRef, taskRef: first.task.taskRef }])
+    await ledger.archiveChannel({ requestId: requestId('archive'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })
+    expect(ledger.progressNudgeTargets(other.memberId)).toEqual({ progress: [], claim: [] })
+    expect(() => replayLedger(test).validate()).not.toThrow()
+  })
+
+  it('dedupes multi-claim threads and orders targets by thread revision descending', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const older = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('older'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'older task', recipients: [member.memberId], actor: agentTeamHumanActor() })).value))
+    const newer = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('newer'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'newer task', recipients: [member.memberId], actor: agentTeamHumanActor() })).value))
+    const readOlder = (await ledger.readThread({ requestId: requestId('read-older-member'), workspaceId: alpha, taskRef: older.task.taskRef, actor })).value
+    await ledger.changeClaim({ requestId: requestId('claim-older'), workspaceId: alpha, taskRef: older.task.taskRef,
+      action: 'claim', direction: 'one', baseRevision: readOlder.thread.revision, actor })
+    const readNewerMember = (await ledger.readThread({ requestId: requestId('read-newer-member'), workspaceId: alpha, taskRef: newer.task.taskRef, actor })).value
+    const claimedNewer = committed((await ledger.changeClaim({ requestId: requestId('claim-newer'), workspaceId: alpha, taskRef: newer.task.taskRef,
+      action: 'claim', direction: 'two', baseRevision: readNewerMember.thread.revision, actor })).value)
+    // Bump the older thread's revision with a human reply so the ordering flips.
+    const readOlderHuman = (await ledger.readThread({ requestId: requestId('read-older-human'), workspaceId: alpha, taskRef: older.task.taskRef, actor: agentTeamHumanActor() })).value
+    const bumped = committed((await ledger.reply({ requestId: requestId('bump'), workspaceId: alpha, taskRef: older.task.taskRef,
+      body: 'status update', baseRevision: readOlderHuman.thread.revision, actor: agentTeamHumanActor() })).value)
+    expect(bumped.thread.revision).toBeGreaterThan(claimedNewer.thread.revision)
+    const targets = ledger.progressNudgeTargets(member.memberId)
+    expect(targets.progress.map(entry => entry.threadRef)).toEqual([bumped.thread.threadRef, claimedNewer.thread.threadRef])
+    expect(targets.claim).toEqual([])
+  })
+
+  it('returns empty targets for unknown, suspended, or archived members', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    expect(ledger.progressNudgeTargets('member:missing' as never)).toEqual({ progress: [], claim: [] })
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const started = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Task', recipients: [member.memberId], actor: agentTeamHumanActor() })).value))
+    const memberRead = (await ledger.readThread({ requestId: requestId('member-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'work', baseRevision: memberRead.thread.revision, actor })).value)
+    expect(claimed.task.status).toBe('in_progress')
+    expect(ledger.progressNudgeTargets(member.memberId).progress).toHaveLength(1)
+    await ledger.suspendMember({ requestId: requestId('suspend'), memberId: member.memberId, actor: agentTeamHumanActor() })
+    expect(ledger.progressNudgeTargets(member.memberId)).toEqual({ progress: [], claim: [] })
+  })
+})

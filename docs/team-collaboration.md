@@ -63,6 +63,15 @@ Host derives bounded coalesced notifications from durable unread state. Idle Age
 
 Hints are at-least-once notification intent, coalesced per Member and rediscovered on restart/resume. A consumed or ignored hint does not create another turn until a later relevant durable change or recovery. Runtime recovery, error thresholds, and the three UI recovery actions remain Host behavior; they do not create ledger authority beyond their documented operations.
 
+## Progress-visibility nudges
+
+Besides unread-driven notifications, the Host counts each Member Session's `tool/call` events and may inject an advisory progress nudge into the running turn — it never writes Messages, Activities, Claims, or ledger operations, and never wakes an idle Member by itself.
+
+- **Thread progress reminder (A)**: a Member holding an active Claim on an open Task, or following a taskless Thread in an active Channel, that reaches 20 tool calls since its last committed public communication, then every 20 more. Public communication is one of message-sent, thread-replied, claim-created, claim-done, or claim-released; reads, follow/unfollow, DMs, and failed calls do not reset the count.
+- **Claim suggestion (B)**: a Member following a still-`todo` Task it has never claimed, at 5 tool calls. At most once per (Member, Thread) within the current Member Session — consumed suggestions stay consumed for the session's lifetime; Host restart and resume keep them; a Human-initiated new context starts fresh. Tasks with any progress (`in_progress`, `in_review`, done, closed) never recruit claimants.
+
+Eligibility is one read-only ledger projection (`progressNudgeTargets`). Multiple targets merge into a single notice listing each Thread; at most one nudge lands per turn. A queued nudge defers to recovery, Inbox, and pre-compaction notices, and is revoked if the Member commits communication or the target disappears (Task accepted, Channel archived) before the model reads it. The count is a rhythm signal, not a work measure: it never parses tool arguments, and the notice text says "reply only if your current work relates" where Thread attribution is only a candidate.
+
 ## Assembled acceptance
 
 `npm run test:browser` uses a credential-free Harness Web scaffold. It verifies default taskless Thread creation, default-off Human 「作为任务」, Human promotion and Host reread, taskless header/Claim gating, invitation confirmation, Agent Inbox read/reply, Human Channel/Thread state, reload persistence, desktop/390×844/keyboard paths, Team exit, and ordinary DSH restoration. Real Agent-loop integration tests separately cover safe-boundary wake and direct, Activity, and body-free ordinary notification forms.

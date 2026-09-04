@@ -259,6 +259,25 @@ export interface AgentTeamThreadAttentionKey {
   readonly threadRef: AgentTeamThreadRef
 }
 
+/**
+ * Current progress-nudge candidacy for one Member, as a read-only projection
+ * snapshot. `progress` covers Thread-progress reminders (the Member holds an
+ * active Claim, or follows a taskless Thread); `claim` covers Claim reminders
+ * (the Member follows a still-`todo` Task and has never claimed it).
+ */
+export interface AgentTeamProgressNudgeTargets {
+  readonly progress: readonly {
+    /** Why this Thread is a progress-reminder candidate. */
+    readonly reason: 'active-claim' | 'taskless-follower'
+    readonly threadRef: AgentTeamThreadRef
+    readonly taskRef?: AgentTeamTaskRef
+  }[]
+  readonly claim: readonly {
+    readonly threadRef: AgentTeamThreadRef
+    readonly taskRef: AgentTeamTaskRef
+  }[]
+}
+
 /** Sparse direct-priority marker for one structured Message mention. */
 export interface AgentTeamDirectMarker {
   readonly memberId: AgentTeamMemberId

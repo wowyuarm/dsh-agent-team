@@ -105,6 +105,7 @@ import type {
   AgentTeamThreadPromotedOperation,
   AgentTeamPromoteThreadRequest,
   AgentTeamPromoteThreadResult,
+  AgentTeamProgressNudgeTargets,
   AgentTeamThreadRepliedOperation,
   AgentTeamUnreadRequired,
   AgentTeamUpdateChannelRequest,
@@ -301,6 +302,11 @@ function emptyProjection(): Projection {
     orderedFacts: [], factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
     attentionByThread: new Map() }
 }
+
+const EMPTY_PROGRESS_NUDGE_TARGETS: AgentTeamProgressNudgeTargets = Object.freeze({
+  progress: Object.freeze([]),
+  claim: Object.freeze([]),
+})
 
 /** Exhaustiveness guard for the closed operation union: adding a kind must update every dispatch. */
 function assertUnhandledKind(operation: never): never {
@@ -529,6 +535,71 @@ export class AgentTeamLedger {
 
   getMember(memberId: AgentTeamMemberId): AgentTeamAgentMember | undefined {
     return this.state.members.get(memberId)
+  }
+
+  /**
+   * Current progress-nudge candidacy for one Member: threads whose Thread
+   * progress reminder applies (active Claim, or following a taskless Thread)
+   * and tasks where the Claim reminder applies (following a still-`todo` Task
+   * with no Claim history for this Member). A deep read-only projection — the
+   * caller never re-derives attention, claim, task-resolution, or channel
+   * archive state. Archived channels and resolved tasks produce no candidacy;
+   * results are ordered by Thread revision descending, then threadRef.
+   */
+  progressNudgeTargets(memberId: AgentTeamMemberId): AgentTeamProgressNudgeTargets {
+    const member = this.state.members.get(memberId)
+    if (member === undefined || member.state !== 'enabled') return EMPTY_PROGRESS_NUDGE_TARGETS
+    const progress: AgentTeamProgressNudgeTargets['progress'][number][] = []
+    const claim: AgentTeamProgressNudgeTargets['claim'][number][] = []
+    const seenProgress = new Set<AgentTeamThreadRef>()
+    for (const claimRecord of this.state.claims.values()) {
+      if (claimRecord.owner !== memberId || claimRecord.state !== 'active') continue
+      const task = this.state.tasks.get(claimRecord.taskRef)
+      const thread = this.state.threads.get(claimRecord.threadRef)
+      if (task === undefined || thread === undefined || task.resolution !== 'open') continue
+      if (this.state.channels.get(task.channelRef)?.state === 'archived') continue
+      if (seenProgress.has(claimRecord.threadRef)) continue
+      seenProgress.add(claimRecord.threadRef)
+      progress.push({ reason: 'active-claim', threadRef: claimRecord.threadRef, taskRef: claimRecord.taskRef })
+    }
+    for (const [threadRef, followers] of this.state.attentionByThread) {
+      if (!followers.has(memberId)) continue
+      const thread = this.state.threads.get(threadRef)
+      if (thread === undefined) continue
+      const channelRef = this.state.channelRefByThread.get(threadRef)
+      if (channelRef === undefined || this.state.channels.get(channelRef)?.state === 'archived') continue
+      if (thread.taskRef === undefined) {
+        if (!seenProgress.has(threadRef)) {
+          seenProgress.add(threadRef)
+          progress.push({ reason: 'taskless-follower', threadRef })
+        }
+        continue
+      }
+      // Claim reminder: only still-`todo` tasks with zero lifetime claims by
+      // this Member; once claimed (any state) the Member moved into the
+      // progress-reminder regime.
+      if (this.hasLifetimeClaimOnTask(memberId, thread.taskRef)) continue
+      const task = this.state.tasks.get(thread.taskRef)
+      if (task === undefined || task.resolution !== 'open' || this.deriveTaskStatus(task.taskRef, this.state.claims.values()) !== 'todo') continue
+      claim.push({ threadRef, taskRef: thread.taskRef })
+    }
+    const byThreadRevision = (left: { readonly threadRef: AgentTeamThreadRef }, right: { readonly threadRef: AgentTeamThreadRef }): number => {
+      const leftRevision = this.state.threads.get(left.threadRef)?.revision ?? 0
+      const rightRevision = this.state.threads.get(right.threadRef)?.revision ?? 0
+      return rightRevision - leftRevision || (left.threadRef < right.threadRef ? -1 : left.threadRef > right.threadRef ? 1 : 0)
+    }
+    return Object.freeze({
+      progress: Object.freeze(progress.sort(byThreadRevision)),
+      claim: Object.freeze(claim.sort(byThreadRevision)),
+    })
+  }
+
+  /** Whether this Member has ever held a Claim on the Task, in any state. */
+  private hasLifetimeClaimOnTask(memberId: AgentTeamMemberId, taskRef: AgentTeamTaskRef): boolean {
+    for (const claim of this.state.claims.values()) {
+      if (claim.owner === memberId && claim.taskRef === taskRef) return true
+    }
+    return false
   }
 
   listMembers(): readonly AgentTeamAgentMember[] {

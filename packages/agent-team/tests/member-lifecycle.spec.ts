@@ -23,6 +23,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
+import { PROGRESS_NUDGE_NOTICE_SUMMARY } from '../src/progress-nudge.ts'
 import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
@@ -1173,5 +1174,202 @@ describe('Agent Team Member lifecycle', () => {
     const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume'), memberId: added.status.member.memberId })
     expect(resumed.status.member.model).toEqual({ provider: 'mock', model: 'pinned-again' })
     expect(lastActivationOptions()).toMatchObject({ provider: 'mock', model: 'pinned-again' })
+  })
+})
+
+
+/** Whether one message is a progress-nudge notice. */
+function isNudgeNotice(message: { source: { kind: string; form?: string; summary?: string } }): boolean {
+  const source = message.source
+  return source.kind === 'plugin' && source.form === 'notice' && source.summary === PROGRESS_NUDGE_NOTICE_SUMMARY
+}
+
+/** Nudge notice texts the model consumed (durable session log) plus pending ones. */
+function deliveredNudgeTexts(agent: NonNullable<ReturnType<Context['agents']['get']>>): readonly string[] {
+  const texts: string[] = []
+  for (const event of agent.session.ownEvents()) {
+    if (event.type !== 'user/message') continue
+    const message = event.data as { source: { kind: string; form?: string; summary?: string }; content: Array<{ type: string; text?: string }> }
+    if (!isNudgeNotice(message)) continue
+    const block = message.content[0]
+    if (block?.type === 'text' && block.text !== undefined) texts.push(block.text)
+  }
+  for (const message of [...agent.inbox.nextStep, ...agent.inbox.nextTurn]) {
+    if (!isNudgeNotice(message)) continue
+    const block = message.content[0]
+    if (block?.type === 'text' && block.text !== undefined) texts.push(block.text)
+  }
+  return texts
+}
+
+describe('Agent Team progress nudge Host wiring', () => {
+  it('counts silent tool calls and nudges the claimant at the threshold', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('nudge-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('nudge-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('nudge-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const read = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('nudge-read'), workspaceId, taskRef: started.task!.taskRef })
+    const claimed = await ctx.agentTeam.changeClaimForAgent(agent, { requestId: requestId('nudge-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', direction: 'implements it', baseRevision: read.thread.revision })
+    if (claimed.kind !== 'committed') throw new Error(`expected committed claim, received ${claimed.kind}`)
+
+    // Nineteen one-tool-call turns stay below the threshold of twenty.
+    for (let index = 0; index < 19; index += 1) {
+      adapter.enqueue(toolCallResponse(`silent-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+      expect(deliveredNudgeTexts(agent)).toEqual([])
+    }
+    // The twentieth silent tool call crosses the threshold and the nudge is
+    // delivered into the turn (consumed or queued).
+    adapter.enqueue(toolCallResponse('silent-final', 'team_view', {}))
+    adapter.enqueue(textResponse('Done.'))
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+    const delivered = deliveredNudgeTexts(agent)
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0]).toContain('Progress visibility reminder')
+    expect(delivered[0]).toContain(started.task!.taskRef)
+    expect(delivered[0]).toContain(started.thread.threadRef)
+  })
+
+  it('does not count other sessions: a second member without tool calls is never nudged', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('n2-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const first = await ctx.agentTeam.addMember({ requestId: requestId('n2-first'), workspaceId, handle: 'first', description: 'Builds', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const second = await ctx.agentTeam.addMember({ requestId: requestId('n2-second'), workspaceId, handle: 'second', description: 'Reviews', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const firstAgent = ctx.agents.get(first.status.member.sessionId)!
+    const secondAgent = ctx.agents.get(second.status.member.sessionId)!
+
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('n2-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate', recipients: [first.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const read = await ctx.agentTeam.readThreadForAgent(firstAgent, { requestId: requestId('n2-read'), workspaceId, taskRef: started.task!.taskRef })
+    const claimed = await ctx.agentTeam.changeClaimForAgent(firstAgent, { requestId: requestId('n2-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', direction: 'implements it', baseRevision: read.thread.revision })
+    if (claimed.kind !== 'committed') throw new Error(`expected committed claim, received ${claimed.kind}`)
+    await ctx.agentTeam.changeAttentionForAgent(secondAgent, { requestId: requestId('n2-follow'), workspaceId, taskRef: started.task!.taskRef, action: 'follow' })
+    await ctx.agentTeam.readThreadForAgent(secondAgent, { requestId: requestId('n2-read-2'), workspaceId, taskRef: started.task!.taskRef })
+
+    for (let index = 0; index < 20; index += 1) {
+      adapter.enqueue(toolCallResponse(`first-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      firstAgent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await firstAgent.whenIdle()
+    }
+    expect(deliveredNudgeTexts(firstAgent)).toHaveLength(1)
+    // second made no tool calls: no counter, no nudge.
+    expect(deliveredNudgeTexts(secondAgent)).toEqual([])
+  })
+
+  it('revokes the queued nudge when the twentieth call is itself a successful team reply', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('n3-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('n3-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('n3-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const read = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('n3-read'), workspaceId, taskRef: started.task!.taskRef })
+    const claimed = await ctx.agentTeam.changeClaimForAgent(agent, { requestId: requestId('n3-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', direction: 'implements it', baseRevision: read.thread.revision })
+    if (claimed.kind !== 'committed') throw new Error(`expected committed claim, received ${claimed.kind}`)
+
+    for (let index = 0; index < 19; index += 1) {
+      adapter.enqueue(toolCallResponse(`silent-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+    }
+    const latestRead = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('n3-read-2'), workspaceId, taskRef: started.task!.taskRef })
+    adapter.enqueue(toolCallResponse('reply-call', 'team_message', { action: 'reply', threadRef: started.thread.threadRef, baseRevision: latestRead.thread.revision, body: 'Progress: all green.' }))
+    adapter.enqueue(textResponse('Reported.'))
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+    await agent.whenIdle()
+    // The reply's commit revoked the queued nudge, so the member read no
+    // generic reminder around its own public update.
+    expect(deliveredNudgeTexts(agent)).toEqual([])
+    // Silence restarted: nineteen more quiet calls stay quiet.
+    for (let index = 0; index < 19; index += 1) {
+      adapter.enqueue(toolCallResponse(`quiet-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+    }
+    expect(deliveredNudgeTexts(agent)).toEqual([])
+  })
+
+  it('suggests a claim once per member session and re-suggests after a context renewal', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('n4-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('n4-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('n4-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('n4-read'), workspaceId, taskRef: started.task!.taskRef })
+
+    // Five silent tool calls earn exactly one Claim suggestion.
+    for (let index = 0; index < 5; index += 1) {
+      adapter.enqueue(toolCallResponse(`silent-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+    }
+    const suggestions = deliveredNudgeTexts(agent).filter(text => text.includes('Claim visibility reminder'))
+    expect(suggestions).toHaveLength(1)
+    expect(suggestions[0]).toContain(`- Claim target: Task ${started.task!.taskRef} — Thread ${started.thread.threadRef}`)
+
+    // Twenty-five more silent calls never re-suggest within the same session.
+    for (let index = 0; index < 25; index += 1) {
+      adapter.enqueue(toolCallResponse(`more-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+    }
+    expect(deliveredNudgeTexts(agent).filter(text => text.includes('Claim visibility reminder'))).toHaveLength(1)
+
+    // A new context starts a fresh session that may earn one new suggestion.
+    const renewed = await ctx.agentTeam.clearMemberContext({ requestId: requestId('n4-renew'), workspaceId, memberId: builder.status.member.memberId })
+    const freshAgent = ctx.agents.get(renewed.status.member.sessionId)!
+    await ctx.agentTeam.readThreadForAgent(freshAgent, { requestId: requestId('n4-read-fresh'), workspaceId, taskRef: started.task!.taskRef })
+    for (let index = 0; index < 5; index += 1) {
+      adapter.enqueue(toolCallResponse(`fresh-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      freshAgent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await freshAgent.whenIdle()
+    }
+    expect(deliveredNudgeTexts(freshAgent).filter(text => text.includes('Claim visibility reminder'))).toHaveLength(1)
+  })
+
+  it('reconciles an in-flight nudge when the human accepts the task', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('n5-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('n5-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('n5-start'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const read = await ctx.agentTeam.readThreadForAgent(agent, { requestId: requestId('n5-read'), workspaceId, taskRef: started.task!.taskRef })
+    const claimed = await ctx.agentTeam.changeClaimForAgent(agent, { requestId: requestId('n5-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', direction: 'implements it', baseRevision: read.thread.revision })
+    if (claimed.kind !== 'committed') throw new Error(`expected committed claim, received ${claimed.kind}`)
+
+    for (let index = 0; index < 20; index += 1) {
+      adapter.enqueue(toolCallResponse(`silent-${index}`, 'team_view', {}))
+      adapter.enqueue(textResponse('Done.'))
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue.' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+    }
+    const deliveredBefore = deliveredNudgeTexts(agent).length
+    expect(deliveredBefore).toBeGreaterThanOrEqual(1)
+
+    // The human accepts the task: eligibility disappears, any queued notice is
+    // revoked, and the replacement Inbox notice carries concrete facts.
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('n5-human-read'), workspaceId, taskRef: started.task!.taskRef })
+    const accepted = await ctx.agentTeam.changeTask({ requestId: requestId('n5-accept'), workspaceId, taskRef: started.task!.taskRef, action: 'accept', baseRevision: humanRead.thread.revision })
+    if (accepted.kind !== 'committed') throw new Error(`expected committed accept, received ${accepted.kind}`)
+    const pendingNudge = [...agent.inbox.nextStep, ...agent.inbox.nextTurn].filter(isNudgeNotice)
+    expect(pendingNudge).toHaveLength(0)
   })
 })

@@ -89,6 +89,15 @@ Web Client 的 Agent-row menu 提供两个 runtime recovery entrances（都不�
 
 确认框会点名 Member 并说明影响范围：旧 Session 会归档并保留在 session records，identity、private memory、notes、Channel 和 Session bindings 保持不变，后续协作从新 context 继续积累。确认后 Host 记录 `team/member-session-renewed` operation（projection 只把该 Member 的 sessionId 迁移到新铸造的 id，其余 facts 不变），dispose 旧 handle，归档旧 Session（日志留在磁盘、从所有分组界面隐藏、workspace accounting 保留），然后在新 sessionId 上走 `agents.create` activation path（header 的 `parentSession` 记录旧 id 作为 lineage，新 Session 名称与 Member handle 一致）。下一次 turn 从空 context 开始。Agent idle 翻转会像 running 一样广播 workspace change，使 sidebar presence gate 在 turn 结束后即时解除。对用户可见的行为是：一个 Agent 始终对应一个 current Session；从 agent card 打开的右侧页面正常渲染并实时更新。新 id 没有历史 resident instance，不会出现同 id 重建后永久 disabled。若 Member Session 已嵌入右栏，Client 直接导航到新 Session 的 embedded view。同一 requestId 重试会铸造同一 new id，并由 ledger idempotency 去重。历史上的同 id 原地清空 `team/member-context-cleared` operation 已停止写入，其 schema 与 replay validation 保留为 tombstone，旧 ledger 仍可 replay。
 
+## Progress-visibility nudges
+
+除 unread 驱动的通知外，Host 会统计每个 Member Session 的 `tool/call` 事件，并可能向运行中的 turn 注入一条 advisory 进度提醒——它不写 Message、Activity、Claim 或任何 ledger operation，也不会凭空唤醒 idle Member。
+
+- **Thread 进度提醒（A）**：持有 open Task active Claim 的 Member，或在 active Channel 中 follow 某 taskless Thread 的 Member，自上一次成功提交公开沟通起累计 20 次 tool call 触发，之后每 20 次递增。公开沟通指 message-sent、thread-replied、claim-created、claim-done、claim-released 之一；read、follow/unfollow、DM 与失败调用不重置计数。
+- **Claim 建议（B）**：follow 仍为 `todo` 的 Task 且从未 claim 过的 Member，5 次 tool call 时触发。当前 Member Session 内每个 (Member, Thread) 至多一次——已消费的建议在本 Session 生命周期内不再重复；Host 重启与 resume 保持；Human 主动「从全新上下文开始」后重新计一次。已有推进状态的 Task（`in_progress`、`in_review`、done、closed）不再招募 claimant。
+
+资格判定是单一只读 ledger projection（`progressNudgeTargets`）。多个目标合并为一条 notice、逐 Thread 列出；每个 turn 至多注入一条。排队的 nudge 会让位于 recovery、Inbox 与 pre-compaction 通知，且在模型读到之前被撤销——若该 Member 提交了公开沟通或目标消失（Task accepted、Channel archived）。计数是节奏信号而非工作量度量：从不解析 tool arguments，Thread 归属只是候选时文案会写明「仅在当前工作相关时回复」。
+
 ## Assembled acceptance
 
 `npm run test:browser` 使用 credential-free Harness Web scaffold 验证 public Client 与 Host chain。代表性 trace 会执行默认 taskless top-level Thread、默认关闭的 Human「作为任务」control、Human promotion 与 Host reread、taskless header/Claim gating；还要求 Human 第二次发送确认以邀请未关注的 Agent，验证 Agent durable Inbox 与 explicit read/reply，然后验证 Human Channel 和 Thread state。Desktop、390×844 和 keyboard paths 都属于 assembled acceptance。Page reload 会从 Host projections 读取同一批 facts，然后 journey 离开 Team mode 并确认 ordinary DSH conversation surface 恢复。
