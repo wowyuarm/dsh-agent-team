@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process'
 import { join, resolve } from 'node:path'
 
 const projectRoot = resolve(import.meta.dirname, '..')
-const harnessRoot = resolve(projectRoot, '../deepseek-harness')
+// Certification runs point this at an isolated checkout at the candidate tag
+// (see docs/dsh-release-compatibility.md); default stays the daily sibling.
+const harnessRoot = resolve(projectRoot, `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}`)
 const clientRoot = join(projectRoot, 'packages/client-agent-team')
 const temporaryPackage = await mkdtemp(join(harnessRoot, 'packages/external-agent-team-'))
 const manifestDirectory = join(temporaryPackage, 'bundle')

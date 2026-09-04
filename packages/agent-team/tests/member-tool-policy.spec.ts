@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -18,10 +18,10 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_TOOL_NAMES } from '../src/index.ts'
-import * as memberContext from '../src/member-context.ts'
 import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
 import type { AgentTeamMemberCapabilities, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -132,36 +132,31 @@ async function policyHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<
   const presetDir = join(presetRoot, 'team-member')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
   process.env.DSH_HOME = join(root, 'dsh-home')
+  // rc.1 preset health resolves every row from disk: bare internal loader
+  // names are reported broken. Real package rows resolve through the linked
+  // node_modules; the distinguishable-tool fixture is a real module beside
+  // this spec, where its own imports resolve.
   await writeFile(join(presetDir, 'agent.cordis.yml'), [
     "- id: member-context",
-    "  name: 'test-member-context'",
+    "  name: '@wowyuarm/dsh-agent-team/member-context'",
     "- id: team-tools",
-    "  name: 'test-team-tools'",
+    `  name: ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'helpers', 'team-tools-fixture.mjs')).href)}`,
     '',
   ].join('\n'))
 
   const ctx = new Context()
-  ctx.baseUrl = pathToFileURL(root).href + '/'
+  // rc.1: preset health resolves package rows by walking node_modules above
+  // ctx.baseUrl — point at this repository, where the harness and bundle
+  // packages are linked, as a real profile install would.
+  ctx.baseUrl = pathToFileURL(resolve(import.meta.dirname, '../../../')).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   ctx.loader.builtins.group = Group
-  ctx.loader.internal = {
-    version: 'v2',
-    async import(specifier: string) {
-      if (specifier === 'test-member-context') return memberContext
-      if (specifier === 'test-team-tools') return {
-        name: 'test-team-tools', inject: ['tools'], apply(scope: Context) {
-          applyAgentTeamTools(scope)
-          scope.tools.register(defineContentToolFixture({ name: 'ordinary_tool', description: 'ordinary', parameters: {}, execute: async () => [{ type: 'text', text: 'ordinary ok' }] }))
-          scope.tools.register(defineContentToolFixture({ name: 'spare_tool', description: 'spare', parameters: {}, execute: async () => [{ type: 'text', text: 'spare ok' }] }))
-        },
-      }
-      throw new Error(`unexpected Loader import: ${specifier}`)
-    },
-  } as unknown as NonNullable<typeof ctx.loader.internal>
   await ctx.plugin(LlmRuntime)
   ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SessionStore)
+  // rc.1: AgentPresets injects 'sessionProjections'; the roster stays PENDING without it.
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)

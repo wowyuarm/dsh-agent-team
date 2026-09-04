@@ -11,7 +11,9 @@ import { standardDecoratorPlugin } from './scripts/standard-decorators.ts'
 // imports back to harness source. paths must win over package exports so a
 // second module-singleton copy can never load.
 const pathsPlugin = (): ReturnType<typeof tsconfigPaths> => tsconfigPaths({
-  projects: ['./tsconfig.json', '../deepseek-harness/tsconfig.base.json'],
+  // Certification runs point the harness project at an isolated checkout at
+  // the candidate tag (see docs/dsh-release-compatibility.md).
+  projects: ['./tsconfig.json', `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}/tsconfig.base.json`],
 })
 
 export default defineConfig({

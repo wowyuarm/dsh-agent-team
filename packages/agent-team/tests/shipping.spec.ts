@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { applyEntryPatches } from '@deepseek-ai/cordis-plugin-include'
 import { loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 
@@ -109,7 +111,13 @@ describe('Agent Team shipping contract', () => {
     expect(bundleManifest.exports['./client']?.default).toBe('./packages/client-agent-team/lib/client.js')
 
     const ctx = new Context()
+    // rc.1: the roster constructor rejects a context without a base URL, and
+    // health resolution walks node_modules above it — point at the repo root,
+    // where the harness packages are linked, as a real profile install would.
+    ctx.baseUrl = pathToFileURL(root).href + '/'
     await ctx.plugin(Loader)
+    // rc.1: AgentPresets injects 'sessionProjections'; the roster stays PENDING without it.
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(AgentPresets, { default: 'team-member',
       roots: [{ path: resolve(root, 'packages/agent-team/preset'), trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
     const roster = await ctx.agentPresets.list()

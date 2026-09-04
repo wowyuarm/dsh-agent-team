@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const harness = resolve(root, '../deepseek-harness')
+const harness = resolve(root, `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}`)
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-agent-team-ui-preview-'))
 const overlay = join(temporary, 'overlay.yml')
 const home = join(temporary, 'home')

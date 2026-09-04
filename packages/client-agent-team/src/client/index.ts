@@ -31,6 +31,7 @@ import type {} from '../../../agent-team/lib/typert.remote-client.d.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
@@ -105,11 +106,7 @@ function registerModeShadow<T extends object>(
     clearMemberContext: (request: AgentTeamClearMemberContextRequest) => ctx.remote.agentTeam.clearMemberContext(request),
     archiveMember: (request: AgentTeamArchiveMemberRequest) => ctx.remote.agentTeam.archiveMember(request),
     // The Host-scoped catalog needs no live Member, so suspended ones stay editable too.
-    loadModels: async () => {
-      const response = await ctx.remote.session.modelCatalog()
-      if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`)
-      return response.value
-    },
+    loadModels: () => ctx.remote.session.modelCatalog(),
     openMemberSession: openMemberSessionImpl,
   }
   ctx.slots.inject(name, () => {

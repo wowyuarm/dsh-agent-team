@@ -1,6 +1,6 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -15,6 +15,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionTitle from '@deepseek-ai/dsh-session-title'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -22,8 +23,6 @@ import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
-import * as memberContext from '../src/member-context.ts'
-import { apply as applyAgentTeamTools } from '@wowyuarm/dsh-agent-team/tools'
 import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
@@ -152,49 +151,45 @@ async function realHarness(
   const presetDir = join(presetRoot, 'team-member')
   await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
   process.env.DSH_HOME = join(root, 'dsh-home')
+  // rc.1 preset health check resolves every row from disk: bare internal
+  // loader names are reported broken. Real package rows resolve through the
+  // self-linked node_modules; the compaction stub is a real file the row
+  // points at with a file: URL.
+  const compactionStub = join(root, 'compaction-stub.mjs')
+  await writeFile(compactionStub, [
+    "export const name = 'test-compaction'",
+    "export function apply(scope) { scope.provide('compaction', { compactNow: async () => null }) }",
+    '',
+  ].join('\n'))
   await writeFile(join(presetDir, 'agent.cordis.yml'), [
     "- id: member-context",
-    "  name: 'test-member-context'",
+    "  name: '@wowyuarm/dsh-agent-team/member-context'",
     "- id: team-tools",
-    "  name: 'test-team-tools'",
+    "  name: '@wowyuarm/dsh-agent-team/tools'",
     "- id: compaction",
     "  name: cordis:group",
     "  group: true",
     "  isolate:",
     "    compaction: true",
     "  config:",
-    "    - id: compaction-stub",
-    "      name: 'test-compaction'",
+    `    - id: compaction-stub`,
+    `      name: ${JSON.stringify(pathToFileURL(compactionStub).href)}`,
     '',
   ].join('\n'))
 
   const ctx = new Context()
-  ctx.baseUrl = pathToFileURL(root).href + '/'
+  // rc.1: preset health resolves package rows by walking node_modules above
+  // ctx.baseUrl — point at this repository, where the harness and bundle
+  // packages are linked, as a real profile install would.
+  ctx.baseUrl = pathToFileURL(resolve(import.meta.dirname, '../../../')).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   ctx.loader.builtins.group = Group
-  ctx.loader.internal = {
-    version: 'v2',
-    async import(specifier: string) {
-      if (specifier === 'test-member-context') return memberContext
-      if (specifier === 'test-compaction') {
-        return {
-          name: 'test-compaction',
-          apply(scope: Context) { scope.provide('compaction', { compactNow: async () => null }) },
-        }
-      }
-      if (specifier === 'test-team-tools') return {
-        name: 'test-team-tools', inject: ['tools'], apply(scope: Context) {
-          applyAgentTeamTools(scope)
-          scope.tools.register(defineContentToolFixture({ name: 'ordinary_tool', description: 'ordinary', parameters: {}, execute: async () => [{ type: 'text', text: 'ok' }] }))
-        },
-      }
-      throw new Error(`unexpected Loader import: ${specifier}`)
-    },
-  } as unknown as NonNullable<typeof ctx.loader.internal>
   await ctx.plugin(LlmRuntime)
   ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SessionStore)
+  // rc.1: AgentPresets injects 'sessionProjections'; the roster stays PENDING without it.
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)

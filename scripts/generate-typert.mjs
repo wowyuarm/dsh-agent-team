@@ -3,7 +3,9 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const projectRoot = resolve(import.meta.dirname, '..')
-const harnessRoot = resolve(projectRoot, '../deepseek-harness')
+// Certification runs point this at an isolated checkout at the candidate tag
+// (see docs/dsh-release-compatibility.md); default stays the daily sibling.
+const harnessRoot = resolve(projectRoot, `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}`)
 const { WorkspaceAnalyzer } = await import(pathToFileURL(join(harnessRoot, 'packages/typert/generator/src/analyzer.ts')).href)
 const { FaceModelEmitter } = await import(pathToFileURL(join(harnessRoot, 'packages/typert/generator/src/emitter.ts')).href)
 const { default: ts } = await import(pathToFileURL(join(harnessRoot, 'node_modules/typescript/lib/typescript.js')).href)

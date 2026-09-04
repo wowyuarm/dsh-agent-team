@@ -1,5 +1,8 @@
 import { resolve } from 'node:path'
-import { clientBundle } from '../../../deepseek-harness/packages/client/tsdown.client.ts'
+// Certification runs point the bundle helper at an isolated checkout at the
+// candidate tag (see docs/dsh-release-compatibility.md).
+const harnessDir = process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'
+const { clientBundle } = await import(`../../../${harnessDir}/packages/client/tsdown.client.ts`)
 
 const bundle = clientBundle('@wowyuarm/dsh-agent-team', [
   'lib/types/index.js',

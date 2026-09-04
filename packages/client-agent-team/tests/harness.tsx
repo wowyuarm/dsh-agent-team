@@ -2,7 +2,8 @@ import { vi } from 'vitest'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
 import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { apply as applySidebar, inject as injectSidebar } from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -33,9 +34,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   }
   const runtime = await SlotTestRuntime.create()
   const locale = new LocaleRuntime(runtime.ctx)
+  // rc.1: shipped sidebar chrome (brand row) reads the common namespace.
+  locale.register(COMMON_NS, { zh: commonZh, en: commonEn })
   runtime.ctx.provide('locale', locale)
   runtime.slots.installLocale(locale)
   runtime.ctx.provide('layout', { toggleSidebar: vi.fn() })
+  // rc.1: the shipped sidebar injects 'uiWorkspace'; the takeover bench
+  // provides a minimal navigation double.
+  runtime.ctx.provide('uiWorkspace', { startSession: vi.fn() })
   const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: string) => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
@@ -149,13 +155,13 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     channels = channels.filter(channel => channel.channelRef !== request.channelRef)
     return { ok: true as const, value: { receipt: {}, channel: archived, releasedClaims: [] } }
   })
-  const loadModels = vi.fn(async () => ({ result: { ok: true as const, value: {
+  const modelCatalog = vi.fn(async () => ({ ok: true as const, value: {
     groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [
       { id: 'deepseek-chat', name: 'DeepSeek Chat', reasoning: { efforts: [{ id: 'low', name: 'low' }, { id: 'high', name: 'high' }] } },
       { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
     ] }],
     failures: [],
-  } } }))
+  } }))
   const putAttachment = vi.fn(async (request: { requestId: string; name: string; mediaType?: string; bytesBase64: string }) => ({
     ok: true as const,
     value: { attachmentId: `attachment:${putAttachmentCounter += 1}`, path: `/cache/${request.name}`, name: request.name, byteSize: request.bytesBase64.length, mediaType: request.mediaType ?? 'application/octet-stream' },
@@ -265,14 +271,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     changeVersion += 1
     for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
   }
-  runtime.ctx.provide('remote', { agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.ctx.provide('remote.agentTeam', {})
   runtime.ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   runtime.ctx.provide('inputTriggers', {
     registerSource: () => () => {},
     sessionOf: () => ({ menu: { getSnapshot: () => ({ open: false }) }, dismiss() {}, toggleSource() {}, arbitrate: () => 'pass' }),
   } as never)
-  runtime.ctx.provide('connection', { api: { llm: { models: loadModels } } })
+  runtime.ctx.provide('connection', { isLoopback: true, generation: { getSnapshot: () => ({}) }, state: { getSnapshot: () => ({}) }, rpc: {}, reconnect: vi.fn(), registerGenerationSource: vi.fn(), start: vi.fn(), stop: vi.fn() })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
     draft.items = [
@@ -290,5 +296,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, loadModels, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, changes }
 }
