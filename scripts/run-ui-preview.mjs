@@ -4,9 +4,10 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { harnessDir } from './harness-dir.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const harness = resolve(root, `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}`)
+const harness = harnessDir
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-agent-team-ui-preview-'))
 const overlay = join(temporary, 'overlay.yml')
 const home = join(temporary, 'home')

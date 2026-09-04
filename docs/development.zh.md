@@ -129,6 +129,8 @@ node scripts/sync-paths.mjs
 
 **环境错误而非代码错误的症状**：大面积 `TypeError ... reading 'UNLOADING'` / `FiberState` undefined 失败 = Vitest 解析到了缺失或过期的 Harness checkout；`Cannot find module 'zod'` = npm 破坏了 pnpm 链接。先修环境，再查 diff。
 
+**checkout 指针集中化且 fail-fast。** `scripts/harness-dir.mjs` 是所有消费方（Vitest、`sync-paths`、`build-client`、`generate-typert`、浏览器/预览 runner）共同解析的单一事实源：`DSH_HARNESS_DIR` 设定时优先；其次读 `sync-paths` 写下的 `.generated-harness` 标记（测试自动跟随 facade 生成时的同一 checkout——认证轮生成后忘了带 env 也不会让两者劈叉）；最后落到默认相邻名。解析出的目录不存在时立即中止，列出相邻真实存在的 Harness checkout 与修复指引，而不是等到跑测才炸出上面那些远端症状。
+
 ## 外部安装验证
 
 发布形态是根 bundle：

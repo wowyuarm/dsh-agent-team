@@ -4,11 +4,10 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { harnessDir } from './harness-dir.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-// Certification runs point this at an isolated checkout at the candidate tag
-// (see docs/dsh-release-compatibility.md); default stays the daily sibling.
-const harness = resolve(root, `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}`)
+const harness = harnessDir
 const chrome = process.env.CHROME_PATH ?? '/usr/bin/google-chrome'
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-agent-team-browser-'))
 const overlay = join(temporary, 'overlay.yml')

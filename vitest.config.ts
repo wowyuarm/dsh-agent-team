@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
+import { harnessDir } from './scripts/harness-dir.mjs'
 import { standardDecoratorPlugin } from './scripts/standard-decorators.ts'
 
 // Root tsconfig.json is the match-all resolution facade (no include) for
@@ -11,9 +12,10 @@ import { standardDecoratorPlugin } from './scripts/standard-decorators.ts'
 // imports back to harness source. paths must win over package exports so a
 // second module-singleton copy can never load.
 const pathsPlugin = (): ReturnType<typeof tsconfigPaths> => tsconfigPaths({
-  // Certification runs point the harness project at an isolated checkout at
-  // the candidate tag (see docs/dsh-release-compatibility.md).
-  projects: ['./tsconfig.json', `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}/tsconfig.base.json`],
+  // scripts/harness-dir.mjs owns the checkout pointer for every consumer:
+  // env override for certification runs, the daily sibling default otherwise,
+  // fail-fast when the resolved checkout is missing.
+  projects: ['./tsconfig.json', resolve(harnessDir, 'tsconfig.base.json')],
 })
 
 export default defineConfig({

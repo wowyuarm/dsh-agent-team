@@ -123,6 +123,8 @@ The test and type systems are not self-contained: they resolve 40+ `@deepseek-ai
 
 **Symptoms of a wrong environment, not wrong code:** mass `TypeError ... reading 'UNLOADING'` / `FiberState` undefined failures mean Vitest resolved a stale or missing Harness checkout; `Cannot find module 'zod'` means npm broke the pnpm links. Fix the environment before debugging the diff.
 
+**The checkout pointer is centralized and fails fast.** `scripts/harness-dir.mjs` is the single source of truth every consumer (Vitest, `sync-paths`, `build-client`, `generate-typert`, the browser/preview runners) resolves through: `DSH_HARNESS_DIR` wins when set, then the `.generated-harness` marker that `sync-paths` writes (so tests follow the same checkout the facades were generated against — a forgotten env var after a cert-run generation cannot split them), then the default sibling name. A resolved checkout that does not exist aborts immediately with the sibling Harness checkouts that do exist and pointers to the fix, instead of surfacing as the far-away symptoms above.
+
 ## External installation verification
 
 The published layout is the root bundle:

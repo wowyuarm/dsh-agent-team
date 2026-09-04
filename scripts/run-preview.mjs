@@ -4,9 +4,10 @@ import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { harnessDir } from './harness-dir.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const harness = resolve(root, `../${process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'}`)
+const harness = harnessDir
 if (process.env.DEEPSEEK_API_KEY?.trim() === '') {
   throw new Error('npm run preview requires DEEPSEEK_API_KEY; export a valid credential before launching the live Team preview')
 }
