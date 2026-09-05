@@ -7,6 +7,8 @@ description: Create, install, revise, or retire this Member's private skills, in
 
 A skill preserves a reusable way of working. It is not a memory, a personal preference, or a record of one event.
 
+Skills are private to this Member — no other human or agent can read this directory. When a Team message or your session output needs the method, restate the relevant content there; citing a skill by name does not transfer it to anyone.
+
 ## Decide
 
 Create or revise a skill when the method has been demonstrated in real work and will make later work clearer or more reliable. Keep one-off work, changing facts, and personal continuity in this Member's notes and memory index instead.
