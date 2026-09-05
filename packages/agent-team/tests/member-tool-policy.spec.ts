@@ -23,6 +23,8 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_TOOL_NAMES } from '../src/index.ts'
 import type { AgentTeamMemberCapabilities, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
+// @ts-expect-error untyped shared resolution module
+import { harnessDir } from '../../../scripts/harness-dir.mjs'
 import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -354,8 +356,7 @@ describe('Agent Team member tool policy', () => {
     const engine = await import('@deepseek-ai/dsh-session-query')
     // The tool plugin ships in the adjacent Harness checkout (read-only
     // reference); it is not a Team dependency, so the spike loads it by path.
-    // @ts-expect-error untyped cross-checkout module
-    const toolPluginModule = await import('/home/yu/projects/deepseek-harness/packages/session-query/tool-session-query/lib/index.js')
+    const toolPluginModule = await import(pathToFileURL(join(harnessDir, 'packages/session-query/tool-session-query/lib/index.js')).href)
     const toolPlugin = {
       name: 'tool-session-query',
       inject: toolPluginModule.inject as readonly string[],

@@ -233,15 +233,11 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       // Every arrival while the Thread is open is acknowledged durably: the
       // timeline renders it either way, and the Human has no manual read
       // action anymore. The count only feeds the pure jump hint for a reader
-      // away from the bottom; returning to the bottom clears it.
+      // away from the tail; a bottom-pinned reader already sees the arrivals.
       if (!timeline.isPinned()) setNewFactsCount(current => current + additions.length)
-      const priorSequence = sequenceRef.current
-      if (await readCurrent(true)) return
-      // The durable acknowledgment did not happen (it failed, a newer read
-      // superseded it, or the page unmounted); the count keeps the jump hint
-      // visible unless that newer read now owns the tail.
-      if (!mountedRef.current || sequenceRef.current !== priorSequence + 1) return
-      setNewFactsCount(current => current + additions.length)
+      // The acknowledgment outcome does not change what is on screen: a
+      // failed read surfaces through the error surface, not through the count.
+      await readCurrent(true)
     } catch {
       // A passive refresh is an invalidation convenience; the next explicit action rereads Host state.
     }
@@ -339,6 +335,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   useEffect(() => {
     if (newFactsCount > 0 && timeline.isPinned()) setNewFactsCount(0)
   }, [newFactsCount, currentFacts, olderFacts, timeline])
+
+  // The hint answers "where is the tail?"; the moment the reader is back
+  // within the follow margin — by the jump click or their own scroll — it
+  // must go away even when no render follows that position change.
+  const handleTimelineScroll = (): void => {
+    timeline.onScroll()
+    if (timeline.isPinned()) setNewFactsCount(0)
+  }
 
   const loadOlder = async (): Promise<void> => {
     if (historyHasMore === false && historyCursor === undefined) return
@@ -735,7 +739,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       </section>}
     </div>
 
-    <section ref={timeline.ref} onScroll={timeline.onScroll} className={css.timeline} aria-label={t('timelineLabel')}>
+    <section ref={timeline.ref} onScroll={handleTimelineScroll} className={css.timeline} aria-label={t('timelineLabel')}>
       <div className={css.timelineContent}>
         {loading && projection === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingThread')}</p></div>}
         {projection === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void readCurrent() }}>{t('retry')}</Button></div>}
@@ -749,7 +753,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           <Button size="sm" onClick={() => { setAutoReadExhausted(false); void drainUnread() }} disabled={loading}>{t('retry')}</Button>
         </div>}
         {newFactsCount > 0 && <div className={threadCss.newUpdates} role="status">
-          <button type="button" className={threadCss.newUpdatesJump} onClick={timeline.scrollToBottom}>{t('newUpdatesJump', { count: newFactsCount })}</button>
+          <button type="button" className={threadCss.newUpdatesJump} onClick={() => { setNewFactsCount(0); timeline.scrollToBottom() }}>{t('newUpdatesJump', { count: newFactsCount })}</button>
         </div>}
       </div>
     </section>

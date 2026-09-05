@@ -1186,6 +1186,9 @@
       ],
       "@deepseek-ai/dsh-workspace/invariant": [
         "../deepseek-harness/packages/workspace/workspace/lib/types/invariant.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-locale/src/*": [
+        "../deepseek-harness/packages/client/locale/lib/types/*"
       ]
     }
   }

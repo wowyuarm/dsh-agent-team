@@ -133,8 +133,13 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   }
   await expect.poll(async () => await joinEditor.getByRole('button', { name: '移除', exact: true }).count()).toBe(2)
   await joinEditor.getByRole('button', { name: '关闭', exact: true }).click()
-  // Narrow-viewport create form with every field optional.
+  // Narrow-viewport create form with every field optional. The 390
+  // breakpoint collapses the frame to the rail and unmounts the sidebar
+  // panels (dialog state included), so the dialog opens from the
+  // narrow-expanded sidebar once the collapse has settled.
   await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator('[data-sidebar-collapsed="true"]').waitFor()
+  await page.getByRole('button', { name: '打开侧边栏' }).click()
   await page.getByRole('button', { name: '添加 Agent' }).click()
   const narrowDialog = page.getByRole('dialog', { name: '添加 Agent' })
   await narrowDialog.getByLabel('名称').waitFor()
@@ -158,16 +163,25 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('menuitem', { name: /reviewer/ }).click()
   await expect.poll(async () => (await channelDialog.getByRole('button', { name: /初始成员/ }).textContent())?.trim() ?? '').toContain('已选 2 个成员')
   await page.screenshot({ path: join(UI03_SHOTS, 'channel-create-modal.png'), fullPage: true })
+  await channelDialog.getByRole('button', { name: '创建频道' }).click()
+  // The same form at 390: the breakpoint unmounts sidebar panels (dialog
+  // state included), so the check re-opens it from the narrow-expanded
+  // sidebar after the collapse has settled.
   await page.setViewportSize({ width: 390, height: 844 })
-  const dialogBox = await channelDialog.boundingBox()
+  await page.locator('[data-sidebar-collapsed="true"]').waitFor()
+  await page.getByRole('button', { name: '打开侧边栏' }).click()
+  await page.getByRole('button', { name: '新建频道' }).click()
+  const narrowChannelDialog = page.getByRole('dialog', { name: '新建频道' })
+  await narrowChannelDialog.getByLabel('名称').waitFor()
+  const dialogBox = await narrowChannelDialog.boundingBox()
   expect(dialogBox).not.toBeNull()
   expect(dialogBox!.x).toBeGreaterThanOrEqual(0)
   expect(dialogBox!.y).toBeGreaterThanOrEqual(0)
   expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(390)
   expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(844)
   await page.screenshot({ path: join(UI03_SHOTS, 'channel-create-modal-narrow.png'), fullPage: true })
+  await page.keyboard.press('Escape')
   await page.setViewportSize({ width: 1440, height: 960 })
-  await channelDialog.getByRole('button', { name: '创建频道' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByText('还没有消息', { exact: true }).waitFor()
   await page.screenshot({ path: join(UI02_SHOTS, 'sidebar-channels.png'), fullPage: true })
@@ -1040,9 +1054,20 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await membersDialog.waitFor()
   await expect.poll(() => membersDialog.locator('[tabindex="-1"]').evaluate(element => element === document.activeElement)).toBe(true)
   await page.screenshot({ path: join(UI06_SHOTS, 'members-modal-desktop.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+  await expect.poll(() => membersKeyboard.evaluate(element => element === document.activeElement)).toBe(true)
+  // Narrow viewport: the breakpoint unmounts sidebar panels (dialog state
+  // included), so the check re-opens the dialog from the narrow-expanded
+  // sidebar after the collapse has settled.
   await page.setViewportSize({ width: 390, height: 844 })
   await page.locator('[data-sidebar-collapsed="true"]').waitFor()
-  const membersBox = await membersDialog.boundingBox()
+  await page.getByRole('button', { name: '打开侧边栏' }).click()
+  const narrowMembersKeyboard = page.getByRole('button', { name: '成员', exact: true })
+  await narrowMembersKeyboard.focus()
+  await narrowMembersKeyboard.press('Space')
+  const narrowMembersDialog = page.getByRole('dialog', { name: '成员' })
+  await narrowMembersDialog.waitFor()
+  const membersBox = await narrowMembersDialog.boundingBox()
   expect(membersBox).not.toBeNull()
   expect(membersBox!.x).toBeGreaterThanOrEqual(0)
   expect(membersBox!.y).toBeGreaterThanOrEqual(0)
@@ -1050,7 +1075,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(membersBox!.y + membersBox!.height).toBeLessThanOrEqual(844)
   await page.screenshot({ path: join(UI06_SHOTS, 'members-modal-narrow.png'), fullPage: true })
   await page.keyboard.press('Escape')
-  await expect.poll(() => membersKeyboard.evaluate(element => element === document.activeElement)).toBe(true)
+  await expect.poll(() => narrowMembersKeyboard.evaluate(element => element === document.activeElement)).toBe(true)
   await page.setViewportSize({ width: 1440, height: 960 })
 
   const channelKeyboard = page.getByRole('button', { name: '# delivery' })
