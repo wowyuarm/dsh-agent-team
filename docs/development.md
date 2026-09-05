@@ -103,6 +103,8 @@ The `tsconfig*.json` facades must not gain `include` or `files`; they must conti
 
 The test and type systems are not self-contained: they resolve 40+ `@deepseek-ai/dsh-*` packages from the adjacent Harness checkout (both `src/` and a built `lib/`). Sandboxed agents and CI runners must reproduce that layout instead of improvising their own.
 
+This applies to any fresh environment: a new clone **or a `git worktree`**. A worktree does not carry the main checkout's gitignored `node_modules/` and `lib/`, so the setup below is required from scratch there too — skipping step 4 (linking and building) surfaces later as mass false preset-resolution failures in host tests, not as a missing-module error at startup.
+
 **Checkout naming is the contract.** Clone the Harness as the sibling `../deepseek-harness` — the default directory name every script falls back to — and check out the latest certified release tag. Sibling checkouts with tag-suffixed names (`../deepseek-harness-<tag>/`) belong to isolated certification environments only (see [dsh-release-compatibility.md](dsh-release-compatibility.md) §3.2); pointing tooling at one is the root cause of mass false test failures. A checkout with a non-default name must be selected explicitly with `DSH_HARNESS_DIR`.
 
 **Setup, in order:**

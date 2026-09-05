@@ -109,6 +109,8 @@ node scripts/sync-paths.mjs
 
 测试与类型系统不是自包含的：40+ 个 `@deepseek-ai/dsh-*` 包全部从相邻 Harness checkout 解析（`src/` 与已构建的 `lib/` 都要在）。沙箱 agent 与 CI runner 必须复刻这个布局，而不是自行发明。
 
+这适用于任何全新环境：新 clone **或 `git worktree`**。worktree 不携带主 checkout 中被 gitignore 的 `node_modules/` 与 `lib/`，因此下面的步骤在那里同样要从头执行——跳过步骤 4（链接与构建）不会在启动时报缺模块，而是稍后以 host 测试中大面积 preset 解析假失败的形式出现。
+
 **checkout 目录名就是契约。** Harness 必须 clone 为相邻的 `../deepseek-harness`——所有脚本的默认 fallback 名——并 checkout 最新认证 release tag。带 tag 后缀的相邻 checkout（`../deepseek-harness-<tag>/`）只属于隔离认证环境（见 [dsh-release-compatibility.zh.md](dsh-release-compatibility.zh.md) 3.2 节）；把工具指向它是大面积假挂的根因。非默认名的 checkout 必须显式设置 `DSH_HARNESS_DIR`。
 
 **按顺序准备：**
