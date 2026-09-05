@@ -1,0 +1,491 @@
+{
+  "files": [
+    {
+      "file": "packages/agent-team/src/types/entities.ts",
+      "fanInSrc": 3,
+      "fanInTest": 0,
+      "closureSize": 61,
+      "closureSrc": 39,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/agent-team/src/types/operations.ts",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 59,
+      "closureSrc": 37,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/types/requests-results.ts",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 59,
+      "closureSrc": 37,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/types.ts",
+      "fanInSrc": 30,
+      "fanInTest": 14,
+      "closureSize": 58,
+      "closureSrc": 36,
+      "forwardDeps": 3
+    },
+    {
+      "file": "packages/client-agent-team/src/client/drafts.ts",
+      "fanInSrc": 4,
+      "fanInTest": 2,
+      "closureSize": 26,
+      "closureSrc": 19,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/navigation.ts",
+      "fanInSrc": 2,
+      "fanInTest": 1,
+      "closureSize": 26,
+      "closureSrc": 19,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/team-changes.ts",
+      "fanInSrc": 2,
+      "fanInTest": 1,
+      "closureSize": 26,
+      "closureSrc": 19,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/slots.ts",
+      "fanInSrc": 15,
+      "fanInTest": 2,
+      "closureSize": 24,
+      "closureSrc": 18,
+      "forwardDeps": 4
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamStateDot.tsx",
+      "fanInSrc": 5,
+      "fanInTest": 0,
+      "closureSize": 22,
+      "closureSrc": 16,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/attachment-preview.ts",
+      "fanInSrc": 5,
+      "fanInTest": 0,
+      "closureSize": 18,
+      "closureSrc": 13,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamPresenceDot.tsx",
+      "fanInSrc": 6,
+      "fanInTest": 0,
+      "closureSize": 16,
+      "closureSrc": 12,
+      "forwardDeps": 4
+    },
+    {
+      "file": "packages/client-agent-team/src/client/team-formatters.ts",
+      "fanInSrc": 5,
+      "fanInTest": 1,
+      "closureSize": 16,
+      "closureSrc": 10,
+      "forwardDeps": 3
+    },
+    {
+      "file": "packages/client-agent-team/src/client/requests.ts",
+      "fanInSrc": 6,
+      "fanInTest": 0,
+      "closureSize": 14,
+      "closureSrc": 10,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/agent-team/src/member-skills.ts",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 12,
+      "closureSrc": 4,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/agent-team/src/auto-compaction.ts",
+      "fanInSrc": 1,
+      "fanInTest": 1,
+      "closureSize": 12,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/progress-nudge.ts",
+      "fanInSrc": 1,
+      "fanInTest": 2,
+      "closureSize": 12,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/recovery.ts",
+      "fanInSrc": 1,
+      "fanInTest": 2,
+      "closureSize": 12,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/task-refs.ts",
+      "fanInSrc": 3,
+      "fanInTest": 0,
+      "closureSize": 11,
+      "closureSrc": 6,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/attachments.ts",
+      "fanInSrc": 1,
+      "fanInTest": 1,
+      "closureSize": 11,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/ledger.ts",
+      "fanInSrc": 1,
+      "fanInTest": 4,
+      "closureSize": 11,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/member-runtime.ts",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 11,
+      "closureSrc": 3,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/agent-team/src/spec.ts",
+      "fanInSrc": 1,
+      "fanInTest": 2,
+      "closureSize": 11,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/sidebar-sections.ts",
+      "fanInSrc": 3,
+      "fanInTest": 1,
+      "closureSize": 10,
+      "closureSrc": 5,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/client/sidebar-order.ts",
+      "fanInSrc": 2,
+      "fanInTest": 1,
+      "closureSize": 10,
+      "closureSrc": 5,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/client/team-membership.ts",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 10,
+      "closureSrc": 6,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/client-agent-team/src/client/team-separators.ts",
+      "fanInSrc": 2,
+      "fanInTest": 1,
+      "closureSize": 10,
+      "closureSrc": 5,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamMessage.tsx",
+      "fanInSrc": 2,
+      "fanInTest": 1,
+      "closureSize": 10,
+      "closureSrc": 5,
+      "forwardDeps": 6
+    },
+    {
+      "file": "packages/agent-team/src/index.ts",
+      "fanInSrc": 1,
+      "fanInTest": 8,
+      "closureSize": 10,
+      "closureSrc": 2,
+      "forwardDeps": 9
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamSidebarSection.tsx",
+      "fanInSrc": 3,
+      "fanInTest": 0,
+      "closureSize": 9,
+      "closureSrc": 5,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/sidebar-drag.tsx",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 9,
+      "closureSrc": 5,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamComposer.tsx",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 9,
+      "closureSrc": 5,
+      "forwardDeps": 5
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamRowMenu.tsx",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 9,
+      "closureSrc": 5,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamRunDivider.tsx",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 9,
+      "closureSrc": 5,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/client-agent-team/src/client/timeline-scroll.ts",
+      "fanInSrc": 2,
+      "fanInTest": 0,
+      "closureSize": 9,
+      "closureSrc": 5,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/client/locales.ts",
+      "fanInSrc": 1,
+      "fanInTest": 2,
+      "closureSize": 8,
+      "closureSrc": 2,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/client/multi-menu-field.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 8,
+      "closureSrc": 4,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamMemberAvatar.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 8,
+      "closureSrc": 4,
+      "forwardDeps": 6
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamMemberEditor.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 8,
+      "closureSrc": 4,
+      "forwardDeps": 5
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamAgentsPanel.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 7,
+      "closureSrc": 3,
+      "forwardDeps": 12
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamChannelPage.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 7,
+      "closureSrc": 3,
+      "forwardDeps": 18
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamChannelsPanel.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 7,
+      "closureSrc": 3,
+      "forwardDeps": 13
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamMembersAction.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 7,
+      "closureSrc": 3,
+      "forwardDeps": 4
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamThreadPage.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 7,
+      "closureSrc": 3,
+      "forwardDeps": 16
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamWorkspaceRow.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 7,
+      "closureSrc": 3,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamConversation.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 6,
+      "closureSrc": 2,
+      "forwardDeps": 4
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamFooterAction.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 6,
+      "closureSrc": 2,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamSettings.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 6,
+      "closureSrc": 2,
+      "forwardDeps": 2
+    },
+    {
+      "file": "packages/client-agent-team/src/client/TeamWorkspaceBrowser.tsx",
+      "fanInSrc": 1,
+      "fanInTest": 0,
+      "closureSize": 6,
+      "closureSrc": 2,
+      "forwardDeps": 8
+    },
+    {
+      "file": "packages/agent-team/src/invariant.ts",
+      "fanInSrc": 0,
+      "fanInTest": 4,
+      "closureSize": 5,
+      "closureSrc": 1,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/client/index.ts",
+      "fanInSrc": 0,
+      "fanInTest": 2,
+      "closureSize": 5,
+      "closureSrc": 1,
+      "forwardDeps": 11
+    },
+    {
+      "file": "packages/agent-team/src/member-context.ts",
+      "fanInSrc": 0,
+      "fanInTest": 2,
+      "closureSize": 3,
+      "closureSrc": 1,
+      "forwardDeps": 1
+    },
+    {
+      "file": "packages/agent-team/src/preset-roster.ts",
+      "fanInSrc": 0,
+      "fanInTest": 0,
+      "closureSize": 1,
+      "closureSrc": 1,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/css-modules.d.ts",
+      "fanInSrc": 0,
+      "fanInTest": 0,
+      "closureSize": 1,
+      "closureSrc": 1,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/client-agent-team/src/index.ts",
+      "fanInSrc": 0,
+      "fanInTest": 0,
+      "closureSize": 1,
+      "closureSrc": 1,
+      "forwardDeps": 0
+    },
+    {
+      "file": "packages/tool-agent-team/src/index.ts",
+      "fanInSrc": 0,
+      "fanInTest": 0,
+      "closureSize": 1,
+      "closureSrc": 1,
+      "forwardDeps": 2
+    }
+  ],
+  "modules": [
+    {
+      "module": "packages/agent-team/src",
+      "files": 13,
+      "directFanInSrc": 21,
+      "directFanInTest": 17,
+      "closureSize": 61,
+      "closureSrc": 39,
+      "closureTest": 22
+    },
+    {
+      "module": "packages/agent-team/src/types",
+      "files": 3,
+      "directFanInSrc": 1,
+      "directFanInTest": 0,
+      "closureSize": 61,
+      "closureSrc": 39,
+      "closureTest": 22
+    },
+    {
+      "module": "packages/client-agent-team/src/client",
+      "files": 36,
+      "directFanInSrc": 0,
+      "directFanInTest": 11,
+      "closureSize": 48,
+      "closureSrc": 36,
+      "closureTest": 12
+    },
+    {
+      "module": "packages/client-agent-team/src",
+      "files": 2,
+      "directFanInSrc": 0,
+      "directFanInTest": 0,
+      "closureSize": 2,
+      "closureSrc": 2,
+      "closureTest": 0
+    },
+    {
+      "module": "packages/tool-agent-team/src",
+      "files": 1,
+      "directFanInSrc": 0,
+      "directFanInTest": 0,
+      "closureSize": 1,
+      "closureSrc": 1,
+      "closureTest": 0
+    }
+  ]
+}
