@@ -19,21 +19,23 @@
 //
 // Usage: node --import tsx scripts/session-trace.ts <command> [options]
 import { DatabaseSync } from 'node:sqlite'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
+// @ts-expect-error untyped shared resolution module
+import { harnessDir } from './harness-dir.mjs'
 
 const DEFAULT_TIMELINE_LIMIT = 200
 const MAX_WINDOW = 50
 const RECENT_ACTIVITY_MS = 7 * 24 * 60 * 60 * 1000
+const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 /** This repo and the adjacent harness checkout — where this team's member
  * sessions actually run. Everything else (older experiments on other cwds)
  * stays out of the default view; `--all` lifts the filter. */
-const TEAM_CWDS = [
-  '/home/yu/projects/dsh-agent-team',
-  '/home/yu/projects/deepseek-harness',
-]
+const TEAM_CWDS = [PROJECT_ROOT, harnessDir] as const
 
 // ---------- argument parsing ----------
 
