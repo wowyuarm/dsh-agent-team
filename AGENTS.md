@@ -11,7 +11,7 @@ Use this authority order:
 1. **Current behavior:** source and tests under `packages/`. When prose disagrees with code, code wins.
 2. **Maintained engineering guidance:** `docs/`. Update it when a code or workflow change invalidates it; it must not define behavior that the code does not implement.
 3. **Harness contract:** `../deepseek-harness/docs/`, its applicable `AGENTS.md`, and the corresponding Harness source/tests.
-4. **Work history:** `.scratch/` — active work items and archived design, research, tickets, prototypes, and validation evidence. It is not an implementation or API authority; see [`.scratch/README.md`](.scratch/README.md) before using it, and verify relevant history against code, tests, and the Harness contract.
+4. **Work history:** `.scratch/` — active work items and archived design, research, tickets, prototypes, and validation evidence. It is not an implementation or API authority; its own [`AGENTS.md`](.scratch/AGENTS.md) governs how to work there, and the [`README.md`](.scratch/README.md) indexes it. Verify relevant history against code, tests, and the Harness contract.
 
 Keep production code self-explanatory through clear names, types, and structure. Comments explain only non-obvious constraints, ownership, or reasons; they are not the sole definition of current behavior.
 
