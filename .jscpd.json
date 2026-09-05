@@ -2,7 +2,7 @@
   "minTokens": 60,
   "minLines": 6,
   "mode": "mild",
-  "threshold": 1,
+  "threshold": 2,
   "format": [
     "typescript",
     "tsx"
