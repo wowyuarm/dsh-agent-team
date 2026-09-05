@@ -189,32 +189,9 @@ export function TeamComposer({ members, followerMemberIds, recipients, draft, pe
     updateMention(nextDraft, event.target.selectionStart ?? nextDraft.length)
   }
 
-  const selectOption = (option: MentionOption): void => {
-    if (mention === undefined) return
-    if (option.kind === 'all') {
-      // Expand at pick time: the recipients snapshot is every eligible member
-      // a handle pick could reach at this moment.
-      const nextDraft = `${draft.slice(0, mention.start)}@all ${draft.slice(mention.end)}`
-      const nextCaret = mention.start + '@all '.length
-      const nextRecipients = new Set(recipients)
-      for (const status of allMentionMembers(members)) nextRecipients.add(status.member.memberId)
-      onDraftChange(nextDraft)
-      onRecipientsChange(nextRecipients)
-      setMention(undefined)
-      setHighlight(0)
-      requestAnimationFrame(() => {
-        const input = inputRef.current
-        if (input === null) return
-        input.focus({ preventScroll: true })
-        input.setSelectionRange(nextCaret, nextCaret)
-      })
-      return
-    }
-    const member = option.status
-    const inserted = `@${member.member.handle} `
-    const nextDraft = `${draft.slice(0, mention.start)}${inserted}${draft.slice(mention.end)}`
-    const nextCaret = mention.start + inserted.length
-    const nextRecipients = new Set(recipients).add(member.member.memberId)
+  // Both pick kinds share the same commit path: swap the text in, add the
+  // recipients, close the menu, and restore the caret after focus.
+  const commitMention = (nextDraft: string, nextCaret: number, nextRecipients: ReadonlySet<AgentTeamMemberId>): void => {
     onDraftChange(nextDraft)
     onRecipientsChange(nextRecipients)
     setMention(undefined)
@@ -225,6 +202,25 @@ export function TeamComposer({ members, followerMemberIds, recipients, draft, pe
       input.focus({ preventScroll: true })
       input.setSelectionRange(nextCaret, nextCaret)
     })
+  }
+
+  const selectOption = (option: MentionOption): void => {
+    if (mention === undefined) return
+    if (option.kind === 'all') {
+      // Expand at pick time: the recipients snapshot is every eligible member
+      // a handle pick could reach at this moment.
+      const nextDraft = `${draft.slice(0, mention.start)}@all ${draft.slice(mention.end)}`
+      const nextCaret = mention.start + '@all '.length
+      const nextRecipients = new Set(recipients)
+      for (const status of allMentionMembers(members)) nextRecipients.add(status.member.memberId)
+      commitMention(nextDraft, nextCaret, nextRecipients)
+      return
+    }
+    const member = option.status
+    const inserted = `@${member.member.handle} `
+    const nextDraft = `${draft.slice(0, mention.start)}${inserted}${draft.slice(mention.end)}`
+    const nextCaret = mention.start + inserted.length
+    commitMention(nextDraft, nextCaret, new Set(recipients).add(member.member.memberId))
   }
 
   // Pasted files (screenshots, copies) join the same chips the "+" picker
