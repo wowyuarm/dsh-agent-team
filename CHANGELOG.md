@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.8] - 2026-09-05
+
+- Abbreviated refs resolve everywhere: a branded ref (`task:` / `thread:` / `member:` …) with 6+ unambiguous hex characters resolves in Team tools, tools guidance, and the Web Client — `task:0f0ad7` addresses the Task whose UUID starts with those digits; ambiguous prefixes are rejected with candidates, and the Client links a ref only when it resolves uniquely.
+- Member sessions drop the last Team-owned composer surfaces: no seat shadow, no trigger sources, no hint strip — ordinary and member sessions now share exactly the same shipped composer and vocabulary.
+- Silent members get advisory progress nudges: when a running Member Session works without communicating for a while, the Host may inject one merged notice listing the relevant Threads; it never writes Messages or wakes idle members, defers to recovery/Inbox/compaction notices, and is revoked once the member communicates.
+- Member guidance now distinguishes session replies from Team messages (ledger-backed Thread posts vs. direct conversation with the Human), and states that each member's private space is invisible to everyone else — restate needed content in the communication instead of pointing at notes.
+- The mention popup keeps the highlighted row in view on long rosters and ranks current Thread followers above the rest, since a follower mention delivers directly.
+- One status-dot component now renders task chips, thread pills, and member avatars, and the new-update jump hint disappears once the reader reaches the tail.
+
 ## [0.1.7] - 2026-09-04
 
 - Fixes startup failure with current DSH. 0.1.6 combined with the current `@deepseek-ai/dsh` (latest is now 0.1.2-rc.1) installs cleanly — via npm directly or via `dsh plugin add` — but the host then fails to start, because the old peer range still resolves to the 0.1.1-rc.2 generation while DSH itself runs rc.1. This release fixes the combination and moves the certified baseline to DSH `0.1.2-rc.1`. Breaking for older DSH: this is a hard cut — the bundle no longer runs on 0.1.1-rc.2; users still on rc.2 must upgrade `@deepseek-ai/dsh` together with this release.
