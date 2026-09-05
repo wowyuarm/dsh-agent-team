@@ -65,10 +65,12 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
   // previous live Session, the panel follows to the new one exactly once —
   // but only after the refreshed status is actually active, so the commit
   // window (binding moved, new Session not yet live) never redirects to a
-  // Session that does not exist. A rollover observed while unavailable
-  // stays pending here and completes on the first active refresh.
-  const observedSessionIds = useRef(new Map<string, string>())
-  const pendingFollows = useRef(new Map<string, AgentTeamClientMemberStatus['member']['sessionId']>())
+  // Session that does not exist. The follow requires the seat to still show
+  // the previous Session at completion as well: a rollover observed while
+  // unavailable stays pending, and navigating away before it completes
+  // cancels the follow instead of pulling the pane back.
+  const observedSessionIds = useRef(new Map<string, AgentTeamClientMemberStatus['member']['sessionId']>())
+  const pendingFollows = useRef(new Map<string, { readonly previousSessionId: AgentTeamClientMemberStatus['member']['sessionId']; readonly nextSessionId: AgentTeamClientMemberStatus['member']['sessionId'] }>())
   // The seat's embedded Session id rides a ref: the change subscription may
   // deliver an invalidation through a refresh closure captured before the
   // seat rebinds, and the follow decision must always read the live value.
@@ -91,13 +93,18 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         // before any page is embedded is still recorded so the observation
         // baseline stays current.
         const seatSessionId = seatSessionIdRef.current
-        if (seatSessionId !== undefined && observed === seatSessionId) pendingFollows.current.set(memberId, status.member.sessionId)
+        if (seatSessionId !== undefined && observed === seatSessionId) pendingFollows.current.set(memberId, { previousSessionId: observed, nextSessionId: status.member.sessionId })
         else pendingFollows.current.delete(memberId)
       }
       const pending = pendingFollows.current.get(memberId)
-      if (pending !== undefined && pending === status.member.sessionId && status.availability === 'active') {
+      if (pending !== undefined && pending.nextSessionId === status.member.sessionId && status.availability === 'active') {
+        // The seat must still show the followed Member's previous Session at
+        // completion too: the commit window can outlive the user's patience,
+        // and navigating away (or onto another Member/archive view) cancels
+        // the follow instead of yanking the pane back onto the new Session.
+        const seatSessionId = seatSessionIdRef.current
         pendingFollows.current.delete(memberId)
-        openMemberSessionRef.current(pending)
+        if (seatSessionId !== undefined && seatSessionId === pending.previousSessionId) openMemberSessionRef.current(pending.nextSessionId)
       }
     }
   }, [])

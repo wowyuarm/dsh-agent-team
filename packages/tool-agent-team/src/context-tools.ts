@@ -9,7 +9,6 @@
  */
 
 import AgentTeam from '@wowyuarm/dsh-agent-team/host'
-import type { AgentTeamContextCheckpointRef } from '@wowyuarm/dsh-agent-team/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 function service(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>): AgentTeam {
@@ -29,11 +28,10 @@ const MAX_RELATED_FILES = 32
 
 const newContext = defineTool({
   name: 'new_context',
-  description: 'Continue as the same Team Member in a fresh private context seeded by your handoff. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state; one explicit next step. A context change never rolls back files, git, processes, browser state, Team facts, or remote side effects — describe their current state so the next generation can re-verify. Without checkpointRef the new context starts empty (the default, cheapest path); with a context_timeline checkpointRef it resumes from that completed-turn anchor instead. Collect or stop your background jobs first: a rollover is refused while jobs this Member owns are still running.',
+  description: 'Continue as the same Team Member in a fresh private context seeded by your handoff. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state; one explicit next step. A context change never rolls back files, git, processes, browser state, Team facts, or remote side effects — describe their current state so the next generation can re-verify. The new context starts empty: record anything worth keeping in your private memory/notes before calling. Collect or stop your background jobs first: a rollover is refused while jobs this Member owns are still running.',
   parameters: {
     handoff: { type: 'string', required: true, description: 'Prose handoff for the next context generation: objective, active Threads/Claims, verified facts, inferences, external side effects, next step.' },
-    checkpointRef: { type: 'string', description: 'Opaque checkpoint ref exactly as returned by context_timeline or context_checkpoint; resumes from that completed-turn anchor instead of an empty context.' },
-    relatedFiles: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, reason: { type: 'string' } } }, description: 'Workspace paths the next generation should look at first, each with one reason.' },
+    relatedFiles: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { path: { type: 'string', required: true }, reason: { type: 'string', required: true } } }, description: 'Workspace paths the next generation should look at first, each with one reason.' },
   },
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
@@ -49,16 +47,36 @@ const newContext = defineTool({
     const handoff = typeof args.handoff === 'string' ? args.handoff : ''
     if (handoff.trim() === '') throw new Error('new_context requires a non-empty handoff')
     if (handoff.length > MAX_HANDOFF_CHARS) throw new Error(`new_context handoff exceeds ${MAX_HANDOFF_CHARS} characters`)
-    const relatedFiles = Array.isArray(args.relatedFiles) ? args.relatedFiles : []
-    if (relatedFiles.length > MAX_RELATED_FILES) throw new Error(`new_context accepts at most ${MAX_RELATED_FILES} related files`)
-    const checkpointRef = args.checkpointRef
-    // The Host adapter validates member binding, pending-transition
-    // exclusivity, jobs, and checkpoint ownership; it returns the mode the
-    // rollover will take. No lifecycle effect runs inside this tool body.
+    const relatedFilesInput = Array.isArray(args.relatedFiles) ? args.relatedFiles : []
+    if (relatedFilesInput.length > MAX_RELATED_FILES) throw new Error(`new_context accepts at most ${MAX_RELATED_FILES} related files`)
+    // Tool argument validation is layered: the Harness schema (required and
+    // type checks) rejects at the execute boundary, and this body adds the
+    // checks the schema cannot express — each related file is validated
+    // here, so a blank path/reason rejects instead of seeding the handoff
+    // envelope with empty fields.
+    const relatedFiles: Array<{ path: string; reason: string }> = []
+    for (const [index, entry] of relatedFilesInput.entries()) {
+      if (typeof entry !== 'object' || entry === null) throw new Error(`new_context relatedFiles[${index}] must be an object with path and reason`)
+      const candidate = entry as { path?: unknown; reason?: unknown }
+      if (typeof candidate.path !== 'string' || candidate.path.trim() === '') throw new Error(`new_context relatedFiles[${index}].path must be a non-empty string`)
+      if (typeof candidate.reason !== 'string' || candidate.reason.trim() === '') throw new Error(`new_context relatedFiles[${index}].reason must be a non-empty string`)
+      relatedFiles.push({ path: candidate.path, reason: candidate.reason })
+    }
+    // Tool schemas are open at the root (Harness parameter specs set no
+    // `additionalProperties: false`), so a model can still supply a
+    // checkpointRef this build does not declare. Any supplied value —
+    // including non-strings, null, or empty string — signals checkpoint
+    // intent this build cannot honor, so fail closed on presence rather than
+    // type: silently proceeding fresh would let the model believe it resumed
+    // an anchor while the prefix is lost. No lifecycle effect runs inside
+    // this tool body.
+    const raw = args as { checkpointRef?: unknown }
+    if (Object.hasOwn(raw, 'checkpointRef') && raw.checkpointRef !== undefined) {
+      throw new Error('checkpoint return is not available in this build; call new_context without checkpointRef to start from a fresh context')
+    }
     const outcome = host.requestNewContext(agent, {
       memberId: current.memberId,
-      ...(typeof checkpointRef === 'string' && checkpointRef.trim() !== '' ? { checkpointRef: checkpointRef as AgentTeamContextCheckpointRef } : {}),
-      ...(relatedFiles.length === 0 ? {} : { relatedFiles: relatedFiles as Array<{ path: string; reason: string }> }),
+      ...(relatedFiles.length === 0 ? {} : { relatedFiles }),
     })
     exec.concludeTurn()
     return { mode: outcome.mode, status: 'scheduled' }

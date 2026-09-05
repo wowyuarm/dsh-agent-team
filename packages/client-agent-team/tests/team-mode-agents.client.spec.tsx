@@ -289,21 +289,26 @@ describe('Team agent surfaces', () => {
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(b.runtime.sessions.calls.filter(call => call.method === 'open').length).toBe(opened)
 
-    // Once the same Member reports active on the new generation, the seat
-    // follows exactly once — the observed old live id matches, the new id is
-    // active, and later refreshes do not open it again.
-    await b.runtime.sessions.add({ id: 'session:builder-next-2' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    // Navigating away during the commit window cancels the follow: leaving
+    // the Member page (back onto a Channel) rebinds the seat, so the later
+    // active refresh must not yank the pane onto the new Session.
+    fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
+    await waitFor(() => { expect(b.view.getByRole('button', { name: '打开 builder 的会话' }).getAttribute('aria-current')).toBe(null) })
     b.members.mockImplementation(async () => ({ ok: true, value: [
       b.status('member:builder', 'w1', 'builder', 'available'),
     ].map(entry => ({ ...entry, member: { ...entry.member, sessionId: 'session:builder-next-2' } })) }))
     b.publishChannelUpdate()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('builder-next-2')).length).toBe(0)
+
+    // Returning to the Member page after the rollover settled opens the
+    // post-rollover generation directly — the observation baseline has
+    // already absorbed the change, so no pending follow remains.
+    await b.runtime.sessions.add({ id: 'session:builder-next-2' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
     await waitFor(() => {
       expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('builder-next-2')).length).toBe(1)
     })
-    // A further refresh keeps exactly one follow.
-    b.publishChannelUpdate()
-    await new Promise(resolve => setTimeout(resolve, 50))
-    expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('builder-next-2')).length).toBe(1)
     await b.runtime.dispose()
   })
 

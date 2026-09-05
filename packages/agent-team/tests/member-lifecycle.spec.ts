@@ -1484,6 +1484,129 @@ describe('Agent Team fresh new_context rollover (ticket 01)', () => {
       await plain.dispose()
     }
   })
+
+  it('rejects a checkpointRef rollover request instead of returning a false from-checkpoint mode', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('cpref-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('cpref-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+
+    // Checkpoint return ships with the checkpoint tools (ticket 02). Until
+    // then the model-facing surface must not claim it: the schema carries no
+    // checkpointRef parameter, and a request that smuggles one anyway — the
+    // tool schema root is open, so extra keys reach the body — gets an
+    // explicit rejection, never a `from-checkpoint` success over an empty
+    // Session.
+    const live = ctx.agents.get(sessionId)!
+    adapter.enqueue(toolCallResponse('call-cp-ref', 'new_context', { handoff: 'attempted checkpoint return', checkpointRef: 'context-checkpoint:some-call' }))
+    adapter.enqueue(textResponse('the checkpoint path is unavailable; continuing in this context.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning to a checkpoint' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, live)
+
+    // The rejected call schedules nothing: the binding never moves and no
+    // rollover operation is committed.
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(sessionId)
+    const errorEvents = live.session.ownEvents().filter(event => event.type === 'tool/result')
+    const rejectedResult = errorEvents.find(event => {
+      if (event.type !== 'tool/result') return false
+      return JSON.stringify(event.data.message.content).includes('checkpoint return is not available')
+    })
+    expect(rejectedResult).toBeDefined()
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('rejects any supplied checkpointRef value, not only non-empty strings', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('cpref2-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('cpref2-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // Presence, not type, is the signal: the string ref, `7`, explicit
+    // `null`, and `''` all carry checkpoint intent this build cannot honor,
+    // and treating any of them as absent would silently proceed fresh — the
+    // exact lie fail-closed must prevent.
+    const supplied: Array<string | number | null> = ['context-checkpoint:some-call', 7, null, '']
+    for (const [attempt, value] of supplied.entries()) {
+      adapter.enqueue(toolCallResponse(`call-cp-any-${attempt}`, 'new_context', { handoff: `attempt ${attempt}`, checkpointRef: value }))
+      adapter.enqueue(textResponse(`attempt ${attempt} rejected; continuing.`))
+      live.followup(createUserMessage({ content: [{ type: 'text', text: `try checkpointRef ${JSON.stringify(value)}` }], source: { kind: 'user' } }))
+      await waitForIdle(ctx, live)
+    }
+
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(sessionId)
+    const results = live.session.ownEvents().filter(event => event.type === 'tool/result')
+    const rejections = results.filter(event => {
+      if (event.type !== 'tool/result') return false
+      return JSON.stringify(event.data.message.content).includes('checkpoint return is not available')
+    })
+    expect(rejections).toHaveLength(supplied.length)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('rejects malformed relatedFiles entries instead of seeding the handoff envelope with undefined fields', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('badfiles-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('badfiles-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // Tool argument validation is layered: the Harness schema validator
+    // rejects missing/non-string/object violations at the execute boundary,
+    // and the tool's own execute check catches the blank string the schema
+    // cannot express.
+    const malformed: Array<Record<string, unknown> | null> = [
+      { reason: 'missing path' },
+      { path: 'src/index.ts', reason: 7 },
+      null,
+      { path: '   ', reason: 'blank path' },
+    ]
+    for (const [attempt, entry] of malformed.entries()) {
+      adapter.enqueue(toolCallResponse(`call-bad-files-${attempt}`, 'new_context', { handoff: `attempt ${attempt}`, relatedFiles: [entry] }))
+      adapter.enqueue(textResponse(`attempt ${attempt} rejected; continuing.`))
+      live.followup(createUserMessage({ content: [{ type: 'text', text: `try malformed relatedFiles ${attempt}` }], source: { kind: 'user' } }))
+      await waitForIdle(ctx, live)
+    }
+
+    // Every malformed call rejected: the binding never moved, no rollover
+    // operation committed, and each attempt surfaced an explicit error. Each
+    // attempt submits a single-entry array, so every error addresses
+    // relatedFiles[0]. Defense is layered: the Harness schema validator
+    // rejects missing/non-string/object violations at the boundary, and the
+    // tool's own execute check catches the blank string the schema cannot
+    // express.
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(sessionId)
+    const results = live.session.ownEvents().filter(event => event.type === 'tool/result')
+    if (process.env.DSH_DEBUG_TOOL_RESULTS !== undefined) {
+      for (const event of results) {
+        if (event.type !== 'tool/result') continue
+        console.log('TOOL_RESULT', JSON.stringify(event.data.message.content).slice(0, 220))
+      }
+    }
+    const expectedDetails: Array<string> = [
+      'missing required property "relatedFiles[0].path"',
+      '"relatedFiles[0].reason" must be a string',
+      '"relatedFiles[0]" must be an object',
+      'new_context relatedFiles[0].path must be a non-empty string',
+    ]
+    for (const [attempt, detail] of expectedDetails.entries()) {
+      const rejected = results.find(event => {
+        if (event.type !== 'tool/result') return false
+        return JSON.stringify(event.data.message.content).includes(JSON.stringify(detail).slice(1, -1))
+      })
+      expect(rejected, `attempt ${attempt} (${JSON.stringify(malformed[attempt])}) should reject with ${detail}`).toBeDefined()
+    }
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
 })
 
 /** Wait until the predicate holds or the deadline passes. */
@@ -1595,6 +1718,56 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
     expect(archived).toContain(firstSessionId)
     expect(archived).toContain(secondSessionId)
     expect(archived).not.toContain(second.member.sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('derives bounded url-safe rollover identities from hostile provider call ids', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('hostile-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('hostile-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Path metacharacters, traversal segments, control characters, and an
+    // unbounded length are all legal provider call ids; none of them may
+    // reach the derived Session id, and the `:` separator merge must not
+    // collide `x:y` with `x-y`.
+    const hostileCallId = `../..\\x07${'\u0000'.repeat(3)}~ ${'a'.repeat(5000)}:tail`
+    adapter.enqueue(toolCallResponse(hostileCallId, 'new_context', { handoff: 'hostile id handoff' }))
+    adapter.enqueue(textResponse('continuing after the hostile id.'))
+    ctx.agents.get(firstSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over now' }], source: { kind: 'user' } }))
+    const first = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const hostileSessionId = first.member.sessionId
+    // Bounded and url-safe: a fixed prefix plus one sha256 hex digest, never
+    // the provider id verbatim.
+    expect(hostileSessionId).toMatch(/^agent-team-rollover-[0-9a-f]{64}$/)
+    expect(hostileSessionId).not.toContain('..')
+    expect(hostileSessionId.length).toBeLessThan(120)
+
+    // The `:` merge collision: `x:y` and `x-y` must derive distinct
+    // generations even though a naive `replaceAll(':', '-')` would alias them.
+    const secondSessionId = hostileSessionId
+    adapter.enqueue(toolCallResponse('x:y', 'new_context', { handoff: 'colon pair' }))
+    adapter.enqueue(textResponse('colon continuation.'))
+    ctx.agents.get(secondSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'colon' }], source: { kind: 'user' } }))
+    const colon = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== secondSessionId ? current : undefined
+    })
+    const thirdSessionId = colon.member.sessionId
+    adapter.enqueue(toolCallResponse('x-y', 'new_context', { handoff: 'dash pair' }))
+    adapter.enqueue(textResponse('dash continuation.'))
+    ctx.agents.get(thirdSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'dash' }], source: { kind: 'user' } }))
+    const dash = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== thirdSessionId ? current : undefined
+    })
+    expect(dash.member.sessionId).not.toBe(thirdSessionId)
+    expect(dash.member.sessionId).toMatch(/^agent-team-rollover-[0-9a-f]{64}$/)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 

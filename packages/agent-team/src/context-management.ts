@@ -22,6 +22,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionId as SessionIdBrand } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import { createHash } from 'node:crypto'
 import { createHandoffMessage, isCheckpointContinuationMessage } from './context-source.ts'
 import {
   CONTEXT_CHECKPOINT_TOOL_NAME,
@@ -266,9 +267,14 @@ export class ContextManagementCoordinator {
 
   private async performTransition(memberId: AgentTeamMemberId, member: AgentTeamAgentMember, transition: MemberTransition): Promise<void> {
     // Stable rollover identity derives from the previous Session and the
-    // successful tool call id: a result seq is session-local and would
-    // collide across generations. The derived id is url-safe and bounded.
-    const stableKey = `${member.sessionId}:${transition.intent.toolCallId}`.replaceAll(':', '-')
+    // successful tool call: a result seq is session-local and would collide
+    // across generations. Both inputs are unconstrained strings (provider
+    // call ids carry arbitrary lengths and characters; Session ids are
+    // caller-branded), so the pair is JSON-encoded — no delimiter can alias
+    // across the two fields — and hashed to a fixed-length url-safe hex
+    // digest instead of being embedded verbatim: the derived Session id and
+    // request id stay bounded and collision-resistant.
+    const stableKey = createHash('sha256').update(JSON.stringify([member.sessionId, transition.intent.toolCallId])).digest('hex')
     const newSessionId = SessionIdBrand(`agent-team-rollover-${stableKey}`)
     const plan: TransitionPlan = {
       previousSessionId: member.sessionId,

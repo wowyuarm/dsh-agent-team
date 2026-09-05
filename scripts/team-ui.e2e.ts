@@ -299,20 +299,19 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-edit-modal.png'), fullPage: true })
   await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
 
-  // 「从全新上下文开始」rides the same row menu: idle Members get an enabled
-  // destructive entry whose confirm names the Member; cancelling routes nothing.
+  // The manual clear-context entry is retired (ticket 01): Members manage
+  // their own context through the new_context tool, so every row menu must
+  // omit the entry entirely and no confirm dialog exists. Model-initiated
+  // rollover and the live follow are covered by the member-lifecycle
+  // integration tests and the Client component suite; the full
+  // model-driven browser journey lands with ticket 04.
   await builderRow.hover()
   await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
-  await page.getByRole('menuitem', { name: '从全新上下文开始' }).waitFor()
-  const clearEntry = page.getByRole('menuitem', { name: '从全新上下文开始' })
-  expect(await clearEntry.isDisabled()).toBe(false)
-  await page.screenshot({ path: join(UI04_SHOTS, 'agent-clear-context-menu.png'), fullPage: true })
-  await clearEntry.click()
-  const clearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
-  await clearDialog.waitFor()
-  expect(await clearDialog.textContent()).toContain('归档保留')
-  await clearDialog.getByRole('button', { name: '取消' }).click()
-  await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
+  await page.getByRole('menuitem', { name: '编辑 Agent' }).waitFor()
+  expect(await page.getByRole('menuitem', { name: '从全新上下文开始' }).count()).toBe(0)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-row-menu-fresh-only.png'), fullPage: true })
+  await page.keyboard.press('Escape')
+  await expect.poll(() => page.locator('[role="menu"]').count()).toBe(0)
 
   const memberWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const memberStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
@@ -340,52 +339,37 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => memberInput.count()).toBe(1)
   await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-composer.png'), fullPage: true })
 
-  // 「从全新上下文开始」executes for real while the Member Session is embedded:
-  // the Host moves the Member onto a fresh Session id, and the right pane
-  // navigates onto it — blank hero, no stale transcript, composer enabled for
-  // the fresh context. This runs before any prompt send: the scenario mounts no
-  // replay fixture, so a stray model call would push the Member to error
-  // presence and lock the available-only gate.
-  await builderRow.hover()
-  await builderRow.getByRole('button', { name: 'builder 的操作' }).click()
-  const executeClearEntry = page.getByRole('menuitem', { name: '从全新上下文开始' })
-  await executeClearEntry.waitFor()
-  await expect.poll(async () => await executeClearEntry.isDisabled()).toBe(false)
-  await executeClearEntry.click()
-  const executeClearDialog = page.getByRole('dialog', { name: '从全新上下文开始：builder' })
-  await executeClearDialog.waitFor()
-  await executeClearDialog.getByRole('button', { name: '开始全新上下文' }).click()
-  await expect.poll(() => page.getByRole('dialog', { name: '从全新上下文开始：builder' }).count()).toBe(0)
-  // The embedded pane navigates onto the renewed Session (hero composer, no
-  // rows): the shipped composer stays live for the fresh context.
+  // With clear-context retired there is no Human-initiated rollover in this
+  // journey: the embedded Member Session simply stays live for its current
+  // generation (model-driven new_context rollover and the Client follow are
+  // covered by the member-lifecycle integration tests and the Client
+  // component suite; the full model-driven browser journey lands with
+  // ticket 04). The pane keeps rendering the Member's live Session — blank
+  // hero, composer enabled, Team mode mounted.
   await expect.poll(() => page.evaluate(() => ({
     channel: document.querySelectorAll('[data-team-channel]').length,
     mode: document.documentElement.dataset.agentTeamMode ?? null,
   })), { timeout: 10_000 }).toEqual({ channel: 0, mode: 'team' })
   await expect.poll(() => memberInput.isEnabled()).toBe(true)
-  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-cleared.png'), fullPage: true })
-  // Host side: the Member moved onto a fresh Session id; the previous log
-  // stays on disk but is archived from every grouping surface, and the new
-  // Session records the previous id as fork lineage.
-  const clearedStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
-  const clearedBuilder = clearedStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
-  expect(clearedBuilder.member.sessionId).not.toBe(builderMember.member.sessionId)
-  const freshBuilderAgent = scaffold.ctx.agents.get(clearedBuilder.member.sessionId)!
-  expect(freshBuilderAgent).not.toBe(builderAgent)
-  expect(freshBuilderAgent.session.header.parentSession).toBe(builderMember.member.sessionId)
-  expect(freshBuilderAgent.session.snapshotEvents().filter(event => event.type === 'user/message' || event.type === 'command/run' || event.type === 'turn/start')).toHaveLength(0)
-  expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).toContain(builderMember.member.sessionId)
+  await page.screenshot({ path: join(UI04_SHOTS, 'agent-session-live.png'), fullPage: true })
+  // Host side: the Member is still bound to its original Session id; no
+  // archive happened and no rollover operation exists.
+  const liveStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
+  const liveBuilder = liveStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
+  expect(liveBuilder.member.sessionId).toBe(builderMember.member.sessionId)
+  expect(scaffold.ctx.workspaceRegistry.archivedSessionIds).not.toContain(builderMember.member.sessionId)
 
-  // The fresh session is immediately usable through the shipped composer: a
-  // plain prompt lands on the recreated Session (the Team manages no
-  // member-session input surface, so no structured mention flow remains).
-  await memberInput.fill('fresh context hello')
+  // The embedded Member Session is directly usable through the shipped
+  // composer: a plain prompt lands on the Member's live Session (the Team
+  // manages no member-session input surface, so no structured mention flow
+  // remains).
+  await memberInput.fill('member session hello')
   await memberInput.press('Enter')
-  const isPlainFreshPrompt = (event: ReturnType<typeof freshBuilderAgent.session.snapshotEvents>[number]): boolean => event.type === 'user/message'
+  const isPlainMemberPrompt = (event: ReturnType<typeof builderAgent.session.snapshotEvents>[number]): boolean => event.type === 'user/message'
     && event.data.source.kind === 'user'
-    && event.data.content.some(block => block.type === 'text' && block.text === 'fresh context hello')
-  await expect.poll(() => freshBuilderAgent.session.snapshotEvents().some(isPlainFreshPrompt)).toBe(true)
-  await freshBuilderAgent.whenIdle()
+    && event.data.content.some(block => block.type === 'text' && block.text === 'member session hello')
+  await expect.poll(() => builderAgent.session.snapshotEvents().some(isPlainMemberPrompt)).toBe(true)
+  await builderAgent.whenIdle()
   await expect.poll(() => page.locator('[class*="agentRow"]').count()).toBeGreaterThan(0)
   // The single positioning highlight sits on the selected Agent card; the
   // workspace overview row stays quiet while the Member view is open.
@@ -469,7 +453,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // agents read the taskless Thread so the later inbox assertions keep
   // counting only the original @builder invitation flow. The @all message is
   // the newest taskless Thread in the workspace; the Members are re-fetched
-  // because builder's session was renewed by the clear-context flow above.
+  // through their current live bindings.
   const allWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const allProjection = scaffold.ctx.agentTeam.view({ workspaceId: allWorkspace.id })
   const allThread = allProjection.threads

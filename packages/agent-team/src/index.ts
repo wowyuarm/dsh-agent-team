@@ -173,13 +173,23 @@ declare module '@deepseek-ai/cordis' {
 /** Tool-side request for one context rollover; the Host validates without side effects. */
 export interface AgentTeamNewContextToolRequest {
   readonly memberId: AgentTeamMemberId
+  /**
+   * Forwarded checkpoint ref when the model supplies one anyway. No recording
+   * tool exists in this build, so the Host rejects it explicitly instead of
+   * returning a false `from-checkpoint` over an empty Session; seeded return
+   * ships with the checkpoint tools (ticket 02).
+   */
   readonly checkpointRef?: AgentTeamContextCheckpointRef
   readonly relatedFiles?: readonly { readonly path: string; readonly reason: string }[]
 }
 
-/** Tool-side validation outcome: which rollover mode a successful call will take. */
+/**
+ * Tool-side validation outcome: which rollover mode a successful call will
+ * take. Only the fresh mode exists in this build; checkpoint return ships
+ * with the checkpoint tools (ticket 02).
+ */
 export interface AgentTeamNewContextToolOutcome {
-  readonly mode: 'fresh' | 'from-checkpoint'
+  readonly mode: 'fresh'
 }
 
 /** Host owner of the single Agent Team in one dshHome. */
@@ -1152,7 +1162,15 @@ export default class AgentTeam extends TypertRemoteService {
       // outside the turn fence.
       throw new Error('new_context must run inside this Member\'s own running turn')
     }
-    return { mode: request.checkpointRef === undefined ? 'fresh' : 'from-checkpoint' }
+    // Checkpoint return ships with the checkpoint tools (ticket 02): without
+    // them no recording tool exists, so no ref can resolve to a real anchor.
+    // Accepting one anyway would return `from-checkpoint` while creating an
+    // empty Session — the model would believe it resumed the anchor while the
+    // prefix is silently lost. Fail closed until seeded return exists.
+    if (request.checkpointRef !== undefined) {
+      throw new Error('checkpoint return is not available in this build; call new_context without checkpointRef to start from a fresh context')
+    }
+    return { mode: 'fresh' }
   }
 
   /**
