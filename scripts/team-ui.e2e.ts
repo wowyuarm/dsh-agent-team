@@ -317,7 +317,6 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const memberWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
   const memberStatuses = scaffold.ctx.agentTeam.members({ workspaceId: memberWorkspace.id })
   const builderMember = memberStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
-  const reviewerMember = memberStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'reviewer')!
   const builderAgent = scaffold.ctx.agents.get(builderMember.member.sessionId)!
 
   // Clicking the Agent card keeps Team mode mounted and swaps only the right
