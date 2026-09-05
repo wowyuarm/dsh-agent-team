@@ -240,82 +240,70 @@ describe('Team agent surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('offers 从全新上下文开始 only for idle Members and requires a destructive confirm', async () => {
+  it('retires the manual clear-context action and follows a Member rollover exactly once', async () => {
     const b = await runtimeWithTeam({ initialChannels: true })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await b.view.findByText('builder')
 
-    // The available Member gets an enabled clear entry.
-    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
-    const healthyMenu = await within(document.body).findByRole('menu')
-    const clearItem = within(healthyMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
-    expect(clearItem.disabled).toBe(false)
-    fireEvent.keyDown(document, { key: 'Escape' })
-    // The working Member's entry is disabled with a reason label.
-    fireEvent.click(b.view.getByRole('button', { name: 'worker 的操作' }))
-    const workingMenu = await within(document.body).findByRole('menu')
-    const workingClear = within(workingMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
-    expect(workingClear.disabled).toBe(true)
-    expect(within(workingMenu).getByText('成员正在工作中，完成后才能清空上下文')).toBeTruthy()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    // An error Member keeps a live idle handle, so its clear entry stays
-    // enabled — starting from a new context doubles as a recovery path.
-    fireEvent.click(b.view.getByRole('button', { name: 'failed 的操作' }))
-    const failedMenu = await within(document.body).findByRole('menu')
-    const failedClear = within(failedMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
-    expect(failedClear.disabled).toBe(false)
-    fireEvent.keyDown(document, { key: 'Escape' })
-    // An unavailable Member has no live handle; its entry is gated with a
-    // reason naming that state instead of claiming the Member is working.
-    fireEvent.click(b.view.getByRole('button', { name: 'offline 的操作' }))
-    const offlineMenu = await within(document.body).findByRole('menu')
-    const offlineClear = within(offlineMenu).getByRole('menuitem', { name: '从全新上下文开始' }) as HTMLButtonElement
-    expect(offlineClear.disabled).toBe(true)
-    expect(within(offlineMenu).getByText('成员当前不可用，恢复在线且空闲后才能清空上下文')).toBeTruthy()
-    fireEvent.keyDown(document, { key: 'Escape' })
+    // The manual clear-context row action is retired: Members manage their
+    // own context through the new_context tool, and every row menu —
+    // available, working, error, unavailable — omits the entry entirely.
+    for (const handle of ['builder', 'worker', 'failed', 'offline']) {
+      fireEvent.click(b.view.getByRole('button', { name: `${handle} 的操作` }))
+      const menu = await within(document.body).findByRole('menu')
+      expect(within(menu).queryByRole('menuitem', { name: '从全新上下文开始' })).toBeNull()
+      fireEvent.keyDown(document, { key: 'Escape' })
+    }
 
-    // Confirm before routing: the first click only opens the destructive dialog.
-    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    expect(b.view.getByRole('dialog', { name: '从全新上下文开始：builder' })).toBeTruthy()
-    expect(b.clearMemberContext).not.toHaveBeenCalled()
-    // Cancel closes without routing.
-    fireEvent.click(b.view.getByRole('button', { name: '取消' }))
-    expect(b.view.queryByRole('dialog', { name: '从全新上下文开始：builder' })).toBeNull()
-    // Confirm routes through the Host remote with the Member identity.
-    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
-    await waitFor(() => {
-      expect(b.clearMemberContext).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w1', memberId: 'member:builder' }))
-    })
-    // The seat is not embedded here, so no member view navigation happens.
-    expect(b.runtime.sessions.calls.some(call => call.method === 'open' && String(call.args[0]).includes('renewed'))).toBe(false)
+    // While no Member page is embedded, a rollover binding change never
+    // redirects the conversation seat.
+    // Prime the change stream: the first wake advances the probe loop so
+    // later publishes reach the listener (no roster change is attached to it).
+    b.publishChannelUpdate()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    b.members.mockImplementation(async () => ({ ok: true, value: [
+      b.status('member:builder', 'w1', 'builder', 'available'),
+    ].map(entry => ({ ...entry, member: { ...entry.member, sessionId: 'session:builder-next' } })) }))
+    b.publishChannelUpdate()
+    // The roster now reports only builder on the new binding: wait for the
+    // refresh to land (worker's row disappears) before opening the page.
+    await waitFor(() => { expect(b.view.queryByRole('button', { name: '打开 worker 的会话' })).toBeNull() }, { timeout: 3000 })
+    expect(b.runtime.sessions.calls.some(call => call.method === 'open' && String(call.args[0]).includes('builder-next'))).toBe(false)
 
-    // While the Member's Session is embedded, a successful clear navigates the
-    // seat onto the renewed Session id — a brand-new id has no resident client
-    // instance, so the pane lazily instantiates the fresh conversation.
-    await b.runtime.sessions.add({ id: 'session:member:builder-renewed-1' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
-    fireEvent.click(await b.view.findByRole('button', { name: '打开 builder 的会话' }))
-    await waitFor(() => {
-      expect(b.runtime.sessions.calls.some(call => call.method === 'open' && String(call.args[0]).includes('renewed'))).toBe(true)
-    })
+    // Open the Member's live page: the conversation seat embeds the
+    // post-rollover Session the roster now reports.
+    await b.runtime.sessions.add({ id: 'session:builder-next' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
     await waitFor(() => {
       expect(b.view.getByRole('button', { name: '打开 builder 的会话' }).getAttribute('aria-current')).toBe('page')
     })
-    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
-    await waitFor(() => {
-      expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('renewed'))).toHaveLength(2)
-    })
+    const opened = b.runtime.sessions.calls.filter(call => call.method === 'open').length
 
-    // A transport rejection surfaces as the row alert.
-    b.clearMemberContext.mockRejectedValueOnce(new Error('connection lost'))
-    fireEvent.click(b.view.getByRole('button', { name: 'builder 的操作' }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: '从全新上下文开始' }))
-    fireEvent.click(await b.view.findByRole('button', { name: '开始全新上下文' }))
-    await waitFor(() => { expect(b.view.getByRole('alert').textContent).toContain('清空上下文失败：connection lost') })
+    // A rollover that lands while the commit window still reports the Member
+    // unavailable does not redirect — the new Session does not exist for the
+    // client yet.
+    b.members.mockImplementation(async () => ({ ok: true, value: [
+      { ...b.status('member:builder', 'w1', 'builder', 'unavailable', 'context rollover in progress'), member: { ...b.status('member:builder', 'w1', 'builder', 'unavailable').member, sessionId: 'session:builder-next-2' } },
+    ] }))
+    b.publishChannelUpdate()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(b.runtime.sessions.calls.filter(call => call.method === 'open').length).toBe(opened)
+
+    // Once the same Member reports active on the new generation, the seat
+    // follows exactly once — the observed old live id matches, the new id is
+    // active, and later refreshes do not open it again.
+    await b.runtime.sessions.add({ id: 'session:builder-next-2' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never)
+    b.members.mockImplementation(async () => ({ ok: true, value: [
+      b.status('member:builder', 'w1', 'builder', 'available'),
+    ].map(entry => ({ ...entry, member: { ...entry.member, sessionId: 'session:builder-next-2' } })) }))
+    b.publishChannelUpdate()
+    await waitFor(() => {
+      expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('builder-next-2')).length).toBe(1)
+    })
+    // A further refresh keeps exactly one follow.
+    b.publishChannelUpdate()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(b.runtime.sessions.calls.filter(call => call.method === 'open' && String(call.args[0]).includes('builder-next-2')).length).toBe(1)
     await b.runtime.dispose()
   })
 

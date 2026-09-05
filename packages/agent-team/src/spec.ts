@@ -2,13 +2,14 @@ import { z } from 'zod'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { AgentTeamMemberCapabilities, AgentTeamModelSelection } from './types.ts'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamActivityRef,
   AgentTeamAttachmentId,
   AgentTeamChannelRef,
   AgentTeamClaimRef,
+  AgentTeamContextCheckpointRef,
   AgentTeamMemberId,
   AgentTeamMessageRef,
   AgentTeamOperation,
@@ -23,6 +24,8 @@ const requestIdSchema = z.string().min(1).transform(value => value as AgentTeamR
 const memberIdSchema = z.string().regex(/^member:[^:]+$/).transform(value => value as AgentTeamMemberId)
 const workspaceIdSchema = z.string().min(1).transform(value => value as WorkspaceId)
 const sessionIdSchema = z.string().min(1).transform(value => value as SessionId)
+const sessionSeqSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeq)
+const contextCheckpointRefSchema = z.string().regex(/^context-checkpoint:[^:]+$/).transform(value => value as AgentTeamContextCheckpointRef)
 const channelRefSchema = z.string().regex(/^channel:[^:]+$/).transform(value => value as AgentTeamChannelRef)
 const messageRefSchema = z.string().regex(/^message:[^:]+$/).transform(value => value as AgentTeamMessageRef)
 const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value as AgentTeamTaskRef)
@@ -325,6 +328,21 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     previousOperationId: operationIdSchema.nullable(),
     kind: z.literal('team/member-session-renewed'),
     data: z.object({ member: memberSchema, previousSessionId: sessionIdSchema }).strict(),
+  }).strict(),
+  z.object({
+    ...operationBase,
+    previousOperationId: operationIdSchema.nullable(),
+    kind: z.literal('team/member-session-rolled-over'),
+    data: z.object({
+      member: memberSchema,
+      previousSessionId: sessionIdSchema,
+      newSessionId: sessionIdSchema,
+      sourceSessionId: sessionIdSchema.optional(),
+      sourceThroughSeq: sessionSeqSchema.optional(),
+      handoffEventSeq: sessionSeqSchema,
+      checkpointRef: contextCheckpointRefSchema.optional(),
+      trigger: z.enum(['model', 'pressure']),
+    }).strict(),
   }).strict(),
   z.object({
     ...operationBase,

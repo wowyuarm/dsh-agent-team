@@ -5,7 +5,7 @@ import type {
   AgentTeamModelSelection,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconArchiveOutline20, IconEditOutline16, IconNewChatOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutline20, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberAvatar } from './TeamMemberAvatar.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
@@ -25,7 +25,6 @@ interface TeamAgentsPanelProps {
   readonly addMember: TeamSidebarProps['addMember']
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
-  readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
   readonly archiveMember: TeamSidebarProps['archiveMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   /** The Member Session currently embedded in the conversation seat, if any. */
@@ -35,7 +34,7 @@ interface TeamAgentsPanelProps {
   readonly t: TeamSidebarProps['t']
 }
 
-export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, clearMemberContext, archiveMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
+export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, addMember, updateMember, recoverMember, archiveMember, loadModels, memberSessionId, openMemberSession, onCreatingChange, t }: TeamAgentsPanelProps) {
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
@@ -60,19 +59,64 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
   const drag = useSidebarRowDrag({ refs: orderedAgentRefs, onCommit: applyMove })
   const sectionOpen = useSidebarSectionOpen(workspaceId, 'agents')
 
+  // Observed old→new Session binding per Member while this panel is
+  // mounted. A model-initiated rollover moves the binding without any
+  // Client action; when the conversation seat is showing the Member's
+  // previous live Session, the panel follows to the new one exactly once —
+  // but only after the refreshed status is actually active, so the commit
+  // window (binding moved, new Session not yet live) never redirects to a
+  // Session that does not exist. A rollover observed while unavailable
+  // stays pending here and completes on the first active refresh.
+  const observedSessionIds = useRef(new Map<string, string>())
+  const pendingFollows = useRef(new Map<string, AgentTeamClientMemberStatus['member']['sessionId']>())
+  // The seat's embedded Session id rides a ref: the change subscription may
+  // deliver an invalidation through a refresh closure captured before the
+  // seat rebinds, and the follow decision must always read the live value.
+  const seatSessionIdRef = useRef(memberSessionId)
+  seatSessionIdRef.current = memberSessionId
+  const openMemberSessionRef = useRef(openMemberSession)
+  openMemberSessionRef.current = openMemberSession
+  const followRollover = useCallback((statuses: readonly AgentTeamClientMemberStatus[]) => {
+    for (const status of statuses) {
+      const memberId = status.member.memberId
+      const observed = observedSessionIds.current.get(memberId)
+      if (observed === undefined) {
+        observedSessionIds.current.set(memberId, status.member.sessionId)
+        continue
+      }
+      if (observed !== status.member.sessionId) {
+        observedSessionIds.current.set(memberId, status.member.sessionId)
+        // Only the exact previous live page follows; browsing an older
+        // archive or another Member stays untouched. A binding change seen
+        // before any page is embedded is still recorded so the observation
+        // baseline stays current.
+        const seatSessionId = seatSessionIdRef.current
+        if (seatSessionId !== undefined && observed === seatSessionId) pendingFollows.current.set(memberId, status.member.sessionId)
+        else pendingFollows.current.delete(memberId)
+      }
+      const pending = pendingFollows.current.get(memberId)
+      if (pending !== undefined && pending === status.member.sessionId && status.availability === 'active') {
+        pendingFollows.current.delete(memberId)
+        openMemberSessionRef.current(pending)
+      }
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
     setLoading(true)
     const result = await loadMembers({ workspaceId })
     if (result.ok) {
       // Archived Members are hidden from every surface; the row disappears
       // the moment the workspace-scope wake delivers the archived state.
-      setMembers(result.value.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived'))
+      const next = result.value.filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived')
+      setMembers(next)
+      followRollover(next)
       setError(undefined)
     } else {
       setError(result.error.message)
     }
     setLoading(false)
-  }, [loadMembers, workspaceId])
+  }, [loadMembers, workspaceId, followRollover])
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => subscribeChanges({ kind: 'workspace', workspaceId }, update => {
@@ -189,7 +233,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         <div className={css.agentList}>
           {orderedMembers.map(status => (
             <SortableRow key={status.member.memberId} drag={drag} orderKey={status.member.memberId}>
-              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} clearMemberContext={clearMemberContext} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
+              <AgentRow status={status} {...(memberSessionId === undefined ? {} : { current: status.member.sessionId === memberSessionId })} updateMember={updateMember} recoverMember={recoverMember} archiveMember={archiveMember} loadModels={loadModels} openMemberSession={openMemberSession} onUpdated={() => { void refresh() }} t={t} />
             </SortableRow>
           ))}
         </div>
@@ -209,13 +253,12 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
  * conversation page, the avatar carries identity plus the presence badge, and
  * the row menu opens the editor.
  */
-function AgentRow({ status, current, updateMember, recoverMember, clearMemberContext, archiveMember, loadModels, openMemberSession, onUpdated, t }: {
+function AgentRow({ status, current, updateMember, recoverMember, archiveMember, loadModels, openMemberSession, onUpdated, t }: {
   readonly status: AgentTeamClientMemberStatus
   /** This Member's Session is the one embedded in the conversation seat. */
   readonly current?: boolean
   readonly updateMember: TeamSidebarProps['updateMember']
   readonly recoverMember: TeamSidebarProps['recoverMember']
-  readonly clearMemberContext: TeamSidebarProps['clearMemberContext']
   readonly archiveMember: TeamSidebarProps['archiveMember']
   readonly loadModels: TeamSidebarProps['loadModels']
   readonly openMemberSession: TeamSidebarProps['openMemberSession']
@@ -224,7 +267,6 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
-  const [clearing, setClearing] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [rowAlert, setRowAlert] = useState<string>()
   // Both row actions ride the same runtime remote: the Host steers a live
@@ -253,33 +295,6 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
       setRowAlert(t('restartFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
     }
   }
-  const clearContext = async (): Promise<void> => {
-    try {
-      const result = await clearMemberContext({
-        requestId: mintRequestId(),
-        workspaceId: status.member.workspaceId,
-        memberId: status.member.memberId,
-      })
-      await onUpdated()
-      if (!result.ok) {
-        setRowAlert(t('clearContextFailed', { message: result.error.message }))
-        return
-      }
-      setRowAlert(undefined)
-      // The Host moved the Member onto a fresh Session id (the previous log
-      // stays archived on disk). A new id has no resident client instance, so
-      // re-entering the member view lazily instantiates it from host truth:
-      // blank hero, live updates, and no disposed-generation gray-out.
-      if (current === true) openMemberSession(result.value.status.member.sessionId)
-    } catch (cause) {
-      setRowAlert(t('clearContextFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
-    }
-  }
-  // Error Members keep a live idle handle, so starting from a new context
-  // is available to them too — it doubles as a recovery path (the broken
-  // handle's error markers are dropped with it). Only a running turn or a
-  // missing handle gates the entry.
-  const contextClearable = status.presence === 'available' || status.presence === 'error'
   const archive = async (): Promise<void> => {
     try {
       const result = await archiveMember({
@@ -311,13 +326,10 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
               ...(status.availability === 'unavailable' ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
-              { id: 'clear-context', label: t('clearContextAgent'), icon: <IconNewChatOutline16 />, danger: true, disabled: !contextClearable },
-              ...(!contextClearable ? [{ type: 'label' as const, id: 'clear-context-reason', text: status.presence === 'working' ? t('clearContextWorkingReason') : t('clearContextUnavailableReason') }] : []),
               { id: 'archive', label: t('archiveAgent'), icon: <IconArchiveOutline20 size={16} />, danger: true },
             ]}
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)
-              else if (id === 'clear-context') setClearing(true)
               else if (id === 'archive') setArchiving(true)
               else void recover()
             }}
@@ -326,21 +338,6 @@ function AgentRow({ status, current, updateMember, recoverMember, clearMemberCon
         </span>
       </div>
       {rowAlert !== undefined && <div className={css.rowAlert} role="alert">{rowAlert}</div>}
-      {clearing && (
-        <Modal
-          open
-          onClose={() => { setClearing(false) }}
-          title={t('clearContextTitle', { name: status.member.handle })}
-          closeLabel={t('close')}
-          contentClassName={createCss.dialogContent!}
-          footer={<>
-            <Button variant="outline" onClick={() => { setClearing(false) }}>{t('cancel')}</Button>
-            <Button variant="primary" onClick={() => { setClearing(false); void clearContext() }}>{t('clearContextConfirm')}</Button>
-          </>}
-        >
-          <p className={createCss.error}>{t('clearContextNotice', { name: status.member.handle })}</p>
-        </Modal>
-      )}
       {archiving && (
         <Modal
           open

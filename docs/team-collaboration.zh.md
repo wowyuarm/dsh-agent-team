@@ -10,7 +10,7 @@ Channel 顶层 Message 会创建一个 Thread 及其 anchor。新的 model-facin
 
 Agent 只能读取或修改自己 Workspace 中、且自己是 Member 的 Channels。Team tools 从 live Agent Member 解析 Workspace 和 actor，不接受 model-supplied Workspace identity。
 
-## 五工具协议
+## 六工具协议
 
 各工具职责不同：
 
@@ -20,8 +20,9 @@ Agent 只能读取或修改自己 Workspace 中、且自己是 Member 的 Channe
 - `team_message.start` 创建 Channel 顶层 Thread；默认 taskless，也接受明确 task intent 以原子创建 Task。`team_message.reply` 向既有 Thread 追加明确的 reply。二者都接受 `attachments` 中的可选 absolute file paths：Host 验证每个 path，将 bytes 复制到 attachment cache，收件人看到 thumbnails/chips 与一行 cached path；任一 path 验证失败都会拒绝整个 send。
 - `team_message.dm` 向同一 Workspace 内一个 enabled Agent Member 发送私有 direct message。DM 是纯送达：ledger 追加一个 audit-only 的 `team/dm-sent` operation（requestId 幂等），收件人的 live session 以 relay-form 注入的 user message 收到正文——idle 收件人开新 turn，busy 收件人 steer 进当前 turn。DM 不创建 Channel、Thread、revision、Attention 或 Inbox markers，也不唤醒任何 change waiters。Human 不能被 DM。收件人无 live session 或唤醒失败时，operation 保持 durable，发送方收到结构化的 delivery error 而非静默丢失；不做自动重投。DM 只用于快速澄清与状态同步——任务工作、决策和任何需要团队可见或可追溯的内容一律走 Thread；同一对象往来超过约 3 轮应转 Thread，因为每条 DM 消耗收件人一次完整 agent turn。
 - `team_claim` 列出 Claims，并允许 Agent 仅在真实 Task 上创建、完成或 release 自己的 Direction Claims；taskless Threads 没有 Claim mutation path。Direction 是一句说明 Agent 工作角度的话，帮助其他人发现冲突并追踪进展；execution plans 和 acceptance checklists 应写在 Thread messages 中。Claim 成功后会自动开始 Attention。
+- `new_context` 为调用的 Member 安排一次进入全新上下文的 rollover。Agent 传入私有 `handoff`（及可选 `relatedFiles`）；工具只做校验并返回 `status: 'scheduled'`，同时结束当前 turn——工具体本身不做任何 lifecycle 或 Inbox 副作用。Host 只在成功的 `tool/result` 持久落盘后才反应：等待所属 turn 结束并真正 idle，提交一个幂等的 `team/member-session-rolled-over` operation（Member actor、仅限自身，记录旧/新 Session id、成功的 handoff result sequence 和 trigger——绝不写入 handoff 正文），dispose 旧 Agent、归档旧 Session，再激活一个全新 Session，以 handoff 作为第一份 model-facing context。Member 身份、模型、私有记忆、skills、Claims 和 Attention 全部保留；新 Session 不继承旧的事件/chunk 历史。意图之后到达的非 Team 输入在新一代恰好投递一次；过期的 Team Inbox notices 被丢弃并从 ledger 重新派生。失败或悬空的调用不会安排任何事。请求与新 Session 身份由该 Member 绑定的 Session 加 tool call id 稳定派生，因此结果落盘与换窗之间崩溃后重放会收敛到同一代。
 
-每个成功或被拒绝的 Team tool result 都通过正常 model loop 返回。Team tools 不会结束 Agent turn；Agent 自行决定继续读取、重试、开展项目工作、发送协作更新或结束。
+每个成功或被拒绝的 Team tool result 都通过正常 model loop 返回。除 `new_context` 外，Team tools 不会结束 Agent turn；Agent 自行决定继续读取、重试、开展项目工作、发送协作更新或结束。
 
 ## Thread Attention 与 Inbox
 
@@ -63,9 +64,9 @@ Human Client 使用 `readThread`、`threadHistory`、`threadObservations`、`cha
 
 ## Team Member context boundary
 
-显式的 `team-member` preset 是完整 coding composition：shell、filesystem/search、web search、background-job controls、skill 加载工具、todo tracking、compaction、五个 Team tools、Workspace instruction discovery 和 private-memory context plugin。Host 拥有 Web service/provider；Team preset 只增加面向模型的 web tool。普通 Sessions 不会继承这些 Team rows。skill 发现本身是 Member 私有的（Host 在每个 Member 的 agent scope 上注册只扫其私有目录的 provider，catalog 初始为空，自装 SKILL.md 是唯一安装路径）。
+显式的 `team-member` preset 是完整 coding composition：shell、filesystem/search、web search、background-job controls、skill 加载工具、todo tracking、compaction、六个 Team tools、Workspace instruction discovery 和 private-memory context plugin。Host 拥有 Web service/provider；Team preset 只增加面向模型的 web tool。普通 Sessions 不会继承这些 Team rows。skill 发现本身是 Member 私有的（Host 在每个 Member 的 agent scope 上注册只扫其私有目录的 provider，catalog 初始为空，自装 SKILL.md 是唯一安装路径）。
 
-Member 的 project `cwd` 保持在 Workspace path。Harness `agent-instructions` 仍是加载 `AGENTS.md`/`CLAUDE.md` guidance 的唯一 loader；Team 不重新实现或迁移这套 discovery。每个 Member 的 private root 包含小写的 `memory.md` index、按需读取的 `notes/` 和 Member 私有 skill 的 `skills/`。每个 safe pre-step 最多向 Member 提供其自身发生变化的 index，并包装为 escaped、typed reference context。Index 上限为 8 KiB；超出预算会产生 maintenance warning，而不是静默截断、删除或 summarization。Notes 不会自动注入。Suspend/resume 保留这些 files，永久 removal 删除 private root。persona 只陈述私有空间的物理事实：使用注入的绝对路径（绝不 cwd 相对路径）、memory/notes 纪律、可复用资产边界（repo 只收正式交付）。全部 skill 写作指引——什么值得成为 skill、目录形态布局、写作质量、credentials 约定——都在内置的 `member-skill-manager` meta skill 里，其 description 负责"涉及 skill 管理工作时先读我"；用不用任何 skill 由 Member 按任务自行判断。
+Member 的 project `cwd` 保持在 Workspace path。Harness `agent-instructions` 仍是加载 `AGENTS.md`/`CLAUDE.md` guidance 的唯一 loader；Team 不重新实现或迁移这套 discovery。每个 Member 的 private root 包含小写的 `memory.md` index、按需读取的 `notes/` 和 Member 私有 skill 的 `skills/`。每个 safe pre-step 最多向 Member 提供其自身发生变化的 index，并包装为 escaped、typed reference context。Index 上限为 8 KiB；超出预算会产生 maintenance warning，而不是静默截断、删除或 summarization。Notes 不会自动注入。Suspend/resume 保留这些 files，永久 removal 删除 private root。persona 陈述私有空间的物理事实（使用注入的绝对路径、绝不 cwd 相对路径、memory/notes 纪律、可复用资产边界），外加一段简洁的 context-management 指引：把活跃上下文当作最小充分工作集、何时记录 checkpoint 或调用 `new_context`、上下文切换不会回滚外部影响、handoff 中要交接当前状态。全部 skill 写作指引——什么值得成为 skill、目录形态布局、写作质量、credentials 约定——都在内置的 `member-skill-manager` meta skill 里，其 description 负责"涉及 skill 管理工作时先读我"；用不用任何 skill 由 Member 按任务自行判断。
 
 Memory 不是 authority：它可能过时，不能覆盖 Workspace instructions、direct Human input 或 durable Team facts。Member 只能记录已验证且持久的知识，不得记录 credentials、sensitive data、guesses、chat logs、其他 Members' memory，或 ledger 已拥有的 facts。
 
@@ -85,16 +86,14 @@ Pending hints 按 Member 合并。Consumed 或 ignored hint 不会再触发 turn
 
 Web Client 的 Agent-row menu 提供两个 runtime recovery entrances（都不写 ledger）：有 live session 的 error Member 显示「恢复」，由 Host 向 session 注入 continuation prompt（孤儿 composition 则原地重建）；activation failed 的 Member 显示「重启」，由 Host 重新执行该 Member activation，再次失败时仍以 diagnostic 显示在 sidebar。
 
-「从全新上下文开始」是第三个入口。它对 `presence === 'available'`（在线且 idle）或 `presence === 'error'`（带 live handle 的 error state；换新上下文也可作为 recovery，因为坏 handle 的 error marker 随 dispose 丢弃，新 session 重新挂载 preset）的 enabled Members 可用。其他 presence 会灰显并按状态说明原因：working 等当前 turn 结束，unavailable 先恢复在线；若 unavailable 没有 live handle 且首次 activation failed，session 可能从未 materialize，archive 会失败并由「重启」覆盖。这样不会截断当前 loop。
-
-确认框会点名 Member 并说明影响范围：旧 Session 会归档并保留在 session records，identity、private memory、notes、Channel 和 Session bindings 保持不变，后续协作从新 context 继续积累。确认后 Host 记录 `team/member-session-renewed` operation（projection 只把该 Member 的 sessionId 迁移到新铸造的 id，其余 facts 不变），dispose 旧 handle，归档旧 Session（日志留在磁盘、从所有分组界面隐藏、workspace accounting 保留），然后在新 sessionId 上走 `agents.create` activation path（header 的 `parentSession` 记录旧 id 作为 lineage，新 Session 名称与 Member handle 一致）。下一次 turn 从空 context 开始。Agent idle 翻转会像 running 一样广播 workspace change，使 sidebar presence gate 在 turn 结束后即时解除。对用户可见的行为是：一个 Agent 始终对应一个 current Session；从 agent card 打开的右侧页面正常渲染并实时更新。新 id 没有历史 resident instance，不会出现同 id 重建后永久 disabled。若 Member Session 已嵌入右栏，Client 直接导航到新 Session 的 embedded view。同一 requestId 重试会铸造同一 new id，并由 ledger idempotency 去重。历史上的同 id 原地清空 `team/member-context-cleared` operation 已停止写入，其 schema 与 replay validation 保留为 tombstone，旧 ledger 仍可 replay。
+历史上的第三个入口「从全新上下文开始」已经移除：Member 现在通过 `new_context` 工具自行管理上下文（见六工具协议），Host 侧 clear-context Remote 保留为无可见入口的 hidden migration escape hatch，其 `team/member-session-renewed` operation schema 与 replay validation 保留，旧 ledger 仍可 replay。模型发起的 rollover 期间（ledger 绑定已迁移、新 Session 尚未就绪），Member 状态短暂显示为 unavailable 并带 "context rollover in progress" diagnostic；若该 Member 的 Session 正嵌入右栏，Client 只在旧→新绑定变化且当前页面正是被观察的旧 live Session 时跟随一次到新 Session，归档视图不会跳转。
 
 ## Progress-visibility nudges
 
 除 unread 驱动的通知外，Host 会统计每个 Member Session 的 `tool/call` 事件，并可能向运行中的 turn 注入一条 advisory 进度提醒——它不写 Message、Activity、Claim 或任何 ledger operation，也不会凭空唤醒 idle Member。
 
 - **Thread 进度提醒（A）**：持有 open Task active Claim 的 Member，或在 active Channel 中 follow 某 taskless Thread 的 Member，自上一次成功提交公开沟通起累计 20 次 tool call 触发，之后每 20 次递增。公开沟通指 message-sent、thread-replied、claim-created、claim-done、claim-released 之一；read、follow/unfollow、DM 与失败调用不重置计数。
-- **Claim 建议（B）**：follow 仍为 `todo` 的 Task 且从未 claim 过的 Member，5 次 tool call 时触发。当前 Member Session 内每个 (Member, Thread) 至多一次——已消费的建议在本 Session 生命周期内不再重复；Host 重启与 resume 保持；Human 主动「从全新上下文开始」后重新计一次。已有推进状态的 Task（`in_progress`、`in_review`、done、closed）不再招募 claimant。
+- **Claim 建议（B）**：follow 仍为 `todo` 的 Task 且从未 claim 过的 Member，5 次 tool call 时触发。当前 Member Session 内每个 (Member, Thread) 至多一次——已消费的建议在本 Session 生命周期内不再重复；Host 重启与 resume 保持；Member 经 `new_context` 换到全新上下文后重新计一次。已有推进状态的 Task（`in_progress`、`in_review`、done、closed）不再招募 claimant。
 
 资格判定是单一只读 ledger projection（`progressNudgeTargets`）。多个目标合并为一条 notice、逐 Thread 列出；每个 turn 至多注入一条。排队的 nudge 会让位于 recovery、Inbox 与 pre-compaction 通知，且在模型读到之前被撤销——若该 Member 提交了公开沟通或目标消失（Task accepted、Channel archived）。计数是节奏信号而非工作量度量：从不解析 tool arguments，Thread 归属只是候选时文案会写明「仅在当前工作相关时回复」。
 

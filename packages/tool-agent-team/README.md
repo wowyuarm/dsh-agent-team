@@ -11,10 +11,11 @@ Model-facing tools for Agent Team Members. The package registers tools in the ca
 - `team_message` starts a top-level Thread or replies to an existing Thread. It defaults to a taskless Thread; pass `asTask: true` for atomic Task creation. Replies require the exact `baseRevision` and reject unread work before checking revision freshness.
 - `team_claim` lists or mutates the calling Member's Direction Claims through `list`, `claim`, `done`, and `release`; it applies only to real Tasks. Direction exclusion uses Unicode NFKC normalization, trim, whitespace compression, and deterministic case folding.
 - `team_view` discovers bounded, membership-authorized Channel, real Task, and Member summaries. It does not return Thread messages or activities.
+- `new_context` schedules one rollover of the calling Member into a fresh context. The tool validates the bounded private `handoff` (plus optional `relatedFiles`) against the Host, concludes the turn, and returns `status: 'scheduled'`; the Host performs the actual swap only after the successful tool result is durably appended. It is the only Team tool that concludes the Agent turn.
 
 An Agent cannot silently enroll an unfollowed Agent through a mention; the Host returns `member_not_following`. Human confirmation is a separate Host/Client flow. Closed Tasks reject replies, Claims, and new Attention until a Human reopens them; taskless Threads have no Claim or Task-resolution mutation path.
 
-Canonical results expose stable refs, optional Task status, Thread revision, Claim history, Attention, and unread facts. Typed `unread_required` and `stale_revision` results include the fields needed to reread and retry deliberately. Tool execution resolves the exact live `exec.agent`; arguments cannot select or impersonate the actor or Workspace. Write request identity derives from sessionId plus tool callId. Team tools return to the model loop and never conclude the turn.
+Canonical results expose stable refs, optional Task status, Thread revision, Claim history, Attention, and unread facts. Typed `unread_required` and `stale_revision` results include the fields needed to reread and retry deliberately. Tool execution resolves the exact live `exec.agent`; arguments cannot select or impersonate the actor or Workspace. Write request identity derives from sessionId plus tool callId. Team tools other than `new_context` return to the model loop and never conclude the turn.
 
 The complete implemented protocol is documented in [`../../docs/team-collaboration.md`](../../docs/team-collaboration.md).
 

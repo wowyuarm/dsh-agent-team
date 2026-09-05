@@ -38,7 +38,7 @@
 
 ### 2.2 修改 model-facing tool 或 preset
 
-- 本仓库：`docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`（五个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
+- 本仓库：`docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`（六个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
 - Harness 文档：`docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md`、`docs/subsystems/system-prompt.md`。
 - Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-presets/src`。
 

@@ -1,0 +1,384 @@
+/**
+ * Host-only Session projection for Agent Team context management.
+ *
+ * One pure synchronous fold over a Member Session log derives every
+ * context-management fact the Host needs: pending rollover intent (a
+ * successful `new_context` call/result pair), explicit checkpoints (a
+ * successful `context_checkpoint` pair resolved by its containing `turn/end`),
+ * handoff/compaction boundaries, and quiet-continuation delivery state. The
+ * fold is the single authority for these facts — no second store, and callers
+ * never re-derive intent from raw events.
+ *
+ * A seeded child Session folds with `inheritedEventCount` respected: events
+ * inherited from the fork prefix are already resolved history, never fresh
+ * intent. The cold fold and the registered unit both start past the inherited
+ * cut, so an inherited historical `new_context` call can never schedule
+ * another transition in the child.
+ * @module @wowyuarm/dsh-agent-team/context-projection
+ */
+
+import { z } from 'zod'
+import type { ToolResultMessage, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { SessionEvent, SessionHeader, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import type { AgentTeamContextCheckpointRef } from './types.ts'
+import { isCheckpointContinuationMessage } from './context-source.ts'
+
+/** Plugin identity of the Agent Team Host, for recognizing own notices. */
+const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+
+/** Stable tool names the projection recognizes. */
+export const CONTEXT_CHECKPOINT_TOOL_NAME = 'context_checkpoint'
+export const NEW_CONTEXT_TOOL_NAME = 'new_context'
+
+/** One completed-turn checkpoint anchor in this Session lineage. */
+export interface ContextCheckpointEntry {
+  /** Opaque stable ref; selection authority, never derived from the name. */
+  readonly checkpointRef: AgentTeamContextCheckpointRef
+  /** Display label supplied by the model. */
+  readonly name: string
+  /** Seq of the successful tool result that recorded the checkpoint. */
+  readonly resultSeq: number
+  /** Turn the checkpoint concluded; the completed-turn boundary anchor. */
+  readonly turn: number
+  /** Seq of the `turn/end` that resolved the checkpoint; -1 until resolved. */
+  readonly turnEndSeq: number
+}
+
+/** Arguments the model passed to one successful `new_context` call. */
+export interface NewContextArguments {
+  readonly handoff: string
+  readonly checkpointRef?: AgentTeamContextCheckpointRef | undefined
+  readonly relatedFiles: readonly { readonly path: string; readonly reason: string }[]
+}
+
+/** Rollover intent waiting for the containing turn to finish and the Agent to idle. */
+export interface PendingRolloverIntent extends NewContextArguments {
+  /** The provider-issued call id of the successful `new_context` call. */
+  readonly toolCallId: string
+  /** Seq of the successful `new_context` tool result. */
+  readonly resultSeq: number
+  /** Turn containing the successful call; the swap waits for its end. */
+  readonly turn: number
+  /** Seq of the `turn/end` that released the intent for the swap; -1 until observed. */
+  readonly turnEndSeq: number
+}
+
+/** Quiet-continuation delivery state for one checkpoint, keyed by checkpointRef. */
+export interface ContinuationDeliveryState {
+  /** The checkpoint the continuation follows. */
+  readonly checkpointRef: AgentTeamContextCheckpointRef
+  /** Seq of the delivered continuation notice in this Session; -1 until delivered. */
+  readonly deliveredSeq: number
+}
+
+/** One non-Team message queued after the pending intent; a carry candidate. */
+export interface CarriedCandidate {
+  /** The queued message itself, verbatim. */
+  readonly message: UserMessage
+  /** The turn that surfaced the message onto the model-visible input, if any. */
+  readonly surfacedTurn: number
+  /** Whether a completed assistant answer proved the old generation handled it. */
+  readonly consumed: boolean
+}
+
+/** State of the `agentTeamContext` projection for one Session. */
+export interface AgentTeamContextProjectionState {
+  /** Checkpoints recorded by a successful call, resolved ones anchored to their turn end. */
+  readonly checkpoints: readonly ContextCheckpointEntry[]
+  /** Rollover intent awaiting its containing turn end, at most one. */
+  readonly pending: PendingRolloverIntent | null
+  /** Quiet continuations recorded (with or without delivery), keyed by checkpoint ref. */
+  readonly continuations: readonly ContinuationDeliveryState[]
+  /**
+   * Non-Team messages queued into the inbox after the pending intent's tool
+   * result. The durable `agent/inbox/spliced` log is the truth: the
+   * transition delivers every candidate the old generation never answered
+   * (a claimed-but-rejected or canceled message stays a candidate), deduped
+   * by message id. Empty until an intent exists.
+   */
+  readonly carriedCandidates: readonly CarriedCandidate[]
+  /** The most recently opened turn; user/message events carry no turn of their own. */
+  readonly lastTurn: number
+  /**
+   * Context-tool calls whose results have not landed yet. Part of the state so
+   * the live unit folds one event at a time and still pairs call to result; a
+   * dangling call at any cut simply never becomes intent or a checkpoint.
+   */
+  readonly openCalls: readonly { readonly callId: string; readonly name: string; readonly arguments: string }[]
+}
+
+const relatedFileSchema = z.object({ path: z.string().min(1), reason: z.string() }).strict()
+const checkpointRefSchema = z.string().regex(/^context-checkpoint:[^:]+$/).transform(value => value as AgentTeamContextCheckpointRef)
+const openCallSchema = z.object({ callId: z.string().min(1), name: z.string(), arguments: z.string() }).strict()
+
+const carriedCandidateSchema = z.object({
+  message: z.any(),
+  surfacedTurn: z.number().int(),
+  consumed: z.boolean(),
+})
+
+const stateSchema = z.object({
+  checkpoints: z.array(z.object({
+    checkpointRef: checkpointRefSchema,
+    name: z.string(),
+    resultSeq: z.number().int().nonnegative(),
+    turn: z.number().int().nonnegative(),
+    turnEndSeq: z.number().int(),
+  }).strict()),
+  pending: z.object({
+    toolCallId: z.string().min(1),
+    resultSeq: z.number().int().nonnegative(),
+    turn: z.number().int().nonnegative(),
+    handoff: z.string(),
+    checkpointRef: checkpointRefSchema.optional(),
+    relatedFiles: z.array(relatedFileSchema),
+    turnEndSeq: z.number().int(),
+  }).strict().nullable(),
+  continuations: z.array(z.object({
+    checkpointRef: checkpointRefSchema,
+    deliveredSeq: z.number().int(),
+  }).strict()),
+  carriedCandidates: z.array(carriedCandidateSchema),
+  lastTurn: z.number().int().nonnegative(),
+  openCalls: z.array(openCallSchema),
+}).strict()
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionStateMap {
+    agentTeamContext: AgentTeamContextProjectionState
+  }
+}
+
+/** Deterministic checkpoint ref from the recording tool call identity. */
+export function checkpointRefFor(callId: string): AgentTeamContextCheckpointRef {
+  return `context-checkpoint:${callId}` as AgentTeamContextCheckpointRef
+}
+
+function emptyState(): AgentTeamContextProjectionState {
+  return { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [] }
+}
+
+/**
+ * Cold-fold one immutable event log into the projection state. Events at or
+ * before `inheritedEventCount` belong to the fork prefix and are resolved
+ * history in this Session, so they never produce fresh intent.
+ */
+export function foldContextProjection(events: readonly SessionEvent[], inheritedEventCount: SessionLogOffset = 0 as SessionLogOffset): AgentTeamContextProjectionState {
+  let state = emptyState()
+  const inherited = Number(inheritedEventCount)
+  for (const event of events) {
+    if (event.seq < inherited) continue
+    state = applyContextEvent(state, event)
+  }
+  return state
+}
+
+/** The host-only projection unit; no wire view is published. */
+export const agentTeamContextProjectionDefinition = {
+  key: 'agentTeamContext',
+  stateVersion: 1,
+  stateSchema,
+  init: (_header: SessionHeader, _inheritedEventCount: SessionLogOffset): AgentTeamContextProjectionState => emptyState(),
+  apply: applyContextEvent,
+} satisfies ProjectionDefinition<'agentTeamContext', AgentTeamContextProjectionState>
+
+/**
+ * Pure transition: previous state + one committed event → next state. Returns
+ * the same reference when the event is not this unit's.
+ */
+function applyContextEvent(state: AgentTeamContextProjectionState, event: SessionEvent): AgentTeamContextProjectionState {
+  if (event.type === 'tool/call') {
+    if (event.data.name !== NEW_CONTEXT_TOOL_NAME && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME) return state
+    return { ...state, openCalls: [...state.openCalls, { callId: event.data.callId, name: event.data.name, arguments: event.data.arguments }] }
+  }
+  if (event.type === 'tool/result') {
+    return applyToolResult(state, event.seq, event.data.turn, event.data.message, event.data.error !== undefined)
+  }
+  if (event.type === 'turn/end') {
+    return applyTurnEnd(state, event.seq, event.data.turn)
+  }
+  if (event.type === 'user/message') {
+    return applyUserMessage(state, event.seq, event.data)
+  }
+  if (event.type === 'agent/inbox/spliced') {
+    return applyInboxSpliced(state, event.data)
+  }
+  if (event.type === 'assistant/message') {
+    return applyAssistantMessage(state, event)
+  }
+  if (event.type === 'turn/start') {
+    return event.data.turn === state.lastTurn ? state : { ...state, lastTurn: event.data.turn }
+  }
+  return state
+}
+
+/**
+ * Fold one durable inbox splice. After a pending intent exists, every
+ * non-Team message inserted into the inbox is a carry candidate; the
+ * durable log is the truth, so a claim, removal, or cancel can never make
+ * the message vanish silently — only surfacing it onto the model-visible
+ * `user/message` surface consumes it.
+ */
+function applyInboxSpliced(state: AgentTeamContextProjectionState, data: { inserted: readonly UserMessage[] }): AgentTeamContextProjectionState {
+  if (state.pending === null || data.inserted.length === 0) return state
+  const fresh = data.inserted
+    .filter(message => !isTeamNotice(message))
+    .filter(message => !state.carriedCandidates.some(candidate => candidate.message.id === message.id))
+    .map(message => ({ message, surfacedTurn: -1, consumed: false }))
+  if (fresh.length === 0) return state
+  return { ...state, carriedCandidates: [...state.carriedCandidates, ...fresh] }
+}
+
+function applyToolResult(
+  state: AgentTeamContextProjectionState,
+  seq: number,
+  turn: number,
+  message: ToolResultMessage,
+  internalFailure: boolean,
+): AgentTeamContextProjectionState {
+  const block = message.content[0]
+  if (block === undefined || block.type !== 'tool-result') return state
+  // A successful pair only: model-visible errors and internal failures carry
+  // neither checkpoint nor rollover intent.
+  if (block.isError === true || internalFailure) return state
+  const index = state.openCalls.findIndex(call => call.callId === block.toolCallId)
+  if (index === -1) return state
+  const recorded = state.openCalls[index]!
+  const openCalls = state.openCalls.filter(call => call.callId !== block.toolCallId)
+  if (recorded.name === NEW_CONTEXT_TOOL_NAME) {
+    const parsed = parseNewContextArguments(recorded.arguments)
+    if (parsed === undefined) return { ...state, openCalls }
+    // One pending intent at a time: a second successful call before the turn
+    // ends replaces nothing — the first owns the swap.
+    if (state.pending !== null) return { ...state, openCalls }
+    return { ...state, openCalls, pending: { ...parsed, toolCallId: recorded.callId, resultSeq: seq, turn, turnEndSeq: -1 } }
+  }
+  // The only remaining open call name is the checkpoint tool.
+  const parsed = parseCheckpointArguments(recorded.arguments)
+  if (parsed === undefined) return { ...state, openCalls }
+  const checkpointRef = checkpointRefFor(block.toolCallId)
+  return {
+    ...state,
+    openCalls,
+    checkpoints: [...state.checkpoints, { checkpointRef, name: parsed.name, resultSeq: seq, turn, turnEndSeq: -1 }],
+  }
+}
+
+function applyTurnEnd(state: AgentTeamContextProjectionState, seq: number, _turn: number): AgentTeamContextProjectionState {
+  let changed = false
+  const checkpoints = state.checkpoints.map(entry => {
+    if (entry.turnEndSeq !== -1) return entry
+    changed = true
+    return { ...entry, turnEndSeq: seq }
+  })
+  let pending = state.pending
+  if (pending !== null && pending.turnEndSeq === -1) {
+    pending = { ...pending, turnEndSeq: seq }
+    changed = true
+  }
+  return changed ? { ...state, checkpoints, pending } : state
+}
+
+function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, message: UserMessage): AgentTeamContextProjectionState {
+  let next = state
+  // A surfaced candidate is NOT consumed yet: the loop appends user/message
+  // before the step runs, so cancellation can still land between them. Only
+  // a completed, uninterrupted assistant answer for the same turn proves the
+  // old generation handled it; anything else stays carried, so an aborted
+  // partial request re-delivers the input instead of silently dropping it.
+  const surfaced = next.carriedCandidates.some(candidate => !candidate.consumed && candidate.message.id === message.id)
+  if (surfaced) {
+    // The user/message event carries no turn field, but the projection folds
+    // in log order: the containing step/start preceded this message, and
+    // the fold tracks the current turn from turn/start. Candidates surface
+    // inside the turn the inbox claimed them for.
+    next = { ...next, carriedCandidates: next.carriedCandidates.map(candidate =>
+      candidate.message.id === message.id && !candidate.consumed ? { ...candidate, surfacedTurn: next.lastTurn } : candidate) }
+  }
+  // The quiet continuation notice delivered for one checkpoint completes its
+  // delivery state; replay repair reads this to avoid re-scheduling it.
+  if (message.source.kind !== 'agent-team-context-continuation') return next
+  const checkpointRef = message.source.checkpointRef as AgentTeamContextCheckpointRef
+  const existing = next.continuations.find(entry => entry.checkpointRef === checkpointRef)
+  if (existing !== undefined) {
+    if (existing.deliveredSeq !== -1) return next
+    return { ...next, continuations: next.continuations.map(entry => entry === existing ? { ...entry, deliveredSeq: seq } : entry) }
+  }
+  return { ...next, continuations: [...next.continuations, { checkpointRef, deliveredSeq: seq }] }
+}
+
+/** A completed, uninterrupted assistant turn answers every candidate surfaced into it. */
+function applyAssistantMessage(state: AgentTeamContextProjectionState, event: SessionEvent & { type: 'assistant/message' }): AgentTeamContextProjectionState {
+  if (state.carriedCandidates.length === 0 || event.data.interrupted === true) return state
+  let changed = false
+  const carriedCandidates = state.carriedCandidates.map(candidate => {
+    if (candidate.consumed || candidate.surfacedTurn !== event.data.turn) return candidate
+    changed = true
+    return { ...candidate, consumed: true }
+  })
+  return changed ? { ...state, carriedCandidates } : state
+}
+
+/** The carried input one transition must deliver: unconsumed post-intent candidates, in queue order. */
+export function carriedInputOf(state: AgentTeamContextProjectionState): readonly UserMessage[] {
+  return state.carriedCandidates.filter(candidate => !candidate.consumed).map(candidate => candidate.message)
+}
+
+/** Whether one queued message is a Team-owned notice the rederived Inbox replaces. */
+function isTeamNotice(message: UserMessage): boolean {
+  const source = message.source
+  return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+}
+
+/** Whether a quiet continuation for one checkpoint was already delivered in this Session. */
+export function continuationDelivered(state: AgentTeamContextProjectionState, checkpointRef: AgentTeamContextCheckpointRef): boolean {
+  return state.continuations.some(entry => entry.checkpointRef === checkpointRef && entry.deliveredSeq !== -1)
+}
+
+/** Record that a continuation for one checkpoint is scheduled (delivery not yet seen). */
+export function withScheduledContinuation(state: AgentTeamContextProjectionState, checkpointRef: AgentTeamContextCheckpointRef): AgentTeamContextProjectionState {
+  if (state.continuations.some(entry => entry.checkpointRef === checkpointRef)) return state
+  return { ...state, continuations: [...state.continuations, { checkpointRef, deliveredSeq: -1 }] }
+}
+
+function parseNewContextArguments(raw: string): NewContextArguments | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const { handoff, checkpointRef, relatedFiles } = parsed as Record<string, unknown>
+  if (typeof handoff !== 'string' || handoff.trim() === '') return undefined
+  if (checkpointRef !== undefined && typeof checkpointRef !== 'string') return undefined
+  if (relatedFiles !== undefined && !isRelatedFiles(relatedFiles)) return undefined
+  return {
+    handoff,
+    ...(checkpointRef === undefined ? {} : { checkpointRef: checkpointRef as AgentTeamContextCheckpointRef }),
+    relatedFiles: relatedFiles === undefined ? [] : relatedFiles,
+  }
+}
+
+function parseCheckpointArguments(raw: string): { readonly name: string } | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const { name } = parsed as Record<string, unknown>
+  if (typeof name !== 'string' || name.trim() === '') return undefined
+  return { name }
+}
+
+function isRelatedFiles(value: unknown): value is Array<{ path: string; reason: string }> {
+  return Array.isArray(value) && value.every(file => typeof file === 'object' && file !== null
+    && typeof (file as Record<string, unknown>).path === 'string' && typeof (file as Record<string, unknown>).reason === 'string')
+}
+
+// Re-exported for callers that only want the predicate view of continuation
+// delivery without importing the source module's message constructors.
+export { isCheckpointContinuationMessage }

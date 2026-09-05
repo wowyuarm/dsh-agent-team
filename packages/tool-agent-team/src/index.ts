@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@wowyuarm/dsh-agent-team/host'
+import { registerContextTools } from './context-tools.ts'
 import type {
   AgentTeamClaimRef,
   AgentTeamMemberId,
@@ -328,4 +329,5 @@ export function apply(ctx: Context): void {
   ctx.tools.register(teamMessage)
   ctx.tools.register(teamClaim)
   ctx.tools.register(teamView)
+  registerContextTools(ctx)
 }

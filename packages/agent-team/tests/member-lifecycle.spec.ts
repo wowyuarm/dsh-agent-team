@@ -1079,8 +1079,8 @@ describe('Agent Team Member lifecycle', () => {
     expect(lastRequest).not.toContain('Unread across Host remount')
   })
 
-  it('validates the final five-tool Team marker during unpublished setup', async () => {
-    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view'])
+  it('validates the final Team tool marker during unpublished setup', async () => {
+    expect(AGENT_TEAM_TOOL_NAMES).toEqual(['team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view', 'new_context'])
     const definition = markAgentTeamPreset({ name: 'team_message' })
     expect(Reflect.get(definition, Symbol.for('@wowyuarm/dsh-agent-team.preset'))).toBe(true)
   })
@@ -1410,3 +1410,285 @@ describe('Agent Team progress nudge Host wiring', () => {
     expect(deliveredNudgeTexts(resumedAgent).filter(text => text.includes('Claim visibility reminder'))).toHaveLength(1)
   })
 })
+
+describe('Agent Team fresh new_context rollover (ticket 01)', () => {
+  it('rolls a Member over end to end: handoff first, fresh Session, archive, facts survive', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, archived } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('rollover-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('rollover-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const previousSessionId = added.status.member.sessionId
+    const memberId = added.status.member.memberId
+    await writeFile(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'), 'persistent note')
+
+    // One direct prompt drives a turn whose only tool call is new_context.
+    const handoff = 'Objective: land the parser feature. Verified: tests pass. Next: run the browser check.'
+    adapter.enqueue(toolCallResponse('call-nc', 'new_context', { handoff }))
+    // The generation after the rollover consumes the handoff and replies.
+    adapter.enqueue(textResponse('Continuing from the handoff.'))
+    const liveBefore = ctx.agents.get(previousSessionId)!
+    liveBefore.followup(createUserMessage({ content: [{ type: 'text', text: 'Please hand off now.' }], source: { kind: 'user' } }))
+
+    // The rollover completes asynchronously after the containing turn ends.
+    const renewedStatus = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId ? current : undefined
+    })
+    const newSessionId = renewedStatus.member.sessionId
+
+    // Fresh generation: nothing inherited from the old log, and the lineage
+    // parent points at the previous active Session.
+    expect(ctx.agents.get(previousSessionId)).toBeUndefined()
+    const liveAfter = ctx.agents.get(newSessionId)!
+    expect(liveAfter).not.toBe(liveBefore)
+    expect(liveAfter.session.header.parentSession).toBe(previousSessionId)
+    expect(liveAfter.session.inheritedEventCount).toBe(0)
+    const ownEvents = liveAfter.session.ownEvents()
+    // The only pre-handoff events are the constructor seed marker; the
+    // handoff leads every model-facing event of the new generation.
+    const firstUserIndex = ownEvents.findIndex(event => event.type === 'user/message')
+    expect(ownEvents.slice(0, firstUserIndex).some(event => event.type === 'assistant/chunk' || event.type === 'tool/call' || event.type === 'assistant/message')).toBe(false)
+
+    // The old Session archived; private memory and binding survive.
+    expect(archived).toContain(previousSessionId)
+    expect(archived).not.toContain(newSessionId)
+    await expect(access(join(added.status.member.privateMemoryPath, 'notes', 'kept.md'))).resolves.toBeUndefined()
+    expect(ctx.agentTeam.memberForAgent(liveAfter)?.sessionId).toBe(newSessionId)
+
+    // The durable ledger records the Member-actor rollover and replays cleanly.
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+    // The handoff message is the first model-facing context of the new generation.
+    const firstUserEvent = liveAfter.session.ownEvents().find(event => event.type === 'user/message')
+    expect(firstUserEvent?.type).toBe('user/message')
+    if (firstUserEvent?.type !== 'user/message') throw new Error('expected handoff user message')
+    expect(firstUserEvent.data.source).toMatchObject({
+      kind: 'agent-team-context-handoff', form: 'snapshot', version: 1,
+      previousSessionId, newSessionId, trigger: 'model',
+    })
+    expect(firstUserEvent.data.content[0]).toMatchObject({ type: 'text' })
+    const handoffText = (firstUserEvent.data.content[0] as { text: string }).text
+    expect(handoffText).toContain(handoff)
+    // The generation consumed the handoff and answered.
+    expect(adapter.requests.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('an ordinary Session never receives the new_context tool', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx } = await realHarness(adapter)
+    const plain = await ctx.agents.create({ sessionId: SessionId('plain-session'), meta: { cwd: process.cwd() } })
+    try {
+      const names = ctx.tools.schemas(plain.agent).map(tool => tool.name)
+      expect(names).not.toContain('new_context')
+      expect(names).not.toContain('team_message')
+    } finally {
+      await plain.dispose()
+    }
+  })
+})
+
+/** Wait until the predicate holds or the deadline passes. */
+async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = probe()
+    if (value !== undefined) return value
+    if (Date.now() > deadline) throw new Error('waitFor: condition not met before the deadline')
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+}
+
+  it('carries later direct input across a rollover and rederives Team notices from the ledger', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('gate-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('gate-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const previousSessionId = added.status.member.sessionId
+    const memberId = added.status.member.memberId
+
+    adapter.enqueue(toolCallResponse('call-nc', 'new_context', { handoff: 'handoff for the gate test' }))
+    adapter.enqueue(textResponse('Continuing after the handoff.'))
+    const liveBefore = ctx.agents.get(previousSessionId)!
+    liveBefore.followup(createUserMessage({ content: [{ type: 'text', text: 'Start the rollover.' }], source: { kind: 'user' } }))
+
+    // Deterministic race injection: deliver the later direct input inside the
+    // old generation's own turn/end observer — after turn-stopping, at the
+    // boundary where a queued follow-up can slip in between turn end and
+    // idle convergence, before the driver converges or opens a new turn.
+    // The turn/end observer fires inside the append publication, so the
+    // injected follow-up defers one microtask — the same discipline the Host
+    // uses for steer-from-observer — while still landing deterministically
+    // before the driver can converge to idle or open a new turn.
+    const raced = Promise.withResolvers<void>()
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== previousSessionId || event.type !== 'turn/end' || injected) return
+      injected = true
+      queueMicrotask(() => {
+        liveBefore.followup(createUserMessage({ content: [{ type: 'text', text: 'Direct follow-up that arrived during the transition.' }], source: { kind: 'user' } }))
+        raced.resolve()
+      })
+    })
+    // The ledger binding moves first, activation follows; wait for the new
+    // generation's live handle before asserting on it (the commit window's
+    // readiness semantics are locked separately below).
+    const newSessionId = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId ? current.member.sessionId : undefined
+    })
+    const liveAfter = await waitFor(() => ctx.agents.get(newSessionId)!)
+
+    // Old-generation invariant: the rollover turn is the only turn that ran a
+    // step; the racing follow-up never reached a second model request.
+    const oldEvents = liveBefore.session.ownEvents()
+    expect(oldEvents.filter(event => event.type === 'step/start').length).toBe(1)
+    disposeObserver()
+    await raced.promise
+
+    // The carried input is delivered after the handoff; wait for the new
+    // generation to surface it before asserting.
+    await waitFor(() => {
+      const surfaced = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
+      return surfaced.some(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Direct follow-up that arrived during the transition')) ? surfaced : undefined
+    })
+    const userEvents = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
+    const bodies = userEvents.map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+      .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
+    const followUpCount = bodies.filter(body => body.includes('Direct follow-up that arrived during the transition')).length
+    expect(followUpCount).toBe(1)
+    const handoffIndex = bodies.findIndex(body => body.includes('handoff for the gate test'))
+    const followUpIndex = bodies.findIndex(body => body.includes('Direct follow-up'))
+    expect(handoffIndex).toBeGreaterThanOrEqual(0)
+    expect(followUpIndex).toBeGreaterThan(handoffIndex)
+  })
+
+  it('rolls the same Member over twice with identical result sequences without id collisions', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, archived } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('twice-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('twice-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Both generations call new_context as their first tool call with the
+    // same provider call id, so the folded result seq repeats exactly.
+    adapter.enqueue(toolCallResponse('same-call-id', 'new_context', { handoff: 'first handoff' }))
+    adapter.enqueue(textResponse('first continuation.'))
+    ctx.agents.get(firstSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'first' }], source: { kind: 'user' } }))
+    const first = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const secondSessionId = first.member.sessionId
+
+    adapter.enqueue(toolCallResponse('same-call-id', 'new_context', { handoff: 'second handoff' }))
+    adapter.enqueue(textResponse('second continuation.'))
+    ctx.agents.get(secondSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'second' }], source: { kind: 'user' } }))
+    const second = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== secondSessionId ? current : undefined
+    })
+
+    // Distinct generations, both archives preserved, and the ledger holds
+    // exactly two rollover operations with distinct ids.
+    expect(second.member.sessionId).not.toBe(firstSessionId)
+    expect(second.member.sessionId).not.toBe(secondSessionId)
+    expect(archived).toContain(firstSessionId)
+    expect(archived).toContain(secondSessionId)
+    expect(archived).not.toContain(second.member.sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('delivers the handoff first even when unread Team facts exist at rollover time', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('unread-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('unread-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    // An unread Team fact lands while the rollover turn is still settling:
+    // its Inbox notice would ordinarily wake the next turn first, so this is
+    // the discriminating window for handoff-first delivery.
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('unread-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Unread work that must not preempt the handoff', recipients: [memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    adapter.enqueue(textResponse('acknowledged.'))
+    const live = ctx.agents.get(previousSessionId)!
+    await waitForIdle(ctx, live)
+    await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('unread-read'), workspaceId, taskRef: started.task!.taskRef })
+
+    adapter.enqueue(toolCallResponse('call-nc', 'new_context', { handoff: 'handoff under unread pressure' }))
+    adapter.enqueue(textResponse('continuing.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'hand off now' }], source: { kind: 'user' } }))
+    // Once the rollover intent is durable, a fresh unread fact arrives; its
+    // notice steers the old inbox, which the admission gate must hold back
+    // while the handoff leads the new generation.
+    const seenResult = Promise.withResolvers<void>()
+    let seen = false
+    const disposeSeen = ctx.on('session/event', (session, event) => {
+      if (session.id !== previousSessionId || event.type !== 'tool/result' || seen) return
+      seen = true
+      seenResult.resolve()
+    })
+    await seenResult.promise
+    disposeSeen()
+    const update = await ctx.agentTeam.reply({ requestId: requestId('unread-update'), workspaceId, taskRef: started.task!.taskRef, body: 'Second unread update', baseRevision: (await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('unread-read-2'), workspaceId, taskRef: started.task!.taskRef })).thread.revision })
+    if (update.kind !== 'committed') throw new Error(`expected committed update, received ${update.kind}`)
+
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId ? current : undefined
+    })
+    const liveAfter = ctx.agents.get(renewed.member.sessionId)!
+    await waitFor(() => liveAfter.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    // The first model-facing user message of the new generation is the
+    // handoff snapshot, not the rederived Team Inbox notice.
+    const firstUser = liveAfter.session.ownEvents().find(event => event.type === 'user/message')
+    expect(firstUser?.type).toBe('user/message')
+    if (firstUser?.type !== 'user/message') throw new Error('expected first user message')
+    expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', form: 'snapshot' })
+    // The rederived Inbox still arrives afterwards — unread work is not lost.
+    await waitFor(() => {
+      const events = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
+      return events.some(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Team Inbox has unread work')) ? true : undefined
+    })
+  })
+
+  it('never reports the new Session as active during the rollover commit window', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('window-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('window-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    adapter.enqueue(toolCallResponse('call-nc', 'new_context', { handoff: 'window handoff' }))
+    adapter.enqueue(textResponse('continuing.'))
+    ctx.agents.get(previousSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'hand off' }], source: { kind: 'user' } }))
+
+    // Observe the exact commit window: the durable rollover operation is
+    // visible while the old generation still runs and the new Session does
+    // not exist yet. The Member must not report the new binding as active.
+    const windowProbe = Promise.withResolvers<void>()
+    let probed = false
+    const disposeCommitted = ctx.on('agent-team/committed', () => {
+      if (probed) return
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      if (status === undefined || status.member.sessionId === previousSessionId) return
+      probed = true
+      expect(status.availability).not.toBe('active')
+      expect(status.presence).toBe('unavailable')
+      expect(status.diagnostic).toBe('context rollover in progress')
+      windowProbe.resolve()
+    })
+    const renewedSessionId = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId ? current.member.sessionId : undefined
+    })
+    await waitFor(() => ctx.agents.get(renewedSessionId)!)
+    disposeCommitted()
+    await windowProbe.promise
+    // Once activation completes, the same Member reports active again.
+    const settled = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)!
+    expect(settled.member.sessionId).toBe(renewedSessionId)
+    expect(settled.availability).toBe('active')
+  })

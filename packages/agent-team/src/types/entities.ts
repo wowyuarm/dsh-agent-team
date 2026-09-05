@@ -33,6 +33,13 @@ export type AgentTeamClaimRef = Branded<'AgentTeamClaimRef'>
 /** Stable identifier of one public Thread Activity. */
 export type AgentTeamActivityRef = Branded<'AgentTeamActivityRef'>
 
+/**
+ * Opaque, restorable reference to one completed-turn context checkpoint in a
+ * Member's private Session lineage. Selection authority is the ref itself;
+ * the human-readable name is display data only.
+ */
+export type AgentTeamContextCheckpointRef = Branded<'AgentTeamContextCheckpointRef'>
+
 /** Process-local one-use authorization for one Human invitation. */
 export type AgentTeamConfirmationToken = Branded<'AgentTeamConfirmationToken'>
 

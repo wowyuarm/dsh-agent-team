@@ -1,4 +1,5 @@
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
+import type { SessionId as AgentTeamMemberSessionId, SessionSeq as AgentTeamMemberSessionSeq } from "@deepseek-ai/dsh-session"
 import type {
   AgentTeamActivity,
   AgentTeamAgentMember,
@@ -11,6 +12,7 @@ import type {
   AgentTeamClaimActivity,
   AgentTeamClaimRef,
   AgentTeamConfirmationToken,
+  AgentTeamContextCheckpointRef,
   AgentTeamDirectMarker,
   AgentTeamMemberCapabilities,
   AgentTeamMemberId,
@@ -171,6 +173,37 @@ export interface AgentTeamClearMemberContextRequest {
 export interface AgentTeamClearMemberContextResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly status: AgentTeamAgentMemberStatus
+}
+
+/**
+ * Member-authored intent (carried by its live Agent) to continue in its next
+ * private context generation. The requestId and new Session id derive stably
+ * from the successful `new_context` tool call so crash replay converges on
+ * one operation and one generation.
+ */
+export interface AgentTeamRolloverSessionRequest {
+  readonly requestId: AgentTeamRequestId
+  readonly workspaceId: WorkspaceId
+  readonly memberId: AgentTeamMemberId
+  /** The Session the Member must still be bound to at commit time. */
+  readonly previousSessionId: AgentTeamMemberSessionId
+  /** The next generation Session, derived from the successful tool call. */
+  readonly newSessionId: AgentTeamMemberSessionId
+  /** Seq of the successful `new_context` tool result in the previous Session log. */
+  readonly handoffEventSeq: AgentTeamMemberSessionSeq
+  /** Why the rollover happened: the model asked, or honored a pressure notice. */
+  readonly trigger: 'model' | 'pressure'
+  /** Seed source Session for a checkpoint return; absent on a fresh rollover. */
+  readonly sourceSessionId?: AgentTeamMemberSessionId
+  /** Inclusive source event seq the checkpoint return was seeded through. */
+  readonly sourceThroughSeq?: AgentTeamMemberSessionSeq
+  /** The checkpoint a return was addressed to; absent on a fresh rollover. */
+  readonly checkpointRef?: AgentTeamContextCheckpointRef
+}
+
+export interface AgentTeamRolloverSessionResult {
+  readonly receipt: AgentTeamOperationReceipt
+  readonly member: AgentTeamAgentMember
 }
 
 /** Human intent to remove one Agent Member from one Channel. */

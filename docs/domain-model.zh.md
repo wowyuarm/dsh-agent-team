@@ -92,7 +92,7 @@ Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有
 
 ## Runtime Presence
 
-Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 available（live idle）、working（Agent loop running）、error（当前 loop/tool failure，保留到下一次 loop 启动）与 unavailable（无可用 AgentHandle 或 lifecycle/setup/resume 阻止调用）；列表以状态点呈现，和 Claim 状态分离。
+Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 available（live idle）、working（Agent loop running）、error（当前 loop/tool failure，保留到下一次 loop 启动）与 unavailable（无可用 AgentHandle 或 lifecycle/setup/resume 阻止调用，也包括 context rollover 的短暂窗口——ledger 绑定已迁移、新 Session 尚未就绪）；列表以状态点呈现，和 Claim 状态分离。
 
 ## Suspend
 

@@ -23,7 +23,9 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { acceptedTaskCompactionMembers, AutoCompactionCoordinator, PRE_COMPACTION_NOTICE_SUMMARY, preCompactionNoticeText } from './auto-compaction.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor } from './ledger.ts'
+import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
+import { carriedInputOf, foldContextProjection } from './context-projection.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, MemberRuntime } from './member-runtime.ts'
 import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
@@ -45,6 +47,7 @@ import type {
   AgentTeamClaimRequest,
   AgentTeamClaimResult,
   AgentTeamClientMemberStatus,
+  AgentTeamContextCheckpointRef,
   AgentTeamAttachmentId,
   AgentTeamModelSelection,
   AgentTeamCreateChannelRequest,
@@ -73,6 +76,7 @@ import type {
   AgentTeamRecoverMemberResult,
   AgentTeamClearMemberContextRequest,
   AgentTeamClearMemberContextResult,
+  AgentTeamRolloverSessionRequest,
   AgentTeamDmRequest,
   AgentTeamDmResult,
   AgentTeamOperationId,
@@ -166,6 +170,18 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** Tool-side request for one context rollover; the Host validates without side effects. */
+export interface AgentTeamNewContextToolRequest {
+  readonly memberId: AgentTeamMemberId
+  readonly checkpointRef?: AgentTeamContextCheckpointRef
+  readonly relatedFiles?: readonly { readonly path: string; readonly reason: string }[]
+}
+
+/** Tool-side validation outcome: which rollover mode a successful call will take. */
+export interface AgentTeamNewContextToolOutcome {
+  readonly mode: 'fresh' | 'from-checkpoint'
+}
+
 /** Host owner of the single Agent Team in one dshHome. */
 export default class AgentTeam extends TypertRemoteService {
   static inject = [
@@ -241,6 +257,24 @@ export default class AgentTeam extends TypertRemoteService {
       return { events: handle.agent.session.ownEvents() }
     },
     log: message => { this.ctx.logger.warn(message) },
+  })
+  /**
+   * Context self-management: the one deep module that turns a Member's
+   * successful `new_context` tool result into its next private context
+   * generation. The ledger owns the binding audit, the Session projection
+   * owns intent, and this coordinator owns only reconstructible process
+   * state. See docs/architecture.md and docs/team-collaboration.md.
+   */
+  private readonly contextManagement = new ContextManagementCoordinator({
+    agentForMember: memberId => this.handles.get(memberId)?.agent,
+    memberForAgent: agent => this.memberForAgent(agent),
+    projectionForMember: (memberId, sessionId) => {
+      const handle = this.handles.get(memberId)
+      if (handle === undefined || handle.agent.session.id !== sessionId) return undefined
+      return foldContextProjection(handle.agent.session.ownEvents(), handle.agent.session.inheritedEventCount)
+    },
+    executeTransition: (memberId, plan) => this.executeMemberTransition(memberId, plan),
+    log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
   })
   private lifecycleTail: Promise<void> = Promise.resolve()
   private accepting = true
@@ -324,12 +358,16 @@ export default class AgentTeam extends TypertRemoteService {
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
       this.progressNudge.onSessionEvent(memberId, session.id, handle.agent, event)
+      // Context management reacts only after a successful durable tool/result;
+      // the projection (not this listener) decides what that means.
+      this.contextManagement.onSessionEvent(memberId, handle.agent, event)
     })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
       this.accepting = false
       this.recovery.dispose()
       this.progressNudge.dispose()
+      this.contextManagement.dispose()
       await this.autoCompaction.dispose()
       if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
       this.attachmentGcTimer = undefined
@@ -588,22 +626,7 @@ export default class AgentTeam extends TypertRemoteService {
         return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
       }
       const renewed = result.value.member
-      // Drop the old handle's transient state: pending recovery episodes and
-      // error markers belong to the disposed agent, not to the Member.
-      this.recovery.stopTracking(request.memberId)
-      // The fresh Session may re-earn one Claim suggestion per Thread; the
-      // old Session's one-shot records must not leak into it.
-      this.progressNudge.stopTracking(request.memberId)
-      this.memberBySessionId.delete(previousSessionId)
-      await active.dispose()
-      this.handles.delete(request.memberId)
-      this.modelSelections.delete(request.memberId)
-      this.memberRuntime.forgetMember(request.memberId)
-      this.clearMemberFailure(request.memberId, 'activation')
-      this.clearMemberNotificationState(request.memberId)
-      // The previous log survives on disk; archiving hides it from every
-      // grouping surface so one Member keeps exactly one visible Session.
-      await this.ctx.workspaceRegistry.archiveSession(previousSessionId)
+      await this.retireMemberGeneration(request.memberId, active, previousSessionId)
       await this.activateMember(renewed, undefined, undefined, previousSessionId)
       const reactivated = this.handles.get(request.memberId)
       if (reactivated === undefined) {
@@ -612,6 +635,100 @@ export default class AgentTeam extends TypertRemoteService {
         throw new Error(`Agent Member '${stored.handle}' failed to start a new context: ${this.memberFailures.get(request.memberId)?.activation ?? 'unknown error'}`)
       }
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(renewed) })
+    })
+  }
+
+  /**
+   * Retire one Member's previous generation after its durable binding moved
+   * onto a new Session id: drop the old handle's transient state, dispose the
+   * Agent, and archive the old Session log (which stays on disk for history).
+   * Shared by the Human clear path and the model-initiated rollover.
+   */
+  private async retireMemberGeneration(memberId: AgentTeamMemberId, active: AgentHandle, previousSessionId: SessionId): Promise<void> {
+    // Drop the old handle's transient state: pending recovery episodes and
+    // error markers belong to the disposed agent, not to the Member.
+    this.recovery.stopTracking(memberId)
+    // The fresh Session may re-earn one Claim suggestion per Thread; the
+    // old Session's one-shot records must not leak into it.
+    this.progressNudge.stopTracking(memberId)
+    // The context admission gate stays armed through disposal: input racing
+    // the retire window must still be captured for the new generation, and
+    // the coordinator drops its own bookkeeping only after the swap settles.
+    this.memberBySessionId.delete(previousSessionId)
+    await active.dispose()
+    this.handles.delete(memberId)
+    this.modelSelections.delete(memberId)
+    this.memberRuntime.forgetMember(memberId)
+    this.clearMemberFailure(memberId, 'activation')
+    this.clearMemberNotificationState(memberId)
+    // The previous log survives on disk; archiving hides it from every
+    // grouping surface so one Member keeps exactly one visible Session.
+    await this.ctx.workspaceRegistry.archiveSession(previousSessionId)
+  }
+
+  /**
+   * Execute one prepared context rollover at a true idle boundary: commit the
+   * idempotent Member-actor operation, retire the previous generation, and
+   * activate the fresh Session whose first model-facing context is the
+   * Member's own handoff. Later non-Team input captured during the transition
+   * is delivered after the handoff; the Team Inbox is rederived from the
+   * ledger, never copied.
+   */
+  private async executeMemberTransition(memberId: AgentTeamMemberId, plan: TransitionPlan): Promise<void> {
+    await this.enqueueLifecycle(async () => {
+      this.requireAccepting()
+      const stored = this.requireLedger().getMember(memberId)
+      if (stored === undefined || stored.state !== 'enabled') throw new Error(`Agent Member '${memberId}' cannot roll over: not enabled`)
+      if (stored.sessionId !== plan.previousSessionId) throw new Error(`Agent Member '${stored.handle}' is no longer bound to the rolled-over Session`)
+      const active = this.handles.get(memberId)
+      if (active === undefined) throw new Error(`Agent Member '${stored.handle}' has no active session to roll over`)
+      // A racing turn the admission gate rejects still leaves the Agent
+      // momentarily running; wait for its convergence instead of failing the
+      // swap — the gate guarantees it spends no model request.
+      if (this.runningAgents.has(active.agent.id)) await active.agent.whenIdle()
+      if (this.runningAgents.has(active.agent.id)) throw new Error(`Agent Member '${stored.handle}' is still running; the rollover must wait for idle`)
+      const rolled = await this.rolloverSessionForAgent(active.agent, {
+        requestId: plan.requestId,
+        workspaceId: stored.workspaceId,
+        memberId,
+        previousSessionId: plan.previousSessionId,
+        newSessionId: plan.newSessionId,
+        handoffEventSeq: plan.handoffEventSeq as AgentTeamRolloverSessionRequest['handoffEventSeq'],
+        trigger: plan.trigger,
+        ...(plan.checkpointRef === undefined ? {} : { checkpointRef: plan.checkpointRef as AgentTeamContextCheckpointRef }),
+      })
+      // The durable old-log projection is the carried-input truth: after the
+      // old Agent retires, fold its final state and take every post-intent
+      // non-Team candidate the old generation never answered. The process
+      // capture only accelerates; it is unioned by message id, never allowed
+      // to override the fold.
+      const preRetireCapture = this.contextManagement.drainCapturedInput(memberId)
+      await this.retireMemberGeneration(memberId, active, plan.previousSessionId)
+      const finalState = foldContextProjection(active.agent.session.ownEvents(), active.agent.session.inheritedEventCount)
+      const foldedCarried = carriedInputOf(finalState)
+      const carriedById = new Map(plan.carriedInput.map(message => [message.id, message]))
+      for (const message of foldedCarried) carriedById.set(message.id, message)
+      for (const message of preRetireCapture) if (!carriedById.has(message.id)) carriedById.set(message.id, message)
+      for (const message of this.contextManagement.drainCapturedInput(memberId)) if (!carriedById.has(message.id)) carriedById.set(message.id, message)
+      const carriedInput = [...carriedById.values()]
+      // A fresh rollover seeds nothing and points the lineage parent at the
+      // previous active Session; checkpoint returns (ticket 02) seed the
+      // source prefix and parent at the checkpoint's own Session instead.
+      // Activation defers the ordinary Inbox wake so the handoff is
+      // guaranteed to be the new generation's first model-facing context.
+      await this.activateMember(rolled.member, undefined, undefined, plan.previousSessionId, { deferNotify: true })
+      const reactivated = this.handles.get(memberId)
+      if (reactivated === undefined) {
+        throw new Error(`Agent Member '${stored.handle}' failed to activate its next context: ${this.memberFailures.get(memberId)?.activation ?? 'unknown error'}`)
+      }
+      // The handoff is the first model-facing context of the new generation.
+      // It rides the step-priority inbox lane (steer) so a later rederived
+      // Inbox notice queues behind it instead of preempting it; carried input
+      // follows as its own turn, and the Inbox is rederived from ledger facts.
+      reactivated.agent.steer(this.contextManagement.handoffMessageFor(plan))
+      for (const message of carriedInput) reactivated.agent.followup(message)
+      const notifications = this.requireLedger().notificationFacts(memberId, { workspaceId: rolled.member.workspaceId })
+      if (notifications.length > 0) this.notifyMember(reactivated.agent)
     })
   }
 
@@ -1019,6 +1136,38 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireLedger().validate()
   }
 
+  /**
+   * Agent-only rollover request validation: the tool calls this to check its
+   * Member binding, exclusivity, and checkpoint ownership. It performs no
+   * lifecycle effect — the actual transition reacts to the successful tool
+   * result through the context-management coordinator.
+   */
+  requestNewContext(agent: Agent, request: AgentTeamNewContextToolRequest): AgentTeamNewContextToolOutcome {
+    const member = this.memberForAgent(agent)
+    if (member === undefined || member.state !== 'enabled') throw new Error('new_context requires an active Team Member')
+    if (this.contextManagement.isTransitioning(member.memberId)) throw new Error('a context rollover is already scheduled for this Member; wait for it to finish before requesting another')
+    if (this.runningAgents.has(agent.id) !== true) {
+      // The tool runs inside the Member's own turn, so a non-running agent at
+      // this point is a harness anomaly; refuse rather than schedule a swap
+      // outside the turn fence.
+      throw new Error('new_context must run inside this Member\'s own running turn')
+    }
+    return { mode: request.checkpointRef === undefined ? 'fresh' : 'from-checkpoint' }
+  }
+
+  /**
+   * Agent-only session rollover commit: the Member actor must be the target
+   * Member on its currently bound live Session. The Host performs the actual
+   * generation swap around this write; the ledger records only the durable
+   * binding transition and rollover audit envelope.
+   */
+  async rolloverSessionForAgent(agent: Agent, request: AgentTeamRolloverSessionRequest): Promise<AgentTeamDurableMemberResult> {
+    const actor = this.memberCall(agent, request.workspaceId)
+    const result = await this.requireLedger().rolloverMemberSession({ ...request, actor })
+    if (result.committed) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   private emitCommittedOutcome<T extends { readonly kind: string; readonly receipt?: AgentTeamOperationReceipt }>(
     result: { readonly committed: boolean; readonly value: T },
   ): void {
@@ -1100,7 +1249,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId): Promise<void> {
+  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId, options?: { readonly deferNotify?: boolean }): Promise<void> {
     if (this.handles.has(member.memberId)) return
     let created: AgentHandle | undefined
     try {
@@ -1124,6 +1273,28 @@ export default class AgentTeam extends TypertRemoteService {
         this.memberRuntime.applyMemberToolPolicy(agentCtx, member)
         this.validateMemberPreset(agentCtx)
         installModelSelection(agentCtx, selected)
+        // Admission gate for pending context rollovers: once a successful
+        // new_context result is durable, queued input must not open another
+        // old-generation model request. The turn-stop boundary captures the
+        // inbox (non-Team input is carried to the new generation), and a
+        // racing pre-step rejects instead of admitting claimed messages.
+        agentCtx.on('agent/turn-stopping', ({ agent }) => {
+          if (!this.contextManagement.needsAdmissionGate(agent)) return
+          this.contextManagement.captureQueuedInput(agent)
+        })
+        agentCtx.on('agent/pre-step', async ({ agent, messages }, next) => {
+          // Check before AND after the waterfall: a rollover pending at either
+          // edge must reject this old-generation step, preserving its claimed
+          // input for the new generation instead of letting it run or drop.
+          if (this.contextManagement.needsAdmissionGate(agent)) {
+            this.contextManagement.captureClaimedInput(agent, messages)
+            return { kind: 'reject' as const }
+          }
+          const decision = await next()
+          if (decision.kind === 'reject' || !this.contextManagement.needsAdmissionGate(agent)) return decision
+          this.contextManagement.captureClaimedInput(agent, messages)
+          return { kind: 'reject' as const }
+        })
         return {
           commit: () => {
             const agent = agentCtx.agent
@@ -1155,8 +1326,19 @@ export default class AgentTeam extends TypertRemoteService {
       this.modelSelections.set(member.memberId, selected)
       this.clearMemberFailure(member.memberId, 'activation')
       this.nameMemberSession(member, created.agent)
-      this.notifyMember(created.agent)
+      // A rollover activation defers the ordinary Inbox wake: the caller
+      // delivers the handoff (and carried input) first, then rederives the
+      // Inbox, so the handoff is guaranteed to be the new generation's first
+      // model-facing context even when unread Team facts exist.
+      if (options?.deferNotify !== true) this.notifyMember(created.agent)
       this.autoCompaction.activated(member.memberId)
+      // A restart between a durable rollover intent and its swap replays the
+      // old Session; the projection still carries the intent, so finish the
+      // transition (or keep waiting for the containing turn) from here.
+      if (persisted) {
+        const state = foldContextProjection(created.agent.session.ownEvents(), created.agent.session.inheritedEventCount)
+        if (state.pending !== null) this.contextManagement.recoverPendingTransition(member.memberId, created.agent, member.sessionId)
+      }
     } catch (error) {
       await created?.dispose()
       this.modelSelections.delete(member.memberId)
@@ -1235,6 +1417,12 @@ export default class AgentTeam extends TypertRemoteService {
     if (failures?.activation !== undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic: failures.activation })
     const handle = this.handles.get(member.memberId)
     if (handle === undefined) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable' })
+    // A rollover commits its ledger binding before the old generation retires
+    // and the new one activates; during that window the live handle still runs
+    // the previous Session. The Member stays visible but must not report the
+    // new binding as active — a Client following the row would otherwise open
+    // a Session that does not exist yet.
+    if (handle.agent.id !== member.sessionId) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic: 'context rollover in progress' })
     if (this.ctx.agentPresets.composedPreset(handle.agent.ctx) === undefined) {
       return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: ORPHANED_MEMBER_DIAGNOSTIC })
     }

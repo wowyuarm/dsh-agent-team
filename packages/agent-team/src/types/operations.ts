@@ -1,9 +1,10 @@
-import type { SessionId } from "@deepseek-ai/dsh-session"
+import type { SessionId, SessionSeq } from "@deepseek-ai/dsh-session"
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
 import type {
   AgentTeamAgentMember,
   AgentTeamChannel,
   AgentTeamChannelRef,
+  AgentTeamContextCheckpointRef,
   AgentTeamOperationBase,
   AgentTeamClaim,
   AgentTeamClaimActivity,
@@ -116,6 +117,39 @@ export interface AgentTeamMemberSessionRenewedOperation extends AgentTeamOperati
     readonly member: AgentTeamAgentMember
     /** The Session the Member ran on before this renewal. */
     readonly previousSessionId: SessionId
+  }
+}
+
+/**
+ * Durable model-initiated rollover of one Member onto its next context
+ * generation. The actor is the calling Member itself: the Host is the
+ * executor, never a synthetic Human/system actor. The data records only the
+ * verifiable envelope — session anchors, the successful handoff tool-result
+ * sequence, and the trigger — because the private handoff prose stays in the
+ * Member's own Session log, never in the Team ledger.
+ */
+export interface AgentTeamMemberSessionRolledOverOperation extends AgentTeamOperationBase {
+  readonly kind: 'team/member-session-rolled-over'
+  readonly data: {
+    readonly member: AgentTeamAgentMember
+    /** The Session the Member ran on before this rollover. */
+    readonly previousSessionId: SessionId
+    /** The fresh or seeded Session the Member transitions onto. */
+    readonly newSessionId: SessionId
+    /**
+     * The Session a checkpoint return was seeded from. Absent on a fresh
+     * rollover, where the new Session inherits no prefix and its lineage
+     * parent is the previous active Session.
+     */
+    readonly sourceSessionId?: SessionId
+    /** Inclusive source event seq the checkpoint return was seeded through. */
+    readonly sourceThroughSeq?: SessionSeq
+    /** Seq of the successful `new_context` tool result in the previous Session log. */
+    readonly handoffEventSeq: SessionSeq
+    /** The checkpoint a return was addressed to; absent on a fresh rollover. */
+    readonly checkpointRef?: AgentTeamContextCheckpointRef
+    /** Why the rollover happened: the model asked, or a pressure notice was honored. */
+    readonly trigger: 'model' | 'pressure'
   }
 }
 
@@ -347,6 +381,7 @@ export type AgentTeamOperation =
   | AgentTeamMemberSessionRestartedOperation
   | AgentTeamMemberContextClearedOperation
   | AgentTeamMemberSessionRenewedOperation
+  | AgentTeamMemberSessionRolledOverOperation
   | AgentTeamChannelUpdatedOperation
   | AgentTeamMemberUpdatedOperation
   | AgentTeamChannelMemberAddedOperation

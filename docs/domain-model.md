@@ -88,7 +88,7 @@ A possible future private Place with its own participants, visibility, Messages,
 
 ## Runtime Presence
 
-An in-process availability projection, not a ledger fact: available (live idle), working (loop running), error (current loop/tool failure), and unavailable (no usable handle or lifecycle/setup/resume block). It is separate from Claim state.
+An in-process availability projection, not a ledger fact: available (live idle), working (loop running), error (current loop/tool failure), and unavailable (no usable handle or lifecycle/setup/resume block, including the brief context-rollover window where the ledger binding has moved but the new Session is not live yet). It is separate from Claim state.
 
 ## Suspend
 
