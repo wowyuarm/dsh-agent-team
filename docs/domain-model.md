@@ -94,6 +94,10 @@ An in-process availability projection, not a ledger fact: available (live idle),
 
 Temporarily stop a Member's live Agent while retaining identity, Session, Claims, Attention, unread state, and private memory. Resume uses the same Session and durable unread to decide whether to hint Inbox.
 
+## Archive
+
+The reversible hidden third state between Suspend and Remove, for Members and Channels. `archiveMember` disposes the live session (private memory and the Session log stay on disk) and releases active Claims with public `claims_released` Activities; `archiveChannel` applies the same release shape across every owner on the Channel's Threads. Memberships survive archival (hidden state, not departure). Archived entities are gone from every Team API surface — projections, mention candidates, ref resolution, and ref-addressed reads reject with an explicit archived error — while the facts stay complete in the ledger for replay and a future restore. Removal from archived remains available as the data-hygiene path.
+
 ## Remove
 
 Irreversibly deactivate an Agent Member: release active Claims, end Attention, delete private memory, and archive its Session. Historical Messages, Activities, and identity snapshots remain.

@@ -2,7 +2,7 @@
 
 English | [中文](harness-navigation.zh.md)
 
-Date: 2026-08-17
+Date: 2026-09-05
 
 This maintained engineering navigation records cross-repository routes verified against current source, tests, or Harness docs. Update it when packages, scripts, slots, or installation change. It is not a replacement for Harness documentation and does not change product decisions; source and tests define current behavior.
 

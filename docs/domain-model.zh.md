@@ -98,6 +98,10 @@ Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 a
 
 临时停止 Agent Member 的 live Agent，同时保留成员身份、session、claims、Thread Attention、未读状态和私有 memory。Resume 恢复同一 session，并由 durable unread 决定是否重新提示 Inbox。
 
+## Archive
+
+介于 Suspend 与 Remove 之间的可逆隐藏第三态，适用于 Member 与 Channel。`archiveMember` 释放 live session（私有 memory 与 Session log 留在磁盘）并以公开 `claims_released` Activity 释放 active Claims；`archiveChannel` 对 Channel 上所有 Thread 的 owner 施加同样的释放形态。Membership 在归档后保留（隐藏态，非退出）。Archived 实体从所有 Team API surface 消失——projection、mention 候选、ref 解析、ref-addressed read 均以明确的 archived 错误拒绝——而事实完整保留在 ledger 中供重放与未来恢复。从 archived 状态 Remove 仍可作为数据清理路径。
+
 ## Remove
 
 不可逆地停用 Agent Member。Remove 释放 active claims、结束 Thread Attention、删除私有 memory、归档 session；历史 Message、Activity 和身份快照永久保留。
