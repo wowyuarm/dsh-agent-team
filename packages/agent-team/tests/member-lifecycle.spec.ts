@@ -270,7 +270,7 @@ describe('Agent Team Member lifecycle', () => {
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     expect(added.status.availability).toBe('active')
-    expect(added.status.member.privateMemoryPath).toBe(join(root, 'dsh-home', 'agent-team', 'members', added.status.member.memberId))
+    expect(added.status.member.privateMemoryPath).toBe(join(root, 'dsh-home', 'agent-team', 'members', added.status.member.memberId.replaceAll(':', '-')))
     expect(await readFile(join(added.status.member.privateMemoryPath, 'memory.md'), 'utf8')).toContain('# Member memory')
     await expect(access(join(added.status.member.privateMemoryPath, 'notes'))).resolves.toBeUndefined()
     const live = ctx.agents.get(added.status.member.sessionId)
@@ -1408,5 +1408,59 @@ describe('Agent Team progress nudge Host wiring', () => {
     // The durable log still carries the consumed notice; no NEW suggestion
     // may appear on top of it within the same Session.
     expect(deliveredNudgeTexts(resumedAgent).filter(text => text.includes('Claim visibility reminder'))).toHaveLength(1)
+  })
+})
+
+describe('Agent Team Member private memory directory sanitization (issue #7)', () => {
+  it('derives a Windows-safe directory segment without touching the member ref', async () => {
+    const { memberMemoryDirectoryName } = await import('../src/member-runtime.ts')
+    const memberId = 'member:9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b' as AgentTeamMemberId
+    expect(memberMemoryDirectoryName(memberId)).toBe('member-9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b')
+    // No path-segment-forbidden characters remain on any platform.
+    expect(memberMemoryDirectoryName(memberId)).not.toContain(':')
+    // The branded ref itself is unchanged by the helper.
+    expect(memberId).toBe('member:9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b')
+  })
+
+  it('provisions new Members under a colon-free private memory path', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    await ctx.agentTeam.createChannel({ requestId: requestId('san-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('san-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [] })
+    const member = added.status.member
+    expect(member.memberId).toContain(':')
+    expect(member.privateMemoryPath).not.toContain(':')
+    expect(member.privateMemoryPath).toContain(member.memberId.replaceAll(':', '-'))
+    await expect(access(join(member.privateMemoryPath, 'notes'))).resolves.toBeUndefined()
+    await expect(access(join(member.privateMemoryPath, 'skills'))).resolves.toBeUndefined()
+    await expect(access(join(member.privateMemoryPath, 'memory.md'))).resolves.toBeUndefined()
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('migrates a legacy colon directory onto the sanitized path on activation, preserving memory', async () => {
+    const { ctx } = await realHarness()
+    // Exercise the migration seam directly with a synthetic pre-fix Member
+    // record: the ledger recorded the colon path and the colon directory
+    // holds the Member's existing private memory.
+    const memberId = 'member:1a2b3c4d-0000-4000-8000-000000000001' as AgentTeamMemberId
+    const parent = join(process.env.DSH_HOME!, 'agent-team', 'members')
+    const legacyPath = join(parent, memberId)
+    const sanitized = join(parent, memberId.replaceAll(':', '-'))
+    await mkdir(join(legacyPath, 'notes'), { recursive: true })
+    await writeFile(join(legacyPath, 'notes', 'kept.md'), 'persistent note')
+    await writeFile(join(legacyPath, 'memory.md'), '# Member memory\n\n## Stable facts\n- legacy fact\n')
+
+    const { MemberRuntime } = await import('../src/member-runtime.ts')
+    const runtime = new MemberRuntime({ ctx: ctx as never, liveMemberContext: () => { throw new Error('unused') }, runningAgents: new Set() })
+    await runtime.initializePrivateMemory(sanitized, legacyPath)
+
+    // The sanitized directory now holds the migrated memory; the colon
+    // directory is gone (renamed, not copied).
+    await expect(readFile(join(sanitized, 'notes', 'kept.md'), 'utf8')).resolves.toBe('persistent note')
+    await expect(readFile(join(sanitized, 'memory.md'), 'utf8')).resolves.toContain('legacy fact')
+    await expect(access(legacyPath)).rejects.toThrow()
+
+    // Re-running activation is idempotent: sanitized wins, no throw.
+    await runtime.initializePrivateMemory(sanitized, legacyPath)
+    await expect(readFile(join(sanitized, 'notes', 'kept.md'), 'utf8')).resolves.toBe('persistent note')
   })
 })
