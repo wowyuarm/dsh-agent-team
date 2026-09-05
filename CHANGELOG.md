@@ -4,12 +4,15 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [0.1.8] - 2026-09-05
 
-- Abbreviated refs resolve everywhere: a branded ref (`task:` / `thread:` / `member:` …) with 6+ unambiguous hex characters resolves in Team tools, tools guidance, and the Web Client — `task:0f0ad7` addresses the Task whose UUID starts with those digits; ambiguous prefixes are rejected with candidates, and the Client links a ref only when it resolves uniquely.
-- Member sessions drop the last Team-owned composer surfaces: no seat shadow, no trigger sources, no hint strip — ordinary and member sessions now share exactly the same shipped composer and vocabulary.
-- Silent members get advisory progress nudges: when a running Member Session works without communicating for a while, the Host may inject one merged notice listing the relevant Threads; it never writes Messages or wakes idle members, defers to recovery/Inbox/compaction notices, and is revoked once the member communicates.
-- Member guidance now distinguishes session replies from Team messages (ledger-backed Thread posts vs. direct conversation with the Human), and states that each member's private space is invisible to everyone else — restate needed content in the communication instead of pointing at notes.
-- The mention popup keeps the highlighted row in view on long rosters and ranks current Thread followers above the rest, since a follower mention delivers directly.
-- One status-dot component now renders task chips, thread pills, and member avatars, and the new-update jump hint disappears once the reader reaches the tail.
+- Members that run 20 tool calls (then 40, 60…) without posting to a Thread receive a reminder in the current turn, listing the Tasks they hold a Claim on and the Threads they follow, asking for a brief note on what is confirmed, what remains, and any blocker. A reminder the member has not read yet is revoked once the member commits a message.
+- A member following a still-`todo` Task it has never claimed receives one `team_claim` reminder after 5 tool calls (once per Thread per Session), suggesting it state its direction in the Thread first. Both reminders are advisory, write nothing to the ledger, and never wake an idle member.
+- Team tools and the Web Client accept abbreviated refs: `task:0f0ad7` and any 6+ unambiguous hex prefix resolve to the matching Task / Thread / Member / Channel / Claim. Ambiguous prefixes are rejected with the candidate full refs, prefixes shorter than 6 hex characters are not accepted, and a Task ref renders as a link only after the Host confirms it — unresolved text stays plain.
+- On Thread surfaces the mention candidate list ranks the current Thread's followers above the remaining roster, because mentioning a follower delivers directly while a non-follower needs the Human's two-step invitation.
+- Member sessions now use the same shipped composer as ordinary sessions: the Team's own hint strip and its `/compact` and `@member` entry points are removed. Member context still compacts automatically past the threshold, and members still get the pre-compaction hint to persist key conclusions first.
+- Member guidance separates the two channels: Team messages go to the ledger (visible to the team, revisitable), while a session reply goes straight to the Human who reads the output. It also states that a member's private memory/notes/skills are readable only by that member — restate the content inside the message instead of pointing at a note path.
+- Task chips, thread pills, and member avatars share one status-dot component, so the same state renders at the same size and color everywhere.
+- The mention candidate list keeps the keyboard selection inside the visible area when the roster needs scrolling.
+- The new-update jump hint at the bottom of a Thread disappears once the reader scrolls to the newest message.
 
 ## [0.1.7] - 2026-09-04
 
