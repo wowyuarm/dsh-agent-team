@@ -27,7 +27,7 @@ This directory contains the maintained engineering documentation for this reposi
 
 ## Where to start
 
-- **Host or domain:** read [`architecture.md`](architecture.md) and [`domain-model.md`](domain-model.md), then use `packages/agent-team/src/` and its tests as authority; use `.scratch/README.md` to locate historical decisions when needed.
-- **Tools, preset, or `/team`:** read the relevant sections of [`architecture.md`](architecture.md), then consult the Harness cookbook and subsystem docs.
-- **Client or UI:** read [`frontend-design.md`](frontend-design.md), the Client section of [`architecture.md`](architecture.md), and the UI acceptance rules in [`development.md`](development.md); use [`harness-navigation.md`](harness-navigation.md) for the cross-repository route.
-- **Installation, build, tests, or Remote generation:** read [`development.md`](development.md), then inspect the actual `package.json` or script implementation.
+- **Host or domain changes:** [`architecture.md`](architecture.md) for boundaries, [`domain-model.md`](domain-model.md) for vocabulary; `packages/agent-team/src/` and its tests are the authority. Use `.scratch/README.md` to locate historical decisions when needed.
+- **Tools, preset, or `/team` changes:** the relevant sections of [`architecture.md`](architecture.md), then the Harness cookbook and subsystem docs.
+- **Client or UI changes:** [`frontend-design.md`](frontend-design.md) for the UI system, [`harness-navigation.md`](harness-navigation.md) for the cross-repository route.
+- **Installation, build, tests, or Remote generation:** [`development.md`](development.md), then the actual `package.json` or script implementation.

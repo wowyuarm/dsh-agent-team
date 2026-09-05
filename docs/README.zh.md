@@ -27,7 +27,7 @@
 
 ## 从哪里开始
 
-- **改 Host 或 domain：** 读 [`architecture.zh.md`](architecture.zh.md) 与 [`domain-model.zh.md`](domain-model.zh.md)，再以 `packages/agent-team/src/` 和测试为准；需要决策来由时，按 `.scratch/README.md` 查 archive。
-- **改 tools、preset 或 `/team`：** 读 [`architecture.zh.md`](architecture.zh.md) 的对应章节，再查 Harness cookbook 和 subsystem 文档。
-- **改 Client 或 UI：** 读 [`frontend-design.zh.md`](frontend-design.zh.md)、[`architecture.zh.md`](architecture.zh.md) 的 Client 章节与 [`development.zh.md`](development.zh.md) 的 UI 验收规则；跨仓库路线见 [`harness-navigation.zh.md`](harness-navigation.zh.md)；需要历史设计来由时再查 `.scratch/archive/2026-08/ui-redesign/`。
-- **改安装、构建、测试或 Remote 生成：** 读 [`development.zh.md`](development.zh.md)，再查看对应 `package.json` / script 的实际实现。
+- **改 Host 或 domain：** 边界查 [`architecture.zh.md`](architecture.zh.md)，词汇查 [`domain-model.zh.md`](domain-model.zh.md)；`packages/agent-team/src/` 和测试是权威。需要决策来由时再按 `.scratch/README.md` 查 archive。
+- **改 tools、preset 或 `/team`：** 查 [`architecture.zh.md`](architecture.zh.md) 的对应章节，再查 Harness cookbook 和 subsystem 文档。
+- **改 Client 或 UI：** UI 体系查 [`frontend-design.zh.md`](frontend-design.zh.md)，跨仓库路线查 [`harness-navigation.zh.md`](harness-navigation.zh.md)。
+- **改安装、构建、测试或 Remote 生成：** 查 [`development.zh.md`](development.zh.md)，再看对应 `package.json` / script 的实际实现。

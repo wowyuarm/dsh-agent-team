@@ -4,26 +4,21 @@
 
 `dsh-agent-team` is an opt-in, externally installable Cordis bundle for DeepSeek Harness. It adds a single-host Agent Team without modifying the Harness repository, the agent loop, or shipped defaults.
 
-Read [`docs/README.md`](docs/README.md) first. It is the maintained documentation index:
-
-- [`docs/development.md`](docs/development.md): setup, commands, generated files, testing, and release checks.
-- [`docs/architecture.md`](docs/architecture.md): package ownership, Host authority, Remote, preset, and Client boundaries.
-- [`docs/harness-navigation.md`](docs/harness-navigation.md): which Harness docs, packages, source, and tests to inspect for each kind of change.
+Read [`docs/README.md`](docs/README.md) first — it is the maintained documentation index.
 
 Use this authority order:
 
 1. **Current behavior:** source and tests under `packages/`. When prose disagrees with code, code wins.
 2. **Maintained engineering guidance:** `docs/`. Update it when a code or workflow change invalidates it; it must not define behavior that the code does not implement.
 3. **Harness contract:** `../deepseek-harness/docs/`, its applicable `AGENTS.md`, and the corresponding Harness source/tests.
-4. **Work history:** `.scratch/`. It contains active work items and archived design, research, tickets, prototypes, and validation evidence. It is not an implementation or API authority. Read [`.scratch/README.md`](.scratch/README.md) before using it; then verify relevant history against code, tests, and the Harness contract.
+4. **Work history:** `.scratch/` — active work items and archived design, research, tickets, prototypes, and validation evidence. It is not an implementation or API authority; see [`.scratch/README.md`](.scratch/README.md) before using it, and verify relevant history against code, tests, and the Harness contract.
 
 Keep production code self-explanatory through clear names, types, and structure. Comments explain only non-obvious constraints, ownership, or reasons; they are not the sole definition of current behavior.
 
-## Before editing
+## Reading guidance
 
-- Identify the owning package and read its source, tests, package manifest, and README.
-- Read the matching section of [`docs/architecture.md`](docs/architecture.md).
-- For anything that consumes a Harness capability, follow [`docs/harness-navigation.md`](docs/harness-navigation.md) into the adjacent checkout before designing the change.
+- Use [`docs/architecture.md`](docs/architecture.md) for package ownership, Host authority, Remote, preset, and Client boundaries — not before every edit, only when a change crosses those boundaries.
+- Use [`docs/harness-navigation.md`](docs/harness-navigation.md) for cross-repository routes when a change consumes a Harness capability.
 - Treat `.scratch/` as background context, not as a specification to implement blindly. New cross-session work belongs in one `.scratch/active/<work>/` directory; close it into the archive only after durable conclusions have moved to maintained documents.
 
 ## Architecture guardrails
@@ -51,16 +46,6 @@ Keep production code self-explanatory through clear names, types, and structure.
 
 Run the narrowest applicable check, then escalate for the changed surface. The exact workflow is in [`docs/development.md`](docs/development.md).
 
-```sh
-npm run typecheck
-npm test
-npm run build
-npm run test:browser
-npm run lint
-npm pack --dry-run
-git diff --check
-```
-
 `npm run test:browser` is required for changes that can affect the assembled Web bundle, Client loading, slot takeover, Remote activation, or visible UI. It uses the adjacent Harness checkout and a temporary profile; it does not modify the Harness repository permanently.
 
 Release cadence is batched: between releases the operator daily-drives a locally linked build as a lightweight acceptance channel, so choose the narrowest applicable check per change instead of demanding full acceptance for every small fix. When asking the operator to preview or accept a change, point them at the dev profile (`dsh web --profile web-dev`); the default `web` profile stays on the published stable release. See "Profile 模式与发布节奏" in [`docs/development.md`](docs/development.md).
@@ -69,5 +54,4 @@ Release cadence is batched: between releases the operator daily-drives a locally
 
 - Domain and Host behavior: `packages/agent-team/src/`, its tests, and `docs/architecture.md`.
 - Tools and preset: `packages/tool-agent-team/`, `packages/agent-team/preset/`, and the matching Harness subsystem docs.
-- Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, and `docs/harness-navigation.md`.
-- Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, `docs/harness-navigation.md`, and, when needed, the relevant `.scratch/archive/` work history; verify all behavior in code and tests.
+- Client or UI: `packages/client-agent-team/src/client/`, `docs/architecture.md`, and `docs/harness-navigation.md`; consult the relevant `.scratch/archive/` work history only when needed, and verify all behavior in code and tests.
