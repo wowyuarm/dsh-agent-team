@@ -9,9 +9,7 @@
 import { useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import css from './sidebar.module.css'
-
-/** Insert side of an in-flight drop relative to the hovered row. */
-export type SidebarDropMarker = 'before' | 'after'
+import type { SidebarDropMarker } from './sidebar-order.ts'
 
 export interface SidebarRowDragHandlers<K extends string> {
   /** Per-row native wiring plus the marker this row currently shows. */
