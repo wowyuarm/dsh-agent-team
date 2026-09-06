@@ -29,7 +29,15 @@ const linkPackage = (name, packageDir) => {
   if (existsSync(target)) return
   // node_modules/<scope>/<name> -> ../../../deepseek-harness/<packageDir>
   const relativeTarget = relative(scopeRoot, packageDir)
-  symlinkSync(relativeTarget, target, 'dir')
+  if (process.platform === 'win32') {
+    // Windows needs symlink privilege (admin or developer mode) for real
+    // symlinks; directory junctions need none and behave the same for this
+    // purpose. CI windows runners are admin, but junction keeps local
+    // non-admin setups working too.
+    symlinkSync(relativeTarget, target, 'junction')
+  } else {
+    symlinkSync(relativeTarget, target, 'dir')
+  }
   linked += 1
 }
 for (const area of readdirSync(packagesRoot, { withFileTypes: true })) {
@@ -62,7 +70,11 @@ if (existsSync(vendorRoot)) {
 const selfRef = join(repoRoot, 'node_modules', '@wowyuarm')
 mkdirSync(selfRef, { recursive: true })
 if (!existsSync(join(selfRef, 'dsh-agent-team'))) {
-  symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'dsh-agent-team'), 'dir')
+  if (process.platform === 'win32') {
+    symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'dsh-agent-team'), 'junction')
+  } else {
+    symlinkSync(relative(selfRef, repoRoot), join(selfRef, 'dsh-agent-team'), 'dir')
+  }
   linked += 1
 }
 console.log(`linked ${linked} Harness packages into node_modules`)

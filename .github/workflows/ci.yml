@@ -1,0 +1,116 @@
+# CI gate: typecheck + full tests on clean Linux and Windows runners.
+#
+# The environment contract lives in docs/development.md § "Sandbox and CI
+# environments" — the same six-step contract as the hoplite sandbox setup in
+# .hoplite/settings.json. When the certified harness tag advances, update the
+# DSH_HARNESS_TAG env below, docs/development.md, and .hoplite/settings.json
+# together; keep the three in sync by hand, there is no generator on purpose.
+#
+# Scope guard: one workflow, two jobs (linux + windows). No coverage matrix,
+# no release automation, no test:browser (that stays a local acceptance step).
+# The windows lane is the regression fence for filesystem-identifier bugs
+# (issues #7/#8): string-level sanitizing must hold on a real Windows FS.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Least privilege; the harness clone and pnpm store live in the workspace.
+permissions:
+  contents: read
+
+env:
+  # Single adjustable variable: the certified harness release tag. Advance it
+  # per certification (docs/dsh-release-compatibility.md).
+  DSH_HARNESS_TAG: dsh-v0.1.2-rc.1
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+
+      - name: Check out the pinned Harness release as the default sibling
+        # Contract: the sibling must be named deepseek-harness (the default
+        # every script falls back to); checkout the certified tag. actions/
+        # checkout refuses paths outside the workspace, so clone inside and
+        # move it up one level to the real sibling position.
+        run: |
+          git clone --depth 1 --branch "$DSH_HARNESS_TAG" \
+            https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+
+      - name: Install and build the Harness workspace
+        # corepack pnpm only — never npm install (breaks workspace symlinks).
+        run: |
+          cd ../deepseek-harness
+          corepack pnpm install
+          corepack pnpm build:lib
+
+      - name: Install this repository
+        run: corepack pnpm install
+
+      - name: Link harness packages and build the bundle
+        run: |
+          node scripts/link-harness-packages.mjs
+          npm run build
+
+      - name: Regenerate TypeScript path facades
+        # sync-paths is not part of any npm script; skipping it leaves the
+        # committed facades pointing at their generation-time paths.
+        run: node scripts/sync-paths.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+
+      - name: Check out the pinned Harness release as the default sibling
+        # Same sibling contract; run in git bash so ../ and $VAR expand exactly
+        # like the linux lane (the default windows shell is pwsh, which breaks
+        # backslash line continuations).
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$DSH_HARNESS_TAG" \
+            https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
+
+      - name: Install and build the Harness workspace
+        shell: bash
+        run: |
+          cd ../deepseek-harness
+          corepack pnpm install
+          corepack pnpm build:lib
+
+      - name: Install this repository
+        shell: bash
+        run: corepack pnpm install
+
+      - name: Link harness packages and build the bundle
+        # link-harness-packages uses directory junctions on win32, so no
+        # symlink privilege is needed.
+        shell: bash
+        run: |
+          node scripts/link-harness-packages.mjs
+          npm run build
+
+      - name: Regenerate TypeScript path facades
+        shell: bash
+        run: node scripts/sync-paths.mjs
+
+      - name: Typecheck
+        shell: bash
+        run: npm run typecheck
+
+      - name: Test
+        shell: bash
+        run: npm test
