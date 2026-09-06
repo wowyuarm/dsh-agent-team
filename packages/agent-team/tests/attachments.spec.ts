@@ -87,6 +87,7 @@ describe('attachment file hygiene', () => {
     for (const name of ['_con.txt', 'reportfinal.md', 'abcdefg.h', 'report', sanitizeFileName('a/b\\c.png'), sanitizeFileName('report\u0000\u001f.pdf')]) {
       expect(name.length).toBeGreaterThan(0)
       expect(name.length).toBeLessThanOrEqual(180)
+      // oxlint-disable-next-line no-control-regex -- the assertion intentionally matches control characters.
       expect(name).not.toMatch(/[\\/:*?"<>|\u0000-\u001f\u007f]/)
       expect(name).not.toMatch(/[\s.]$/)
       expect(name).not.toMatch(/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i)

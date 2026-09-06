@@ -32,13 +32,14 @@ export function newAttachmentId(): AgentTeamAttachmentId {
 
 /** Strip path separators, control characters, Windows-illegal characters, reserved device names, and leading dots from one client-supplied name. */
 export function sanitizeFileName(raw: string): string {
-  // oxlint-disable-next-line no-control-regex -- strip ASCII control characters from client filenames.
+  // oxlint-disable no-control-regex -- strip ASCII control characters, separators, and Windows-reserved characters from client filenames.
   const cleaned = raw
     .replaceAll(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '')
     .replaceAll(/^\.+/g, '')
     .trim()
     .slice(0, 180)
     .replace(/[\s.]+$/g, '')
+  // oxlint-enable no-control-regex
   if (cleaned === '') return 'attachment'
   // The metadata sidecar owns 'meta.json' inside every entry directory; a
   // payload with that name would be clobbered by the sidecar and unreadable.
