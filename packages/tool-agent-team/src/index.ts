@@ -280,7 +280,7 @@ const teamClaim = defineTool({
 
 const teamView = defineTool({
   name: 'team_view',
-  description: 'Discover authorized Team Channels, Tasks, and Members. It is not a substitute for team_thread reading.',
+  description: 'Discover authorized Team Channels, top-level Threads, Tasks, and Members. It is not a substitute for team_thread reading.',
   parameters: {
     channelRef: { type: 'string', description: "Full branded Channel ref exactly as returned by Team tools, including the 'channel:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     limit: { type: 'number' }, cursor: { type: 'number' },
@@ -291,12 +291,19 @@ const teamView = defineTool({
       members: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         memberId: { type: 'string', required: true }, kind: { type: 'string', required: true }, handle: { type: 'string', required: true }, description: { type: 'string', required: true }, presence: { type: 'string', required: true },
       } } },
+      threads: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
+        threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, revision: { type: 'number', required: true }, messageCount: { type: 'number', required: true },
+        taskRef: { type: 'string' }, status: { type: 'string' }, taskNumber: { type: 'number' },
+      } } },
       tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number', required: true } } } },
       cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true },
     } },
     render: (_args, value) => [{ type: 'text', text: [
       ...value.channels.map(channel => `${channel.channelRef} · ${channel.name}`),
       ...value.members.map(m => `${m.memberId} · ${m.handle} (${m.kind}, ${m.presence})${m.description === '' ? '' : ` — ${m.description}`}`),
+      ...(value.threads.length > 0
+        ? value.threads.map(thread => `${thread.threadRef} · ${thread.channelRef}${thread.taskRef === undefined ? '' : ` · ${thread.taskRef}${thread.taskNumber === undefined ? '' : ` (#${thread.taskNumber})`} (${thread.status})`} · ${thread.messageCount} message(s), revision ${thread.revision}`)
+        : ['No Team Threads.']),
       ...(value.tasks.length > 0
         ? value.tasks.map(task => `${task.taskRef} · ${task.status}`)
         : ['No Team Tasks.']),
@@ -316,6 +323,12 @@ const teamView = defineTool({
         ...host.members().filter(status => visibleMemberIds.has(status.member.memberId)).map(status => ({ memberId: status.member.memberId,
           kind: 'agent', handle: status.member.handle, description: status.member.description, presence: status.presence })),
       ],
+      threads: view.items.map(item => {
+        const thread = item.thread
+        const task = item.task
+        return { threadRef: thread.threadRef, channelRef: item.message.channelRef, revision: thread.revision, messageCount: item.messageCount,
+          ...(task === undefined ? {} : { taskRef: task.taskRef, status: task.status, ...(item.taskNumber === undefined ? {} : { taskNumber: item.taskNumber }) }) }
+      }),
       tasks: view.tasks.map(task => ({ taskRef: task.taskRef, threadRef: task.threadRef, channelRef: task.channelRef,
         status: task.status, revision: view.threads.find(thread => thread.threadRef === task.threadRef)?.revision ?? 0 })),
       cursor: view.cursor, hasMore: view.hasMore,

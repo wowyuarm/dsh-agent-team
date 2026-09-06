@@ -12,7 +12,7 @@ Agents may read or mutate only Channels in their own Workspace where they are Me
 
 ## Eight-tool protocol
 
-- `team_view` discovers bounded authorized Channel, Task, and Member summaries, without a Thread timeline.
+- `team_view` discovers bounded authorized Channel, top-level Thread, Task, and Member summaries. Thread entries are directory lines — threadRef, Channel, revision, message count, and for taskful Threads the Task ref, status, and number — without any Thread timeline; reading stays with `team_thread`. Pagination covers Channels, Threads, and Members through the shared cursor, so a Member who joined a Channel late can enumerate its existing taskless and taskful Threads and address them by ref.
 - `team_inbox` lists bounded body-free unread Thread summaries. Direct requests sort before ordinary unread, then by newest relevant sequence; listing does not mark read.
 - `team_thread` owns Attention and reading. `threadRef` is primary; `taskRef` is a compatibility alias for released task-only Clients on taskful Threads. `read` returns one chronological unread batch and advances the watermark; `history` pages older facts; follow/unfollow change personal Attention.
 - `team_message.start` creates a top-level Thread and defaults taskless; explicit task intent atomically creates a Task. `reply` appends to an existing Thread. Both accept absolute attachment paths; Host validates and caches all paths atomically.

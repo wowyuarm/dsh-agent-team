@@ -14,7 +14,7 @@ Agent 只能读取或修改自己 Workspace 中、且自己是 Member 的 Channe
 
 各工具职责不同：
 
-- `team_view` 发现获授权的 Channel、Task 和 Member summaries。结果有界，不包含 Thread timeline。
+- `team_view` 发现有界的获授权 Channel、顶层 Thread、Task 和 Member summaries。Thread 条目是目录行——threadRef、Channel、revision、message 数，taskful Threads 另附 Task ref、status 与编号——不包含任何 Thread timeline；正文阅读仍归 `team_thread`。分页通过共享 cursor 覆盖 Channels、Threads 与 Members，因此后加入 Channel 的 Member 也能枚举其中既有的 taskless 与 taskful Threads 并按 ref 寻址。
 - `team_inbox` 返回有 unread work 的 Threads 的有界、无正文 summaries。Direct requests 排在 ordinary unread work 之前，之后按最新相关 sequence 排序；列出结果不改变 read state。
 - `team_thread` 负责个人 Attention 和 Thread reading。`threadRef` 是 primary identity；`taskRef` 仅是 released Clients 在 taskful Threads 上使用的 compatibility alias。`read` 原子返回一个按 chronology 排列的 unread batch，推进 durable watermark，并报告剩余 unread facts 数量；`history` 返回有界的旧 public facts，不改变 read state；`follow` 与 `unfollow` 修改个人 Attention。
 - `team_message.start` 创建 Channel 顶层 Thread；默认 taskless，也接受明确 task intent 以原子创建 Task。`team_message.reply` 向既有 Thread 追加明确的 reply。二者都接受 `attachments` 中的可选 absolute file paths：Host 验证每个 path，将 bytes 复制到 attachment cache，收件人看到 thumbnails/chips 与一行 cached path；任一 path 验证失败都会拒绝整个 send。

@@ -526,6 +526,43 @@ describe('Agent Team Member lifecycle', () => {
     expect(discovered).not.toHaveProperty('items')
     expect(ctx.tools.schemas(agent).every(schema => !Object.hasOwn(schema.parameters.properties ?? {}, 'workspaceId'))).toBe(true)
 
+    // team_view enumerates every top-level Thread of joined Channels, taskless
+    // included, without message bodies: a Member who joined late and was never
+    // mentioned can discover prior discussions and address them by ref (issue #2).
+    const beforeThreads = await call('team_view', {})
+    expect(beforeThreads.threads).toEqual([])
+    const plainStart = await call('team_message', { action: 'start', channelRef: channel.channel.channelRef, body: 'Agent-led taskless discussion' })
+    expect(plainStart).toMatchObject({ kind: 'committed' })
+    const taskfulStart = await call('team_message', { action: 'start', asTask: true, channelRef: channel.channel.channelRef, body: 'Agent-led task with work' })
+    expect(taskfulStart).toMatchObject({ kind: 'committed' })
+    await call('team_message', { action: 'reply', threadRef: plainStart.threadRef, body: 'One follow-up reply', baseRevision: plainStart.revision })
+    const threadDirectory = await call('team_view', {})
+    expect(threadDirectory.threads).toHaveLength(2)
+    const taskless = threadDirectory.threads.find((thread: { threadRef: string }) => thread.threadRef === plainStart.threadRef)
+    expect(taskless).toMatchObject({ channelRef: channel.channel.channelRef, messageCount: 2 })
+    expect(taskless.taskRef).toBeUndefined()
+    const taskful = threadDirectory.threads.find((thread: { threadRef: string }) => thread.threadRef === taskfulStart.threadRef)
+    expect(taskful).toMatchObject({ channelRef: channel.channel.channelRef, messageCount: 1, taskRef: taskfulStart.taskRef, status: 'todo' })
+    expect(typeof taskful.taskNumber).toBe('number')
+    // Directory entries stay summaries: no anchor or reply bodies leak.
+    expect(JSON.stringify(threadDirectory.threads)).not.toContain('Agent-led taskless discussion')
+    expect(JSON.stringify(threadDirectory.threads)).not.toContain('One follow-up reply')
+    // A second Member who joined after both Threads started sees them too.
+    const lateJoinerAgent = ctx.agents.get(reviewer.status.member.sessionId)!
+    const lateJoinerView = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name: 'team_view', arguments: {}, agent: lateJoinerAgent }).then(result => {
+      expect(result.isError).toBe(false)
+      return result.value as Record<string, any>
+    })
+    expect(lateJoinerView.threads.map((thread: { threadRef: string }) => thread.threadRef)).toEqual(expect.arrayContaining([plainStart.threadRef, taskfulStart.threadRef]))
+    // Threads in a Channel the Member has not joined stay invisible.
+    const privateChannel = await ctx.agentTeam.createChannel({ requestId: requestId('protocol-private'), workspaceId, name: 'private', description: 'Unjoined' })
+    const privateStart = await ctx.agentTeam.sendMessage({ requestId: requestId('protocol-private-start'), workspaceId, channelRef: privateChannel.channel.channelRef, body: 'Taskless discussion outside membership' })
+    expect(privateStart).toMatchObject({ kind: 'committed' })
+    const privateThreadRef = (privateStart as { thread: { threadRef: string } }).thread.threadRef
+    const afterPrivate = await call('team_view', {})
+    expect(afterPrivate.threads.some((thread: { threadRef: string }) => thread.threadRef === privateThreadRef)).toBe(false)
+    expect(afterPrivate.channels.some((entry: { channelRef: string }) => entry.channelRef === privateChannel.channel.channelRef)).toBe(false)
+
     // team_message attachments: the tool passes absolute paths, the Host
     // validates and copies them into the cache, and the committed message
     // carries the same metadata and prompt lines as a manual upload.
