@@ -33,12 +33,12 @@ jobs:
 
       - name: Check out the pinned Harness release as the default sibling
         # Contract: the sibling must be named deepseek-harness (the default
-        # every script falls back to); checkout the certified tag.
-        uses: actions/checkout@v4
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: ${{ env.DSH_HARNESS_TAG }}
-          path: ../deepseek-harness
+        # every script falls back to); checkout the certified tag. actions/
+        # checkout refuses paths outside the workspace, so clone inside and
+        # move it up one level to the real sibling position.
+        run: |
+          git clone --depth 1 --branch "$DSH_HARNESS_TAG" \
+            https://github.com/deepseek-ai/deepseek-harness.git ../deepseek-harness
 
       - name: Install and build the Harness workspace
         # corepack pnpm only — never npm install (breaks workspace symlinks).
