@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
+
+/** Escape a literal string for embedding in a RegExp (path separators differ per platform). */
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 import { Context } from '@deepseek-ai/cordis'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -63,6 +66,37 @@ describe('attachment file hygiene', () => {
     expect(sanitizeFileName('META.JSON')).toBe('_META.JSON')
   })
 
+  it('strips Windows-reserved names, illegal characters, and trailing spaces and dots', () => {
+    // Reserved Win32 device names, including the with-extension form.
+    expect(sanitizeFileName('CON')).toBe('_CON')
+    expect(sanitizeFileName('con.txt')).toBe('_con.txt')
+    expect(sanitizeFileName('PRN')).toBe('_PRN')
+    expect(sanitizeFileName('AUX')).toBe('_AUX')
+    expect(sanitizeFileName('NUL')).toBe('_NUL')
+    expect(sanitizeFileName('COM1')).toBe('_COM1')
+    expect(sanitizeFileName('lpt9.log')).toBe('_lpt9.log')
+    // CON alone is reserved; longer words merely start with those letters.
+    expect(sanitizeFileName('CONTRIBUTING.md')).toBe('CONTRIBUTING.md')
+    // Colons would parse as NTFS alternate data streams.
+    expect(sanitizeFileName('report:final.md')).toBe('reportfinal.md')
+    // Characters Windows paths reserve.
+    expect(sanitizeFileName('a<b>c|d"e?f*g.h')).toBe('abcdefg.h')
+    // Trailing spaces and dots are illegal path suffixes on Windows.
+    expect(sanitizeFileName('report ')).toBe('report')
+    expect(sanitizeFileName('report.')).toBe('report')
+    expect(sanitizeFileName('report .  .')).toBe('report')
+    expect(sanitizeFileName('. . ')).toBe('attachment')
+    // Every cleaned name above is a legal file name on all three platforms.
+    for (const name of ['_con.txt', 'reportfinal.md', 'abcdefg.h', 'report', sanitizeFileName('a/b\\c.png'), sanitizeFileName('report\u0000\u001f.pdf')]) {
+      expect(name.length).toBeGreaterThan(0)
+      expect(name.length).toBeLessThanOrEqual(180)
+      // oxlint-disable-next-line no-control-regex -- the assertion intentionally matches control characters.
+      expect(name).not.toMatch(/[\\/:*?"<>|\u0000-\u001f\u007f]/)
+      expect(name).not.toMatch(/[\s.]$/)
+      expect(name).not.toMatch(/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i)
+    }
+  })
+
   it('accepts well-formed media types and falls back for anything else', () => {
     expect(sanitizeMediaType('image/png')).toBe('image/png')
     expect(sanitizeMediaType('Application/PDF')).toBe('application/pdf')
@@ -98,6 +132,17 @@ describe('attachment cache', () => {
     expect(readBack?.name).toBe('_meta.json')
     expect(readBack?.bytes.toString('utf8')).toBe('payload')
     expect(JSON.parse(await readFile(join(root, id, 'meta.json'), 'utf8'))).toMatchObject({ name: '_meta.json' })
+  })
+
+  it('stores a payload named after a Windows reserved device under the underscore prefix', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-attachments-'))
+    cleanups.push(async () => { await rm(root, { recursive: true, force: true }) })
+    const id = newAttachmentId()
+    const stored = await writeAttachment(root, id, 'aux.txt', 'text/plain', Buffer.from('payload'))
+    expect(stored.name).toBe('_aux.txt')
+    const readBack = await readAttachment(root, id)
+    expect(readBack?.name).toBe('_aux.txt')
+    expect(readBack?.bytes.toString('utf8')).toBe('payload')
   })
 
   it('sweeps orphans after 24h and referenced uploads only after 72h', async () => {
@@ -170,7 +215,7 @@ describe('Agent Team attachment remotes', () => {
     expect(sent.message.attachments).toHaveLength(1)
     expect(sent.message.attachments?.[0]?.name).toBe('design.png')
     expect(sent.message.body).toContain('请看这张图')
-    expect(sent.message.body).toMatch(/\[attachment\] .*attachments\/v1\//)
+    expect(sent.message.body).toMatch(new RegExp(`\\[attachment\\] .*attachments${escapeRegExp(sep)}v1${escapeRegExp(sep)}`))
 
     // Idempotent resend with the same request resolves to the same message.
     const resent = await ctx.agentTeam.sendMessage({ asTask: true,
@@ -213,7 +258,7 @@ describe('Agent Team attachment remotes', () => {
     if (replied.kind !== 'committed') return
     expect(replied.message.attachments).toHaveLength(1)
     expect(replied.message.attachments?.[0]?.name).toBe('reply.png')
-    expect(replied.message.body).toMatch(/\[attachment\] .*attachments\/v1\//)
+    expect(replied.message.body).toMatch(new RegExp(`\\[attachment\\] .*attachments${escapeRegExp(sep)}v1${escapeRegExp(sep)}`))
 
     // An unknown attachment id is rejected before the ledger append.
     await expect(ctx.agentTeam.reply({

@@ -27,7 +27,7 @@ import { ContextManagementCoordinator, type TransitionPlan } from './context-man
 import { createHandoffMessage } from './context-source.ts'
 import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, MemberRuntime } from './member-runtime.ts'
+import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
@@ -620,7 +620,7 @@ export default class AgentTeam extends TypertRemoteService {
         presetId: request.presetId,
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
         ...(request.capabilities === undefined ? {} : { capabilities: Object.freeze(deepCopyCapabilities(request.capabilities)) }),
-        privateMemoryPath: dshHomePath('agent-team', 'members', memberId),
+        privateMemoryPath: dshHomePath('agent-team', 'members', memberMemoryDirectoryName(memberId)),
         state: 'enabled',
       })
       const result = await this.requireLedger().addMember({ ...request, actor: agentTeamHumanActor(), member })
@@ -1921,7 +1921,10 @@ export default class AgentTeam extends TypertRemoteService {
     try {
       const workspace = this.requireWorkspace(member.workspaceId)
       const workspacePath = knownWorkspacePath ?? workspace.path
-      await this.memberRuntime.initializePrivateMemory(member.privateMemoryPath)
+      // Existing Members carry the pre-sanitization ledger path; activation
+      // migrates it onto the sanitized directory before provisioning.
+      const sanitizedMemoryPath = dshHomePath('agent-team', 'members', memberMemoryDirectoryName(member.memberId))
+      await this.memberRuntime.initializePrivateMemory(sanitizedMemoryPath, member.privateMemoryPath)
       const persisted = knownSessions !== undefined ? knownSessions.has(member.sessionId)
         : await this.sessionPersisted(member.sessionId)
       // AgentOptions declares only provider/model. Install the full selection

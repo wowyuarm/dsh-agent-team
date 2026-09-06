@@ -1,6 +1,6 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, basename, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -299,7 +299,7 @@ describe('Agent Team Member lifecycle', () => {
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
     expect(added.status.availability).toBe('active')
-    expect(added.status.member.privateMemoryPath).toBe(join(root, 'dsh-home', 'agent-team', 'members', added.status.member.memberId))
+    expect(added.status.member.privateMemoryPath).toBe(join(root, 'dsh-home', 'agent-team', 'members', added.status.member.memberId.replaceAll(':', '-')))
     expect(await readFile(join(added.status.member.privateMemoryPath, 'memory.md'), 'utf8')).toContain('# Member memory')
     await expect(access(join(added.status.member.privateMemoryPath, 'notes'))).resolves.toBeUndefined()
     const live = ctx.agents.get(added.status.member.sessionId)
@@ -575,7 +575,7 @@ describe('Agent Team Member lifecycle', () => {
     const shotHistory = ctx.agentTeam.threadHistory({ workspaceId, threadRef: shotThreadRef as never })
     const shotFact = shotHistory.facts.find(fact => fact.kind === 'message' && fact.message.attachments !== undefined)
     expect(shotFact).toBeDefined()
-    expect(shotHistory.facts.some(fact => fact.kind === 'message' && /\[attachment\] .*attachments\/v1\//.test(fact.message?.body ?? ''))).toBe(true)
+    expect(shotHistory.facts.some(fact => fact.kind === 'message' && new RegExp(`\\[attachment\\] .*attachments${sep === '/' ? '\\/' : '\\\\'}v1${sep === '/' ? '\\/' : '\\\\'}`).test(fact.message?.body ?? ''))).toBe(true)
     const rejected = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'start', channelRef: channel.channel.channelRef, body: 'Never committed', attachments: ['relative/shot.png'] }, agent })
     expect(rejected.isError).toBe(true)
     expect(rejected.error?.message ?? rejected.value).toMatch(/must be absolute/)
@@ -3213,4 +3213,97 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     return agent!.session.ownEvents().filter(event => event.type === 'user/message'
       && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-handoff')
   }
+})
+describe('Agent Team Member private memory directory sanitization (issue #7)', () => {
+  it('derives a Windows-safe directory segment without touching the member ref', async () => {
+    const { memberMemoryDirectoryName } = await import('../src/member-runtime.ts')
+    const memberId = 'member:9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b' as AgentTeamMemberId
+    expect(memberMemoryDirectoryName(memberId)).toBe('member-9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b')
+    // No path-segment-forbidden characters remain on any platform.
+    expect(memberMemoryDirectoryName(memberId)).not.toContain(':')
+    // The branded ref itself is unchanged by the helper.
+    expect(memberId).toBe('member:9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b')
+  })
+
+  it('sanitizes only the final segment of a legacy colon path on any platform', async () => {
+    // F8: the fallback must be segment arithmetic, not whole-string length
+    // math on the memberId. A Windows drive-letter prefix keeps its colon; a
+    // recorded path whose final segment is not the memberId no longer
+    // crashes and still resolves to the member's sanitized directory.
+    const { memberMemoryDirectoryPath } = await import('../src/member-runtime.ts')
+    const memberId = 'member:1a2b3c4d-0000-4000-8000-000000000001' as AgentTeamMemberId
+    expect(memberMemoryDirectoryPath({ memberId, privateMemoryPath: '/home/yu/.dsh/agent-team/members/member:1a2b3c4d-0000-4000-8000-000000000001' }))
+      .toBe('/home/yu/.dsh/agent-team/members/member-1a2b3c4d-0000-4000-8000-000000000001')
+    expect(memberMemoryDirectoryPath({ memberId, privateMemoryPath: 'C:\\Users\\team\\.dsh\\agent-team\\members\\member:1a2b3c4d-0000-4000-8000-000000000001' }))
+      .toBe('C:\\Users\\team\\.dsh\\agent-team\\members\\member-1a2b3c4d-0000-4000-8000-000000000001')
+    // A colon-free final segment keeps the recorded path verbatim even when
+    // earlier segments carry the Windows drive-letter colon — a member
+    // record without a memberId never reaches the rewrite branch.
+    expect(memberMemoryDirectoryPath({ memberId: undefined as never, privateMemoryPath: 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\team-member-memory-x' }))
+      .toBe('C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\team-member-memory-x')
+    expect(memberMemoryDirectoryPath({ memberId, privateMemoryPath: 'C:\\dsh-homes\\team\\.dsh\\agent-team\\members\\a1' }))
+      .toBe('C:\\dsh-homes\\team\\.dsh\\agent-team\\members\\a1')
+    // A colon in the final segment without any separator collapses to the
+    // sanitized member name.
+    expect(memberMemoryDirectoryPath({ memberId, privateMemoryPath: 'member:1a2b3c4d-0000-4000-8000-000000000001' }))
+      .toBe('member-1a2b3c4d-0000-4000-8000-000000000001')
+  })
+
+  it('provisions new Members under a colon-free private memory path', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    await ctx.agentTeam.createChannel({ requestId: requestId('san-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('san-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [] })
+    const member = added.status.member
+    expect(member.memberId).toContain(':')
+    // The colon-free guarantee is about the directory segment: a Windows
+    // absolute prefix still carries its drive-letter colon (F7b).
+    const recordedDirectory = member.privateMemoryPath.replaceAll('\\', '/')
+    expect(basename(recordedDirectory)).not.toContain(':')
+    expect(recordedDirectory).toContain(member.memberId.replaceAll(':', '-'))
+    await expect(access(join(member.privateMemoryPath, 'notes'))).resolves.toBeUndefined()
+    await expect(access(join(member.privateMemoryPath, 'skills'))).resolves.toBeUndefined()
+    await expect(access(join(member.privateMemoryPath, 'memory.md'))).resolves.toBeUndefined()
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('migrates a legacy colon directory onto the sanitized path on activation, preserving memory', async () => {
+    const { ctx } = await realHarness()
+    // Exercise the migration seam directly with a synthetic pre-fix Member
+    // record: the ledger recorded the colon path and the colon directory
+    // holds the Member's existing private memory. On Windows the colon
+    // directory cannot be constructed at all (NTFS parses it as an ADS
+    // separator), so the legacy record there is the path-only form (F7c).
+    const memberId = 'member:1a2b3c4d-0000-4000-8000-000000000001' as AgentTeamMemberId
+    const parent = join(process.env.DSH_HOME!, 'agent-team', 'members')
+    const legacyPath = join(parent, memberId)
+    const sanitized = join(parent, memberId.replaceAll(':', '-'))
+    const legacyDirectoryExists = process.platform !== 'win32'
+    if (legacyDirectoryExists) {
+      await mkdir(join(legacyPath, 'notes'), { recursive: true })
+      await writeFile(join(legacyPath, 'notes', 'kept.md'), 'persistent note')
+      await writeFile(join(legacyPath, 'memory.md'), '# Member memory\n\n## Stable facts\n- legacy fact\n')
+    }
+
+    const { MemberRuntime } = await import('../src/member-runtime.ts')
+    const runtime = new MemberRuntime({ ctx: ctx as never, liveMemberContext: () => { throw new Error('unused') }, runningAgents: new Set() })
+    await runtime.initializePrivateMemory(sanitized, legacyPath)
+
+    if (legacyDirectoryExists) {
+      // The sanitized directory now holds the migrated memory; the colon
+      // directory is gone (renamed, not copied).
+      await expect(readFile(join(sanitized, 'notes', 'kept.md'), 'utf8')).resolves.toBe('persistent note')
+      await expect(readFile(join(sanitized, 'memory.md'), 'utf8')).resolves.toContain('legacy fact')
+      await expect(access(legacyPath)).rejects.toThrow()
+    } else {
+      // Windows: no legacy directory could exist, so activation provisions
+      // the sanitized directory from scratch without throwing.
+      await expect(access(join(sanitized, 'notes'))).resolves.toBeUndefined()
+    }
+
+    // Re-running activation is idempotent: sanitized wins, no throw.
+    await runtime.initializePrivateMemory(sanitized, legacyPath)
+    if (legacyDirectoryExists) {
+      await expect(readFile(join(sanitized, 'notes', 'kept.md'), 'utf8')).resolves.toBe('persistent note')
+    }
+  })
 })

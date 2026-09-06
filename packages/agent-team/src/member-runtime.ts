@@ -14,7 +14,7 @@
  * @module @wowyuarm/dsh-agent-team/member-runtime
  */
 
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -58,6 +58,32 @@ export function deepCopyCapabilities(capabilities: AgentTeamMemberCapabilities):
     ...(capabilities.tools === undefined ? {} : { tools: copyAllow(capabilities.tools.allow) }),
     ...(capabilities.skills === undefined ? {} : { skills: copyAllow(capabilities.skills.allow) }),
   }
+}
+
+/**
+ * Filesystem directory segment for one Member's private memory namespace.
+ * The `member:<uuid>` ref is a durable ledger identity and must never appear
+ * in a path: Windows rejects `:` in a path segment (NTFS parses it as an
+ * Alternate Data Stream separator), which made Member activation fail at its
+ * first `mkdir` on Windows (issue #7).
+ */
+export function memberMemoryDirectoryName(memberId: AgentTeamMemberId): string {
+  return memberId.replaceAll(':', '-')
+}
+
+/** The sanitized absolute private-memory path for one Member, regardless of what the ledger recorded. */
+export function memberMemoryDirectoryPath(member: Pick<AgentTeamAgentMember, 'memberId' | 'privateMemoryPath'>): string {
+  // Sanitize per segment: only a segment that actually contains the ledger's
+  // member identity colon needs rewriting, and the recorded final segment is
+  // the only place it can appear. The drive-letter colon of a Windows
+  // absolute prefix is not a member identity and must survive untouched, so
+  // a colon-free final segment keeps the recorded path verbatim even when
+  // earlier segments carry colons.
+  const separator = Math.max(member.privateMemoryPath.lastIndexOf('/'), member.privateMemoryPath.lastIndexOf('\\'))
+  const finalSegment = separator === -1 ? member.privateMemoryPath : member.privateMemoryPath.slice(separator + 1)
+  if (!finalSegment.includes(':')) return member.privateMemoryPath
+  const prefix = separator === -1 ? '' : member.privateMemoryPath.slice(0, separator + 1)
+  return prefix + memberMemoryDirectoryName(member.memberId)
 }
 
 /** Everything the runtime needs from its owning Host service. */
@@ -193,10 +219,12 @@ export class MemberRuntime {
    * scope layer (the traceable-service seam, like the tool restriction):
    * bundled read-only core skills plus this Member's own private directory,
    * with the live selection ref that later capability edits swap in place.
+   * The sanitized directory is authoritative: activateMember migrated any
+   * legacy colon directory onto it before the provider mounted.
    */
   mountMemberSkillProvider(member: AgentTeamAgentMember, agentCtx: Context, selection: MemberSkillSelectionRef): void {
     this.skillProviderDisposals.set(member.memberId, memberSkills.mountMemberSkillProvider(agentCtx, {
-      skillsDirectory: join(member.privateMemoryPath, 'skills'),
+      skillsDirectory: join(memberMemoryDirectoryPath(member), 'skills'),
       bundledSkillsDirectory: BUNDLED_SKILLS_DIRECTORY,
       selection,
     }))
@@ -213,8 +241,15 @@ export class MemberRuntime {
    * first-run memory.md scaffold. The Member-private skills directory starts
    * empty; the per-Member provider scans exactly this root (default roots
    * excluded).
+   *
+   * Existing installs recorded the pre-fix colon directory in the ledger, and
+   * `privateMemoryPath` is a durable Member fact the renewal path cannot
+   * rewrite: when the legacy directory exists it is renamed onto the sanitized
+   * path once (same-parent rename, atomic), so existing private memory
+   * survives instead of being silently orphaned.
    */
-  async initializePrivateMemory(path: string): Promise<void> {
+  async initializePrivateMemory(path: string, legacyPath?: string): Promise<void> {
+    if (legacyPath !== undefined && legacyPath !== path) await migrateLegacyMemoryDirectory(legacyPath, path)
     await mkdir(join(path, 'notes'), { recursive: true })
     await mkdir(join(path, 'skills'), { recursive: true })
     try {
@@ -226,9 +261,14 @@ export class MemberRuntime {
 
   /** Irreversibly remove one Member: archive its Session and delete its private namespace. */
   async cleanupRemovedMember(member: AgentTeamAgentMember): Promise<void> {
+    // The ledger path may still name the legacy colon directory (never
+    // activated after the fix): remove both spellings; rm is force-tolerant
+    // of the one that does not exist.
+    const sanitized = memberMemoryDirectoryPath(member)
     const results = await Promise.allSettled([
       this.deps.ctx.workspaceRegistry.archiveSession(member.sessionId),
-      rm(member.privateMemoryPath, { recursive: true, force: true }),
+      rm(sanitized, { recursive: true, force: true }),
+      ...(sanitized === member.privateMemoryPath ? [] : [rm(member.privateMemoryPath, { recursive: true, force: true })]),
     ])
     const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
     if (failures.length > 0) throw new AggregateError(failures, `failed to clean up removed Member '${member.memberId}'`)
@@ -254,4 +294,28 @@ export class MemberRuntime {
     this.memberRestrictions.clear()
     this.capabilityWarnings.clear()
   }
+}
+
+/**
+ * One-time in-place migration of a pre-fix colon-named private memory
+ * directory onto its sanitized path. A sanitized target that already exists
+ * wins (idempotent across restarts and partially migrated installs); a legacy
+ * source that never existed is simply the fresh-install case.
+ */
+async function migrateLegacyMemoryDirectory(legacyPath: string, path: string): Promise<void> {
+  let legacy: Awaited<ReturnType<typeof stat>>
+  try {
+    legacy = await stat(legacyPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  if (!legacy.isDirectory()) throw new Error(`legacy Member memory path '${legacyPath}' exists but is not a directory`)
+  try {
+    await stat(path)
+    return // Sanitized directory already present: migration already done or a new install.
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  await rename(legacyPath, path)
 }
