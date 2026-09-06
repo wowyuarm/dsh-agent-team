@@ -27,7 +27,7 @@ import { ContextManagementCoordinator, type TransitionPlan } from './context-man
 import { createHandoffMessage } from './context-source.ts'
 import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, MemberRuntime } from './member-runtime.ts'
+import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
@@ -467,7 +467,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.startAttachmentGc(ledger)
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
-    const persistedSessions = new Set((await this.ctx.sessionPersistence.list()).map(header => header.id))
+    const persistedSessions = new Set((await this.persistedSessionHeaders()).map(header => header.id))
     for (const member of ledger.listMembers()) {
       if (member.state === 'enabled') await this.activateMember(member, undefined, persistedSessions)
       else if (member.state === 'inactive') await this.memberRuntime.cleanupRemovedMember(member)
@@ -620,7 +620,7 @@ export default class AgentTeam extends TypertRemoteService {
         presetId: request.presetId,
         ...(request.model === undefined ? {} : { model: Object.freeze({ ...request.model }) }),
         ...(request.capabilities === undefined ? {} : { capabilities: Object.freeze(deepCopyCapabilities(request.capabilities)) }),
-        privateMemoryPath: dshHomePath('agent-team', 'members', memberId),
+        privateMemoryPath: dshHomePath('agent-team', 'members', memberMemoryDirectoryName(memberId)),
         state: 'enabled',
       })
       const result = await this.requireLedger().addMember({ ...request, actor: agentTeamHumanActor(), member })
@@ -647,7 +647,13 @@ export default class AgentTeam extends TypertRemoteService {
       const result = await this.requireLedger().resumeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
       this.clearMemberNotificationState(result.value.member.memberId)
-      await this.activateMember(result.value.member)
+      // The suspended Session's log is durable once its retirement completes,
+      // and agents.resume() waits for exactly that retirement before loading.
+      // Consulting the persistence tree here instead would race the
+      // fire-and-forget retirement on Windows, where the JSONL backend
+      // publishes directories through transient staging entries that surface
+      // as ENOENT mid-walk — so pass the known session rather than re-listing.
+      await this.activateMember(result.value.member, undefined, new Set([result.value.member.sessionId]))
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
   }
@@ -1915,13 +1921,36 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+  /**
+   * Session headers currently durable in the persistence backend.
+   *
+   * The Host retires a disposed Session's log without awaiting it, so a
+   * concurrent activation can observe the JSONL backend's transient win32
+   * staging directories (.dsh-mkdir-*) as ENOENT while they rename into
+   * place. The read is idempotent; back off briefly instead of failing the
+   * activation on a race the publisher resolves within milliseconds.
+   */
+  private async persistedSessionHeaders() {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.ctx.sessionPersistence.list()
+      } catch (error) {
+        if (attempt >= 3 || (error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error
+        await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 25))
+      }
+    }
+  }
+
   private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId, options?: { readonly deferNotify?: boolean; readonly seed?: readonly SessionEvent[]; readonly inheritedEventCount?: SessionLogOffset }): Promise<void> {
     if (this.handles.has(member.memberId)) return
     let created: AgentHandle | undefined
     try {
       const workspace = this.requireWorkspace(member.workspaceId)
       const workspacePath = knownWorkspacePath ?? workspace.path
-      await this.memberRuntime.initializePrivateMemory(member.privateMemoryPath)
+      // Existing Members carry the pre-sanitization ledger path; activation
+      // migrates it onto the sanitized directory before provisioning.
+      const sanitizedMemoryPath = dshHomePath('agent-team', 'members', memberMemoryDirectoryName(member.memberId))
+      await this.memberRuntime.initializePrivateMemory(sanitizedMemoryPath, member.privateMemoryPath)
       const persisted = knownSessions !== undefined ? knownSessions.has(member.sessionId)
         : await this.sessionPersisted(member.sessionId)
       // AgentOptions declares only provider/model. Install the full selection

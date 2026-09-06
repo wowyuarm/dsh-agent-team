@@ -18,7 +18,12 @@ const quote = value => value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")
 const overlayText = await readFile(join(root, 'cordis.patch.yml'), 'utf8')
 
 const run = (command, args, cwd) => new Promise((resolveRun, reject) => {
-  const child = spawn(command, args, { cwd, stdio: 'inherit', env: process.env })
+  // On Windows, bare-name spawns of pnpm shims (.cmd) fail with ENOENT and
+  // Node 22+ also refuses shell-less .cmd spawns (EINVAL) — route through
+  // cmd.exe with the full argument string quoted.
+  const child = process.platform === 'win32'
+    ? spawn(`${command} ${args.join(' ')}`, { cwd, stdio: 'inherit', env: process.env, shell: true })
+    : spawn(command, args, { cwd, stdio: 'inherit', env: process.env })
   child.once('error', reject)
   child.once('exit', code => code === 0 ? resolveRun() : reject(new Error(`${command} exited with ${code}`)))
 })

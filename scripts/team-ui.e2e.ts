@@ -29,9 +29,14 @@ async function installLocalBundle(): Promise<void> {
   await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
   const scope = `${HOME}/profiles/node_modules/@wowyuarm`
   await mkdir(scope, { recursive: true })
+  // The filter must match on both separators: on Windows cp walks backslash
+  // paths, so forward-slash-only matching lets node_modules and src through.
   await cp(TEAM_ROOT, `${scope}/dsh-agent-team`, {
     recursive: true,
-    filter: source => !source.includes('/node_modules') && !source.includes('/src') && !source.includes('/artifacts'),
+    filter: source => {
+      const normalized = source.replaceAll('\\', '/')
+      return !normalized.includes('/node_modules') && !normalized.includes('/src') && !normalized.includes('/artifacts')
+    },
   })
   // The routed ledger backend in its installed position. A real `dsh plugin
   // add` installs this bundle's dependencies under the profile tree; this

@@ -254,9 +254,11 @@ describe('Agent Team member tool policy', () => {
     const narrow = await addMember(ctx, workspaceId, 'narrow', { tools: { allow: ['ordinary_tool'] } })
 
     const suspended = await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: narrow.memberId })
-    expect(suspended.status.availability).toBe('suspended')
+    expect(suspended.status.availability, JSON.stringify(suspended.status)).toBe('suspended')
     const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume'), memberId: narrow.memberId })
-    expect(resumed.status.availability).toBe('active')
+    // Carry the full status (diagnostic included) into the failure text: a
+    // lifecycle race here is otherwise invisible in CI logs.
+    expect(resumed.status.availability, JSON.stringify(resumed.status)).toBe('active')
     expect(toolNames(ctx, liveAgent(ctx, narrow))).toEqual([...AGENT_TEAM_TOOL_NAMES, 'ordinary_tool'].sort())
     // The sibling never moved.
     expect(toolNames(ctx, liveAgent(ctx, other))).toEqual([...AGENT_TEAM_TOOL_NAMES, 'ordinary_tool', 'spare_tool'].sort())
@@ -266,7 +268,7 @@ describe('Agent Team member tool policy', () => {
     await teamFiber.dispose()
     await ctx.plugin(AgentTeam)
     const restored = ctx.agentTeam.membersForClient({ workspaceId }).find(item => item.member.memberId === narrow.memberId)
-    expect(restored?.availability).toBe('active')
+    expect(restored?.availability, JSON.stringify(restored)).toBe('active')
     expect(toolNames(ctx, liveAgent(ctx, narrow))).toEqual([...AGENT_TEAM_TOOL_NAMES, 'ordinary_tool'].sort())
   })
 

@@ -126,6 +126,8 @@ This applies to any fresh environment: a new clone **or a `git worktree`**. A wo
 
 **Symptoms of a wrong environment, not wrong code:** mass `TypeError ... reading 'UNLOADING'` / `FiberState` undefined failures mean Vitest resolved a stale or missing Harness checkout; `Cannot find module 'zod'` means npm broke the pnpm links. Fix the environment before debugging the diff.
 
+**No stray `node_modules` above the working tree.** TypeScript `typeRoots` and Node module resolution both walk ancestor directories, so a leftover `node_modules\@types` in a home directory (from an accidental `npm install` run there once) silently injects its types into every compile — observed as React-19-typed errors against a React-18 lockfile on the harness build. If a fresh checkout fails typecheck with type errors the lockfile cannot explain, check each ancestor directory for a stray `node_modules` before debugging the code.
+
 **The checkout pointer is centralized and fails fast.** `scripts/harness-dir.mjs` is the single source of truth every consumer (Vitest, `sync-paths`, `build-client`, `generate-typert`, the browser/preview runners) resolves through: `DSH_HARNESS_DIR` wins when set, then the `.generated-harness` marker that `sync-paths` writes (so tests follow the same checkout the facades were generated against — a forgotten env var after a cert-run generation cannot split them), then the default sibling name. A resolved checkout that does not exist aborts immediately with the sibling Harness checkouts that do exist and pointers to the fix, instead of surfacing as the far-away symptoms above.
 
 ## External installation verification

@@ -24,7 +24,18 @@ try {
     },
   }))
   await mkdir(join(tempPackage, 'node_modules'), { recursive: true })
-  await symlink(join(packageRoot, 'node_modules/zod'), join(tempPackage, 'node_modules/zod'), 'file')
+  // Resolve zod once through the real node_modules chain and COPY it into the
+  // temp analysis package. A 'file' symlink is the cheap Linux path but is
+  // privilege-gated on Windows and can silently produce a link form the
+  // analyzer's TypeScript resolution rejects; a copy is always safe and only
+  // costs the package size.
+  const zodSource = join(packageRoot, 'node_modules/zod')
+  const zodTarget = join(tempPackage, 'node_modules/zod')
+  if (process.platform === 'win32') {
+    await cp(zodSource, zodTarget, { recursive: true, verbatimSymlinks: true })
+  } else {
+    await symlink(zodSource, zodTarget, 'file')
+  }
   await writeFile(join(tempPackage, 'tsconfig.json'), JSON.stringify({
     extends: '../../tsconfig.base.json',
     include: ['src'],

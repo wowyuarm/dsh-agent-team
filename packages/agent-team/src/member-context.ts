@@ -4,6 +4,7 @@ import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { AgentTeamAgentMember } from './types.ts'
+import { memberMemoryDirectoryPath } from './member-runtime.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
 const MAX_MEMORY_BYTES = 8 * 1024
@@ -22,11 +23,14 @@ export function apply(ctx: Context): void {
     if (host === undefined) return decision
     const member = host.memberForAgent(agent)
     if (member === undefined) return decision
+    // The sanitized path is authoritative: activation migrated any legacy
+    // colon directory onto it before this member could run a step.
+    const memoryPath = memberMemoryDirectoryPath(member)
     let memory: string
     try {
-      memory = renderMemberMemory(await readFile(`${member.privateMemoryPath}/memory.md`), member.privateMemoryPath)
+      memory = renderMemberMemory(await readFile(`${memoryPath}/memory.md`), memoryPath)
     } catch (error) {
-      memory = renderUnavailableMemory(member.privateMemoryPath, (error as NodeJS.ErrnoException).code === 'ENOENT'
+      memory = renderUnavailableMemory(memoryPath, (error as NodeJS.ErrnoException).code === 'ENOENT'
         ? 'memory.md is absent; the private memory index is empty.'
         : 'memory.md is currently unreadable; do not use any earlier private memory context.')
     }
