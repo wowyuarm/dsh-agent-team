@@ -4,10 +4,21 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
-import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
+import { SlotTestRuntime, stubSettingsScope } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { apply as applySidebar, inject as injectSidebar } from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import { apply as applyConversation, inject as injectConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { apply, inject } from '../src/client/index.ts'
+
+// jsdom has no ResizeObserver; the shipped ConversationRoot publishes the
+// composer seat's height through one on every mount.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+
 type FrameProps = PropsRenderSlots<'sidebar' | 'conversation'>
 function Frame({ renderSlot }: FrameProps) {
   const [collapsed, setCollapsed] = useState(false)
@@ -20,7 +31,6 @@ function Frame({ renderSlot }: FrameProps) {
 
 function BaselineWorkspace() { return <div data-baseline-workspaces>普通工作区</div> }
 function BaselineSettings() { return <div data-baseline-settings>设置</div> }
-function BaselineConversation() { return <div data-baseline-conversation>普通对话</div> }
 interface SeededMessage {
   readonly body: string
   readonly occurredAt: string
@@ -41,7 +51,23 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   runtime.ctx.provide('layout', { toggleSidebar: vi.fn() })
   // rc.1: the shipped sidebar injects 'uiWorkspace'; the takeover bench
   // provides a minimal navigation double.
-  runtime.ctx.provide('uiWorkspace', { startSession: vi.fn() })
+  runtime.ctx.provide('uiWorkspace', { startSession: vi.fn(), connectWorkspace: vi.fn(async () => 'ordinary-session') })
+  // The shipped ConversationRoot needs a settings scope; the composer's
+  // session-scoped inject resolves the conversation service lazily, so a
+  // placeholder carrying the attachment-registry verbs the InputBar calls
+  // keeps the root resident in every seat state.
+  runtime.ctx.provide('settingsScope', { bind: () => stubSettingsScope().scope } as never)
+  runtime.ctx.provide('conversation', {
+    input: { for: () => ({ submit: vi.fn() }) },
+    createDraftImages: () => [],
+    draftImages: () => [],
+    releaseDraftImage: () => {},
+    releaseDraftImages: () => {},
+    updateQueue: vi.fn(async () => {}),
+    cancel: vi.fn(async () => {}),
+    loadOlder: vi.fn(async () => {}),
+    send: vi.fn(async () => {}),
+  } as never)
   const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: string) => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
@@ -286,7 +312,6 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   runtime.ctx.provide('remote.session', { modelCatalog })
   runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.ctx.provide('remote.agentTeam', {})
-  runtime.ctx.provide('conversation', { input: { for: () => ({ submit: vi.fn() }) } } as never)
   runtime.ctx.provide('connection', { isLoopback: true, generation: { getSnapshot: () => ({}) }, state: { getSnapshot: () => ({}) }, rpc: {}, reconnect: vi.fn(), registerGenerationSource: vi.fn(), start: vi.fn(), stop: vi.fn() })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
   await runtime.workspaces.update((draft) => {
@@ -300,10 +325,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     conversation: { kind: 'single', scope: 'session-maybe' },
   } as never, Frame as never)
   await runtime.mount({ inject: [...injectSidebar], apply: applySidebar })
+  // The shipped ConversationRoot occupies the conversation seat — the same
+  // surface production mounts — so member-session specs assert the
+  // session-maybe seat's adoption semantics (remount on no-session) through
+  // real element identity of the root's [data-phase] node.
+  await runtime.mount({ inject: [...injectConversation], apply: applyConversation })
   const disposeWorkspace = runtime.slots.register({ name: 'sidebar.workspaces', priority: 0 }, BaselineWorkspace as never)
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
-  const disposeConversation = runtime.slots.register({ name: 'conversation', priority: 0 }, BaselineConversation as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, disposeConversation, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, threadObservations, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, threadObservations, changes }
 }

@@ -29,8 +29,9 @@ async function bench(persisted: string | null = null) {
   // The plugin declares these runtime services; the takeover bench only mounts
   // them, it never drives sessions or the model catalog.
   ctx.provide('sessions', {
-    list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} },
+    list: { getSnapshot: () => ({ current: undefined, byId: {} }), subscribe: () => () => {} },
     open: vi.fn(),
+    clear: vi.fn(),
     openSubagent: vi.fn(),
     search: vi.fn(async () => ({ items: [], hasMore: false })),
     searchResultLimit: 20,
@@ -131,8 +132,14 @@ describe('Team Client slot takeover', () => {
     const { ctx, slots } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    const sessions = ctx.get('sessions') as unknown as { open: ReturnType<typeof vi.fn>; list: { getSnapshot: () => { current?: string } } }
-    sessions.list.getSnapshot = () => ({ current: 'session:human-origin' })
+    const sessions = ctx.get('sessions') as unknown as {
+      open: ReturnType<typeof vi.fn>
+      clear: ReturnType<typeof vi.fn>
+      list: { getSnapshot: () => { current?: string; byId?: Record<string, unknown> } }
+    }
+    // The root restore owner reads the list snapshot (current + byId) before
+    // rebinding, so the bench's list double carries both.
+    sessions.list.getSnapshot = () => ({ current: 'session:human-origin', byId: { 'session:human-origin': {} } })
 
     ctx.teamNavigation.actions().selectWorkspace('workspace:one' as never)
     ctx.teamNavigation.actions().enterTeam()
@@ -154,7 +161,7 @@ describe('Team Client slot takeover', () => {
     expect(slots.entries('conversation.composer.bar')).toHaveLength(0)
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
     // Direct Member-to-Member navigation keeps the zero-surface invariant.
-    sessions.list.getSnapshot = () => ({ current: 'session:reviewer' })
+    sessions.list.getSnapshot = () => ({ current: 'session:reviewer', byId: { 'session:reviewer': {}, 'session:human-origin': {} } })
     ctx.teamNavigation.actions().enterMemberSession('session:reviewer' as never)
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(2)

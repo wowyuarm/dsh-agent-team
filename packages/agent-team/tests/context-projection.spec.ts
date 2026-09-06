@@ -330,6 +330,19 @@ describe('AgentTeam context projection — timeline boundaries', () => {
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
     expect(state.boundaries[0]!.source).toBe('team-boundary')
+    // The boundary carries the notice's own account, so default timeline
+    // items are distinguishable instead of all reading "Team delivery".
+    expect(state.boundaries[0]!.label).toBe('Team Inbox has unread work.')
+  })
+
+  it('a structured Team notice without a summary keeps the generic delivery label', () => {
+    // form: 'instructions' plugin messages carry no summary; they are still
+    // Team-owned structured deliveries, so the label falls back generically.
+    const instructions = createUserMessage({ content: [{ type: 'text', text: 'identity' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'instructions' } })
+    const events = [turnStart(1), userMessageEvent(instructions), turnEnd(1)]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]).toMatchObject({ source: 'team-boundary', label: 'Team delivery' })
   })
 
   it('a pre-compaction notice is a compaction boundary', () => {

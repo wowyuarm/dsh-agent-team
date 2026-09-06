@@ -637,7 +637,10 @@ describe('Team conversation surfaces', () => {
 
     await b.team.dispose()
     expect(await b.view.findByText('普通工作区')).toBeTruthy()
-    expect(await b.view.findByText('普通对话')).toBeTruthy()
+    // The conversation seat keeps the shipped ConversationRoot after the Team
+    // plugin unloads; its resident composer seat stands in for the old
+    // baseline double's text.
+    expect(b.view.container.querySelector('[data-composer-seat]')).toBeTruthy()
     expect(await b.view.findByText('设置')).toBeTruthy()
     await b.runtime.dispose()
   })

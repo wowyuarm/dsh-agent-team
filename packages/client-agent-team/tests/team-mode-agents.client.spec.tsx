@@ -20,7 +20,9 @@ describe('Team agent surfaces', () => {
   it('enters Team with existing Workspaces and restores the shipped seats', async () => {
     const b = await runtimeWithTeam()
     expect(b.view.getByText('普通工作区')).toBeTruthy()
-    expect(b.view.getByText('普通对话')).toBeTruthy()
+    // The conversation seat carries the shipped ConversationRoot; its
+    // resident [data-composer-seat] node stands in for the old baseline text.
+    expect(b.view.container.querySelector('[data-composer-seat]')).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     await waitFor(() => expect(document.documentElement.dataset.agentTeamMode).toBe('team'))
     expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
@@ -51,7 +53,7 @@ describe('Team agent surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '对话' }))
     await waitFor(() => expect(document.documentElement.dataset.agentTeamMode).toBeUndefined())
     expect(await b.view.findByText('普通工作区')).toBeTruthy()
-    expect(await b.view.findByText('普通对话')).toBeTruthy()
+    expect(b.view.container.querySelector('[data-composer-seat]')).toBeTruthy()
     expect(await b.view.findByText('设置')).toBeTruthy()
     expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
     await b.runtime.dispose()
@@ -350,7 +352,7 @@ describe('Team agent surfaces', () => {
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
     expect(document.documentElement.dataset.agentTeamMode).toBe('team')
     // Team views own the conversation seat before the card click.
-    expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeNull()
+    expect(b.view.container.querySelector('[data-phase]')).toBeNull()
 
     fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
     await waitFor(() => {
@@ -359,7 +361,7 @@ describe('Team agent surfaces', () => {
     // The card stays inside Team mode: the chrome remains mounted and the
     // conversation seat yields to the shipped root rendering the Member Session.
     expect(document.documentElement.dataset.agentTeamMode).toBe('team')
-    await waitFor(() => { expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeTruthy() })
+    await waitFor(() => { expect(b.view.container.querySelector('[data-phase]')).toBeTruthy() })
     expect(b.view.container.querySelector('[data-team-conversation]')).toBeNull()
     // The single positioning highlight moves to the selected Agent card; the
     // workspace overview row goes quiet.
@@ -372,8 +374,66 @@ describe('Team agent surfaces', () => {
     // Explicit Team navigation closes the embedded Member view again.
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     await waitFor(() => { expect(b.view.container.querySelector('[data-team-channel]')).toBeTruthy() })
-    expect(b.view.container.querySelector('[data-baseline-conversation]')).toBeNull()
+    expect(b.view.container.querySelector('[data-phase]')).toBeNull()
     expect(card.getAttribute('aria-current')).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('rebinds the underlying session when leaving an embedded Member view, so an off-seat rollover never blanks the seat', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
+    // Added without taking the selection: the Human's ordinary session stays
+    // current, the way a real Member session exists beside it on the Host.
+    await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never, { current: false })
+    await b.view.findByText('builder')
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+
+    // Enter the Member page: the seat embeds the Member session while the
+    // underlying DSH current still points at the Human's ordinary session
+    // only until open() moves it.
+    fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
+    await waitFor(() => { expect(b.runtime.sessions.list.getSnapshot().current).toBe('session:member:builder') })
+
+    // Leaving the Member page through Team navigation must rebind the
+    // underlying current back to the Human's original session exactly once —
+    // a stale current would later mask to undefined when the Host disposes
+    // the Member session (rollover), remounting the whole conversation seat.
+    fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[data-team-channel]')).toBeTruthy() })
+    expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
+    const restores = b.runtime.sessions.calls.filter(call => call.method === 'open' && call.args[0] === 'ordinary-session')
+    expect(restores).toHaveLength(1)
+    const seat = b.view.container.querySelector('[data-team-channel]') as HTMLElement
+
+    // The later rollover disposal of the Member session is now invisible to
+    // the seat: current was already rebound, so no undefined gap, no remount.
+    await b.runtime.sessions.remove('session:member:builder')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(b.runtime.sessions.list.getSnapshot().current).toBe('ordinary-session')
+    expect(b.view.container.querySelector('[data-team-channel]')).toBe(seat)
+    expect(b.view.getByRole('heading', { name: '# engineering' })).toBeTruthy()
+    await b.runtime.dispose()
+  })
+
+  it('clears the stale current when a Member view closes and its return target is gone', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1', initialChannels: true })
+    await b.runtime.sessions.add({ id: 'session:member:builder' as never, summary: { title: 'builder', cwd: '/work/alpha' } } as never, { current: false })
+    await b.view.findByText('builder')
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    fireEvent.click(b.view.getByRole('button', { name: '打开 builder 的会话' }))
+    await waitFor(() => { expect(b.runtime.sessions.list.getSnapshot().current).toBe('session:member:builder') })
+
+    // The return target dies while the Member page is embedded (the Host
+    // disposed the Human's ordinary session). Leaving the Member view must
+    // not leave the stale Member session as current — the seat clears into
+    // the no-session view instead of waiting for a later removal to mask it.
+    await b.runtime.sessions.remove('ordinary-session')
+    fireEvent.click(b.view.getByRole('button', { name: '# engineering' }))
+    await waitFor(() => { expect(b.view.container.querySelector('[data-team-channel]')).toBeTruthy() })
+    expect(b.runtime.sessions.list.getSnapshot().current).toBeUndefined()
+    const clears = b.runtime.sessions.calls.filter(call => call.method === 'clear')
+    expect(clears).toHaveLength(1)
+    // The dead target is never opened: unknown ids fail loud in the service.
+    expect(b.runtime.sessions.calls.some(call => call.method === 'open' && call.args[0] === 'ordinary-session')).toBe(false)
     await b.runtime.dispose()
   })
 

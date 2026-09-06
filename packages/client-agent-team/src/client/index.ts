@@ -171,6 +171,33 @@ function applyUi(ctx: ClientContext): void {
     void disposeDrafts()
   }, 'agent-team: navigation service')
 
+  // The one restore owner: leaving an embedded Member Session view must
+  // rebind the underlying current session, or the stale Member current later
+  // masks to undefined when the Host disposes that session (rollover) and
+  // the conversation seat remounts. Takeover is conditional — only when the
+  // current still IS the departed Member session — so a selection someone
+  // else made in the meantime survives. A dead return target clears instead
+  // of opening an unknown id.
+  ctx.effect(() => {
+    let previous = navigation.getSnapshot()
+    const restore = (): void => {
+      const snapshot = navigation.getSnapshot()
+      const departed = previous.memberSessionId
+      const returnTo = previous.returnToSessionId
+      previous = snapshot
+      if (departed === undefined || snapshot.memberSessionId !== undefined) return
+      const sessions = ctx.sessions as unknown as ISessions
+      if (sessions.list.getSnapshot().current !== departed) return
+      if (returnTo !== undefined && sessions.list.getSnapshot().byId[returnTo] !== undefined) sessions.open(returnTo)
+      else sessions.clear()
+    }
+    const unsubscribe = navigation.subscribe(restore)
+    return () => {
+      unsubscribe()
+      restore()
+    }
+  }, 'agent-team: member session restore')
+
   const changes = new TeamChangeStream((request, signal) => ctx.remote.agentTeam.changes(request, signal))
 
   const loadMemberGroups = async () => {
@@ -194,18 +221,12 @@ function applyUi(ctx: ClientContext): void {
     inject: () => ({
       navigation,
       ...navigation.actions(),
-      // The footer is the only surface that leaves Team mode; it also closes
-      // an embedded Member Session view, restoring the session the Human came
-      // from so the ordinary shell never strands them inside a Member Session.
+      // The footer is the only surface that leaves Team mode; closing the
+      // embedded Member Session view rebinds the underlying current through
+      // the same root-scope restore owner, so there is exactly one restore
+      // path and no double open.
       leaveTeam: () => {
-        const snapshot = navigation.getSnapshot()
-        if (snapshot.memberSessionId === undefined) {
-          navigation.actions().leaveTeam()
-          return
-        }
-        const returnTo = snapshot.returnToSessionId
         navigation.actions().exitMemberSession()
-        if (returnTo !== undefined) (ctx.sessions as unknown as ISessions).open(returnTo)
         navigation.actions().leaveTeam()
       },
       loadMemberGroups,

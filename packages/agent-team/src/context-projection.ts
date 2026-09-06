@@ -304,7 +304,10 @@ function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMe
   if (source.form === 'notice' && source.summary === PRE_COMPACTION_NOTICE_SUMMARY) {
     return { key: `compaction:${seq}`, source: 'compaction', label: 'compaction notice', seq, turn: -1, turnEndSeq: -1 }
   }
-  return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: 'Team delivery', seq, turn: -1, turnEndSeq: -1 }
+  // A notice carries its own one-line account; other plugin forms (e.g.
+  // identity instructions) have none and keep the generic delivery label.
+  const label = source.form === 'notice' && source.summary !== undefined ? source.summary : 'Team delivery'
+  return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label, seq, turn: -1, turnEndSeq: -1 }
 }
 
 /**
