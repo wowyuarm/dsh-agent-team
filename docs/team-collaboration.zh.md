@@ -10,7 +10,7 @@ Channel 顶层 Message 会创建一个 Thread 及其 anchor。新的 model-facin
 
 Agent 只能读取或修改自己 Workspace 中、且自己是 Member 的 Channels。Team tools 从 live Agent Member 解析 Workspace 和 actor，不接受 model-supplied Workspace identity。
 
-## 六工具协议
+## 八工具协议
 
 各工具职责不同：
 
@@ -20,7 +20,9 @@ Agent 只能读取或修改自己 Workspace 中、且自己是 Member 的 Channe
 - `team_message.start` 创建 Channel 顶层 Thread；默认 taskless，也接受明确 task intent 以原子创建 Task。`team_message.reply` 向既有 Thread 追加明确的 reply。二者都接受 `attachments` 中的可选 absolute file paths：Host 验证每个 path，将 bytes 复制到 attachment cache，收件人看到 thumbnails/chips 与一行 cached path；任一 path 验证失败都会拒绝整个 send。
 - `team_message.dm` 向同一 Workspace 内一个 enabled Agent Member 发送私有 direct message。DM 是纯送达：ledger 追加一个 audit-only 的 `team/dm-sent` operation（requestId 幂等），收件人的 live session 以 relay-form 注入的 user message 收到正文——idle 收件人开新 turn，busy 收件人 steer 进当前 turn。DM 不创建 Channel、Thread、revision、Attention 或 Inbox markers，也不唤醒任何 change waiters。Human 不能被 DM。收件人无 live session 或唤醒失败时，operation 保持 durable，发送方收到结构化的 delivery error 而非静默丢失；不做自动重投。DM 只用于快速澄清与状态同步——任务工作、决策和任何需要团队可见或可追溯的内容一律走 Thread；同一对象往来超过约 3 轮应转 Thread，因为每条 DM 消耗收件人一次完整 agent turn。
 - `team_claim` 列出 Claims，并允许 Agent 仅在真实 Task 上创建、完成或 release 自己的 Direction Claims；taskless Threads 没有 Claim mutation path。Direction 是一句说明 Agent 工作角度的话，帮助其他人发现冲突并追踪进展；execution plans 和 acceptance checklists 应写在 Thread messages 中。Claim 成功后会自动开始 Attention。
-- `new_context` 为调用的 Member 安排一次进入全新上下文的 rollover。Agent 传入私有 `handoff`（及可选 `relatedFiles`）；工具只做校验并返回 `status: 'scheduled'`，同时结束当前 turn——工具体本身不做任何 lifecycle 或 Inbox 副作用。Host 只在成功的 `tool/result` 持久落盘后才反应：等待所属 turn 结束并真正 idle，提交一个幂等的 `team/member-session-rolled-over` operation（Member actor、仅限自身，记录旧/新 Session id、成功的 handoff result sequence 和 trigger——绝不写入 handoff 正文），dispose 旧 Agent、归档旧 Session，再激活一个全新 Session，以 handoff 作为第一份 model-facing context。Member 身份、模型、私有记忆、skills、Claims 和 Attention 全部保留；新 Session 不继承旧的事件/chunk 历史。意图之后到达的非 Team 输入在新一代恰好投递一次；过期的 Team Inbox notices 被丢弃并从 ledger 重新派生。失败或悬空的调用不会安排任何事。请求与新 Session 身份由该 Member 绑定的 Session 加 tool call id 稳定派生，因此结果落盘与换窗之间崩溃后重放会收敛到同一代。
+- `new_context` 为调用的 Member 安排一次进入全新上下文的 rollover。Agent 传入私有 `handoff`（及可选 `relatedFiles`；传入 `checkpointRef` 则改为回返到已记录的 checkpoint）；工具只做校验并返回 `status: 'scheduled'`，同时结束当前 turn——工具体本身不做任何 lifecycle 或 Inbox 副作用。Host 只在成功的 `tool/result` 持久落盘后才反应：等待所属 turn 结束并真正 idle，提交一个幂等的 `team/member-session-rolled-over` operation（Member actor、仅限自身，记录旧/新 Session id、成功的 handoff result sequence 和 trigger——绝不写入 handoff 正文），dispose 旧 Agent、归档旧 Session，再激活一个全新 Session，以 handoff 作为第一份 model-facing context。Member 身份、模型、私有记忆、skills、Claims 和 Attention 全部保留；新 Session 不继承旧的事件/chunk 历史。意图之后到达的非 Team 输入在新一代恰好投递一次；过期的 Team Inbox notices 被丢弃并从 ledger 重新派生。失败或悬空的调用不会安排任何事。请求与新 Session 身份由该 Member 绑定的 Session 加 tool call id 稳定派生，因此结果落盘与换窗之间崩溃后重放会收敛到同一代。Member 持有无法在切换中存活的 jobs 时 rollover 会被拒绝——任何 running/stopping job，以及任何已结束但输出从未上报的 job；拒绝文案点名这些 jobs 并要求先收集或停止，且该 guard 在 lifecycle commit seam 复查一次。Host 重启落在 rollover 的 durable commit 与新 Session 激活之间时，会从上一 Session 的 durable intent 重建 handoff，而不是把该 Member 当作空白 Session 对待：即使新 Session 在崩溃前从未落盘，ledger 记录的上一 Session 也是 lineage 来源；重建是幂等的——自身日志已含 handoff 的一代不会再收到第二条。
+- `context_checkpoint` 为调用的 Member 记录一个命名的当前上下文 checkpoint。与 `new_context` 一样，工具体不做副作用：durable checkpoint 就是 Session projection 折叠的成功 `tool/call`+`tool/result` 对，返回的 ref 由 tool call id 确定性派生，模型可以在结果存在前就引用它。checkpoint 在其所属 turn 完成时 resolve；turn 结束后 Host 调度一条 quiet continuation message，让 Member 朝记录的锚点继续工作。投递跨重启恰好一次：projection 的 delivery record 是 durable 的，已送达 continuation 的 checkpoint 不会被重新调度。
+- `context_timeline` 返回该 Member 跨当前 Session 与已归档祖先 lineage 的上下文代际有界结构视图：已记录的 checkpoints（各自锚定的已完成 turn、quiet continuation 是否已送达），以及 handoff、Team-boundary 和 compaction 边界。仅结构信息——不含任何 transcript 正文。带 `checkpointRef` 的 `new_context` 调用会把 Member 回返到该 checkpoint 的精确 completed-turn 前缀：seed 是截至 checkpoint 的 `turn/end` 的 durable 前缀，构造上即平衡；子 Session 在 seed 来源处 parent，继承的 checkpoints 保持为惰性历史（子代不会触发继承的 intent）。以下情形回返会被拒绝：checkpoint 未 resolve、无法实质缩减工作集、usage 已达或超过 handoff 预算且回返保留过多、或 Member 持有多于一个 active Claim（无法证明回退停留在单一 Thread 内）；每种拒绝情形下 fresh handoff 都是文档化的替代路径。上下文回返只是重读历史；它绝不声称回滚外部影响。
 
 每个成功或被拒绝的 Team tool result 都通过正常 model loop 返回。除 `new_context` 外，Team tools 不会结束 Agent turn；Agent 自行决定继续读取、重试、开展项目工作、发送协作更新或结束。
 
@@ -64,9 +66,13 @@ Human Client 使用 `readThread`、`threadHistory`、`threadObservations`、`cha
 
 ## Team Member context boundary
 
-显式的 `team-member` preset 是完整 coding composition：shell、filesystem/search、web search、background-job controls、skill 加载工具、todo tracking、compaction、六个 Team tools、Workspace instruction discovery 和 private-memory context plugin。Host 拥有 Web service/provider；Team preset 只增加面向模型的 web tool。普通 Sessions 不会继承这些 Team rows。skill 发现本身是 Member 私有的（Host 在每个 Member 的 agent scope 上注册只扫其私有目录的 provider，catalog 初始为空，自装 SKILL.md 是唯一安装路径）。
+显式的 `team-member` preset 是完整 coding composition：shell、filesystem/search、web search、background-job controls、skill 加载工具、todo tracking、compaction、八个 Team tools、Workspace instruction discovery 和 private-memory context plugin。Host 拥有 Web service/provider；Team preset 只增加面向模型的 web tool。普通 Sessions 不会继承这些 Team rows。skill 发现本身是 Member 私有的（Host 在每个 Member 的 agent scope 上注册只扫其私有目录的 provider，catalog 初始为空，自装 SKILL.md 是唯一安装路径）。
 
-Member 的 project `cwd` 保持在 Workspace path。Harness `agent-instructions` 仍是加载 `AGENTS.md`/`CLAUDE.md` guidance 的唯一 loader；Team 不重新实现或迁移这套 discovery。每个 Member 的 private root 包含小写的 `memory.md` index、按需读取的 `notes/` 和 Member 私有 skill 的 `skills/`。每个 safe pre-step 最多向 Member 提供其自身发生变化的 index，并包装为 escaped、typed reference context。Index 上限为 8 KiB；超出预算会产生 maintenance warning，而不是静默截断、删除或 summarization。Notes 不会自动注入。Suspend/resume 保留这些 files，永久 removal 删除 private root。persona 陈述私有空间的物理事实（使用注入的绝对路径、绝不 cwd 相对路径、memory/notes 纪律、可复用资产边界），外加一段简洁的 context-management 指引：把活跃上下文当作最小充分工作集、何时调用 `new_context`（本版本没有 checkpoint 回返，切换前先把值得保留的内容写入私有 memory/notes）、上下文切换不会回滚外部影响、handoff 中要交接当前状态。全部 skill 写作指引——什么值得成为 skill、目录形态布局、写作质量、credentials 约定——都在内置的 `member-skill-manager` meta skill 里，其 description 负责"涉及 skill 管理工作时先读我"；用不用任何 skill 由 Member 按任务自行判断。
+Member 的 project `cwd` 保持在 Workspace path。Harness `agent-instructions` 仍是加载 `AGENTS.md`/`CLAUDE.md` guidance 的唯一 loader；Team 不重新实现或迁移这套 discovery。每个 Member 的 private root 包含小写的 `memory.md` index、按需读取的 `notes/` 和 Member 私有 skill 的 `skills/`。每个 safe pre-step 最多向 Member 提供其自身发生变化的 index，并包装为 escaped、typed reference context。Index 上限为 8 KiB；超出预算会产生 maintenance warning，而不是静默截断、删除或 summarization。Notes 不会自动注入。Suspend/resume 保留这些 files，永久 removal 删除 private root。persona 陈述私有空间的物理事实（使用注入的绝对路径、绝不 cwd 相对路径、memory/notes 纪律、可复用资产边界），外加一段简洁的 context-management 指引：把活跃上下文当作最小充分工作集、在风险阶段前用 `context_checkpoint` 记录锚点并在阶段失败时通过 `new_context` 回返、历史不再划算时通过 `new_context` 换新（切换前先把值得保留的内容写入私有 memory/notes）、上下文切换不会回滚外部影响、handoff 中要交接当前状态。全部 skill 写作指引——什么值得成为 skill、目录形态布局、写作质量、credentials 约定——都在内置的 `member-skill-manager` meta skill 里，其 description 负责"涉及 skill 管理工作时先读我"；用不用任何 skill 由 Member 按任务自行判断。
+
+## 上下文压力归属
+
+Host 端到端拥有 Member 的上下文压力管理。两个预算阈值从当前 route 的 context window 派生（handoff 预算上限 200K、硬上限 256K，并留安全 reserve）：达到 handoff 预算时，Member 在该 generation 内收到一条结构化压力通知，建议 `new_context` rollover——同一 generation 不重复，rollover 后重新武装；达到硬上限时，Host 在转发下一个模型请求前强制一次原地 compaction，无法证明 generation 前进或实测压力下降的 Member 会被 fail closed（拒绝该 step，而不是超限提交）。Provider context-overflow 失败获得一条有界的 compact-and-retry 序列后再上浮。无法测量窗口的 route 会显式拒绝，绝不静默超限提交。已接受 Task 的自动 compaction 已退役：除 Member 自己的显式选择外，压力策略是唯一的 compaction 触发器。
 
 Memory 不是 authority：它可能过时，不能覆盖 Workspace instructions、direct Human input 或 durable Team facts。Member 只能记录已验证且持久的知识，不得记录 credentials、sensitive data、guesses、chat logs、其他 Members' memory，或 ledger 已拥有的 facts。
 
@@ -86,7 +92,7 @@ Pending hints 按 Member 合并。Consumed 或 ignored hint 不会再触发 turn
 
 Web Client 的 Agent-row menu 提供两个 runtime recovery entrances（都不写 ledger）：有 live session 的 error Member 显示「恢复」，由 Host 向 session 注入 continuation prompt（孤儿 composition 则原地重建）；activation failed 的 Member 显示「重启」，由 Host 重新执行该 Member activation，再次失败时仍以 diagnostic 显示在 sidebar。
 
-历史上的第三个入口「从全新上下文开始」已经移除：Member 现在通过 `new_context` 工具自行管理上下文（见六工具协议），Host 侧 clear-context Remote 保留为无可见入口的 hidden migration escape hatch，其 `team/member-session-renewed` operation schema 与 replay validation 保留，旧 ledger 仍可 replay。模型发起的 rollover 期间（ledger 绑定已迁移、新 Session 尚未就绪），Member 状态短暂显示为 unavailable 并带 "context rollover in progress" diagnostic；若该 Member 的 Session 正嵌入右栏，Client 只在旧→新绑定变化且当前页面正是被观察的旧 live Session 时跟随一次到新 Session，归档视图不会跳转。
+历史上的第三个入口「从全新上下文开始」已经移除：Member 现在通过 `new_context` 工具自行管理上下文（见八工具协议），Host 侧 clear-context Remote 保留为无可见入口的 hidden migration escape hatch，其 `team/member-session-renewed` operation schema 与 replay validation 保留，旧 ledger 仍可 replay。模型发起的 rollover 期间（ledger 绑定已迁移、新 Session 尚未就绪），Member 状态短暂显示为 unavailable 并带 "context rollover in progress" diagnostic；若该 Member 的 Session 正嵌入右栏，Client 只在旧→新绑定变化且当前页面正是被观察的旧 live Session 时跟随一次到新 Session，归档视图不会跳转。
 
 ## Progress-visibility nudges
 

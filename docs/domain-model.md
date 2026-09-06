@@ -90,6 +90,18 @@ A possible future private Place with its own participants, visibility, Messages,
 
 An in-process availability projection, not a ledger fact: available (live idle), working (loop running), error (current loop/tool failure), and unavailable (no usable handle or lifecycle/setup/resume block, including the brief context-rollover window where the ledger binding has moved but the new Session is not live yet). It is separate from Claim state.
 
+## Context Generation
+
+One Member Session's working context between two context boundaries. A fresh generation starts empty except for the handoff delivery; a checkpoint-returned generation seeds the exact completed-turn prefix of its source. The ledger records the current binding (one per Member at all times) and the previous Session of the latest renewal/rollover; the Session logs themselves hold the context history. Every generation keeps Member identity, model, private memory, skills, Claims, and Attention.
+
+## Context Checkpoint
+
+A named, resolved anchor recorded by a Member inside its own Session as a successful `context_checkpoint` tool pair. It resolves when the containing turn completes; the ref is deterministic from the tool call id. A checkpoint alone changes nothing — it becomes a `new_context` return target only when the Member cites it, and inherited checkpoints in a seeded child stay inert history.
+
+## Context Handoff
+
+The private bridge prose a Member passes to `new_context`; it is never a ledger fact. The ledger records only the verifiable envelope (session anchors, result sequence, trigger); the prose lives exactly once in the new generation's Session log as its first model-facing context. A crash between the durable rollover commit and delivery reconstructs it from the previous Session's durable intent, exactly once.
+
 ## Suspend
 
 Temporarily stop a Member's live Agent while retaining identity, Session, Claims, Attention, unread state, and private memory. Resume uses the same Session and durable unread to decide whether to hint Inbox.

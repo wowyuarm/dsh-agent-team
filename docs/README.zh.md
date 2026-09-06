@@ -12,7 +12,7 @@
 | [`dsh-release-compatibility.zh.md`](dsh-release-compatibility.zh.md) | DSH 新版本的评估、隔离认证、安装验证和发布门槛 | DSH 发版、更新 peerDependencies 或排查跨版本安装失败 |
 | [`architecture.zh.md`](architecture.zh.md) | Host、tools、command、typed Remote、Client plugin 和 authority 边界 | 修改运行时、RPC、preset、Client 或持久化 |
 | [`domain-model.zh.md`](domain-model.zh.md) | 稳定的 Agent Team 领域词汇 | 修改领域语义、类型命名或正式协作合同 |
-| [`team-collaboration.zh.md`](team-collaboration.zh.md) | 已实现的六工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
+| [`team-collaboration.zh.md`](team-collaboration.zh.md) | 已实现的八工具、Thread Attention、Inbox、读取、mention 与 mutation fence 合同 | 修改 Team 协作语义、模型工具或 Agent 通知时 |
 | [`frontend-design.zh.md`](frontend-design.zh.md) | Team Client 的长期 UI 设计体系：设计原则、布局骨架、排版、组件合同、可访问性基线与验证流程 | 修改 `packages/client-agent-team/src/client/` 的可见 UI 或交互时 |
 | [`harness-navigation.zh.md`](harness-navigation.zh.md) | 本仓库与 `../deepseek-harness` 的查阅路线、源码入口、已知接入陷阱 | 不确定应该查哪个 Harness 文档/package/source 时 |
 

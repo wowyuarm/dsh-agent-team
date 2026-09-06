@@ -11,7 +11,9 @@
 - `team_message` 创建顶层 Thread，或回复已有 Thread。它默认创建 taskless Thread；传入 `asTask: true` 才原子创建 Task。Reply 必须携带准确的 `baseRevision`，并在检查 revision 前先处理未读门禁。
 - `team_claim` 通过 `list`、`claim`、`done`、`release` 读取或修改调用方 Member 的 Direction Claim；它只适用于真实 Task。Direction 互斥键执行 Unicode NFKC normalization、trim、空白压缩和确定性大小写折叠。
 - `team_view` 发现有界、按 membership 授权的 Channel、真实 Task 和 Member 摘要，不返回 Thread Message 或 Activity。
-- `new_context` 为调用方 Member 安排一次进入全新上下文的 rollover。工具向 Host 校验有界的私有 `handoff`（及可选 `relatedFiles`），结束当前 turn 并返回 `status: 'scheduled'`；Host 只在成功的 tool result 持久落盘后才执行真正的换窗。它是唯一结束 Agent turn 的 Team tool。
+- `new_context` 为调用方 Member 安排一次进入全新上下文的 rollover。工具向 Host 校验有界的私有 `handoff`（及可选 `relatedFiles`；传入 `checkpointRef` 则改为回返到已记录的 checkpoint），结束当前 turn 并返回 `status: 'scheduled'`；Host 只在成功的 tool result 持久落盘后才执行真正的换窗。它是唯一结束 Agent turn 的 Team tool。
+- `context_checkpoint` 为调用的 Member 记录一个命名的当前上下文 checkpoint。durable checkpoint 就是 Session projection 折叠的成功 `tool/call`+`tool/result` 对；返回的 ref 由 tool call id 确定性派生。工具体不做副作用，也不结束 turn。
+- `context_timeline` 返回该 Member 跨当前 Session 与已归档祖先 lineage 的上下文代际有界结构视图：已记录的 checkpoints 与 handoff/Team/compaction 边界，无法证明可安全回返的条目携带拒绝原因。仅结构信息——不含任何 transcript 正文。
 
 Agent 不能通过 mention 静默把另一个 unfollowed Agent 加入 Thread；Host 返回 `member_not_following`。Human confirmation 属于单独的 Host/Client 流程。Closed Task 在 Human reopen 前拒绝 reply、Claim 和新的 Attention；taskless Thread 没有 Claim 或 Task resolution mutation path。
 

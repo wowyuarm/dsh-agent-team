@@ -24,6 +24,7 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { PressurePolicyCoordinator } from './pressure-policy.ts'
 import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
+import { createHandoffMessage } from './context-source.ts'
 import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, MemberRuntime } from './member-runtime.ts'
@@ -471,6 +472,23 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
+  /**
+   * Whether one Member Session has durable persisted content, decided through
+   * {@link SessionPersistenceService.inspect} rather than a bare metadata
+   * listing: inspection first awaits any in-flight retirement drain for the
+   * id, so a resume racing a suspend's fire-and-forget final flush cannot
+   * mistake a still-draining persisted Session for an unpersisted one and
+   * fork a fresh generation over it.
+   */
+  private async sessionPersisted(sessionId: SessionId): Promise<boolean> {
+    try {
+      await this.ctx.sessionPersistence.inspect(sessionId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /** Resolve one exact live Agent to its durable Team Member; forks do not inherit identity. */
   memberForAgent(agent: Agent): AgentTeamAgentMember | undefined {
     for (const [memberId, handle] of this.handles) {
@@ -767,6 +785,12 @@ export default class AgentTeam extends TypertRemoteService {
       // violation found here fails the whole swap with the old generation
       // intact — never a guessed seed over a wrong prefix.
       const seed = plan.checkpointRef === undefined ? undefined : await this.resolveCheckpointSeed(memberId, active.agent, plan.checkpointRef as AgentTeamContextCheckpointRef)
+      // Recheck the job guard at the lifecycle commit seam: a job may have
+      // started or settled after the tool-time validation.
+      const blockingJobs = this.ownedJobsBlockingRollover(active.agent)
+      if (blockingJobs.length > 0) {
+        throw new Error(`the context rollover is refused: this Member now owns jobs that would not survive the switch (${blockingJobs.join(', ')}); collect or stop them, then retry`)
+      }
       const rolled = await this.rolloverSessionForAgent(active.agent, {
         requestId: plan.requestId,
         workspaceId: stored.workspaceId,
@@ -1300,6 +1324,44 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
+   * Rebuild the handoff for a Member whose rollover committed but whose new
+   * Session activated without the handoff delivery (a crash between the
+   * ledger commit and the swap's delivery step). The previous Session —
+   * recorded in the operation, mirrored by the lineage parent, and available
+   * from the ledger even when the new Session's own header never carried it —
+   * holds the durable intent; fold it cold and deliver the same handoff
+   * envelope first. Idempotent: once any handoff exists in the new Session's
+   * own log this never runs.
+   */
+  private async reconstructMissingHandoff(member: AgentTeamAgentMember, agent: Agent): Promise<void> {
+    const previousSessionId = agent.session.header.parentSession
+      ?? this.requireLedger().previousSessionForMember(member.memberId)
+    if (previousSessionId === undefined) return
+    let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
+    try {
+      const result = await this.ctx.sessionPersistence.inspect(previousSessionId)
+      inspection = result
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: rollover handoff reconstruction could not read the previous Session '${previousSessionId}': ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    const state = foldContextProjection(inspection.events, inspection.inheritedEventCount)
+    if (state.pending === null) return
+    const pending = state.pending
+    const message = createHandoffMessage({
+      handoff: pending.handoff,
+      previousSessionId,
+      newSessionId: agent.session.id,
+      trigger: 'model',
+      handoffEventSeq: pending.resultSeq as never,
+      ...(pending.checkpointRef === undefined ? {} : { checkpointRef: pending.checkpointRef }),
+      ...(pending.relatedFiles.length === 0 ? {} : { relatedFiles: pending.relatedFiles }),
+    })
+    agent.steer(message)
+    this.ctx.logger.info(`agent-team: reconstructed the rollover handoff for member '${this.memberLabel(member.memberId)}' from the previous Session '${previousSessionId}'`)
+  }
+
+  /**
    * Agent-only checkpoint request validation: the tool calls this inside its
    * own running turn. Like `new_context`, the tool performs no side effect —
    * the durable checkpoint is the successful `tool/call`+`tool/result` pair
@@ -1422,6 +1484,15 @@ export default class AgentTeam extends TypertRemoteService {
       // outside the turn fence.
       throw new Error('new_context must run inside this Member\'s own running turn')
     }
+    // Job ownership guard: disposing the old Agent cancels its running jobs
+    // and orphaned terminal-but-unreported output would vanish with it. The
+    // rejection names the jobs so the model can collect or stop them first;
+    // the transition rechecks at the lifecycle commit seam because a job may
+    // settle between this validation and the swap.
+    const blocking = this.ownedJobsBlockingRollover(agent)
+    if (blocking.length > 0) {
+      throw new Error(`new_context is refused while this Member owns jobs that would not survive the switch (${blocking.join(', ')}); collect or stop them first, then retry`)
+    }
     if (request.checkpointRef !== undefined) {
       // Seeded return validation is async (it cold-reads archived ancestors),
       // so the tool prevalidates the syntactic shape here and the transition
@@ -1432,6 +1503,20 @@ export default class AgentTeam extends TypertRemoteService {
       return { mode: 'from-checkpoint' }
     }
     return { mode: 'fresh' }
+  }
+
+  /**
+   * Jobs this Agent owns that cannot survive a generation swap: any
+   * running/stopping job, and any settled job whose terminal output was
+   * never reported (disposal would silently discard it). In-place hard
+   * compaction is exempt — it never cancels the owner.
+   */
+  private ownedJobsBlockingRollover(agent: Agent): readonly string[] {
+    const jobs = agent.ctx.get('jobs')
+    if (jobs === undefined) return []
+    return jobs.list(agent)
+      .filter((job: { status: string; reported: boolean }) => job.status === 'running' || job.status === 'stopping' || ((job.status === 'completed' || job.status === 'killed' || job.status === 'failed') && !job.reported))
+      .map((job: { id: string; label: string }) => `${job.label} (${job.id})`)
   }
 
   /**
@@ -1536,7 +1621,7 @@ export default class AgentTeam extends TypertRemoteService {
       const workspacePath = knownWorkspacePath ?? workspace.path
       await this.memberRuntime.initializePrivateMemory(member.privateMemoryPath)
       const persisted = knownSessions !== undefined ? knownSessions.has(member.sessionId)
-        : (await this.ctx.sessionPersistence.list()).some(header => header.id === member.sessionId)
+        : await this.sessionPersisted(member.sessionId)
       // AgentOptions declares only provider/model. Install the full selection
       // through the public Agent model-selection seam so reasoning effort is
       // applied to the next request and not lost during activation.
@@ -1602,6 +1687,12 @@ export default class AgentTeam extends TypertRemoteService {
           },
         }
       }
+      // A renewal's create path parents at the ledger-recorded previous
+      // Session even when the caller does not pass one: a crash between the
+      // durable rollover commit and this activation recreates the Session
+      // from the ledger binding alone, and the lineage parent is what makes
+      // the missing handoff reconstructible on the NEXT failure.
+      const lineageParent = forkedFrom ?? (!persisted ? this.requireLedger().previousSessionForMember(member.memberId) : undefined)
       created = persisted
         ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup })
         : await this.ctx.agents.create({
@@ -1613,7 +1704,7 @@ export default class AgentTeam extends TypertRemoteService {
             meta: {
               cwd: workspacePath,
               agentPreset: member.presetId,
-              ...(forkedFrom === undefined ? {} : { parentSession: forkedFrom }),
+              ...(lineageParent === undefined ? {} : { parentSession: lineageParent }),
               ...(options?.seed === undefined ? {} : { isSeeded: true }),
             },
             ...(options?.seed === undefined ? {} : { seed: options.seed, inheritedEventCount: options.inheritedEventCount }),
@@ -1644,6 +1735,23 @@ export default class AgentTeam extends TypertRemoteService {
         // follow-up delivery repairs exactly once; delivered continuations
         // stay delivered through the projection's own delivery record.
         this.contextManagement.repairContinuations(created.agent, state)
+        // A restart after the rollover committed but before the handoff was
+        // delivered activates the new Session with no handoff in its own
+        // log — never treat that as an ordinary blank Member Session. The
+        // operation's recorded previous Session (the lineage parent) still
+        // holds the intent; rebuild the handoff from it and deliver first.
+        if (!state.boundaries.some(boundary => boundary.source === 'handoff')) {
+          await this.reconstructMissingHandoff(member, created.agent)
+        }
+      } else if (forkedFrom === undefined && lineageParent !== undefined) {
+        // A restart recreated a Session that never materialized before the
+        // crash (the rollover committed, its activation failed, and this
+        // create path just rebuilt it from the ledger binding alone): the
+        // same handoff reconstruction applies from the ledger's recorded
+        // previous Session. The rollover's own activation passes its fork
+        // parent explicitly and delivers the handoff right after — that
+        // delivery is the plan, never this recovery.
+        await this.reconstructMissingHandoff(member, created.agent)
       }
     } catch (error) {
       await created?.dispose()

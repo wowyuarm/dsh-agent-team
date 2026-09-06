@@ -325,13 +325,15 @@ interface Projection {
   readonly mentionsByMessage: Map<AgentTeamMessageRef, readonly AgentTeamMemberId[]>
   readonly messageCountByThread: Map<AgentTeamThreadRef, number>
   readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
+  /** Latest retired Session id per Member, from the most recent renewal or rollover record. */
+  readonly previousSessions: Map<AgentTeamMemberId, SessionId>
 }
 
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
     claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
-    attentionByThread: new Map() }
+    attentionByThread: new Map(), previousSessions: new Map() }
 }
 
 const EMPTY_PROGRESS_NUDGE_TARGETS: AgentTeamProgressNudgeTargets = Object.freeze({
@@ -611,6 +613,17 @@ export class AgentTeamLedger {
 
   getMember(memberId: AgentTeamMemberId): AgentTeamAgentMember | undefined {
     return this.state.members.get(memberId)
+  }
+
+  /**
+   * The retired Session this Member most recently left through a renewal or
+   * rollover — the lineage parent a crash between the durable binding commit
+   * and the new Session's activation must reconstruct a handoff from. Read
+   * from the audit projection; the Member record itself only names the
+   * current Session.
+   */
+  previousSessionForMember(memberId: AgentTeamMemberId): SessionId | undefined {
+    return this.state.previousSessions.get(memberId)
   }
 
   /**
@@ -2264,10 +2277,12 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/member-session-renewed') {
       target.members.set(operation.data.member.memberId, operation.data.member)
+      target.previousSessions.set(operation.data.member.memberId, operation.data.previousSessionId)
       return
     }
     if (operation.kind === 'team/member-session-rolled-over') {
       target.members.set(operation.data.member.memberId, operation.data.member)
+      target.previousSessions.set(operation.data.member.memberId, operation.data.previousSessionId)
       return
     }
     if (operation.kind === 'team/channel-updated') {

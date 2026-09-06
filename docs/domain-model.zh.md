@@ -94,6 +94,18 @@ Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有
 
 Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 available（live idle）、working（Agent loop running）、error（当前 loop/tool failure，保留到下一次 loop 启动）与 unavailable（无可用 AgentHandle 或 lifecycle/setup/resume 阻止调用，也包括 context rollover 的短暂窗口——ledger 绑定已迁移、新 Session 尚未就绪）；列表以状态点呈现，和 Claim 状态分离。
 
+## Context Generation（上下文代际）
+
+一个 Member Session 的两个上下文边界之间的工作上下文。全新代际除 handoff 投递外从零开始；checkpoint 回返的代际以其来源的精确 completed-turn 前缀作 seed。ledger 记录当前绑定（任一时刻每个 Member 恰好一个）以及最近一次 renewal/rollover 的上一 Session；上下文历史本身保存在各 Session 日志中。所有代际都保留 Member 身份、模型、私有记忆、skills、Claims 和 Attention。
+
+## Context Checkpoint（上下文检查点）
+
+Member 在自己的 Session 内通过成功的 `context_checkpoint` 工具对记录的命名、已 resolve 的锚点。它在所属 turn 完成时 resolve；ref 由 tool call id 确定性派生。checkpoint 本身不改变任何东西——只有 Member 在 `new_context` 中引用它时才成为回返目标；seed 子代中继承的 checkpoints 保持为惰性历史。
+
+## Context Handoff（上下文交接）
+
+Member 通过 `new_context` 传递的私有桥接正文；它绝不是 ledger 事实。ledger 只记录可验证的信封（session 锚点、result sequence、trigger）；正文恰好一次地保存在新代际 Session 日志中，作为其第一份 model-facing context。落在 rollover 的 durable commit 与投递之间的崩溃会从上一 Session 的 durable intent 重建它，且仅一次。
+
 ## Suspend
 
 临时停止 Agent Member 的 live Agent，同时保留成员身份、session、claims、Thread Attention、未读状态和私有 memory。Resume 恢复同一 session，并由 durable unread 决定是否重新提示 Inbox。

@@ -148,6 +148,8 @@ async function realHarness(
   readonly presets: TestablePresets
   /** Writable fake meter pressure; tests drive the thresholds through it. */
   readonly pressureState: { usageTokens: number }
+  /** Writable fake owned-jobs list; tests drive the rollover guard through it. */
+  readonly jobsState: { jobs: Array<{ id: string; label: string; status: string; reported: boolean }> }
 }> {
   const root = reopen?.root ?? await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
@@ -204,6 +206,10 @@ async function realHarness(
   // tests that need pressure control override this with a writable fake.
   const pressureState = { usageTokens: 0 }
   ctx.provide('tokenMeter', { measure: () => ({ totalTokens: pressureState.usageTokens }) })
+  // The rollover job guard reads the member-scoped jobs registry; a writable
+  // fake lets tests drive owned-job states.
+  const jobsState: { jobs: Array<{ id: string; label: string; status: string; reported: boolean }> } = { jobs: [] }
+  ctx.provide('jobs', { list: () => jobsState.jobs })
   if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
   const presetsConfig = (): { default: string; roots: { path: string; trust: 'system' }[]; includeShippedRoot: boolean; includeUserRoot: boolean } => ({
@@ -224,7 +230,7 @@ async function realHarness(
   })
   const teamFiber = await ctx.plugin(AgentTeam)
   cleanups.push(async () => { await ctx.fiber.dispose(); await facility.closeAll(); await rm(root, { recursive: true, force: true }) })
-  return { ctx, workspaceId, root, project, teamFiber, archived, presets: ctx.agentPresets as TestablePresets, pressureState }
+  return { ctx, workspaceId, root, project, teamFiber, archived, presets: ctx.agentPresets as TestablePresets, pressureState, jobsState }
 }
 
 describe('Agent Team Member lifecycle', () => {
@@ -2318,4 +2324,150 @@ describe('Agent Team pressure policy integration (ticket 03)', () => {
     expect(status.presence === 'available' || status.presence === 'working').toBe(true)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
+})
+
+describe('Agent Team recovery hardening (ticket 04)', () => {
+  it('refuses new_context while the Member owns jobs that would not survive the switch', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, jobsState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('jobs-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('jobs-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // A running job blocks the rollover; the rejection names it.
+    jobsState.jobs = [{ id: 'bash-1', label: 'long build', status: 'running', reported: false }]
+    adapter.enqueue(toolCallResponse('call-jobs-nc-1', 'new_context', { handoff: 'blocked by a running job' }))
+    adapter.enqueue(textResponse('collecting the job first.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'try switching with a running job' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    const firstResult = live.session.ownEvents().findLast(event => event.type === 'tool/result' && JSON.stringify((event as { data: { message: { content: unknown } } }).data.message.content).includes('long build'))
+    expect(firstResult).toBeDefined()
+
+    // A terminal-but-unreported job also blocks: disposal would discard its
+    // unreported output.
+    jobsState.jobs = [{ id: 'bash-2', label: 'finished silently', status: 'completed', reported: false }]
+    adapter.enqueue(toolCallResponse('call-jobs-nc-2', 'new_context', { handoff: 'blocked by unreported output' }))
+    adapter.enqueue(textResponse('reading the output first.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'try again with unreported output' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    const secondResult = live.session.ownEvents().findLast(event => event.type === 'tool/result' && JSON.stringify((event as { data: { message: { content: unknown } } }).data.message.content).includes('finished silently'))
+    expect(secondResult).toBeDefined()
+
+    // A reported terminal job does not block: the Member may switch.
+    jobsState.jobs = [{ id: 'bash-3', label: 'reported done', status: 'completed', reported: true }]
+    adapter.enqueue(toolCallResponse('call-jobs-nc-3', 'new_context', { handoff: 'clean switch' }))
+    adapter.enqueue(textResponse('switched.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'try now that everything is reported' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === added.status.member.memberId)
+      return current !== undefined && current.member.sessionId !== sessionId ? current : undefined
+    })
+    expect(renewed.member.sessionId).not.toBe(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('keeps a delivered rollover handoff durable across a Host restart without duplicating it', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('hfix-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('hfix-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // One fresh rollover whose handoff delivers normally.
+    adapter.enqueue(toolCallResponse('call-hfix-nc', 'new_context', { handoff: 'the reconstructed handoff text' }))
+    adapter.enqueue(textResponse('continuing.'))
+    const live = ctx.agents.get(firstSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+    expect(archivedHandoffs(next)).toHaveLength(1)
+
+    // Host restart on the same ledger and Session store: the delivered
+    // handoff is durable in the new Session's own log, and the restart must
+    // not reconstruct a second one on top of it. This is also the race the
+    // write-behind retire drain runs against — the persisted decision goes
+    // through inspection (which awaits the drain), never a bare listing.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('hfix-suspend'), memberId })
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    await ctx.agentTeam.resumeMember({ requestId: requestId('hfix-resume'), memberId })
+    const resumedStatus = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    const resumed = await waitFor(() => ctx.agents.get(resumedStatus.member.sessionId)!)
+    await resumed.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(resumed.session.id).toBe(renewed.member.sessionId)
+    expect(archivedHandoffs(resumed)).toHaveLength(1)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('reconstructs the handoff when a restart lands between the rollover commit and its delivery', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('hgap-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('hgap-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Crash the rollover between its durable ledger commit and the handoff
+    // delivery: the new Session's activation fails (preset mount throws), so
+    // the binding is committed, the old generation is retired, and the
+    // handoff never lands in any log. The ledger's previous-Session record
+    // is the only remaining lineage fact.
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-hgap-nc', 'new_context', { handoff: 'the handoff that never delivered' }))
+    adapter.enqueue(textResponse('rolling over into the crash.'))
+    const live = ctx.agents.get(firstSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over now' }], source: { kind: 'user' } }))
+    const committed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+    expect(committed.member.sessionId).not.toBe(firstSessionId)
+    expect(ctx.agents.get(committed.member.sessionId)).toBeUndefined()
+    expect(ctx.agents.get(firstSessionId)).toBeUndefined()
+
+    // Host restart on the same ledger: activation of the never-materialized
+    // Session goes through the create path with the ledger lineage, and the
+    // missing handoff is reconstructed from the previous Session's durable
+    // pending intent — delivered exactly once, before anything else.
+    presets.failingMount = false
+    adapter.enqueue(textResponse('picked up from the reconstructed handoff.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const restarted = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    const resumed = await waitFor(() => ctx.agents.get(restarted.member.sessionId)!)
+    await resumed.whenIdle()
+    await waitFor(() => archivedHandoffs(resumed).length > 0 ? true : undefined)
+    await resumed.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(archivedHandoffs(resumed)).toHaveLength(1)
+    const handoff = archivedHandoffs(resumed)[0] as { data: { content: Array<{ type: string; text: string }> } }
+    expect(handoff.data.content[0]?.text).toContain('the handoff that never delivered')
+    // The reconstructed Session carries its lineage for future restarts.
+    expect(resumed.session.header.parentSession).toBe(firstSessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  /** Count handoff-sourced user messages in one agent's own log. */
+  function archivedHandoffs(agent: ReturnType<Context['agents']['get']>): readonly unknown[] {
+    return agent!.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-handoff')
+  }
 })
