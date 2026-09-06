@@ -318,6 +318,25 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const builderMember = memberStatuses.find((status: { member: { handle: string } }) => status.member.handle === 'builder')!
   const builderAgent = scaffold.ctx.agents.get(builderMember.member.sessionId)!
 
+  // Fixture seam, not an assertion change: the adjacent Harness scaffold's
+  // fixture-less adapter reports route capacity on a top-level field the
+  // canonical LlmResolvedModelInfo shape never reads, so the Member's route
+  // would price as unknown and the pressure policy fail-closed would reject
+  // every pre-step. The canonical durable route record — the same
+  // `request/context` event a real first request appends — matches the
+  // Member's default selection and carries the route's real capacity, so
+  // the Host's persisted-route fast path prices the turn normally. The
+  // journey still proves a plain composer prompt lands on the Member's live
+  // Session below; nothing about the delivery assertion changes.
+  {
+    const selection = scaffold.ctx.agentDefaultModel.currentSelection()
+    builderAgent.session.append('request/context', {
+      provider: selection.provider,
+      model: selection.model,
+      contextWindow: 128_000,
+    })
+  }
+
   // Clicking the Agent card keeps Team mode mounted and swaps only the right
   // pane: the conversation shadow stands down so the shipped root renders the
   // Member Session between the Team sidebars. A Member session has no human
