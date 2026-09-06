@@ -10,7 +10,13 @@ const temporaryPackage = await mkdtemp(join(harnessRoot, 'packages/external-agen
 const manifestDirectory = join(temporaryPackage, 'bundle')
 
 const run = () => new Promise((resolveRun, reject) => {
-  const child = spawn(join(harnessRoot, 'node_modules/.bin/tsdown'), [], {
+  // On Windows the pnpm .bin shims are .cmd files (the extensionless file is
+  // a POSIX shell script only), and spawn without a shell cannot run a .cmd
+  // by bare name through PATH — name the shim file directly.
+  const bin = process.platform === 'win32'
+    ? join(harnessRoot, 'node_modules/.bin/tsdown.cmd')
+    : join(harnessRoot, 'node_modules/.bin/tsdown')
+  const child = spawn(bin, [], {
     cwd: clientRoot,
     stdio: 'inherit',
     env: { ...process.env, DSH_AGENT_TEAM_BUILD_RUNTIME: '1' },
