@@ -30,14 +30,22 @@ export function newAttachmentId(): AgentTeamAttachmentId {
   return randomUUID() as AgentTeamAttachmentId
 }
 
-/** Strip path separators, control characters, and leading dots from one client-supplied name. */
+/** Strip path separators, control characters, Windows-illegal characters, reserved device names, and leading dots from one client-supplied name. */
 export function sanitizeFileName(raw: string): string {
   // oxlint-disable-next-line no-control-regex -- strip ASCII control characters from client filenames.
-  const cleaned = raw.replaceAll(/[\\/\u0000-\u001f\u007f]/g, '').replaceAll(/^\.+/g, '').trim().slice(0, 180)
+  const cleaned = raw
+    .replaceAll(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '')
+    .replaceAll(/^\.+/g, '')
+    .trim()
+    .slice(0, 180)
+    .replace(/[\s.]+$/g, '')
   if (cleaned === '') return 'attachment'
   // The metadata sidecar owns 'meta.json' inside every entry directory; a
   // payload with that name would be clobbered by the sidecar and unreadable.
-  return /^meta\.json$/i.test(cleaned) ? `_${cleaned}` : cleaned
+  if (/^meta\.json$/i.test(cleaned)) return `_${cleaned}`
+  // Win32 CreateFile resolves these device names (with or without an
+  // extension) as hardware, so the payload write would fail or alias a device.
+  return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(cleaned) ? `_${cleaned}` : cleaned
 }
 
 /** Extension-derived media types for agent-supplied files; unknown types stay generic. */

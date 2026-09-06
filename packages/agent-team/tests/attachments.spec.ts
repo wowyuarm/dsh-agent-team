@@ -63,6 +63,36 @@ describe('attachment file hygiene', () => {
     expect(sanitizeFileName('META.JSON')).toBe('_META.JSON')
   })
 
+  it('strips Windows-reserved names, illegal characters, and trailing spaces and dots', () => {
+    // Reserved Win32 device names, including the with-extension form.
+    expect(sanitizeFileName('CON')).toBe('_CON')
+    expect(sanitizeFileName('con.txt')).toBe('_con.txt')
+    expect(sanitizeFileName('PRN')).toBe('_PRN')
+    expect(sanitizeFileName('AUX')).toBe('_AUX')
+    expect(sanitizeFileName('NUL')).toBe('_NUL')
+    expect(sanitizeFileName('COM1')).toBe('_COM1')
+    expect(sanitizeFileName('lpt9.log')).toBe('_lpt9.log')
+    // CON alone is reserved; longer words merely start with those letters.
+    expect(sanitizeFileName('CONTRIBUTING.md')).toBe('CONTRIBUTING.md')
+    // Colons would parse as NTFS alternate data streams.
+    expect(sanitizeFileName('report:final.md')).toBe('reportfinal.md')
+    // Characters Windows paths reserve.
+    expect(sanitizeFileName('a<b>c|d"e?f*g.h')).toBe('abcdefg.h')
+    // Trailing spaces and dots are illegal path suffixes on Windows.
+    expect(sanitizeFileName('report ')).toBe('report')
+    expect(sanitizeFileName('report.')).toBe('report')
+    expect(sanitizeFileName('report .  .')).toBe('report')
+    expect(sanitizeFileName('. . ')).toBe('attachment')
+    // Every cleaned name above is a legal file name on all three platforms.
+    for (const name of ['_con.txt', 'reportfinal.md', 'abcdefg.h', 'report', sanitizeFileName('a/b\\c.png'), sanitizeFileName('report\u0000\u001f.pdf')]) {
+      expect(name.length).toBeGreaterThan(0)
+      expect(name.length).toBeLessThanOrEqual(180)
+      expect(name).not.toMatch(/[\\/:*?"<>|\u0000-\u001f\u007f]/)
+      expect(name).not.toMatch(/[\s.]$/)
+      expect(name).not.toMatch(/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i)
+    }
+  })
+
   it('accepts well-formed media types and falls back for anything else', () => {
     expect(sanitizeMediaType('image/png')).toBe('image/png')
     expect(sanitizeMediaType('Application/PDF')).toBe('application/pdf')
@@ -98,6 +128,17 @@ describe('attachment cache', () => {
     expect(readBack?.name).toBe('_meta.json')
     expect(readBack?.bytes.toString('utf8')).toBe('payload')
     expect(JSON.parse(await readFile(join(root, id, 'meta.json'), 'utf8'))).toMatchObject({ name: '_meta.json' })
+  })
+
+  it('stores a payload named after a Windows reserved device under the underscore prefix', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-attachments-'))
+    cleanups.push(async () => { await rm(root, { recursive: true, force: true }) })
+    const id = newAttachmentId()
+    const stored = await writeAttachment(root, id, 'aux.txt', 'text/plain', Buffer.from('payload'))
+    expect(stored.name).toBe('_aux.txt')
+    const readBack = await readAttachment(root, id)
+    expect(readBack?.name).toBe('_aux.txt')
+    expect(readBack?.bytes.toString('utf8')).toBe('payload')
   })
 
   it('sweeps orphans after 24h and referenced uploads only after 72h', async () => {
