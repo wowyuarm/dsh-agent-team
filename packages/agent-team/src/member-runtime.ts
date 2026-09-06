@@ -46,6 +46,8 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'team_claim',
   'team_view',
   'new_context',
+  'context_checkpoint',
+  'context_timeline',
 ] as const)
 
 /** Copy a Remote-supplied capability overlay into owned frozen storage. */

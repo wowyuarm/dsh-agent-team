@@ -3,12 +3,14 @@
  * only: validation runs in the Host adapter, the successful result is the
  * durable intent, and every lifecycle side effect — generation swap, Session
  * creation, inbox handling — happens in the Host coordinator after the
- * result is durably appended. `concludeTurn()` rides the success result, so
- * sibling calls settle in model order before the turn closes.
+ * result is durably appended. `concludeTurn()` rides the success result of
+ * `new_context` and `context_checkpoint`, so sibling calls settle in model
+ * order before the turn closes.
  * @module @wowyuarm/dsh-agent-team/context-tools
  */
 
 import AgentTeam from '@wowyuarm/dsh-agent-team/host'
+import type { AgentTeamContextCheckpointRef } from '@wowyuarm/dsh-agent-team/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 function service(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>): AgentTeam {
@@ -28,9 +30,10 @@ const MAX_RELATED_FILES = 32
 
 const newContext = defineTool({
   name: 'new_context',
-  description: 'Continue as the same Team Member in a fresh private context seeded by your handoff. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state; one explicit next step. A context change never rolls back files, git, processes, browser state, Team facts, or remote side effects — describe their current state so the next generation can re-verify. The new context starts empty: record anything worth keeping in your private memory/notes before calling. Collect or stop your background jobs first: a rollover is refused while jobs this Member owns are still running.',
+  description: 'Continue as the same Team Member in a new private context. Without checkpointRef the context starts fresh and empty, seeded only by your handoff — this is the default, cheapest path at context pressure. With a context_timeline checkpointRef the new context resumes from that completed-turn anchor plus your handoff; use it to discard a failed later branch while keeping the earlier working set. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state (files, git, jobs, browser state, remote calls); one explicit next step. A context change never rolls back any external effect — describe current state so the next generation can re-verify. Record anything worth keeping in your private memory/notes first. Collect or stop your background jobs before calling: a rollover is refused while jobs this Member owns are still running.',
   parameters: {
-    handoff: { type: 'string', required: true, description: 'Prose handoff for the next context generation: objective, active Threads/Claims, verified facts, inferences, external side effects, next step.' },
+    handoff: { type: 'string', required: true, description: 'Prose handoff for the next context generation: objective, active Threads/Claims, verified facts, inferences, external side effects and their verification state, next step.' },
+    checkpointRef: { type: 'string', description: 'Opaque checkpoint ref exactly as returned by context_timeline; resumes from that completed-turn anchor instead of an empty context.' },
     relatedFiles: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { path: { type: 'string', required: true }, reason: { type: 'string', required: true } } }, description: 'Workspace paths the next generation should look at first, each with one reason.' },
   },
   output: {
@@ -63,19 +66,19 @@ const newContext = defineTool({
       relatedFiles.push({ path: candidate.path, reason: candidate.reason })
     }
     // Tool schemas are open at the root (Harness parameter specs set no
-    // `additionalProperties: false`), so a model can still supply a
-    // checkpointRef this build does not declare. Any supplied value —
-    // including non-strings, null, or empty string — signals checkpoint
-    // intent this build cannot honor, so fail closed on presence rather than
-    // type: silently proceeding fresh would let the model believe it resumed
-    // an anchor while the prefix is lost. No lifecycle effect runs inside
-    // this tool body.
+    // `additionalProperties: false`), so an undeclared shape can still reach
+    // the body. Any supplied value that is not a non-empty string rejects
+    // here rather than being treated as absent — an absent ref means fresh,
+    // which is not what the model asked for.
     const raw = args as { checkpointRef?: unknown }
-    if (Object.hasOwn(raw, 'checkpointRef') && raw.checkpointRef !== undefined) {
-      throw new Error('checkpoint return is not available in this build; call new_context without checkpointRef to start from a fresh context')
+    const suppliedRef = Object.hasOwn(raw, 'checkpointRef') ? raw.checkpointRef : undefined
+    if (suppliedRef !== undefined && (typeof suppliedRef !== 'string' || suppliedRef.trim() === '')) {
+      throw new Error('new_context checkpointRef must be a non-empty string when supplied')
     }
+    const checkpointRef = typeof suppliedRef === 'string' ? suppliedRef.trim() : undefined
     const outcome = host.requestNewContext(agent, {
       memberId: current.memberId,
+      ...(checkpointRef === undefined || checkpointRef === '' ? {} : { checkpointRef: checkpointRef as AgentTeamContextCheckpointRef }),
       ...(relatedFiles.length === 0 ? {} : { relatedFiles }),
     })
     exec.concludeTurn()
@@ -83,6 +86,73 @@ const newContext = defineTool({
   },
 })
 
+const contextCheckpoint = defineTool({
+  name: 'context_checkpoint',
+  description: 'Record a named checkpoint at the end of the current turn: an opaque, private, restorable anchor for this Member\'s context lineage. Use it before a noisy or risky phase — a broad refactor, an experiment whose value is unproven — when returning to the current completed state may later be useful. The checkpoint resolves only when this turn completes; the Host continues work in the next turn automatically. A checkpoint never snapshots files, git, jobs, or any external state: returning to one (via new_context with its checkpointRef) resumes the conversation prefix and nothing else. Checkpoints are private context structure, not Team facts, and are never visible to other Members.',
+  parameters: {
+    name: { type: 'string', required: true, description: 'Short semantic label for this checkpoint, shown in context_timeline.' },
+  },
+  output: {
+    schema: { type: 'object', additionalProperties: false, properties: {
+      checkpointRef: { type: 'string', required: true }, name: { type: 'string', required: true },
+    } },
+    render: (_args, value) => [{ type: 'text', text: `Checkpoint recorded: ${value.name}. Work continues in the next turn; the Host will continue automatically.` }],
+  },
+  async execute(args, exec) {
+    const agent = exec.agent
+    if (agent === undefined) throw new Error('context_checkpoint requires an Agent session')
+    const current = member(agent)
+    const host = service(agent)
+    const name = typeof args.name === 'string' ? args.name : ''
+    // The Host validates binding, running-turn fencing, and the name budget;
+    // the durable checkpoint is the successful call/result pair the Session
+    // projection folds, and the ref derives from the tool call id.
+    const outcome = host.recordCheckpointForAgent(agent, { memberId: current.memberId, callId: exec.callId, name })
+    exec.concludeTurn()
+    return { checkpointRef: outcome.checkpointRef, name: outcome.name }
+  },
+})
+
+const contextTimeline = defineTool({
+  name: 'context_timeline',
+  description: 'Inspect the bounded structural timeline of this Member\'s context lineage: named checkpoints you recorded, Team delivery boundaries (claim changes and structured Team notifications that entered your context), handoff and compaction boundaries, and the current head — across the current generation and its archived ancestors. Returns approximate retained/discarded token estimates, current usage against the pressure budget, and which anchors are restorable. Structural only: no transcript content. Use it to pick the smallest sufficient `checkpointRef` for a return, or to confirm that a fresh handoff is the better path when every anchor is marked non-restorable.',
+  parameters: {
+    limit: { type: 'number', description: 'Maximum number of items to return (default 12, at most 24).' },
+  },
+  output: {
+    schema: { type: 'object', additionalProperties: false, properties: {
+      usageTokens: { type: 'number', required: true },
+      hardLimit: { type: 'number', required: true },
+      handoffAt: { type: 'number', required: true },
+      items: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
+        checkpointRef: { type: 'string', required: true },
+        name: { type: 'string', required: true },
+        source: { type: 'string', required: true },
+        retainedTokens: { type: 'number', required: true },
+        discardedTokens: { type: 'number', required: true },
+        affectedThreads: { type: 'array', required: true, items: { type: 'string' } },
+        restorable: { type: 'boolean', required: true },
+        reason: { type: 'string' },
+        sourceSessionId: { type: 'string' },
+      } } },
+    } },
+    render: (_args, value) => [{ type: 'text', text: `Context timeline: ${value.usageTokens} tokens used (handoff at ${value.handoffAt}, hard limit ${value.hardLimit}). ${value.items.length} item(s); restorable anchors carry a checkpointRef for new_context.` }],
+  },
+  async execute(args, exec) {
+    const agent = exec.agent
+    if (agent === undefined) throw new Error('context_timeline requires an Agent session')
+    const current = member(agent)
+    const host = service(agent)
+    const limit = typeof args.limit === 'number' ? args.limit : undefined
+    const result = await host.contextTimelineForAgent(agent, { memberId: current.memberId, ...(limit === undefined ? {} : { limit }) })
+    // The Host result is deeply immutable; the tool output contract carries
+    // plain arrays, so re-shape without any semantic change.
+    return { usageTokens: result.usageTokens, hardLimit: result.hardLimit, handoffAt: result.handoffAt, items: result.items.map(item => ({ ...item, affectedThreads: [...item.affectedThreads] })) }
+  },
+})
+
 export function registerContextTools(ctx: { readonly tools: { register(tool: unknown): void } }): void {
   ctx.tools.register(newContext)
+  ctx.tools.register(contextCheckpoint)
+  ctx.tools.register(contextTimeline)
 }

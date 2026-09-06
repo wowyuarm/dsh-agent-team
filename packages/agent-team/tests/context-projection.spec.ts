@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createToolResultMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createToolResultMessage, createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset, SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   CONTEXT_CHECKPOINT_TOOL_NAME,
@@ -8,6 +8,7 @@ import {
   checkpointRefFor,
   continuationDelivered,
   foldContextProjection,
+  timelineCandidates,
   withScheduledContinuation,
   type AgentTeamContextProjectionState,
 } from '../src/context-projection.ts'
@@ -207,7 +208,7 @@ describe('AgentTeam context projection — quiet continuation delivery', () => {
 
   it('scheduling twice is idempotent and delivery records only once', () => {
     const checkpointRef = checkpointRefFor('call-x')
-    let state: AgentTeamContextProjectionState = { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [] }
+    let state: AgentTeamContextProjectionState = { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [], boundaries: [], lastTurnEndSeq: -1 }
     state = withScheduledContinuation(state, checkpointRef)
     state = withScheduledContinuation(state, checkpointRef)
     expect(state.continuations).toHaveLength(1)
@@ -246,5 +247,97 @@ describe('AgentTeam context sources', () => {
     const message = createCheckpointContinuationMessage(checkpointRef as never)
     expect(message.source).toMatchObject({ kind: 'agent-team-context-continuation', form: 'notice', checkpointRef })
     expect((message.source as unknown as { summary: string }).summary).toBeTruthy()
+  })
+})
+
+describe('AgentTeam context projection — timeline boundaries', () => {
+  it('a handoff delivery becomes a handoff boundary resolved by its turn end', () => {
+    const events = [
+      turnStart(1),
+      userMessageEvent(createHandoffMessage({ handoff: 'seed text', previousSessionId: 'session:a' as never, newSessionId: 'session:b' as never, trigger: 'model', handoffEventSeq: 5 as never })),
+      turnEnd(1),
+    ]
+    const state = foldContextProjection(events)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]).toMatchObject({ source: 'handoff', turnEndSeq: events.at(-1)!.seq })
+    const candidates = timelineCandidates(state, 12)
+    expect(candidates.some(candidate => candidate.ref === state.boundaries[0]!.key && candidate.source === 'handoff')).toBe(true)
+  })
+
+  it('a Team claim mutation result becomes a team boundary; list calls do not', () => {
+    const events = [
+      turnStart(1),
+      contextToolCall(1, 'call-claim', 'team_claim', { action: 'claim', taskRef: 'task:x', baseRevision: 1, direction: 'do it' }),
+      toolResult(1, 'call-claim'),
+      contextToolCall(1, 'call-list', 'team_claim', { action: 'list', taskRef: 'task:x' }),
+      toolResult(1, 'call-list'),
+      turnEnd(1),
+    ]
+    const state = foldContextProjection(events)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]).toMatchObject({ source: 'team-boundary', label: 'Team claim change' })
+  })
+
+  it('a structured Team notice is a team boundary; a relay DM and a checkpoint continuation are not', () => {
+    const notice = createUserMessage({ content: [{ type: 'text', text: 'notice' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' } })
+    const relay = createUserMessage({ content: [{ type: 'text', text: 'dm' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'relay' } })
+    const continuation = createCheckpointContinuationMessage(checkpointRefFor('call-cp'))
+    const events = [
+      turnStart(1),
+      userMessageEvent(notice),
+      userMessageEvent(relay),
+      userMessageEvent(continuation),
+      turnEnd(1),
+    ]
+    const state = foldContextProjection(events)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]!.source).toBe('team-boundary')
+  })
+
+  it('a pre-compaction notice is a compaction boundary', () => {
+    const preCompaction = createUserMessage({ content: [{ type: 'text', text: 'persist conclusions' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Compaction is imminent; consider persisting key conclusions.' } })
+    const events = [turnStart(1), userMessageEvent(preCompaction), turnEnd(1)]
+    const state = foldContextProjection(events)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]).toMatchObject({ source: 'compaction' })
+  })
+
+  it('timeline candidates order newest first, include the head, and respect the limit', () => {
+    // One checkpoint per completed turn, three turns total.
+    const names = ['first', 'second', 'third']
+    const events: SessionEvent[] = []
+    for (const [index, name] of names.entries()) {
+      const turn = index + 1
+      events.push(turnStart(turn), ...checkpointPair(turn, `call-${name}`, name), turnEnd(turn))
+    }
+    const state = foldContextProjection(events)
+    const candidates = timelineCandidates(state, 2)
+    expect(candidates).toHaveLength(2)
+    // The head (latest completed turn) is newest; the third checkpoint is
+    // the next-newest anchor.
+    expect(candidates[0]!.ref).toBe(`head:${state.lastTurnEndSeq}`)
+    expect(candidates[1]!.ref).toBe('context-checkpoint:call-third')
+    const all = timelineCandidates(state, 12)
+    expect(all[1]!.ref).toBe('context-checkpoint:call-third')
+    expect(all[2]!.ref).toBe('context-checkpoint:call-second')
+    expect(all[3]!.ref).toBe('context-checkpoint:call-first')
+  })
+
+  it('inherited boundaries and checkpoints are invisible to a seeded child fold', () => {
+    const parentEvents = [
+      turnStart(1),
+      ...checkpointPair(1, 'call-inherited', 'anchor'),
+      turnEnd(1),
+      turnStart(2),
+      userMessageEvent(createCheckpointContinuationMessage(checkpointRefFor('call-inherited'))),
+      turnEnd(2),
+    ]
+    const inherited = parentEvents.length
+    const childEvents = [...parentEvents, turnStart(3), turnEnd(3)]
+    const state = foldContextProjection(childEvents, inherited as SessionLogOffset)
+    expect(state.checkpoints).toHaveLength(0)
+    expect(state.boundaries).toHaveLength(0)
+    expect(state.continuations).toHaveLength(0)
+    expect(timelineCandidates(state, 12).every(candidate => !candidate.ref.includes('call-inherited'))).toBe(true)
   })
 })

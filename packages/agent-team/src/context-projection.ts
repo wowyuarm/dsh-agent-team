@@ -27,6 +27,12 @@ import { isCheckpointContinuationMessage } from './context-source.ts'
 /** Plugin identity of the Agent Team Host, for recognizing own notices. */
 const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
 
+/** Summary marker of the pre-compaction memory hint. */
+const PRE_COMPACTION_NOTICE_SUMMARY = 'Compaction is imminent; consider persisting key conclusions.'
+
+/** Team tool whose successful mutations are semantic timeline candidates. */
+const TEAM_CLAIM_TOOL_NAME = 'team_claim'
+
 /** Stable tool names the projection recognizes. */
 export const CONTEXT_CHECKPOINT_TOOL_NAME = 'context_checkpoint'
 export const NEW_CONTEXT_TOOL_NAME = 'new_context'
@@ -106,6 +112,33 @@ export interface AgentTeamContextProjectionState {
    * dangling call at any cut simply never becomes intent or a checkpoint.
    */
   readonly openCalls: readonly { readonly callId: string; readonly name: string; readonly arguments: string }[]
+  /**
+   * Timeline boundaries beyond explicit checkpoints, resolved to their
+   * containing completed turn: handoff deliveries (each generation begins
+   * with one), compaction notices, and Team semantic facts that entered
+   * model context (successful claim-state tool results or structured Team
+   * notification delivery). Each is a structural timeline candidate with the
+   * same completed-turn anchor contract as a checkpoint.
+   */
+  readonly boundaries: readonly TimelineBoundary[]
+  /** Seq of the latest resolved `turn/end`; the head boundary of the timeline. */
+  readonly lastTurnEndSeq: number
+}
+
+/** One non-checkpoint timeline candidate resolved at a completed turn. */
+export interface TimelineBoundary {
+  /** Stable identity for the timeline: kind plus the anchoring event seq. */
+  readonly key: string
+  /** Which structural source produced this boundary. */
+  readonly source: 'team-boundary' | 'handoff' | 'compaction'
+  /** Human-facing label derived from the boundary's own data. */
+  readonly label: string
+  /** Seq of the boundary's own anchoring event (delivery or tool result). */
+  readonly seq: number
+  /** Turn the boundary landed in. */
+  readonly turn: number
+  /** Seq of the `turn/end` that resolved it; -1 until resolved. */
+  readonly turnEndSeq: number
 }
 
 const relatedFileSchema = z.object({ path: z.string().min(1), reason: z.string() }).strict()
@@ -117,6 +150,15 @@ const carriedCandidateSchema = z.object({
   surfacedTurn: z.number().int(),
   consumed: z.boolean(),
 })
+
+const boundarySchema = z.object({
+  key: z.string().min(1),
+  source: z.enum(['team-boundary', 'handoff', 'compaction']),
+  label: z.string(),
+  seq: z.number().int().nonnegative(),
+  turn: z.number().int().nonnegative(),
+  turnEndSeq: z.number().int(),
+}).strict()
 
 const stateSchema = z.object({
   checkpoints: z.array(z.object({
@@ -142,6 +184,8 @@ const stateSchema = z.object({
   carriedCandidates: z.array(carriedCandidateSchema),
   lastTurn: z.number().int().nonnegative(),
   openCalls: z.array(openCallSchema),
+  boundaries: z.array(boundarySchema),
+  lastTurnEndSeq: z.number().int(),
 }).strict()
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
@@ -156,7 +200,7 @@ export function checkpointRefFor(callId: string): AgentTeamContextCheckpointRef 
 }
 
 function emptyState(): AgentTeamContextProjectionState {
-  return { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [] }
+  return { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [], boundaries: [], lastTurnEndSeq: -1 }
 }
 
 /**
@@ -189,7 +233,9 @@ export const agentTeamContextProjectionDefinition = {
  */
 function applyContextEvent(state: AgentTeamContextProjectionState, event: SessionEvent): AgentTeamContextProjectionState {
   if (event.type === 'tool/call') {
-    if (event.data.name !== NEW_CONTEXT_TOOL_NAME && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME) return state
+    if (event.data.name !== NEW_CONTEXT_TOOL_NAME && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME && event.data.name !== TEAM_CLAIM_TOOL_NAME) return state
+    // Only Team-claim mutations (not `list`) are semantic timeline candidates.
+    if (event.data.name === TEAM_CLAIM_TOOL_NAME && !argumentsAreClaimMutation(event.data.arguments)) return state
     return { ...state, openCalls: [...state.openCalls, { callId: event.data.callId, name: event.data.name, arguments: event.data.arguments }] }
   }
   if (event.type === 'tool/result') {
@@ -211,6 +257,27 @@ function applyContextEvent(state: AgentTeamContextProjectionState, event: Sessio
     return event.data.turn === state.lastTurn ? state : { ...state, lastTurn: event.data.turn }
   }
   return state
+}
+
+/**
+ * Structural timeline boundary from one delivered user message: a rollover
+ * handoff starts a generation; a structured Team notification (direct
+ * mention, claim/Task activity) delivers semantic Team facts into model
+ * context; a compaction notice rewrites the visible surface. All anchor to
+ * the containing completed turn. Plain Human/agent prose and quiet
+ * checkpoint continuations are not boundaries.
+ */
+function boundaryFromUserMessage(seq: number, message: UserMessage): TimelineBoundary | undefined {
+  const source = message.source
+  if (source.kind === 'agent-team-context-handoff') {
+    return { key: `handoff:${seq}`, source: 'handoff', label: 'context handoff', seq, turn: -1, turnEndSeq: -1 }
+  }
+  if (source.kind !== 'plugin' || source.plugin !== AGENT_TEAM_PLUGIN_ID) return undefined
+  if (source.form === 'relay') return undefined
+  if (source.form === 'notice' && source.summary === PRE_COMPACTION_NOTICE_SUMMARY) {
+    return { key: `compaction:${seq}`, source: 'compaction', label: 'compaction notice', seq, turn: -1, turnEndSeq: -1 }
+  }
+  return { key: `team-boundary:${seq}`, source: 'team-boundary', label: 'Team delivery', seq, turn: -1, turnEndSeq: -1 }
 }
 
 /**
@@ -254,14 +321,23 @@ function applyToolResult(
     if (state.pending !== null) return { ...state, openCalls }
     return { ...state, openCalls, pending: { ...parsed, toolCallId: recorded.callId, resultSeq: seq, turn, turnEndSeq: -1 } }
   }
-  // The only remaining open call name is the checkpoint tool.
-  const parsed = parseCheckpointArguments(recorded.arguments)
-  if (parsed === undefined) return { ...state, openCalls }
-  const checkpointRef = checkpointRefFor(block.toolCallId)
+  if (recorded.name === CONTEXT_CHECKPOINT_TOOL_NAME) {
+    const parsed = parseCheckpointArguments(recorded.arguments)
+    if (parsed === undefined) return { ...state, openCalls }
+    const checkpointRef = checkpointRefFor(block.toolCallId)
+    return {
+      ...state,
+      openCalls,
+      checkpoints: [...state.checkpoints, { checkpointRef, name: parsed.name, resultSeq: seq, turn, turnEndSeq: -1 }],
+    }
+  }
+  // The only remaining open call name is the Team-claim mutation: a
+  // successful claim/done/release result entered model context, so it is a
+  // semantic Team boundary anchored to the containing turn.
   return {
     ...state,
     openCalls,
-    checkpoints: [...state.checkpoints, { checkpointRef, name: parsed.name, resultSeq: seq, turn, turnEndSeq: -1 }],
+    boundaries: [...state.boundaries, { key: `team-boundary:${seq}`, source: 'team-boundary', label: 'Team claim change', seq, turn, turnEndSeq: -1 }],
   }
 }
 
@@ -277,7 +353,13 @@ function applyTurnEnd(state: AgentTeamContextProjectionState, seq: number, _turn
     pending = { ...pending, turnEndSeq: seq }
     changed = true
   }
-  return changed ? { ...state, checkpoints, pending } : state
+  const boundaries = state.boundaries.map(entry => {
+    if (entry.turnEndSeq !== -1) return entry
+    changed = true
+    return { ...entry, turnEndSeq: seq, turn: entry.turn === -1 ? _turn : entry.turn }
+  })
+  if (state.lastTurnEndSeq !== seq) changed = true
+  return changed ? { ...state, checkpoints, pending, boundaries, lastTurnEndSeq: seq } : state
 }
 
 function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, message: UserMessage): AgentTeamContextProjectionState {
@@ -296,6 +378,11 @@ function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, m
     next = { ...next, carriedCandidates: next.carriedCandidates.map(candidate =>
       candidate.message.id === message.id && !candidate.consumed ? { ...candidate, surfacedTurn: next.lastTurn } : candidate) }
   }
+  // A structural boundary delivery (handoff start, Team semantic notice,
+  // compaction notice) becomes a timeline candidate anchored to the
+  // containing turn; it resolves when that turn ends.
+  const boundary = boundaryFromUserMessage(seq, message)
+  if (boundary !== undefined) next = { ...next, boundaries: [...next.boundaries, boundary] }
   // The quiet continuation notice delivered for one checkpoint completes its
   // delivery state; replay repair reads this to avoid re-scheduling it.
   if (message.source.kind !== 'agent-team-context-continuation') return next
@@ -342,6 +429,19 @@ export function withScheduledContinuation(state: AgentTeamContextProjectionState
   return { ...state, continuations: [...state.continuations, { checkpointRef, deliveredSeq: -1 }] }
 }
 
+/** Whether one raw Team-claim arguments string is a mutation (not `list`). */
+function argumentsAreClaimMutation(raw: string): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  if (typeof parsed !== 'object' || parsed === null) return false
+  const { action } = parsed as Record<string, unknown>
+  return action === 'claim' || action === 'done' || action === 'release'
+}
+
 function parseNewContextArguments(raw: string): NewContextArguments | undefined {
   let parsed: unknown
   try {
@@ -382,3 +482,46 @@ function isRelatedFiles(value: unknown): value is Array<{ path: string; reason: 
 // Re-exported for callers that only want the predicate view of continuation
 // delivery without importing the source module's message constructors.
 export { isCheckpointContinuationMessage }
+
+/** One structural timeline candidate, projection view: anchor plus identity. */
+export interface TimelineCandidate {
+  /** Stable selection ref (checkpoint refs for agent checkpoints; the boundary key otherwise). */
+  readonly ref: string
+  /** Semantic label: the model-supplied checkpoint name or the boundary label. */
+  readonly label: string
+  /** Which structural source produced this candidate. */
+  readonly source: 'agent' | 'team-boundary' | 'handoff' | 'compaction' | 'head'
+  /** Seq of the anchoring event (the tool result or delivery message). */
+  readonly seq: number
+  /** Seq of the completed `turn/end` that resolved the candidate; -1 while unresolved. */
+  readonly turnEndSeq: number
+}
+
+/**
+ * Bounded structural timeline candidates, newest first: explicit checkpoints
+ * (resolved only), structural boundaries, then the current head. The Host
+ * prices retained/discarded tokens and applies restorability guards on top;
+ * this view is the single source of candidate anchors and labels.
+ */
+export function timelineCandidates(state: AgentTeamContextProjectionState, limit: number): readonly TimelineCandidate[] {
+  const candidates: TimelineCandidate[] = []
+  for (const checkpoint of state.checkpoints) {
+    if (checkpoint.turnEndSeq === -1) continue
+    candidates.push({ ref: checkpoint.checkpointRef, label: checkpoint.name, source: 'agent', seq: checkpoint.resultSeq, turnEndSeq: checkpoint.turnEndSeq })
+  }
+  for (const boundary of state.boundaries) {
+    if (boundary.turnEndSeq === -1) continue
+    candidates.push({ ref: boundary.key, label: boundary.label, source: boundary.source, seq: boundary.seq, turnEndSeq: boundary.turnEndSeq })
+  }
+  if (state.lastTurnEndSeq !== -1) {
+    candidates.push({ ref: `head:${state.lastTurnEndSeq}`, label: 'current head', source: 'head', seq: state.lastTurnEndSeq, turnEndSeq: state.lastTurnEndSeq })
+  }
+  return candidates
+    .sort((a, b) => b.turnEndSeq - a.turnEndSeq || b.seq - a.seq)
+    .slice(0, Math.max(1, Math.trunc(limit)))
+}
+
+/** Find one resolved checkpoint entry by its stable ref, if it exists. */
+export function checkpointByRef(state: AgentTeamContextProjectionState, checkpointRef: string): ContextCheckpointEntry | undefined {
+  return state.checkpoints.find(entry => entry.checkpointRef === checkpointRef && entry.turnEndSeq !== -1)
+}

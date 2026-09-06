@@ -23,13 +23,12 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionId as SessionIdBrand } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { createHash } from 'node:crypto'
-import { createHandoffMessage, isCheckpointContinuationMessage } from './context-source.ts'
+import { createCheckpointContinuationMessage, createHandoffMessage } from './context-source.ts'
 import {
   CONTEXT_CHECKPOINT_TOOL_NAME,
   NEW_CONTEXT_TOOL_NAME,
   continuationDelivered,
   foldContextProjection,
-  withScheduledContinuation,
   type AgentTeamContextProjectionState,
 } from './context-projection.ts'
 import type { AgentTeamAgentMember, AgentTeamMemberId, AgentTeamRolloverSessionRequest } from './types.ts'
@@ -94,6 +93,8 @@ export interface TransitionPlan {
 export class ContextManagementCoordinator {
   private readonly members = new Map<AgentTeamMemberId, MemberTransition>()
   private readonly capturedInput = new Map<AgentTeamMemberId, readonly UserMessage[]>()
+  /** Per-member latch for the in-process scheduling→delivery window. */
+  private readonly scheduledContinuations = new Set<string>()
   private disposed = false
 
   constructor(private readonly options: ContextManagementCoordinatorOptions) {}
@@ -246,6 +247,12 @@ export class ContextManagementCoordinator {
   }
 
   private onTurnEnd(memberId: AgentTeamMemberId, agent: Agent): void {
+    // Checkpoint continuations first: a turn that resolved checkpoints owes
+    // each of them exactly one quiet next-turn follow-up. The projection's
+    // continuations state deduplicates across restarts; this in-memory latch
+    // closes the same-process window between scheduling and the delivery
+    // event landing in the log.
+    this.scheduleCheckpointContinuations(memberId, agent)
     const transition = this.members.get(memberId)
     if (transition === undefined || transition.turnEnded) return
     const member = this.options.memberForAgent(agent)
@@ -263,6 +270,46 @@ export class ContextManagementCoordinator {
       this.options.log(`context rollover idle wait failed: ${error instanceof Error ? error.message : String(error)} (member ${memberId})`)
       this.members.delete(memberId)
     })
+  }
+
+  /**
+   * Quiet follow-ups for checkpoints resolved by the turn that just ended.
+   * A successful `context_checkpoint` result concludes its turn; the Host
+   * continues work in the next turn with one host-generated notice. The
+   * projection folds delivery (the continuation user/message event), so a
+   * restart repairs a missing follow-up through repairContinuations without
+   * duplicating a delivered one; this live path latches per checkpoint in
+   * memory for the scheduling window.
+   */
+  private scheduleCheckpointContinuations(memberId: AgentTeamMemberId, agent: Agent): void {
+    const member = this.options.memberForAgent(agent)
+    if (member === undefined) return
+    const state = this.options.projectionForMember(memberId, member.sessionId)
+    if (state === undefined) return
+    for (const checkpoint of state.checkpoints) {
+      if (checkpoint.turnEndSeq === -1) continue
+      if (continuationDelivered(state, checkpoint.checkpointRef)) continue
+      const latch = `${memberId}:${checkpoint.checkpointRef}`
+      if (this.scheduledContinuations.has(latch)) continue
+      this.scheduledContinuations.add(latch)
+      // The turn/end observer fires inside the session append publication
+      // (a synchronous followup would reenter the publishing append), and a
+      // next-turn message queued while the driver is still converging never
+      // latches a wake — the loop replays only maintenance/abort latches. So
+      // the continuation waits for true idle, then queues its own turn: the
+      // same discipline the rollover path uses.
+      void agent.whenIdle().then(() => {
+        if (this.disposed) return
+        try {
+          agent.followup(createCheckpointContinuationMessage(checkpoint.checkpointRef))
+        } catch (error) {
+          this.scheduledContinuations.delete(latch)
+          this.options.log(`context continuation scheduling failed: ${error instanceof Error ? error.message : String(error)} (member ${memberId})`)
+        }
+      }, () => {
+        this.scheduledContinuations.delete(latch)
+      })
+    }
   }
 
   private async performTransition(memberId: AgentTeamMemberId, member: AgentTeamAgentMember, transition: MemberTransition): Promise<void> {
@@ -348,20 +395,24 @@ export class ContextManagementCoordinator {
   /**
    * Crash-recovery for quiet continuations: schedule the follow-up for one
    * resolved checkpoint exactly once when the result was durable but the
-   * delivery never landed.
+   * delivery never landed. The projection's continuations state is the
+   * durable delivery record — a checkpoint whose delivery event exists in the
+   * log is never re-scheduled.
    */
   repairContinuations(agent: Agent, state: AgentTeamContextProjectionState): void {
     if (this.disposed) return
+    const memberId = this.options.memberForAgent(agent)?.memberId
+    if (memberId === undefined) return
     for (const checkpoint of state.checkpoints) {
       if (checkpoint.turnEndSeq === -1) continue
       if (continuationDelivered(state, checkpoint.checkpointRef)) continue
-      let next = withScheduledContinuation(state, checkpoint.checkpointRef)
-      void next
-      const message = { source: { kind: 'agent-team-context-continuation' } } as UserMessage
-      if (!isCheckpointContinuationMessage(message, checkpoint.checkpointRef)) continue
+      const latch = `${memberId}:${checkpoint.checkpointRef}`
+      if (this.scheduledContinuations.has(latch)) continue
+      this.scheduledContinuations.add(latch)
       try {
-        agent.followup(message)
+        agent.followup(createCheckpointContinuationMessage(checkpoint.checkpointRef))
       } catch (error) {
+        this.scheduledContinuations.delete(latch)
         this.options.log(`context continuation repair failed: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
@@ -369,7 +420,7 @@ export class ContextManagementCoordinator {
 }
 
 /** Tool names this module owns; the preset validation requires all of them. */
-export const CONTEXT_TOOL_NAMES = Object.freeze([CONTEXT_CHECKPOINT_TOOL_NAME, NEW_CONTEXT_TOOL_NAME] as const)
+export const CONTEXT_TOOL_NAMES = Object.freeze([CONTEXT_CHECKPOINT_TOOL_NAME, NEW_CONTEXT_TOOL_NAME, 'context_timeline'] as const)
 
 /** Re-exported for Host wiring: cold-fold helper for archived ancestors. */
 export { foldContextProjection }

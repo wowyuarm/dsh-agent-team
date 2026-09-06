@@ -614,6 +614,23 @@ export class AgentTeamLedger {
   }
 
   /**
+   * Count one Member's active Claims on open Tasks in active Channels — the
+   * read-only input to the checkpoint single-Thread coverage guard: with
+   * more than one, a rewind cannot be proven to stay inside one Thread.
+   */
+  activeClaimCountForMember(memberId: AgentTeamMemberId): number {
+    let count = 0
+    for (const claim of this.state.claims.values()) {
+      if (claim.owner !== memberId || claim.state !== 'active') continue
+      const task = this.state.tasks.get(claim.taskRef)
+      if (task === undefined || task.resolution !== 'open') continue
+      if (this.state.channels.get(task.channelRef)?.state === 'archived') continue
+      count += 1
+    }
+    return count
+  }
+
+  /**
    * Current progress-nudge candidacy for one Member: threads whose Thread
    * progress reminder applies (active Claim, or following a taskless Thread)
    * and tasks where the Claim reminder applies (following a still-`todo` Task
