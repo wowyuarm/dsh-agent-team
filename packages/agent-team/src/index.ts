@@ -467,7 +467,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.startAttachmentGc(ledger)
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
-    const persistedSessions = new Set((await this.ctx.sessionPersistence.list()).map(header => header.id))
+    const persistedSessions = new Set((await this.persistedSessionHeaders()).map(header => header.id))
     for (const member of ledger.listMembers()) {
       if (member.state === 'enabled') await this.activateMember(member, undefined, persistedSessions)
       else if (member.state === 'inactive') await this.memberRuntime.cleanupRemovedMember(member)
@@ -647,7 +647,13 @@ export default class AgentTeam extends TypertRemoteService {
       const result = await this.requireLedger().resumeMember({ ...request, actor: agentTeamHumanActor() })
       if (result.committed) this.emitCommitted(result.value.receipt)
       this.clearMemberNotificationState(result.value.member.memberId)
-      await this.activateMember(result.value.member)
+      // The suspended Session's log is durable once its retirement completes,
+      // and agents.resume() waits for exactly that retirement before loading.
+      // Consulting the persistence tree here instead would race the
+      // fire-and-forget retirement on Windows, where the JSONL backend
+      // publishes directories through transient staging entries that surface
+      // as ENOENT mid-walk — so pass the known session rather than re-listing.
+      await this.activateMember(result.value.member, undefined, new Set([result.value.member.sessionId]))
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(result.value.member) })
     })
   }
@@ -1912,6 +1918,26 @@ export default class AgentTeam extends TypertRemoteService {
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes('is not supported by')) throw error
+    }
+  }
+
+  /**
+   * Session headers currently durable in the persistence backend.
+   *
+   * The Host retires a disposed Session's log without awaiting it, so a
+   * concurrent activation can observe the JSONL backend's transient win32
+   * staging directories (.dsh-mkdir-*) as ENOENT while they rename into
+   * place. The read is idempotent; back off briefly instead of failing the
+   * activation on a race the publisher resolves within milliseconds.
+   */
+  private async persistedSessionHeaders() {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.ctx.sessionPersistence.list()
+      } catch (error) {
+        if (attempt >= 3 || (error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error
+        await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 25))
+      }
     }
   }
 

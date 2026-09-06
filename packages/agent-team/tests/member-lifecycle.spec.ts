@@ -31,6 +31,9 @@ import { MemoryStorageBackend } from './helpers/memory-backend.ts'
 const cleanups: Array<() => Promise<void>> = []
 const originalDshHome = process.env.DSH_HOME
 const requestId = (value: string): AgentTeamRequestId => value as AgentTeamRequestId
+/** The ENOENT shape the JSONL backend raises when a walk hits a win32 staging directory mid-rename. */
+const persistenceRaceError = (): Error =>
+  Object.assign(new Error("scandir ENOENT: transient win32 staging directory raced the walk (test seam)"), { code: 'ENOENT' })
 
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
@@ -370,13 +373,24 @@ describe('Agent Team Member lifecycle', () => {
 
     // The previous Session log survives on disk (only archived from grouping
     // surfaces), so the Member's history stays queryable. Disposal drains the
-    // log asynchronously, so wait for the artifact to materialize.
+    // log asynchronously, so wait for the artifact to materialize; the walk
+    // itself races the backend's transient win32 staging entries (ENOENT), so
+    // retry those too.
+    const listSessionIds = async (): Promise<Set<SessionId>> => {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return new Set((await ctx.sessionPersistence.list()).map(header => header.id))
+        } catch (error) {
+          if (attempt >= 3 || (error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error
+          await new Promise(resolve => setTimeout(resolve, 25))
+        }
+      }
+    }
     const flushDeadline = Date.now() + 3000
-    while (Date.now() < flushDeadline
-      && !(await ctx.sessionPersistence.list()).some(header => header.id === added.status.member.sessionId)) {
+    while (Date.now() < flushDeadline && !(await listSessionIds()).has(added.status.member.sessionId)) {
       await new Promise(resolve => setTimeout(resolve, 25))
     }
-    expect((await ctx.sessionPersistence.list()).some(header => header.id === added.status.member.sessionId)).toBe(true)
+    expect((await listSessionIds()).has(added.status.member.sessionId)).toBe(true)
     expect(archived).toContain(added.status.member.sessionId)
     expect(archived).not.toContain(cleared.status.member.sessionId)
 
@@ -461,6 +475,52 @@ describe('Agent Team Member lifecycle', () => {
     await ctx.agentTeam.suspendMember({ requestId: requestId('suspend'), memberId: added.status.member.memberId })
     await expect(ctx.agentTeam.recoverMember({ requestId: requestId('restart-suspended'), workspaceId, memberId: added.status.member.memberId }))
       .rejects.toThrow('only enabled Members can be restarted')
+  })
+
+  it('resumes a suspended Member without consulting the persistence tree walk', async () => {
+    const { ctx, workspaceId } = await realHarness()
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('resume-add'), workspaceId, handle: 'restorer', description: 'Restores the exact session', presetId: 'team-member', channelRefs: [] })
+    expect(added.status.availability).toBe('active')
+    const memberId = added.status.member.memberId
+    await ctx.agentTeam.suspendMember({ requestId: requestId('resume-suspend'), memberId })
+
+    // The Host retires the suspended log fire-and-forget, and the JSONL
+    // backend publishes its win32 directories through transient staging
+    // entries; a tree walk concurrent with that retirement sees ENOENT. The
+    // resume path must rely on agents.resume() waiting for the retirement
+    // instead of re-listing, so any consult here fails the test loudly.
+    ctx.sessionPersistence.list = async () => { throw persistenceRaceError() }
+    const resumed = await ctx.agentTeam.resumeMember({ requestId: requestId('resume-resume'), memberId })
+    expect(resumed.status.availability, JSON.stringify(resumed.status)).toBe('active')
+    expect(ctx.agents.get(resumed.status.member.sessionId)).toBeDefined()
+  })
+
+  it('retries a transient persistence walk failure while restarting a Member', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    await ctx.agentTeam.addMember({ requestId: requestId('retry-add'), workspaceId, handle: 'retrier', description: 'Survives a transient walk failure', presetId: 'team-member', channelRefs: [] })
+
+    // Host restart remounts the plugin and the startup restore walks the
+    // persistence tree once for every Member. The previous generation's
+    // retirement is still draining in the background; that walk sees the
+    // JSONL backend's transient staging entries as ENOENT. One injected
+    // failure must not fail the restore: the idempotent read retries and
+    // activation proceeds on whichever branch the second read supports.
+    await teamFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    const realList = ctx.sessionPersistence.list.bind(ctx.sessionPersistence)
+    let consulted = 0
+    ctx.sessionPersistence.list = async () => {
+      consulted += 1
+      if (consulted === 1) throw persistenceRaceError()
+      return realList()
+    }
+    await ctx.plugin(AgentTeam)
+    const restored = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(item => item.member.handle === 'retrier')
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    expect(restored.member.handle).toBe('retrier')
+    expect(consulted).toBe(2)
   })
 
   it('creates a Member with no description and no Channels and lights delivery on join', async () => {
