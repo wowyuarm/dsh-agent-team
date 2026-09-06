@@ -163,6 +163,9 @@ async function policyHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
+  // The Team pressure policy reads the token meter at every Member pre-step;
+  // these tests exercise tool policy, so a zero-usage fake keeps it quiet.
+  ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 0 }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
   await ctx.plugin(Storage)

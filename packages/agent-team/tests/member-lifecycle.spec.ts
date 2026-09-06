@@ -146,6 +146,8 @@ async function realHarness(
   /** Sessions the fake workspace registry archived, in archive order. */
   readonly archived: readonly SessionId[]
   readonly presets: TestablePresets
+  /** Writable fake meter pressure; tests drive the thresholds through it. */
+  readonly pressureState: { usageTokens: number }
 }> {
   const root = reopen?.root ?? await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
@@ -161,7 +163,7 @@ async function realHarness(
   const compactionStub = join(root, 'compaction-stub.mjs')
   await writeFile(compactionStub, [
     "export const name = 'test-compaction'",
-    "export function apply(scope) { scope.provide('compaction', { compactNow: async () => null }) }",
+    "export function apply(scope) { scope.provide('compaction', { compactNow: async () => null, compactIfNeeded: async () => null }) }",
     '',
   ].join('\n'))
   await writeFile(join(presetDir, 'agent.cordis.yml'), [
@@ -198,6 +200,10 @@ async function realHarness(
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
+  // The Team pressure policy reads the token meter at every Member pre-step;
+  // tests that need pressure control override this with a writable fake.
+  const pressureState = { usageTokens: 0 }
+  ctx.provide('tokenMeter', { measure: () => ({ totalTokens: pressureState.usageTokens }) })
   if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
   const presetsConfig = (): { default: string; roots: { path: string; trust: 'system' }[]; includeShippedRoot: boolean; includeUserRoot: boolean } => ({
@@ -218,7 +224,7 @@ async function realHarness(
   })
   const teamFiber = await ctx.plugin(AgentTeam)
   cleanups.push(async () => { await ctx.fiber.dispose(); await facility.closeAll(); await rm(root, { recursive: true, force: true }) })
-  return { ctx, workspaceId, root, project, teamFiber, archived, presets: ctx.agentPresets as TestablePresets }
+  return { ctx, workspaceId, root, project, teamFiber, archived, presets: ctx.agentPresets as TestablePresets, pressureState }
 }
 
 describe('Agent Team Member lifecycle', () => {
@@ -2209,5 +2215,107 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     const continuations2 = resumed2.session.ownEvents().filter(event => event.type === 'user/message'
       && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-continuation')
     expect(continuations2).toHaveLength(1)
+  })
+})
+
+describe('Agent Team pressure policy integration (ticket 03)', () => {
+  it('steers the one-shot pressure notice into a running Member turn at the handoff budget', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('press-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('press-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // Below the handoff budget: no notice at all.
+    pressureState.usageTokens = 150_000
+    adapter.enqueue(textResponse('ordinary work.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'ordinary turn' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    expect(live.session.ownEvents().some(event => event.type === 'user/message'
+      && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff')).toBe(false)
+
+    // At the handoff budget: exactly one structured notice rides the next
+    // turn, and further turns in the same generation do not repeat it.
+    pressureState.usageTokens = 200_000
+    adapter.enqueue(textResponse('under pressure.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'another turn' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    const notices = () => live.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff')
+    expect(notices()).toHaveLength(1)
+    const notice = notices()[0]!
+    expect((notice.data as { content: Array<{ type: string; text?: string }> }).content[0]?.text).toContain('new_context')
+
+    adapter.enqueue(textResponse('still under pressure.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'third turn' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    expect(notices()).toHaveLength(1)
+    // The Member stays available throughout: a notice is not a failure.
+    const status = ctx.agentTeam.members().find(entry => entry.member.memberId === added.status.member.memberId)!
+    expect(status.availability).toBe('active')
+  })
+
+  it('a fresh rollover re-arms the pressure notice for the new generation', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('rearm-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('rearm-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    pressureState.usageTokens = 200_000
+    adapter.enqueue(textResponse('pressured turn.'))
+    const live = ctx.agents.get(previousSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'turn one' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    const noticesIn = (agent: ReturnType<typeof ctx.agents.get>) => agent!.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff')
+    expect(noticesIn(live)).toHaveLength(1)
+
+    // Fresh rollover: the new generation gets its own notice budget.
+    pressureState.usageTokens = 200_000
+    adapter.enqueue(toolCallResponse('call-rearm-nc', 'new_context', { handoff: 'rearm handoff' }))
+    adapter.enqueue(textResponse('new generation.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'hand off' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+    // The new generation observes the budget again on its next turn.
+    pressureState.usageTokens = 200_000
+    adapter.enqueue(textResponse('next generation turn.'))
+    next.followup(createUserMessage({ content: [{ type: 'text', text: 'continue' }], source: { kind: 'user' } }))
+    await next.whenIdle()
+    expect(noticesIn(next)).toHaveLength(1)
+  })
+
+  it('task acceptance no longer schedules standalone auto compaction', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('noauto-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('noauto-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    pressureState.usageTokens = 0
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('noauto-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Investigate the release', recipients: [memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const live = ctx.agents.get(added.status.member.sessionId)!
+    await waitForIdle(ctx, live)
+    const read = await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('noauto-read'), workspaceId, taskRef: started.task!.taskRef })
+    const claim = await ctx.agentTeam.changeClaimForAgent(live, { requestId: requestId('noauto-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', baseRevision: read.thread.revision, direction: 'own the fix' })
+    if (claim.kind !== 'committed') throw new Error(`expected committed claim, received ${claim.kind}`)
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('noauto-human-read'), workspaceId, taskRef: started.task!.taskRef })
+    const accepted = await ctx.agentTeam.changeTask({ requestId: requestId('noauto-accept'), workspaceId, taskRef: started.task!.taskRef, action: 'accept', baseRevision: humanRead.thread.revision })
+    if (accepted.kind !== 'committed') throw new Error(`expected committed accept, received ${accepted.kind}`)
+    // The Member stays available with no compaction failure: acceptance is
+    // a semantic cue, never an unconditional summarization job. The
+    // compaction diagnostic surface is empty (no memberFailures entry).
+    const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)!
+    expect(status.availability).toBe('active')
+    expect(status.presence === 'available' || status.presence === 'working').toBe(true)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 })

@@ -22,7 +22,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
-import { acceptedTaskCompactionMembers, AutoCompactionCoordinator, PRE_COMPACTION_NOTICE_SUMMARY, preCompactionNoticeText } from './auto-compaction.ts'
+import { PressurePolicyCoordinator } from './pressure-policy.ts'
 import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
 import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
@@ -305,7 +305,7 @@ export default class AgentTeam extends TypertRemoteService {
     /** Last non-busy automatic-compaction failure; entered transactions retain additional Session history. */
     compaction?: string
   }>()
-  private readonly autoCompaction: AutoCompactionCoordinator
+  private readonly pressurePolicy: PressurePolicyCoordinator
   private readonly notifiedInbox = new Map<AgentTeamMemberId, string>()
   private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
 
@@ -358,30 +358,28 @@ export default class AgentTeam extends TypertRemoteService {
 
   constructor(ctx: Context) {
     super(ctx, 'agentTeam')
-    this.autoCompaction = new AutoCompactionCoordinator({
+    this.pressurePolicy = new PressurePolicyCoordinator({
       agentForMember: memberId => this.handles.get(memberId)?.agent,
+      memberForAgent: agent => {
+        const member = this.memberForAgent(agent)
+        return member === undefined ? undefined : { memberId: member.memberId, sessionId: agent.id }
+      },
       compactionForAgent: agent => this.ctx.agentPresets.serviceFor(agent, 'compaction'),
-      reactivate: memberId => this.reactivateMember(memberId),
+      limitsForAgent: agent => {
+        if (this.memberForAgent(agent) === undefined) return undefined
+        const meter = agent.ctx.get('tokenMeter')
+        const usageTokens = meter?.measure(agent.session)?.totalTokens
+        if (usageTokens === undefined) return undefined
+        const { hardLimit, handoffAt } = this.contextLimits(agent)
+        return { usageTokens, hardLimit, handoffAt }
+      },
+      activeClaimLabels: memberId => this.activeClaimLabels(memberId),
+      runningJobLabels: memberId => this.runningJobLabels(memberId),
       failed: (memberId, _sessionId, diagnostic) => {
         this.setMemberFailure(memberId, 'compaction', diagnostic)
         this.emitAutoCompactionChanged(memberId)
       },
-      cleared: memberId => {
-        if (!this.clearMemberFailure(memberId, 'compaction')) return
-        this.emitAutoCompactionChanged(memberId)
-      },
       log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
-      // Advisory only: the Agent decides whether anything is worth persisting.
-      steerPreCompaction: agent => {
-        const hint = createUserMessage({
-          content: [{ type: 'text', text: preCompactionNoticeText() }],
-          source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: PRE_COMPACTION_NOTICE_SUMMARY },
-        })
-        // Persist-your-conclusions outranks a queued progress nudge.
-        const member = this.memberForAgent(agent)
-        if (member !== undefined) this.progressNudge.revokePendingNotice(member.memberId)
-        agent.steer(hint)
-      },
     })
   }
 
@@ -433,6 +431,9 @@ export default class AgentTeam extends TypertRemoteService {
       const handle = this.handles.get(memberId)
       if (handle === undefined || handle.agent.session.id !== session.id) return
       this.progressNudge.onSessionEvent(memberId, session.id, handle.agent, event)
+      // A successful assistant response ends any open provider-overflow
+      // recovery sequence for this Member.
+      if (event.type === 'assistant/message') this.pressurePolicy.onAssistantMessage(handle.agent)
       // Context management reacts only after a successful durable tool/result;
       // the projection (not this listener) decides what that means.
       this.contextManagement.onSessionEvent(memberId, handle.agent, event)
@@ -443,7 +444,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.recovery.dispose()
       this.progressNudge.dispose()
       this.contextManagement.dispose()
-      await this.autoCompaction.dispose()
+      this.pressurePolicy.dispose()
       if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
       this.attachmentGcTimer = undefined
       this.emitChanged()
@@ -1560,7 +1561,7 @@ export default class AgentTeam extends TypertRemoteService {
           if (!this.contextManagement.needsAdmissionGate(agent)) return
           this.contextManagement.captureQueuedInput(agent)
         })
-        agentCtx.on('agent/pre-step', async ({ agent, messages }, next) => {
+        agentCtx.on('agent/pre-step', async ({ agent, messages, signal }, next) => {
           // Check before AND after the waterfall: a rollover pending at either
           // edge must reject this old-generation step, preserving its claimed
           // input for the new generation instead of letting it run or drop.
@@ -1568,10 +1569,24 @@ export default class AgentTeam extends TypertRemoteService {
             this.contextManagement.captureClaimedInput(agent, messages)
             return { kind: 'reject' as const }
           }
+          // Team pressure policy rides the same pre-step seam after the
+          // admission gate: the handoff-budget notice steers into the running
+          // turn, and the hard limit forces compaction before the request is
+          // forwarded — failing closed blocks the step instead of submitting
+          // over the Team limit. Missing route capacity is an explicit reject.
+          const pressure = await this.pressurePolicy.onPreStep(agent, signal)
+          if (pressure.kind === 'reject') return { kind: 'reject' as const }
           const decision = await next()
           if (decision.kind === 'reject' || !this.contextManagement.needsAdmissionGate(agent)) return decision
           this.contextManagement.captureClaimedInput(agent, messages)
           return { kind: 'reject' as const }
+        })
+        // Provider context-overflow recovery: one bounded compact-and-retry
+        // sequence per failure chain through the Team-owned policy.
+        agentCtx.on('agent/request-error', async ({ agent, failure, signal }, next) => {
+          const retry = await this.pressurePolicy.onRequestError(agent, failure, signal)
+          if (retry) return { kind: 'retry' as const }
+          return next()
         })
         return {
           commit: () => {
@@ -1617,7 +1632,8 @@ export default class AgentTeam extends TypertRemoteService {
       // Inbox, so the handoff is guaranteed to be the new generation's first
       // model-facing context even when unread Team facts exist.
       if (options?.deferNotify !== true) this.notifyMember(created.agent)
-      this.autoCompaction.activated(member.memberId)
+      // A fresh context generation re-arms the one-shot pressure notice.
+      this.pressurePolicy.rearm(member.memberId)
       // A restart between a durable rollover intent and its swap replays the
       // old Session; the projection still carries the intent, so finish the
       // transition (or keep waiting for the containing turn) from here.
@@ -1773,8 +1789,32 @@ export default class AgentTeam extends TypertRemoteService {
       const handle = this.handles.get(memberId)
       if (handle !== undefined) this.notifyMember(handle.agent)
     }
-    const compactionMembers = acceptedTaskCompactionMembers(operation)
-    if (compactionMembers !== undefined) this.autoCompaction.schedule(compactionMembers)
+    // Task acceptance no longer schedules standalone auto compaction: it is
+    // a semantic checkpoint/context cue (delivered as ordinary Team
+    // notification), and the Team pressure policy owns compaction entry.
+  }
+
+  /** Model-visible active-Claim labels for the pressure notice. */
+  private activeClaimLabels(memberId: AgentTeamMemberId): readonly string[] {
+    const ledger = this.ledger
+    if (ledger === undefined) return []
+    const labels: string[] = []
+    for (const claim of ledger.activeClaimsForMember(memberId)) {
+      if (claim.state !== 'active') continue
+      labels.push(`${claim.claimRef} (${claim.direction})`)
+    }
+    return labels
+  }
+
+  /** Model-visible running/stopping job labels for the pressure notice. */
+  private runningJobLabels(memberId: AgentTeamMemberId): readonly string[] {
+    const handle = this.handles.get(memberId)
+    if (handle === undefined) return []
+    const jobs = handle.agent.ctx.get('jobs')
+    if (jobs === undefined) return []
+    return jobs.list(handle.agent)
+      .filter((job: { status: string }) => job.status === 'running' || job.status === 'stopping')
+      .map((job: { id: string; name?: string }) => `${job.name ?? job.id}`)
   }
 
   private emitAutoCompactionChanged(memberId: AgentTeamMemberId): void {

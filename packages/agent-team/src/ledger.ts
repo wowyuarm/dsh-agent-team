@@ -619,15 +619,23 @@ export class AgentTeamLedger {
    * more than one, a rewind cannot be proven to stay inside one Thread.
    */
   activeClaimCountForMember(memberId: AgentTeamMemberId): number {
-    let count = 0
+    return this.activeClaimsForMember(memberId).length
+  }
+
+  /**
+   * One Member's active Claims on open Tasks in active Channels, oldest
+   * first — the read-only input for the pressure notice's Claim labels.
+   */
+  activeClaimsForMember(memberId: AgentTeamMemberId): readonly AgentTeamClaim[] {
+    const active: AgentTeamClaim[] = []
     for (const claim of this.state.claims.values()) {
       if (claim.owner !== memberId || claim.state !== 'active') continue
       const task = this.state.tasks.get(claim.taskRef)
       if (task === undefined || task.resolution !== 'open') continue
       if (this.state.channels.get(task.channelRef)?.state === 'archived') continue
-      count += 1
+      active.push(claim)
     }
-    return count
+    return active.sort((a, b) => a.claimRef.localeCompare(b.claimRef))
   }
 
   /**
