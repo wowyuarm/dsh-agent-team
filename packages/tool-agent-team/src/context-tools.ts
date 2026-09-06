@@ -96,7 +96,10 @@ const contextCheckpoint = defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       checkpointRef: { type: 'string', required: true }, name: { type: 'string', required: true },
     } },
-    render: (_args, value) => [{ type: 'text', text: `Checkpoint recorded: ${value.name}. Work continues in the next turn; the Host will continue automatically.` }],
+    // The ref is the selection surface for `new_context`: rendering only the
+    // name left the model with no legitimate way to cite the anchor it just
+    // recorded. Renders are the only channel results reach the model through.
+    render: (_args, value) => [{ type: 'text', text: `Checkpoint recorded: ${value.name} (ref: ${value.checkpointRef}). Work continues in the next turn; the Host will continue automatically.` }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -136,7 +139,24 @@ const contextTimeline = defineTool({
         sourceSessionId: { type: 'string' },
       } } },
     } },
-    render: (_args, value) => [{ type: 'text', text: `Context timeline: ${value.usageTokens} tokens used (handoff at ${value.handoffAt}, hard limit ${value.hardLimit}). ${value.items.length} item(s); restorable anchors carry a checkpointRef for new_context.` }],
+    // The item list is the whole decision surface: without each anchor's
+    // ref, label, source, size estimates, affected Threads, and
+    // restorable/reason verdict, the model cannot pick a `checkpointRef` for
+    // `new_context` — the summary line alone left the tool unusable for
+    // seeded returns. The Host bounds items (default 12, at most 24), so this
+    // list cannot grow unbounded.
+    render: (_args, value) => {
+      const lines = [`Context timeline: ${value.usageTokens} tokens used (handoff at ${value.handoffAt}, hard limit ${value.hardLimit}). ${value.items.length} item(s):`]
+      for (const item of value.items) {
+        const threads = item.affectedThreads.length === 0 ? 'no Threads' : `Threads ${item.affectedThreads.join(', ')}`
+        const size = `retained ~${item.retainedTokens}, discarded ~${item.discardedTokens}`
+        const restorable = item.restorable
+          ? `restorable — ref: ${item.checkpointRef}`
+          : `not restorable — ${item.reason ?? 'no reason given'}`
+        lines.push(`- ${item.name} [source: ${item.source}] (${size}; ${threads}) — ${restorable}`)
+      }
+      return [{ type: 'text', text: lines.join('\n') }]
+    },
   },
   async execute(args, exec) {
     const agent = exec.agent
