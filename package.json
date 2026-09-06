@@ -8,6 +8,7 @@
   },
   "private": false,
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "files": [
     "cordis.patch.yml",
     "packages/agent-team/lib/**/*",

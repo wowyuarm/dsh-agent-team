@@ -10,17 +10,15 @@ const temporaryPackage = await mkdtemp(join(harnessRoot, 'packages/external-agen
 const manifestDirectory = join(temporaryPackage, 'bundle')
 
 const run = () => new Promise((resolveRun, reject) => {
-  // On Windows the pnpm .bin shims are .cmd files (the extensionless file is
-  // a POSIX shell script only), and spawn without a shell cannot run a .cmd
-  // by bare name through PATH — name the shim file directly.
-  const bin = process.platform === 'win32'
-    ? join(harnessRoot, 'node_modules/.bin/tsdown.cmd')
-    : join(harnessRoot, 'node_modules/.bin/tsdown')
-  const child = spawn(bin, [], {
-    cwd: clientRoot,
-    stdio: 'inherit',
-    env: { ...process.env, DSH_AGENT_TEAM_BUILD_RUNTIME: '1' },
-  })
+  // On Windows the pnpm .bin shims are .cmd files and Node 22+ refuses to
+  // spawn them without a shell (EINVAL, CVE-2024-27980 follow-up); the POSIX
+  // side keeps the direct spawn. shell:true needs the command quoted as one
+  // string because the argument list is re-parsed by the shell.
+  const bin = join(harnessRoot, 'node_modules/.bin/tsdown')
+  const useShell = process.platform === 'win32'
+  const child = useShell
+    ? spawn(`"${bin}.cmd"`, { shell: true, cwd: clientRoot, stdio: 'inherit', env: { ...process.env, DSH_AGENT_TEAM_BUILD_RUNTIME: '1' } })
+    : spawn(bin, [], { cwd: clientRoot, stdio: 'inherit', env: { ...process.env, DSH_AGENT_TEAM_BUILD_RUNTIME: '1' } })
   child.once('error', reject)
   child.once('exit', code => code === 0 ? resolveRun() : reject(new Error(`tsdown exited with ${String(code)}`)))
 })

@@ -21,11 +21,15 @@ try {
   const rendered = (await readFile(join(root, 'scripts/team-ui.ui-preview.ts'), 'utf8'))
     .replace('__TEAM_ROOT__', quote(root)).replace('__OVERLAY__', quote(overlay)).replace('__HOME__', quote(home))
   await writeFile(test, rendered)
-  const child = spawn('corepack', ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.web.config.ts', 'apps/web/tests/__external-agent-team-ui-preview.e2e.ts', '--reporter=verbose'], {
-    cwd: harness,
-    stdio: 'inherit',
-    env: { ...process.env, DSH_SNAPSHOT: 'replay' },
-  })
+  // Windows: bare-name corepack spawns hit .cmd ENOENT/EINVAL — go through
+  // the shell like the preview runner does.
+  const child = process.platform === 'win32'
+    ? spawn(`corepack pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/__external-agent-team-ui-preview.e2e.ts --reporter=verbose`, {
+        cwd: harness, stdio: 'inherit', env: { ...process.env, DSH_SNAPSHOT: 'replay' }, shell: true,
+      })
+    : spawn('corepack', ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.web.config.ts', 'apps/web/tests/__external-agent-team-ui-preview.e2e.ts', '--reporter=verbose'], {
+        cwd: harness, stdio: 'inherit', env: { ...process.env, DSH_SNAPSHOT: 'replay' },
+      })
   const stop = () => { child.kill('SIGTERM') }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
