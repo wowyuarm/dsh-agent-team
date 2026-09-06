@@ -11,16 +11,25 @@ function fakeAgent(options?: { readonly replaceGeneration?: number }): {
   readonly agent: Agent
   readonly steer: { readonly messages: unknown[] }
   readonly surface: { replaceGeneration: number }
+  /** Own-event log of this fake generation; steer appends the durable notice. */
+  readonly ownEvents: { type: string; data: { source?: { plugin?: string; summary?: string } } }[]
+  /** Replace the generation: a fresh Session starts with an empty own span. */
+  readonly newGeneration: () => void
 } {
   const steer = { messages: [] as unknown[] }
   const surface = { replaceGeneration: options?.replaceGeneration ?? 0 }
+  let ownEvents: { type: string; data: { source?: { plugin?: string; summary?: string } } }[] = []
   const agent = {
     id: 'session:test',
     ctx: { get: (name: string) => (name === 'tokenMeter' ? { measure: () => ({ totalTokens: 0 }) } : undefined) },
-    session: { surface, snapshotEvents: () => [] },
-    steer: (message: unknown) => { steer.messages.push(message) },
+    session: { surface, snapshotEvents: () => [], ownEvents: () => ownEvents },
+    steer: (message: unknown) => {
+      steer.messages.push(message)
+      const source = (message as { source?: { plugin?: string; summary?: string } }).source
+      if (source?.summary !== undefined) ownEvents.push({ type: 'user/message', data: { source } })
+    },
   } as unknown as Agent
-  return { agent, steer, surface }
+  return { agent, steer, surface, ownEvents: ownEvents as never, newGeneration: () => { ownEvents = [] } }
 }
 
 /** A configurable fake engine recording calls and advancing the surface. */
@@ -74,7 +83,7 @@ describe('Agent Team pressure policy (ticket 03)', () => {
   it('at the handoff budget one structured notice is steered once per generation', async () => {
     const steered: unknown[] = []
     const { policy } = coordinator({ limits: { usageTokens: 200_000, hardLimit: 256_000, handoffAt: 200_000 }, steered })
-    const { agent, steer } = fakeAgent()
+    const { agent, steer, newGeneration } = fakeAgent()
     const first = await policy.onPreStep(agent, new AbortController().signal)
     expect(first.kind).toBe('notice')
     expect(steer.messages).toHaveLength(1)
@@ -82,14 +91,34 @@ describe('Agent Team pressure policy (ticket 03)', () => {
     expect(notice.source).toMatchObject({ kind: 'plugin', form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY })
     expect((notice.content[0] as { text: string }).text).toContain('200000')
     expect((notice.content[0] as { text: string }).text).toContain('claim:a')
-    // Later steps in the same generation do not repeat the notice.
+    // Later steps in the same generation do not repeat the notice: the
+    // delivered notice in this Session's own events is the durable latch.
     const second = await policy.onPreStep(agent, new AbortController().signal)
     expect(second.kind).toBe('continue')
     expect(steer.messages).toHaveLength(1)
-    // A fresh generation re-arms the notice.
-    policy.rearm('member:test' as never)
+    // A fresh generation (a new Session with an empty own event span) is
+    // itself the re-arm: the notice fires once for the new generation.
+    newGeneration()
     const third = await policy.onPreStep(agent, new AbortController().signal)
     expect(third.kind).toBe('notice')
+    expect(steer.messages).toHaveLength(2)
+  })
+
+  it('a delivered notice in the Session log latches across coordinator restarts', async () => {
+    const steered: unknown[] = []
+    const first = coordinator({ limits: { usageTokens: 200_000, hardLimit: 256_000, handoffAt: 200_000 }, steered })
+    const { agent, steer, newGeneration } = fakeAgent()
+    await first.policy.onPreStep(agent, new AbortController().signal)
+    expect(steer.messages).toHaveLength(1)
+    // Host restart: a fresh coordinator over the same replayed Session log.
+    const second = coordinator({ limits: { usageTokens: 200_000, hardLimit: 256_000, handoffAt: 200_000 }, steered })
+    const resumed = await second.policy.onPreStep(agent, new AbortController().signal)
+    expect(resumed.kind).toBe('continue')
+    expect(steer.messages).toHaveLength(1)
+    // And a genuinely fresh generation still re-arms.
+    newGeneration()
+    const fresh = await second.policy.onPreStep(agent, new AbortController().signal)
+    expect(fresh.kind).toBe('notice')
     expect(steer.messages).toHaveLength(2)
   })
 

@@ -1,5 +1,5 @@
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
-import type { SessionId as AgentTeamMemberSessionId, SessionSeq as AgentTeamMemberSessionSeq } from "@deepseek-ai/dsh-session"
+import type { SessionId as AgentTeamMemberSessionId, SessionLogOffset as AgentTeamMemberSessionLogOffset, SessionSeq as AgentTeamMemberSessionSeq } from "@deepseek-ai/dsh-session"
 import type {
   AgentTeamActivity,
   AgentTeamAgentMember,
@@ -195,8 +195,8 @@ export interface AgentTeamRolloverSessionRequest {
   readonly trigger: 'model' | 'pressure'
   /** Seed source Session for a checkpoint return; absent on a fresh rollover. */
   readonly sourceSessionId?: AgentTeamMemberSessionId
-  /** Inclusive source event seq the checkpoint return was seeded through. */
-  readonly sourceThroughSeq?: AgentTeamMemberSessionSeq
+  /** Exclusive end of the seeded source prefix (its exact length in the source log). */
+  readonly sourceThroughSeq?: AgentTeamMemberSessionLogOffset
   /** The checkpoint a return was addressed to; absent on a fresh rollover. */
   readonly checkpointRef?: AgentTeamContextCheckpointRef
 }

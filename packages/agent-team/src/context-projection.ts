@@ -17,6 +17,7 @@
  * @module @wowyuarm/dsh-agent-team/context-projection
  */
 
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ToolResultMessage, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionHeader, SessionLogOffset } from '@deepseek-ai/dsh-session'
@@ -142,7 +143,7 @@ export interface TimelineBoundary {
 }
 
 const relatedFileSchema = z.object({ path: z.string().min(1), reason: z.string() }).strict()
-const checkpointRefSchema = z.string().regex(/^context-checkpoint:[^:]+$/).transform(value => value as AgentTeamContextCheckpointRef)
+const checkpointRefSchema = z.string().regex(/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/).transform(value => value as AgentTeamContextCheckpointRef)
 const openCallSchema = z.object({ callId: z.string().min(1), name: z.string(), arguments: z.string() }).strict()
 
 const carriedCandidateSchema = z.object({
@@ -194,9 +195,29 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   }
 }
 
-/** Deterministic checkpoint ref from the recording tool call identity. */
-export function checkpointRefFor(callId: string): AgentTeamContextCheckpointRef {
-  return `context-checkpoint:${callId}` as AgentTeamContextCheckpointRef
+/**
+ * Deterministic checkpoint ref from the recording session and tool call
+ * identity: a bounded, collision-resistant opaque token. Provider call ids
+ * are arbitrary-length free text that may repeat across generations and even
+ * collide between Sessions, so the ref derives from the SHA-256 of the exact
+ * `(sessionId, callId)` pair — same pair always reproduces the ref, any
+ * other pair is overwhelmingly unlikely to collide, and the token can never
+ * smuggle delimiters or unbounded content through a ref field.
+ */
+export function checkpointRefFor(sessionId: string, callId: string): AgentTeamContextCheckpointRef {
+  return `context-checkpoint-${createHash('sha256').update(JSON.stringify([sessionId, callId])).digest('hex')}` as AgentTeamContextCheckpointRef
+}
+
+/**
+ * Deterministic default-boundary ref for one delivered Team boundary: the
+ * same session-scoped hash shape as checkpoint refs, keyed on the boundary's
+ * anchoring event seq. Consecutive generations routinely repeat event seqs,
+ * so the Session identity must be part of the key or two generations'
+ * boundaries at the same seq collide — the timeline would silently drop the
+ * ancestor item and a `new_context` return would resolve the wrong boundary.
+ */
+export function boundaryRefFor(sessionId: string, seq: number): AgentTeamContextCheckpointRef {
+  return `team-boundary-${createHash('sha256').update(JSON.stringify([sessionId, seq])).digest('hex')}` as AgentTeamContextCheckpointRef
 }
 
 function emptyState(): AgentTeamContextProjectionState {
@@ -206,32 +227,38 @@ function emptyState(): AgentTeamContextProjectionState {
 /**
  * Cold-fold one immutable event log into the projection state. Events at or
  * before `inheritedEventCount` belong to the fork prefix and are resolved
- * history in this Session, so they never produce fresh intent.
+ * history in this Session, so they never produce fresh intent. `sessionId` is
+ * the log's own Session identity — it keys checkpoint refs, so the same
+ * provider call id in two different Sessions produces two distinct refs.
  */
-export function foldContextProjection(events: readonly SessionEvent[], inheritedEventCount: SessionLogOffset = 0 as SessionLogOffset): AgentTeamContextProjectionState {
+export function foldContextProjection(events: readonly SessionEvent[], inheritedEventCount: SessionLogOffset = 0 as SessionLogOffset, sessionId: string = ''): AgentTeamContextProjectionState {
   let state = emptyState()
   const inherited = Number(inheritedEventCount)
   for (const event of events) {
     if (event.seq < inherited) continue
-    state = applyContextEvent(state, event)
+    state = applyContextEvent(state, event, sessionId)
   }
   return state
 }
 
-/** The host-only projection unit; no wire view is published. */
-export const agentTeamContextProjectionDefinition = {
+/**
+ * The host-only projection unit; no wire view is published. The definition is
+ * a factory: each Session folds with its own identity so checkpoint refs
+ * derive from that Session's exact `(sessionId, callId)` pairs.
+ */
+export const agentTeamContextProjectionDefinition = (sessionId: string): ProjectionDefinition<'agentTeamContext', AgentTeamContextProjectionState> => ({
   key: 'agentTeamContext',
-  stateVersion: 1,
+  stateVersion: 2,
   stateSchema,
   init: (_header: SessionHeader, _inheritedEventCount: SessionLogOffset): AgentTeamContextProjectionState => emptyState(),
-  apply: applyContextEvent,
-} satisfies ProjectionDefinition<'agentTeamContext', AgentTeamContextProjectionState>
+  apply: (state, event) => applyContextEvent(state, event, sessionId),
+})
 
 /**
  * Pure transition: previous state + one committed event → next state. Returns
  * the same reference when the event is not this unit's.
  */
-function applyContextEvent(state: AgentTeamContextProjectionState, event: SessionEvent): AgentTeamContextProjectionState {
+function applyContextEvent(state: AgentTeamContextProjectionState, event: SessionEvent, sessionId: string): AgentTeamContextProjectionState {
   if (event.type === 'tool/call') {
     if (event.data.name !== NEW_CONTEXT_TOOL_NAME && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME && event.data.name !== TEAM_CLAIM_TOOL_NAME) return state
     // Only Team-claim mutations (not `list`) are semantic timeline candidates.
@@ -239,13 +266,13 @@ function applyContextEvent(state: AgentTeamContextProjectionState, event: Sessio
     return { ...state, openCalls: [...state.openCalls, { callId: event.data.callId, name: event.data.name, arguments: event.data.arguments }] }
   }
   if (event.type === 'tool/result') {
-    return applyToolResult(state, event.seq, event.data.turn, event.data.message, event.data.error !== undefined)
+    return applyToolResult(state, event.seq, event.data.turn, event.data.message, event.data.error !== undefined, sessionId)
   }
   if (event.type === 'turn/end') {
     return applyTurnEnd(state, event.seq, event.data.turn)
   }
   if (event.type === 'user/message') {
-    return applyUserMessage(state, event.seq, event.data)
+    return applyUserMessage(state, event.seq, event.data, sessionId)
   }
   if (event.type === 'agent/inbox/spliced') {
     return applyInboxSpliced(state, event.data)
@@ -267,7 +294,7 @@ function applyContextEvent(state: AgentTeamContextProjectionState, event: Sessio
  * the containing completed turn. Plain Human/agent prose and quiet
  * checkpoint continuations are not boundaries.
  */
-function boundaryFromUserMessage(seq: number, message: UserMessage): TimelineBoundary | undefined {
+function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMessage): TimelineBoundary | undefined {
   const source = message.source
   if (source.kind === 'agent-team-context-handoff') {
     return { key: `handoff:${seq}`, source: 'handoff', label: 'context handoff', seq, turn: -1, turnEndSeq: -1 }
@@ -277,7 +304,7 @@ function boundaryFromUserMessage(seq: number, message: UserMessage): TimelineBou
   if (source.form === 'notice' && source.summary === PRE_COMPACTION_NOTICE_SUMMARY) {
     return { key: `compaction:${seq}`, source: 'compaction', label: 'compaction notice', seq, turn: -1, turnEndSeq: -1 }
   }
-  return { key: `team-boundary:${seq}`, source: 'team-boundary', label: 'Team delivery', seq, turn: -1, turnEndSeq: -1 }
+  return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: 'Team delivery', seq, turn: -1, turnEndSeq: -1 }
 }
 
 /**
@@ -303,6 +330,7 @@ function applyToolResult(
   turn: number,
   message: ToolResultMessage,
   internalFailure: boolean,
+  sessionId: string,
 ): AgentTeamContextProjectionState {
   const block = message.content[0]
   if (block === undefined || block.type !== 'tool-result') return state
@@ -324,7 +352,7 @@ function applyToolResult(
   if (recorded.name === CONTEXT_CHECKPOINT_TOOL_NAME) {
     const parsed = parseCheckpointArguments(recorded.arguments)
     if (parsed === undefined) return { ...state, openCalls }
-    const checkpointRef = checkpointRefFor(block.toolCallId)
+    const checkpointRef = checkpointRefFor(sessionId, block.toolCallId)
     return {
       ...state,
       openCalls,
@@ -337,7 +365,7 @@ function applyToolResult(
   return {
     ...state,
     openCalls,
-    boundaries: [...state.boundaries, { key: `team-boundary:${seq}`, source: 'team-boundary', label: 'Team claim change', seq, turn, turnEndSeq: -1 }],
+    boundaries: [...state.boundaries, { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: 'Team claim change', seq, turn, turnEndSeq: -1 }],
   }
 }
 
@@ -362,7 +390,7 @@ function applyTurnEnd(state: AgentTeamContextProjectionState, seq: number, _turn
   return changed ? { ...state, checkpoints, pending, boundaries, lastTurnEndSeq: seq } : state
 }
 
-function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, message: UserMessage): AgentTeamContextProjectionState {
+function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, message: UserMessage, sessionId: string): AgentTeamContextProjectionState {
   let next = state
   // A surfaced candidate is NOT consumed yet: the loop appends user/message
   // before the step runs, so cancellation can still land between them. Only
@@ -381,7 +409,7 @@ function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, m
   // A structural boundary delivery (handoff start, Team semantic notice,
   // compaction notice) becomes a timeline candidate anchored to the
   // containing turn; it resolves when that turn ends.
-  const boundary = boundaryFromUserMessage(seq, message)
+  const boundary = boundaryFromUserMessage(sessionId, seq, message)
   if (boundary !== undefined) next = { ...next, boundaries: [...next.boundaries, boundary] }
   // The quiet continuation notice delivered for one checkpoint completes its
   // delivery state; replay repair reads this to avoid re-scheduling it.

@@ -22,7 +22,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, markAgentTeamPreset } from '../src/index.ts'
-import { foldContextProjection } from '../src/context-projection.ts'
+import { checkpointRefFor, foldContextProjection } from '../src/context-projection.ts'
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
 import { PROGRESS_NUDGE_NOTICE_SUMMARY } from '../src/progress-nudge.ts'
 import type { AgentTeamChannelRef, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
@@ -39,13 +39,22 @@ afterEach(async () => {
 })
 
 class EmptyAdapter extends LlmAdapter {
-  override resolveModel(provider: string, model: string) { return Promise.resolve({ provider, id: model, name: model }) }
+  // The pressure policy resolves the current route's context capacity through
+  // the LLM service; the mock route reports a large window so ordinary turns
+  // stay below every budget.
+  override resolveModel(provider: string, model: string) { return Promise.resolve({ provider, id: model, name: model, context: { contextWindow: 320_000 } }) }
   async * stream(_options: GenerateOptions): AsyncIterable<StreamChunk> { yield* [] }
 }
 
 class ScriptedAdapter extends EmptyAdapter {
   readonly requests: GenerateOptions[] = []
   private readonly responses: StreamChunk[][] = []
+  /** Context window per model name; the pressure route probe drives this. */
+  resolveModelWindow: (model: string) => number = () => 320_000
+
+  override resolveModel(provider: string, model: string) {
+    return Promise.resolve({ provider, id: model, name: model, context: { contextWindow: this.resolveModelWindow(model) } })
+  }
 
   enqueue(response: StreamChunk[]): void {
     this.responses.push(response)
@@ -62,14 +71,17 @@ class ScriptedAdapter extends EmptyAdapter {
 class GatedAdapter extends ScriptedAdapter {
   readonly started = Promise.withResolvers<void>()
   readonly release = Promise.withResolvers<void>()
-  private first = true
+  private calls = 0
+
+  /** 1-based model-call number whose stream blocks until `release`; default 1. */
+  constructor(private readonly gateAt = 1) { super() }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    if (!this.first) {
+    this.calls += 1
+    if (this.calls !== this.gateAt) {
       yield* super.stream(options)
       return
     }
-    this.first = false
     this.requests.push(options)
     this.started.resolve()
     await this.release.promise
@@ -147,7 +159,7 @@ async function realHarness(
   readonly archived: readonly SessionId[]
   readonly presets: TestablePresets
   /** Writable fake meter pressure; tests drive the thresholds through it. */
-  readonly pressureState: { usageTokens: number }
+  readonly pressureState: { usageTokens: number; bySession: Map<string, number>; failFor: Set<string> }
   /** Writable fake owned-jobs list; tests drive the rollover guard through it. */
   readonly jobsState: { jobs: Array<{ id: string; label: string; status: string; reported: boolean }> }
 }> {
@@ -204,8 +216,11 @@ async function realHarness(
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   // The Team pressure policy reads the token meter at every Member pre-step;
   // tests that need pressure control override this with a writable fake.
-  const pressureState = { usageTokens: 0 }
-  ctx.provide('tokenMeter', { measure: () => ({ totalTokens: pressureState.usageTokens }) })
+  const pressureState = { usageTokens: 0, bySession: new Map<string, number>(), failFor: new Set<string>() }
+  ctx.provide('tokenMeter', { measure: (session: { id: string }): { totalTokens: number } => {
+    if (pressureState.failFor.has(session.id)) throw new Error('meter unavailable for this session')
+    return { totalTokens: pressureState.bySession.get(session.id) ?? pressureState.usageTokens }
+  } })
   // The rollover job guard reads the member-scoped jobs registry; a writable
   // fake lets tests drive owned-job states.
   const jobsState: { jobs: Array<{ id: string; label: string; status: string; reported: boolean }> } = { jobs: [] }
@@ -1512,7 +1527,7 @@ describe('Agent Team fresh new_context rollover (ticket 01)', () => {
     // at the transition: the swap aborts before any ledger commit, the old
     // generation stays bound, and nothing is archived.
     const live = ctx.agents.get(sessionId)!
-    adapter.enqueue(toolCallResponse('call-cp-ref', 'new_context', { handoff: 'attempted checkpoint return', checkpointRef: 'context-checkpoint:nowhere' }))
+    adapter.enqueue(toolCallResponse('call-cp-ref', 'new_context', { handoff: 'attempted checkpoint return', checkpointRef: checkpointRefFor(sessionId, 'call-that-never-recorded') }))
     adapter.enqueue(textResponse('the anchor does not exist; continuing in this context.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning to a checkpoint' }], source: { kind: 'user' } }))
     // The rollover turn ends and the swap attempt fails asynchronously; wait
@@ -1947,7 +1962,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(turnEnds).toHaveLength(1)
     const results = events.filter(event => event.type === 'tool/result')
     expect(results.length).toBe(2)
-    const state = foldContextProjection(events)
+    const state = foldContextProjection(events, undefined, live.session.id)
     expect(state.checkpoints).toHaveLength(1)
     expect(state.checkpoints[0]!.turnEndSeq).toBe(turnEnds[0]!.seq)
   })
@@ -1971,7 +1986,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const events = live.session.ownEvents()
     const turns = events.filter(event => event.type === 'turn/start')
     expect(turns).toHaveLength(1)
-    const state = foldContextProjection(events)
+    const state = foldContextProjection(events, undefined, live.session.id)
     expect(state.checkpoints).toHaveLength(0)
     expect(state.continuations).toHaveLength(0)
   })
@@ -2005,19 +2020,24 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const timeline = await ctx.agentTeam.contextTimelineForAgent(live, { memberId: added.status.member.memberId })
     expect(timeline.items.length).toBeGreaterThanOrEqual(2)
     const refs = timeline.items.map(item => item.checkpointRef)
-    expect(refs).toContain('context-checkpoint:call-tl-cp1')
-    expect(refs).toContain('context-checkpoint:call-tl-cp2')
+    expect(refs).toContain(checkpointRefFor(sessionId, 'call-tl-cp1'))
+    expect(refs).toContain(checkpointRefFor(sessionId, 'call-tl-cp2'))
     // Newest first, head present, every agent checkpoint restorable.
     const cpIndexes = refs.map(ref => timeline.items.findIndex(item => item.checkpointRef === ref))
-    expect(cpIndexes[cpIndexes.indexOf(refs.indexOf('context-checkpoint:call-tl-cp1'))]).toBeLessThanOrEqual(timeline.items.length)
-    const first = timeline.items.find(item => item.checkpointRef === 'context-checkpoint:call-tl-cp1')!
-    const second = timeline.items.find(item => item.checkpointRef === 'context-checkpoint:call-tl-cp2')!
+    expect(cpIndexes[cpIndexes.indexOf(refs.indexOf(checkpointRefFor(sessionId, 'call-tl-cp1')))]).toBeLessThanOrEqual(timeline.items.length)
+    const first = timeline.items.find(item => item.checkpointRef === checkpointRefFor(sessionId, 'call-tl-cp1'))!
+    const second = timeline.items.find(item => item.checkpointRef === checkpointRefFor(sessionId, 'call-tl-cp2'))!
     expect(first.restorable).toBe(true)
     expect(second.restorable).toBe(true)
-    expect(timeline.items.findIndex(item => item.checkpointRef === 'context-checkpoint:call-tl-cp2')).toBeLessThan(timeline.items.findIndex(item => item.checkpointRef === 'context-checkpoint:call-tl-cp1'))
+    expect(timeline.items.findIndex(item => item.checkpointRef === checkpointRefFor(sessionId, 'call-tl-cp2'))).toBeLessThan(timeline.items.findIndex(item => item.checkpointRef === checkpointRefFor(sessionId, 'call-tl-cp1')))
     const head = timeline.items.find(item => item.source === 'head')
     expect(head).toBeDefined()
     expect(head!.restorable).toBe(false)
+    // A current-generation anchor's discarded estimate is the measured usage
+    // beyond the anchor (the suffix a return would drop), never the whole
+    // current usage; retained + discarded equals the measurement.
+    expect(first.discardedTokens).toBe(Math.max(0, timeline.usageTokens - first.retainedTokens))
+    expect(first.retainedTokens + first.discardedTokens).toBeLessThanOrEqual(timeline.usageTokens)
     // The limit bounds the list.
     const limited = await ctx.agentTeam.contextTimelineForAgent(live, { memberId: added.status.member.memberId, limit: 1 })
     expect(limited.items).toHaveLength(1)
@@ -2045,7 +2065,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     }) ? true : undefined)
     await live.whenIdle()
     const anchorEvents = live.session.ownEvents().length
-    const anchorTurnEndSeq = foldContextProjection(live.session.ownEvents()).checkpoints[0]!.turnEndSeq
+    const anchorTurnEndSeq = foldContextProjection(live.session.ownEvents(), undefined, live.session.id).checkpoints[0]!.turnEndSeq
 
     adapter.enqueue(textResponse('noisy branch work.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'now make some noise' }], source: { kind: 'user' } }))
@@ -2054,7 +2074,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(live.session.ownEvents().length).toBeGreaterThan(anchorEvents)
 
     // Return to the anchor with a handoff bridging the discarded branch.
-    adapter.enqueue(toolCallResponse('call-ret-nc', 'new_context', { handoff: 'The noisy branch failed; resume from the anchor.', checkpointRef: 'context-checkpoint:call-ret-cp' }))
+    adapter.enqueue(toolCallResponse('call-ret-nc', 'new_context', { handoff: 'The noisy branch failed; resume from the anchor.', checkpointRef: checkpointRefFor(firstSessionId, 'call-ret-cp') }))
     adapter.enqueue(textResponse('resumed from the anchor.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'return to the anchor' }], source: { kind: 'user' } }))
     const renewed = await waitFor(() => {
@@ -2076,12 +2096,12 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const firstUser = own.find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected handoff')
-    expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: 'context-checkpoint:call-ret-cp' })
+    expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: checkpointRefFor(firstSessionId, 'call-ret-cp') })
     expect((firstUser.data.content[0] as { text: string }).text).toContain('resume from the anchor')
     // Inherited historical intent stays inert: the inherited prefix's
     // checkpoint history is visible, but no continuation or rollover is
     // rescheduled from it.
-    const state = foldContextProjection(own, next.session.inheritedEventCount)
+    const state = foldContextProjection(own, next.session.inheritedEventCount, next.session.id)
     expect(state.pending).toBeNull()
     expect(state.continuations).toHaveLength(0)
     // The old generation archived; the ledger records the seed fields.
@@ -2133,7 +2153,7 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     await waitFor(() => gen2.session.ownEvents().filter(event => event.type === 'assistant/message').length >= 2 ? true : undefined)
     await gen2.whenIdle()
 
-    adapter.enqueue(toolCallResponse('call-anc-return', 'new_context', { handoff: 'Return to the gen1 anchor; the gen2 branch is discarded.', checkpointRef: 'context-checkpoint:call-anc-cp' }))
+    adapter.enqueue(toolCallResponse('call-anc-return', 'new_context', { handoff: 'Return to the gen1 anchor; the gen2 branch is discarded.', checkpointRef: checkpointRefFor(firstSessionId, 'call-anc-cp') }))
     adapter.enqueue(textResponse('resumed from the ancestor anchor.'))
     gen2.followup(createUserMessage({ content: [{ type: 'text', text: 'return to the ancestor anchor' }], source: { kind: 'user' } }))
     const gen3Status = await waitFor(() => {
@@ -2152,14 +2172,14 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     expect(archived).toContain(secondSessionId)
     expect(archived).not.toContain(thirdSessionId)
     // The inherited prefix is exactly the ancestor's anchor cut.
-    const gen1Fold = foldContextProjection(gen1.session.ownEvents())
-    const anchor = gen1Fold.checkpoints.find(entry => entry.checkpointRef === 'context-checkpoint:call-anc-cp')!
+    const gen1Fold = foldContextProjection(gen1.session.ownEvents(), undefined, firstSessionId)
+    const anchor = gen1Fold.checkpoints.find(entry => entry.checkpointRef === checkpointRefFor(firstSessionId, 'call-anc-cp'))!
     expect(gen3.session.inheritedEventCount).toBe(anchor.turnEndSeq + 1)
     // The handoff is the first own model-facing context of generation 3.
     const firstOwnUser = gen3.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstOwnUser?.type).toBe('user/message')
     if (firstOwnUser?.type !== 'user/message') throw new Error('expected handoff')
-    expect(firstOwnUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: 'context-checkpoint:call-anc-cp' })
+    expect(firstOwnUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: checkpointRefFor(firstSessionId, 'call-anc-cp') })
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
@@ -2177,7 +2197,7 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     adapter.enqueue(toolCallResponse('call-repair-cp', 'context_checkpoint', { name: 'pre-crash anchor' }))
     const live = ctx.agents.get(sessionId)!
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'checkpoint before the crash' }], source: { kind: 'user' } }))
-    await waitFor(() => foldContextProjection(live.session.ownEvents()).checkpoints.some(entry => entry.turnEndSeq !== -1) ? true : undefined)
+    await waitFor(() => foldContextProjection(live.session.ownEvents(), undefined, live.session.id).checkpoints.some(entry => entry.turnEndSeq !== -1) ? true : undefined)
     await live.whenIdle()
     await new Promise(resolve => setTimeout(resolve, 50))
     const deliveredBeforeRestart = live.session.ownEvents().filter(event => event.type === 'user/message'
@@ -2324,6 +2344,89 @@ describe('Agent Team pressure policy integration (ticket 03)', () => {
     expect(status.presence === 'available' || status.presence === 'working').toBe(true)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
+
+  it('derives the pressure budgets from the Member\'s current pinned route, honoring route changes', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('route-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    // A Member pinned to a narrow-window model: the mock adapter reports one
+    // context window, the pinned-model resolution must reflect the pinned
+    // route rather than whatever the last request happened to use.
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('route-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+    pressureState.usageTokens = 0
+    adapter.enqueue(textResponse('first turn on the default route.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'warm up' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+
+    // Pin a different route with a much smaller context window; the budgets
+    // must follow the pinned selection at the next pre-step even though the
+    // last persisted request/context still names the old default route.
+    await ctx.agentTeam.updateMember({ requestId: requestId('route-edit'), memberId, handle: 'builder', description: 'Builds the implementation', model: { provider: 'mock', model: 'narrow' } })
+    adapter.resolveModelWindow = (model: string) => model === 'narrow' ? 112_000 : 320_000
+    // 90K usage: below the wide-route handoff budget (200K) but above the
+    // narrow route's effective budgets (112K window → 96K hard, 88K handoff).
+    // The notice must fire for the NARROW budgets because the pinned route
+    // changed — and quote them, not the default route's.
+    pressureState.usageTokens = 90_000
+    adapter.enqueue(textResponse('under the narrow budget now.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'check the narrow budget' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    const notices = live.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff')
+    expect(notices).toHaveLength(1)
+    const notice = notices[0] as { type: 'user/message'; data: { content: Array<{ type: string; text?: string }> } }
+    const noticeText = notice.data.content[0]?.text ?? ''
+    // The notice quotes the NARROW route's budgets, not the default's.
+    expect(noticeText).toContain('the handoff budget is 88000')
+    expect(noticeText).toContain('the hard limit is 96000')
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('does not repeat the pressure notice after a Host restart within the same generation', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('prestart-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('prestart-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // At the handoff budget, exactly one notice lands in this generation.
+    pressureState.usageTokens = 200_000
+    adapter.enqueue(textResponse('working under pressure.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'under pressure' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    const noticeCount = () => live.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff').length
+    expect(noticeCount()).toBe(1)
+
+    // Host restart on the same Session: the durable notice (delivered or
+    // still spliced into the inbox) latches — no second notice in the same
+    // generation, and the Member stays available.
+    adapter.enqueue(textResponse('still going after the restart.'))
+    await ctx.agentTeam.suspendMember({ requestId: requestId('prestart-suspend'), memberId })
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    await ctx.agentTeam.resumeMember({ requestId: requestId('prestart-resume'), memberId })
+    const resumed = await waitFor(() => {
+      const agent = ctx.agents.get(sessionId)
+      return agent !== undefined && agent.status === 'idle' ? agent : undefined
+    })
+    pressureState.usageTokens = 210_000
+    adapter.enqueue(textResponse('one more turn after the restart.'))
+    resumed.followup(createUserMessage({ content: [{ type: 'text', text: 'keep working' }], source: { kind: 'user' } }))
+    await resumed.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const after = resumed.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff').length
+    expect(after).toBe(1)
+    const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)!
+    expect(status.availability).toBe('active')
+  })
 })
 
 describe('Agent Team recovery hardening (ticket 04)', () => {
@@ -2462,6 +2565,609 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     expect(handoff.data.content[0]?.text).toContain('the handoff that never delivered')
     // The reconstructed Session carries its lineage for future restarts.
     expect(resumed.session.header.parentSession).toBe(firstSessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('reconstructs a recorded checkpoint seed when a crash lands between the rollover commit and the new Session', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('seedcut-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('seedcut-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Record the anchor, then make noise past it.
+    adapter.enqueue(toolCallResponse('call-seedcut-cp', 'context_checkpoint', { name: 'stable anchor' }))
+    adapter.enqueue(textResponse('anchored.'))
+    const live = ctx.agents.get(firstSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'record the anchor' }], source: { kind: 'user' } }))
+    await waitFor(() => foldContextProjection(live.session.ownEvents(), undefined, live.session.id).checkpoints.some(entry => entry.turnEndSeq !== -1) ? true : undefined)
+    await live.whenIdle()
+    const anchorTurnEndSeq = foldContextProjection(live.session.ownEvents(), undefined, live.session.id).checkpoints[0]!.turnEndSeq
+
+    adapter.enqueue(textResponse('noise past the anchor.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'make some noise' }], source: { kind: 'user' } }))
+    await waitFor(() => live.session.ownEvents().filter(event => event.type === 'assistant/message').length >= 2 ? true : undefined)
+    await live.whenIdle()
+
+    // Checkpoint return whose activation crashes after the ledger commit:
+    // the recorded seed envelope (source Session, exclusive prefix length,
+    // checkpoint ref) is the only surviving seed fact.
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-seedcut-nc', 'new_context', { handoff: 'resume from the anchor', checkpointRef: checkpointRefFor(firstSessionId, 'call-seedcut-cp') }))
+    adapter.enqueue(textResponse('returning to the anchor.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'return to the anchor' }], source: { kind: 'user' } }))
+    await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+
+    // Host restart: the never-materialized Session is recreated from the
+    // ledger's recorded seed — never a blank child.
+    presets.failingMount = false
+    adapter.enqueue(textResponse('resumed from the recorded seed.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const restarted = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    const resumed = await waitFor(() => ctx.agents.get(restarted.member.sessionId)!)
+    await waitFor(() => archivedHandoffs(resumed).length > 0 ? true : undefined)
+    await resumed.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    // Seeded child, not blank: the lineage parent is the seed source (the
+    // same Session here) and the inherited prefix is exactly the recorded
+    // exclusive cut through the anchor's turn end.
+    expect(resumed.session.header.parentSession).toBe(firstSessionId)
+    expect(resumed.session.header.isSeeded).toBe(true)
+    expect(resumed.session.inheritedEventCount).toBe(anchorTurnEndSeq + 1)
+    const inherited = resumed.session.snapshotEvents(0 as never, resumed.session.inheritedEventCount)
+    expect(inherited.at(-1)!.seq).toBe(anchorTurnEndSeq)
+    expect(inherited.length).toBeGreaterThan(0)
+    // The handoff is reconstructed exactly once on top of the seed.
+    expect(archivedHandoffs(resumed)).toHaveLength(1)
+    const handoff = archivedHandoffs(resumed)[0] as { data: { content: Array<{ type: string; text: string }> } }
+    expect(handoff.data.content[0]?.text).toContain('resume from the anchor')
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('redelivers the old generation\'s carried input after a crash between the rollover commit and the new Session', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('carry-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('carry-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Crash the rollover after its commit; the racing direct input lands in
+    // the old generation's inbox after the intent (durable splice → carried
+    // candidate in the old fold) and must survive the crash.
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-carry-nc', 'new_context', { handoff: 'the crash handoff' }))
+    adapter.enqueue(textResponse('rolling into the crash.'))
+    const live = ctx.agents.get(firstSessionId)!
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== firstSessionId || event.type !== 'turn/end' || injected) return
+      injected = true
+      queueMicrotask(() => {
+        live.followup(createUserMessage({ content: [{ type: 'text', text: 'Direct input that arrived right before the crash.' }], source: { kind: 'user' } }))
+      })
+    })
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over into the crash' }], source: { kind: 'user' } }))
+    const committed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+    disposeObserver()
+    expect(injected).toBe(true)
+    expect(ctx.agents.get(committed.member.sessionId)).toBeUndefined()
+
+    // Host restart: the recreated generation receives the reconstructed
+    // handoff first, then the carried direct input behind it — exactly once,
+    // never before the handoff.
+    presets.failingMount = false
+    adapter.enqueue(textResponse('carrying on after the crash.'))
+    adapter.enqueue(textResponse('handled the carried input.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const restarted = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    const resumed = await waitFor(() => ctx.agents.get(restarted.member.sessionId)!)
+    await waitFor(() => {
+      const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
+        .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+      return bodies.some(body => body.includes('Direct input that arrived right before the crash')) ? true : undefined
+    })
+    await resumed.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    const userEvents = resumed.session.ownEvents().filter(event => event.type === 'user/message')
+    const bodies = userEvents.map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+      .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
+    const carried = bodies.filter(body => body.includes('Direct input that arrived right before the crash'))
+    expect(carried).toHaveLength(1)
+    const carriedIndex = bodies.findIndex(body => body.includes('Direct input that arrived right before the crash'))
+    const handoffPos = bodies.findIndex(body => body.includes('Context handoff'))
+    expect(handoffPos).toBeGreaterThanOrEqual(0)
+    expect(carriedIndex).toBeGreaterThan(handoffPos)
+    expect(archivedHandoffs(resumed)).toHaveLength(1)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('offers a delivered single-Thread Team boundary as a default checkpoint and rejects multi-Thread boundaries', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, archived } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('tbound-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('tbound-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // Thread A: a direct mention wakes the Member; the delivered notice
+    // quotes `Thread: <ref>` — one Thread's facts enter the context.
+    const started = await ctx.agentTeam.sendMessage({ requestId: requestId('tbound-a'), workspaceId, channelRef: channel.channel.channelRef, body: 'Builder, thread A work', recipients: [memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed send, received ${started.kind}`)
+    const threadA = started.thread.threadRef
+    adapter.enqueue(textResponse('thread A acknowledged.'))
+    await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('thread A work')) ? true : undefined)
+    await live.whenIdle()
+
+    // The timeline marks the Thread-A delivery boundary as a selectable
+    // default checkpoint with exactly that Thread attributed.
+    const timelineA = await ctx.agentTeam.contextTimelineForAgent(live, { memberId })
+    const boundaryA = timelineA.items.find(item => item.source === 'team-boundary')
+    expect(boundaryA).toBeDefined()
+    expect(boundaryA!.affectedThreads).toEqual([threadA])
+    expect(boundaryA!.restorable).toBe(true)
+
+    // Thread B arrives later: its boundary's RETAINED prefix spans both
+    // Threads, so it must not be selectable — the reason says so.
+    const second = await ctx.agentTeam.sendMessage({ requestId: requestId('tbound-b'), workspaceId, channelRef: channel.channel.channelRef, body: 'Builder, thread B work', recipients: [memberId] })
+    if (second.kind !== 'committed') throw new Error(`expected committed send, received ${second.kind}`)
+    const threadB = second.thread.threadRef
+    adapter.enqueue(textResponse('thread B acknowledged.'))
+    await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('thread B work')) ? true : undefined)
+    await live.whenIdle()
+    const timelineB = await ctx.agentTeam.contextTimelineForAgent(live, { memberId })
+    const boundaries = timelineB.items.filter(item => item.source === 'team-boundary')
+    // The newest boundary (thread B delivery) retains both Threads.
+    const newest = boundaries.find(item => item.affectedThreads.includes(threadB))
+    expect(newest).toBeDefined()
+    expect(newest!.restorable).toBe(false)
+    expect(newest!.reason).toContain('multiple Threads')
+    // The older single-Thread boundary stays restorable with its one Thread.
+    const older = boundaries.find(item => item.affectedThreads.length === 1)
+    expect(older).toBeDefined()
+    expect(older!.restorable).toBe(true)
+    expect(older!.checkpointRef).toBe(boundaryA!.checkpointRef)
+
+    // Return through the single-Thread boundary: exact seed prefix, handoff
+    // first, and the discarded suffix carries the thread-B noise.
+    adapter.enqueue(toolCallResponse('call-tbound-nc', 'new_context', { handoff: 'Back to the thread-A anchor.', checkpointRef: boundaryA!.checkpointRef }))
+    adapter.enqueue(textResponse('returned to the thread-A boundary.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'return to the thread-A boundary' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== sessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+    // Seeded at the boundary's completed-turn cut, in the same Session.
+    expect(next.session.header.parentSession).toBe(sessionId)
+    expect(next.session.header.isSeeded).toBe(true)
+    expect(next.session.inheritedEventCount).toBeGreaterThan(0)
+    const inherited = next.session.snapshotEvents(0 as never, next.session.inheritedEventCount)
+    // The retained prefix still contains thread A's delivered facts…
+    expect(JSON.stringify(inherited)).toContain('thread A work')
+    // …and discards everything after the boundary, including thread B.
+    expect(JSON.stringify(inherited)).not.toContain('thread B work')
+    expect(archived).toContain(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('keeps default-boundary refs distinct across generations with the same event seq', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('xseq-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('xseq-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Generation 1 receives a direct mention; its notice delivery becomes a
+    // team boundary at some event seq in generation 1.
+    const first = await ctx.agentTeam.sendMessage({ requestId: requestId('xseq-a'), workspaceId, channelRef: channel.channel.channelRef, body: 'Gen1 thread work', recipients: [memberId] })
+    if (first.kind !== 'committed') throw new Error(`expected committed send, received ${first.kind}`)
+    const live = ctx.agents.get(firstSessionId)!
+    adapter.enqueue(textResponse('gen1 acknowledged.'))
+    await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Gen1 thread work')) ? true : undefined)
+    await live.whenIdle()
+
+    // Fresh rollover; generation 2 receives its own mention whose notice
+    // delivery lands at the SAME event seq (both generations start at 0).
+    adapter.enqueue(toolCallResponse('call-xseq-nc', 'new_context', { handoff: 'gen2 handoff' }))
+    adapter.enqueue(textResponse('gen2 starting.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const secondSessionId = renewed.member.sessionId
+    const next = await waitFor(() => ctx.agents.get(secondSessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+
+    const second = await ctx.agentTeam.sendMessage({ requestId: requestId('xseq-b'), workspaceId, channelRef: channel.channel.channelRef, body: 'Gen2 thread work', recipients: [memberId] })
+    if (second.kind !== 'committed') throw new Error(`expected committed send, received ${second.kind}`)
+    adapter.enqueue(textResponse('gen2 acknowledged.'))
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Gen2 thread work')) ? true : undefined)
+    await next.whenIdle()
+
+    // The generation-2 timeline walks the archived ancestor: BOTH
+    // generations' boundaries appear with distinct refs (no `seen`
+    // deduplication swallowing the ancestor), and returning through the
+    // ancestor's ref seeds from the ANCESTOR's events, not generation 2's.
+    const timeline = await ctx.agentTeam.contextTimelineForAgent(next, { memberId, limit: 24 })
+    const boundaries = timeline.items.filter(item => item.source === 'team-boundary')
+    expect(boundaries.length).toBeGreaterThanOrEqual(2)
+    const refs = boundaries.map(item => item.checkpointRef)
+    expect(new Set(refs).size).toBe(refs.length)
+    // Each boundary names its own source Session; their refs must differ
+    // even when the two deliveries anchor at the same event seq in their
+    // own Sessions.
+    const gen2Boundary = boundaries.find(item => item.sourceSessionId === secondSessionId)
+    const gen1Boundary = boundaries.find(item => item.sourceSessionId === firstSessionId)
+    expect(gen1Boundary).toBeDefined()
+    expect(gen2Boundary).toBeDefined()
+    expect(gen1Boundary!.checkpointRef).not.toBe(gen2Boundary!.checkpointRef)
+
+    // Returning through the ancestor boundary seeds generation 1's prefix:
+    // the retained context contains the gen1 delivery and NOT gen2's.
+    adapter.enqueue(toolCallResponse('call-xseq-return', 'new_context', { handoff: 'Back to the gen1 anchor.', checkpointRef: gen1Boundary!.checkpointRef }))
+    adapter.enqueue(textResponse('returned to gen1.'))
+    next.followup(createUserMessage({ content: [{ type: 'text', text: 'return to gen1' }], source: { kind: 'user' } }))
+    const returned = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== secondSessionId ? current : undefined
+    })
+    const third = await waitFor(() => ctx.agents.get(returned.member.sessionId)!)
+    await waitFor(() => third.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await third.whenIdle()
+    const inherited = third.session.snapshotEvents(0 as never, third.session.inheritedEventCount)
+    expect(JSON.stringify(inherited)).toContain('Gen1 thread work')
+    expect(JSON.stringify(inherited)).not.toContain('Gen2 thread work')
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('attributes a claim-mutation boundary through its Task and rejects the cross-Thread mix', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('mix-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('mix-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // Thread A delivers a notice first; then the Member claims a Task on a
+    // DIFFERENT Thread B. The claim boundary must attribute BOTH Threads
+    // (A's delivered facts + B's claimed Task) and refuse selection — the
+    // old notice-text-only attribution would have wrongly seen one Thread.
+    const notice = await ctx.agentTeam.sendMessage({ requestId: requestId('mix-a'), workspaceId, channelRef: channel.channel.channelRef, body: 'Thread A context', recipients: [memberId] })
+    if (notice.kind !== 'committed') throw new Error(`expected committed send, received ${notice.kind}`)
+    adapter.enqueue(textResponse('thread A context read.'))
+    await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
+    await live.whenIdle()
+
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('mix-b-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Task B on another thread', recipients: [memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const read = await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('mix-b-read'), workspaceId, taskRef: started.task!.taskRef })
+    adapter.enqueue(toolCallResponse('call-mix-claim', 'team_claim', { action: 'claim', taskRef: started.task!.taskRef, baseRevision: read.thread.revision, direction: 'own task B' }))
+    adapter.enqueue(textResponse('claimed task B.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'claim task B' }], source: { kind: 'user' } }))
+    await live.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    const timeline = await ctx.agentTeam.contextTimelineForAgent(live, { memberId, limit: 24 })
+    const boundaries = timeline.items.filter(item => item.source === 'team-boundary')
+    // The claim boundary (newest team boundary) carries both Threads.
+    const claimBoundary = boundaries[0]
+    expect(claimBoundary).toBeDefined()
+    expect(claimBoundary!.affectedThreads).toContain(notice.thread.threadRef)
+    expect(claimBoundary!.affectedThreads).toContain(started.thread.threadRef)
+    expect(claimBoundary!.restorable).toBe(false)
+    expect(claimBoundary!.reason).toContain('multiple Threads')
+    // And the boundary is refused as a return target.
+    adapter.enqueue(toolCallResponse('call-mix-return', 'new_context', { handoff: 'cross-thread attempt', checkpointRef: claimBoundary!.checkpointRef }))
+    adapter.enqueue(textResponse('the return was refused.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, live)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('delivers handoff, carried input, then the rederived Inbox in order across a live swap', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('order-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('order-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Unread Team facts exist at rollover time AND racing direct input
+    // arrives in the transition window: the new generation must read the
+    // handoff first, the carried input second, and the rederived Inbox
+    // third — the steer lane may never leapfrog the carried messages.
+    const unread = await ctx.agentTeam.sendMessage({ requestId: requestId('order-unread'), workspaceId, channelRef: channel.channel.channelRef, body: 'Unread thread facts before the swap', recipients: [memberId] })
+    if (unread.kind !== 'committed') throw new Error(`expected committed send, received ${unread.kind}`)
+
+    // Response budget: the pre-swap Inbox wake, the rollover tool turn, the
+    // carried-input turn, and the sequenced Inbox turn each consume one.
+    adapter.enqueue(textResponse('reading the unread facts first.'))
+    adapter.enqueue(toolCallResponse('call-order-nc', 'new_context', { handoff: 'order handoff' }))
+    adapter.enqueue(textResponse('carrying the input over.'))
+    adapter.enqueue(textResponse('inbox turn after the carried input.'))
+    const live = ctx.agents.get(firstSessionId)!
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== firstSessionId || event.type !== 'turn/end' || injected) return
+      // Only the rollover turn counts: the pending intent must already be
+      // durable, or the injected input would be consumed by that same turn
+      // instead of riding behind the handoff.
+      const state = foldContextProjection(live.session.ownEvents(), undefined, live.session.id)
+      if (state.pending === null) return
+      injected = true
+      queueMicrotask(() => {
+        live.followup(createUserMessage({ content: [{ type: 'text', text: 'Carried direct input in the transition window.' }], source: { kind: 'user' } }))
+      })
+    })
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over now' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    disposeObserver()
+    await waitFor(() => {
+      const bodies = next.session.ownEvents().filter(event => event.type === 'user/message')
+        .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+      return bodies.some(body => body.includes('Team Inbox has unread work')) ? true : undefined
+    })
+    await next.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    const bodies = next.session.ownEvents().filter(event => event.type === 'user/message')
+      .map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+        .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
+    const handoffIndex = bodies.findIndex(body => body.includes('order handoff'))
+    const carriedIndex = bodies.findIndex(body => body.includes('Carried direct input in the transition window'))
+    const inboxIndex = bodies.findIndex(body => body.includes('Team Inbox has unread work'))
+    expect(handoffIndex).toBeGreaterThanOrEqual(0)
+    expect(carriedIndex).toBeGreaterThan(handoffIndex)
+    expect(inboxIndex).toBeGreaterThan(carriedIndex)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('does not duplicate carried input that a restart replays from a pending inbox splice, and keeps delivery order', async () => {
+    // Call 1 is the pre-crash rollover turn; call 2 is the recovered
+    // handoff turn — gated mid-request so the carried input stays observably
+    // PENDING (spliced, unclaimed, unsurfaced) while the handoff turn runs.
+    const adapter = new GatedAdapter(2)
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('pendc-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('pendc-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Crash the rollover after its commit with racing direct input in the
+    // old generation's inbox (durable splice → carried candidate).
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-pendc-nc', 'new_context', { handoff: 'the pending-carried handoff' }))
+    adapter.enqueue(textResponse('rolling into the crash.'))
+    const live = ctx.agents.get(firstSessionId)!
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== firstSessionId || event.type !== 'turn/end' || injected) return
+      const state = foldContextProjection(live.session.ownEvents(), undefined, live.session.id)
+      if (state.pending === null) return
+      injected = true
+      queueMicrotask(() => {
+        live.followup(createUserMessage({ content: [{ type: 'text', text: 'Pending-splice carried input.' }], source: { kind: 'user' } }))
+      })
+    })
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over into the crash' }], source: { kind: 'user' } }))
+    await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+    disposeObserver()
+    expect(injected).toBe(true)
+    const newSessionId = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!.member.sessionId
+
+    // First restart: recovery steers the handoff (call 2, gated mid-request)
+    // and the carried input rides the follow-up lane behind it. While the
+    // handoff model call blocks, the carried input is provably in the
+    // PENDING state: queued in the live inbox, claimed by no turn, surfaced
+    // as no `user/message` — the exact claim-before-surface seam a crash
+    // between the two turns would hit.
+    presets.failingMount = false
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    const secondFiber = await ctx.plugin(AgentTeam)
+    const firstRestart = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    expect(firstRestart.member.sessionId).toBe(newSessionId)
+    await adapter.started.promise
+    const firstRestartAgent = (await waitFor(() => ctx.agents.get(newSessionId)!))!
+    const pendingCarried = [...firstRestartAgent.inbox.nextStep, ...firstRestartAgent.inbox.nextTurn]
+      .filter(message => JSON.stringify(message.content).includes('Pending-splice carried input'))
+    const surfacedCarried = firstRestartAgent.session.ownEvents().filter(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Pending-splice carried input'))
+    expect(pendingCarried.length).toBeGreaterThanOrEqual(1)
+    expect(surfacedCarried).toHaveLength(0)
+
+    // Release the gate: the handoff turn completes, the carried turn claims
+    // and surfaces the input exactly once. A crash HERE would replay the
+    // splice; a later restart must never duplicate the delivered message.
+    adapter.release.resolve()
+    await waitFor(() => {
+      const surfaced = firstRestartAgent.session.ownEvents().filter(event => event.type === 'user/message')
+        .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+      return surfaced.some(body => body.includes('Pending-splice carried input')) ? true : undefined
+    })
+    await firstRestartAgent.whenIdle()
+
+    // Second Host restart after the carried input landed: delivered-id
+    // dedupe keeps it at exactly one, and the order stays stable.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('pendc-suspend'), memberId })
+    await secondFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    adapter.enqueue(textResponse('carried input handled.'))
+    await ctx.agentTeam.resumeMember({ requestId: requestId('pendc-resume'), memberId })
+    const resumed = await waitFor(() => {
+      const agent = ctx.agents.get(newSessionId)
+      return agent !== undefined && agent.status === 'idle' ? agent : undefined
+    })
+    await resumed.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
+      .map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+        .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
+    const carried = bodies.filter(body => body.includes('Pending-splice carried input'))
+    expect(carried).toHaveLength(1)
+    const handoffPos = bodies.findIndex(body => body.includes('the pending-carried handoff'))
+    const carriedPos = bodies.findIndex(body => body.includes('Pending-splice carried input'))
+    expect(handoffPos).toBeGreaterThanOrEqual(0)
+    expect(carriedPos).toBeGreaterThan(handoffPos)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('rejects returning a small current child to an ancestor seed priced above the handoff budget', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('biga-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('biga-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Generation 1's only work turn records an anchor while "large": the
+    // meter reads far above the handoff budget for GENERATION 1's own
+    // replayed measurement. The current generation stays small (5K) so only
+    // the source-replayed pricing can catch the oversized ancestor seed —
+    // the old current-usage pricing would have estimated a few thousand
+    // tokens and waved the return through.
+    pressureState.usageTokens = 5_000
+    adapter.enqueue(toolCallResponse('call-biga-cp', 'context_checkpoint', { name: 'big anchor' }))
+    adapter.enqueue(textResponse('big anchor recorded.'))
+    const live = ctx.agents.get(firstSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'record the big anchor' }], source: { kind: 'user' } }))
+    await waitFor(() => foldContextProjection(live.session.ownEvents(), undefined, live.session.id).checkpoints.some(entry => entry.turnEndSeq !== -1) ? true : undefined)
+    await live.whenIdle()
+
+    // Fresh rollover into a small generation 2: the current child is cheap,
+    // but the ANCESTOR's anchor retains the ancestor's real size.
+    adapter.enqueue(toolCallResponse('call-biga-nc', 'new_context', { handoff: 'small fresh generation' }))
+    adapter.enqueue(textResponse('small generation running.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over fresh' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+    // The ancestor grew large by the time it is REPLAYED — no live
+    // generation sees the big number; only the source-replayed pricing
+    // (timeline and return guard) reads it.
+    pressureState.bySession.set(firstSessionId, 500_000)
+
+    // The timeline prices the ancestor anchor against the ANCESTOR's own
+    // measurement (replayed through the meter): the retained estimate stays
+    // above the handoff budget even though the current generation is tiny.
+    const timeline = await ctx.agentTeam.contextTimelineForAgent(next, { memberId })
+    const anchor = timeline.items.find(item => item.checkpointRef === checkpointRefFor(firstSessionId, 'call-biga-cp'))
+    expect(anchor).toBeDefined()
+    expect(anchor!.restorable).toBe(false)
+    expect(anchor!.reason).toContain('handoff budget')
+    // And the return is refused: a small child must not adopt an
+    // over-budget ancestor seed.
+    adapter.enqueue(toolCallResponse('call-biga-return', 'new_context', { handoff: 'attempt the big return', checkpointRef: anchor!.checkpointRef }))
+    adapter.enqueue(textResponse('the big return was refused.'))
+    next.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning to the big anchor' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, next)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(renewed.member.sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('fails closed when the ancestor seed source cannot be measured', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, pressureState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('unmeas-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('unmeas-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Generation 1 records an anchor; a fresh rollover follows.
+    adapter.enqueue(toolCallResponse('call-unmeas-cp', 'context_checkpoint', { name: 'ancestor anchor' }))
+    adapter.enqueue(textResponse('anchor recorded.'))
+    const live = ctx.agents.get(firstSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'record the anchor' }], source: { kind: 'user' } }))
+    await waitFor(() => foldContextProjection(live.session.ownEvents(), undefined, live.session.id).checkpoints.some(entry => entry.turnEndSeq !== -1) ? true : undefined)
+    await live.whenIdle()
+
+    adapter.enqueue(toolCallResponse('call-unmeas-nc', 'new_context', { handoff: 'fresh generation' }))
+    adapter.enqueue(textResponse('fresh generation running.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over fresh' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+
+    // The ancestor's measurement now fails (the meter throws for it): the
+    // ancestor anchor must become non-restorable with an explicit reason —
+    // never priced as zero — and the return must be refused outright.
+    pressureState.failFor.add(firstSessionId)
+    const timeline = await ctx.agentTeam.contextTimelineForAgent(next, { memberId })
+    const anchor = timeline.items.find(item => item.checkpointRef === checkpointRefFor(firstSessionId, 'call-unmeas-cp'))
+    expect(anchor).toBeDefined()
+    expect(anchor!.restorable).toBe(false)
+    expect(anchor!.reason).toContain('cannot be measured')
+
+    adapter.enqueue(toolCallResponse('call-unmeas-return', 'new_context', { handoff: 'attempt the unmeasurable return', checkpointRef: anchor!.checkpointRef }))
+    adapter.enqueue(textResponse('the unmeasurable return was refused.'))
+    next.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning to the unmeasurable anchor' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, next)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(renewed.member.sessionId)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 

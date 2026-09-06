@@ -38,7 +38,10 @@ afterEach(async () => {
 })
 
 class EmptyAdapter extends LlmAdapter {
-  override resolveModel(provider: string, model: string) { return Promise.resolve({ provider, id: model, name: model }) }
+  // The pressure policy resolves the current route's context capacity through
+  // the LLM service; the mock route reports a large window so the zero-usage
+  // meter stays the only pressure input.
+  override resolveModel(provider: string, model: string) { return Promise.resolve({ provider, id: model, name: model, context: { contextWindow: 320_000 } }) }
   async * stream(_options: GenerateOptions): AsyncIterable<StreamChunk> { yield* [] }
 }
 

@@ -50,7 +50,7 @@ export interface PressurePolicyOptions {
   /** Resolve the Member-scoped compaction engine. */
   readonly compactionForAgent: (agent: Agent) => CompactionEngine | undefined
   /** Effective budgets for one Member's current route; undefined means the route window is unknown. */
-  readonly limitsForAgent: (agent: Agent) => { readonly usageTokens: number; readonly hardLimit: number; readonly handoffAt: number } | undefined
+  readonly limitsForAgent: (agent: Agent) => Promise<{ readonly usageTokens: number; readonly hardLimit: number; readonly handoffAt: number } | undefined> | { readonly usageTokens: number; readonly hardLimit: number; readonly handoffAt: number } | undefined
   /** The model-visible active-Claim labels for one Member's notice. */
   readonly activeClaimLabels: (memberId: AgentTeamMemberId) => readonly string[]
   /** The model-visible running-job labels for one Member's notice. */
@@ -61,23 +61,43 @@ export interface PressurePolicyOptions {
   readonly log: (message: string) => void
 }
 
+/** Whether one user message is this policy's one-shot pressure notice. */
+function isPressureNotice(message: { readonly source?: unknown }): boolean {
+  const source = message.source as { plugin?: string; summary?: string } | undefined
+  return source?.plugin === AGENT_TEAM_PLUGIN_ID
+    && source?.summary === CONTEXT_PRESSURE_NOTICE_SUMMARY
+}
+
 export class PressurePolicyCoordinator {
-  /** Members already notified in the current context generation. */
-  private readonly notified = new Set<AgentTeamMemberId>()
-  /** Retry budget per agent for the current provider-overflow sequence. */
+  /**
+   * Retry budget per agent for the current provider-overflow sequence.
+   * Process-only by design: a restart re-earns one sequence per chain.
+   */
   private readonly overflowRetries = new Map<Agent, number>()
   private disposed = false
 
   constructor(private readonly options: PressurePolicyOptions) {}
 
-  /** A new context generation re-arms the one-shot pressure notice. */
-  rearm(memberId: AgentTeamMemberId): void {
-    this.notified.delete(memberId)
+  /**
+   * The one-shot pressure notice is durable Session evidence, not process
+   * state: a `CONTEXT_PRESSURE_NOTICE_SUMMARY` notice already surfaced as a
+   * `user/message`, or still queued in a durable `agent/inbox/spliced`
+   * insert (a steered notice surfaces only at the next step boundary, and a
+   * Host restart replays the splice before surfacing), marks the current
+   * generation as already notified. A resume or restart stays quiet; a
+   * rollover starts a fresh Session whose own event span has no notice yet,
+   * which is exactly the documented re-arm.
+   */
+  private noticeDelivered(agent: Agent): boolean {
+    for (const event of agent.session.ownEvents()) {
+      if (event.type === 'user/message' && isPressureNotice(event.data)) return true
+      if (event.type === 'agent/inbox/spliced' && event.data.inserted.some(isPressureNotice)) return true
+    }
+    return false
   }
 
   dispose(): void {
     this.disposed = true
-    this.notified.clear()
     this.overflowRetries.clear()
   }
 
@@ -97,7 +117,7 @@ export class PressurePolicyCoordinator {
     if (this.disposed || signal.aborted) return { kind: 'continue' }
     const member = this.options.memberForAgent(agent)
     if (member === undefined) return { kind: 'continue' }
-    const limits = this.options.limitsForAgent(agent)
+    const limits = await this.options.limitsForAgent(agent)
     if (limits === undefined) {
       // A missing route capacity must be explicit, never an accidental
       // unlimited policy: reject the step with a recoverable diagnostic.
@@ -110,8 +130,7 @@ export class PressurePolicyCoordinator {
       const outcome = await this.enforceHardLimit(agent, member.memberId, member.sessionId, signal)
       return outcome ? { kind: 'continue' } : { kind: 'reject' }
     }
-    if (usageTokens >= handoffAt && !this.notified.has(member.memberId)) {
-      this.notified.add(member.memberId)
+    if (usageTokens >= handoffAt && !this.noticeDelivered(agent)) {
       const notice = createUserMessage({
         content: [{ type: 'text', text: contextPressureNoticeText({
           usageTokens, handoffAt, hardLimit,
@@ -123,7 +142,6 @@ export class PressurePolicyCoordinator {
       try {
         agent.steer(notice)
       } catch (error) {
-        this.notified.delete(member.memberId)
         this.options.log(`context pressure notice failed: ${error instanceof Error ? error.message : String(error)} (member ${member.memberId})`)
       }
       return { kind: 'notice' }

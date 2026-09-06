@@ -25,7 +25,7 @@ const memberIdSchema = z.string().regex(/^member:[^:]+$/).transform(value => val
 const workspaceIdSchema = z.string().min(1).transform(value => value as WorkspaceId)
 const sessionIdSchema = z.string().min(1).transform(value => value as SessionId)
 const sessionSeqSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeq)
-const contextCheckpointRefSchema = z.string().regex(/^context-checkpoint:[^:]+$/).transform(value => value as AgentTeamContextCheckpointRef)
+const contextCheckpointRefSchema = z.string().regex(/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/).transform(value => value as AgentTeamContextCheckpointRef)
 const channelRefSchema = z.string().regex(/^channel:[^:]+$/).transform(value => value as AgentTeamChannelRef)
 const messageRefSchema = z.string().regex(/^message:[^:]+$/).transform(value => value as AgentTeamMessageRef)
 const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value as AgentTeamTaskRef)

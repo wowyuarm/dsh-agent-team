@@ -1,4 +1,4 @@
-import type { SessionId, SessionSeq } from "@deepseek-ai/dsh-session"
+import type { SessionId, SessionLogOffset, SessionSeq } from "@deepseek-ai/dsh-session"
 import type { WorkspaceId } from "@deepseek-ai/dsh-workspace"
 import type {
   AgentTeamAgentMember,
@@ -142,8 +142,11 @@ export interface AgentTeamMemberSessionRolledOverOperation extends AgentTeamOper
      * parent is the previous active Session.
      */
     readonly sourceSessionId?: SessionId
-    /** Inclusive source event seq the checkpoint return was seeded through. */
-    readonly sourceThroughSeq?: SessionSeq
+    /**
+     * Exclusive end of the seeded source prefix — its exact length in the
+     * source log, from seq 0 through the checkpoint's `turn/end` inclusive.
+     */
+    readonly sourceThroughSeq?: SessionLogOffset
     /** Seq of the successful `new_context` tool result in the previous Session log. */
     readonly handoffEventSeq: SessionSeq
     /** The checkpoint a return was addressed to; absent on a fresh rollover. */

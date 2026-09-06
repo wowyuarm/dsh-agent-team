@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
-import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import type { SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type {
   AgentTeamActivity,
@@ -185,8 +185,8 @@ export interface AgentTeamAuthorizedRolloverMemberSessionRequest {
   readonly trigger: 'model' | 'pressure'
   /** Seed source Session for a checkpoint return; absent on a fresh rollover. */
   readonly sourceSessionId?: SessionId
-  /** Inclusive source event seq the checkpoint return was seeded through. */
-  readonly sourceThroughSeq?: SessionSeq
+  /** Exclusive end of the seeded source prefix (its exact length in the source log). */
+  readonly sourceThroughSeq?: SessionLogOffset
   /** The checkpoint a return was addressed to; absent on a fresh rollover. */
   readonly checkpointRef?: AgentTeamContextCheckpointRef
 }
@@ -327,13 +327,15 @@ interface Projection {
   readonly attentionByThread: Map<AgentTeamThreadRef, Set<AgentTeamMemberId>>
   /** Latest retired Session id per Member, from the most recent renewal or rollover record. */
   readonly previousSessions: Map<AgentTeamMemberId, SessionId>
+  /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
+  readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
 }
 
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
     claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map() }
+    attentionByThread: new Map(), previousSessions: new Map(), rolloverSeeds: new Map() }
 }
 
 const EMPTY_PROGRESS_NUDGE_TARGETS: AgentTeamProgressNudgeTargets = Object.freeze({
@@ -624,6 +626,47 @@ export class AgentTeamLedger {
    */
   previousSessionForMember(memberId: AgentTeamMemberId): SessionId | undefined {
     return this.state.previousSessions.get(memberId)
+  }
+
+  /**
+   * The latest session transition this Member committed: the retired Session
+   * and the target it moved onto, through either a renewal or a rollover.
+   * Crash recovery binds carried-input redelivery to the recorded target —
+   * the CURRENT Session being that target proves the old generation's
+   * unconsumed input still belongs here, regardless of whether the handoff
+   * itself already landed.
+   */
+  lastTransitionForMember(memberId: AgentTeamMemberId): { readonly previousSessionId: SessionId; readonly targetSessionId: SessionId } | undefined {
+    const previousSessionId = this.state.previousSessions.get(memberId)
+    const member = this.state.members.get(memberId)
+    if (previousSessionId === undefined || member === undefined) return undefined
+    return { previousSessionId, targetSessionId: member.sessionId }
+  }
+
+  /**
+   * The Thread a Task overlay lives on, or undefined for an unknown or
+   * archived-Channel Task. Read-only input for attributing claim-mutation
+   * boundaries to the Thread whose context they entered.
+   */
+  threadForTask(taskRef: AgentTeamTaskRef): AgentTeamThreadRef | undefined {
+    const task = this.state.tasks.get(taskRef)
+    if (task === undefined) return undefined
+    return this.state.channels.get(task.channelRef)?.state === 'archived' ? undefined : task.threadRef
+  }
+
+  /**
+   * The seed envelope of this Member's most recent rollover, when that
+   * rollover was a checkpoint return: the recorded source Session, the
+   * exclusive end of its seeded prefix, and the checkpoint ref. A fresh
+   * rollover clears the envelope. Crash recovery reads this to rebuild the
+   * child generation from the recorded seed instead of an empty context.
+   */
+  rolloverSeedForMember(memberId: AgentTeamMemberId, targetSessionId: SessionId): { readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef } | undefined {
+    const seed = this.state.rolloverSeeds.get(memberId)
+    // Bind the envelope to its recorded target: a later renewal or fresh
+    // rollover that reused or replaced the binding must never consume an
+    // older generation's seed.
+    return seed?.targetSessionId === targetSessionId ? seed : undefined
   }
 
   /**
@@ -2278,11 +2321,23 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/member-session-renewed') {
       target.members.set(operation.data.member.memberId, operation.data.member)
       target.previousSessions.set(operation.data.member.memberId, operation.data.previousSessionId)
+      // A Human-side renewal is always a fresh start: a stale checkpoint
+      // seed from an earlier rollover must never re-seed it.
+      target.rolloverSeeds.delete(operation.data.member.memberId)
       return
     }
     if (operation.kind === 'team/member-session-rolled-over') {
       target.members.set(operation.data.member.memberId, operation.data.member)
       target.previousSessions.set(operation.data.member.memberId, operation.data.previousSessionId)
+      // A checkpoint return records its seed envelope: a crash between this
+      // commit and the new Session's activation rebuilds the child from the
+      // recorded source instead of an empty context.
+      const { sourceSessionId, sourceThroughSeq, checkpointRef } = operation.data
+      if (sourceSessionId !== undefined && sourceThroughSeq !== undefined && checkpointRef !== undefined) {
+        target.rolloverSeeds.set(operation.data.member.memberId, { targetSessionId: operation.data.newSessionId, sourceSessionId, sourceThroughSeq, checkpointRef })
+      } else {
+        target.rolloverSeeds.delete(operation.data.member.memberId)
+      }
       return
     }
     if (operation.kind === 'team/channel-updated') {
