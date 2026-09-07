@@ -36,6 +36,26 @@ const PRE_COMPACTION_NOTICE_SUMMARY = 'Compaction is imminent; consider persisti
 /** Team tool whose successful mutations are semantic timeline candidates. */
 const TEAM_CLAIM_TOOL_NAME = 'team_claim'
 
+/** Team tools whose successful Thread effects are semantic timeline candidates. */
+const TEAM_MESSAGE_TOOL_NAME = 'team_message'
+const TEAM_THREAD_TOOL_NAME = 'team_thread'
+
+/** Fixed action-category labels for effect boundaries (mirrors the claim label's shape). */
+const TEAM_MESSAGE_BOUNDARY_LABEL = 'Team message'
+const TEAM_ATTENTION_BOUNDARY_LABEL = 'Team attention change'
+const TEAM_CLAIM_BOUNDARY_LABEL = 'Team claim change'
+
+/**
+ * Notice summaries that are pure reminders, never semantic Team facts: a
+ * progress nudge or a recovery instruction must not become a return anchor.
+ */
+const REMINDER_NOTICE_SUMMARIES = new Set(['Progress visibility reminder', 'Recovery: continue your interrupted work.'])
+
+/** Whether one notice summary is a pure reminder (never a semantic Team fact). */
+export function isReminderNoticeSummary(summary: string): boolean {
+  return REMINDER_NOTICE_SUMMARIES.has(summary)
+}
+
 /** Stable tool names the projection recognizes. */
 export const CONTEXT_CHECKPOINT_TOOL_NAME = 'context_checkpoint'
 export const CONTEXT_ROLLOVER_TOOL_NAME = 'context_rollover'
@@ -52,6 +72,37 @@ export const NEW_CONTEXT_TOOL_NAME = 'new_context'
 /** Whether one recorded tool name is a rollover call under the current or the legacy name. */
 function isRolloverToolName(name: string): boolean {
   return name === CONTEXT_ROLLOVER_TOOL_NAME || name === NEW_CONTEXT_TOOL_NAME
+}
+
+/** Whether one tool name can produce a Team-effect boundary from a successful call. */
+function isTeamEffectToolName(name: string): boolean {
+  return name === TEAM_CLAIM_TOOL_NAME || name === TEAM_MESSAGE_TOOL_NAME || name === TEAM_THREAD_TOOL_NAME
+}
+
+/** Whether one raw team_thread arguments string is an attention mutation (follow/unfollow). */
+function argumentsAreAttentionMutation(raw: string): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  if (typeof parsed !== 'object' || parsed === null) return false
+  const { action } = parsed as Record<string, unknown>
+  return action === 'follow' || action === 'unfollow'
+}
+
+/** Whether one raw team_message arguments string is a Thread-effect attempt (start/reply — dm is not a Thread fact). */
+function argumentsAreMessageCommit(raw: string): boolean {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  if (typeof parsed !== 'object' || parsed === null) return false
+  const { action } = parsed as Record<string, unknown>
+  return action === 'start' || action === 'reply'
 }
 
 /** One completed-turn checkpoint anchor in this Session lineage. */
@@ -138,6 +189,14 @@ export interface AgentTeamContextProjectionState {
    * same completed-turn anchor contract as a checkpoint.
    */
   readonly boundaries: readonly TimelineBoundary[]
+  /**
+   * Threads whose first delivery already anchored a boundary. The first
+   * arrival of a Thread's facts is the one preserved push-face anchor; every
+   * later re-delivery of the same Thread is noise and produces no boundary.
+   * Fold-internal by design: cold and live folds replay it identically from
+   * the event log, so no query-time rescan exists.
+   */
+  readonly seenThreads: readonly string[]
   /** Seq of the latest resolved `turn/end`; the head boundary of the timeline. */
   readonly lastTurnEndSeq: number
 }
@@ -202,6 +261,7 @@ const stateSchema = z.object({
   lastTurn: z.number().int().nonnegative(),
   openCalls: z.array(openCallSchema),
   boundaries: z.array(boundarySchema),
+  seenThreads: z.array(z.string()),
   lastTurnEndSeq: z.number().int(),
 }).strict()
 
@@ -237,7 +297,7 @@ export function boundaryRefFor(sessionId: string, seq: number): AgentTeamContext
 }
 
 function emptyState(): AgentTeamContextProjectionState {
-  return { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [], boundaries: [], lastTurnEndSeq: -1 }
+  return { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [], boundaries: [], seenThreads: [], lastTurnEndSeq: -1 }
 }
 
 /**
@@ -264,7 +324,10 @@ export function foldContextProjection(events: readonly SessionEvent[], inherited
  */
 export const agentTeamContextProjectionDefinition = (sessionId: string): ProjectionDefinition<'agentTeamContext', AgentTeamContextProjectionState> => ({
   key: 'agentTeamContext',
-  stateVersion: 2,
+  // v3: effect-anchored team boundaries — seenThreads (per-Thread first
+  // arrival) plus team_message/team_thread follow-effect boundaries. A
+  // persisted v2 row fails the ver match and refolds from the full log.
+  stateVersion: 3,
   stateSchema,
   init: (_header: SessionHeader, _inheritedEventCount: SessionLogOffset): AgentTeamContextProjectionState => emptyState(),
   apply: (state, event) => applyContextEvent(state, event, sessionId),
@@ -276,13 +339,16 @@ export const agentTeamContextProjectionDefinition = (sessionId: string): Project
  */
 function applyContextEvent(state: AgentTeamContextProjectionState, event: SessionEvent, sessionId: string): AgentTeamContextProjectionState {
   if (event.type === 'tool/call') {
-    if (!isRolloverToolName(event.data.name) && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME && event.data.name !== TEAM_CLAIM_TOOL_NAME) return state
-    // Only Team-claim mutations (not `list`) are semantic timeline candidates.
+    if (!isRolloverToolName(event.data.name) && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME && !isTeamEffectToolName(event.data.name)) return state
+    // Only Team-effect calls that can produce a boundary are tracked; `list`
+    // and other non-mutations are not semantic timeline candidates.
     if (event.data.name === TEAM_CLAIM_TOOL_NAME && !argumentsAreClaimMutation(event.data.arguments)) return state
+    if (event.data.name === TEAM_THREAD_TOOL_NAME && !argumentsAreAttentionMutation(event.data.arguments)) return state
+    if (event.data.name === TEAM_MESSAGE_TOOL_NAME && !argumentsAreMessageCommit(event.data.arguments)) return state
     return { ...state, openCalls: [...state.openCalls, { callId: event.data.callId, name: event.data.name, arguments: event.data.arguments }] }
   }
   if (event.type === 'tool/result') {
-    return applyToolResult(state, event.seq, event.data.turn, event.data.message, event.data.error !== undefined, sessionId)
+    return applyToolResult(state, event.seq, event.data.turn, event.data.message, event.data.error !== undefined, sessionId, event.data.meta)
   }
   if (event.type === 'turn/end') {
     return applyTurnEnd(state, event.seq, event.data.turn)
@@ -302,15 +368,22 @@ function applyContextEvent(state: AgentTeamContextProjectionState, event: Sessio
   return state
 }
 
+/** A boundary-producing delivery plus the Threads whose first arrival it records. */
+interface FirstArrivalBoundary extends TimelineBoundary {
+  readonly firstArrival: readonly string[]
+}
+
 /**
  * Structural timeline boundary from one delivered user message: a rollover
- * handoff starts a generation; a structured Team notification (direct
- * mention, claim/Task activity) delivers semantic Team facts into model
- * context; a compaction notice rewrites the visible surface. All anchor to
- * the containing completed turn. Plain Human/agent prose and quiet
- * checkpoint continuations are not boundaries.
+ * handoff starts a generation; a compaction notice rewrites the visible
+ * surface. A structured Team notification is a boundary ONLY on the first
+ * arrival of each Thread's facts into this Session — the preserved
+ * "work just arrived" anchor; every later re-delivery of the same Thread is
+ * noise. Reminder notices (progress nudges, recovery instructions) never
+ * anchor. All anchor to the containing completed turn. Plain Human/agent
+ * prose and quiet checkpoint continuations are not boundaries.
  */
-function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMessage): TimelineBoundary | undefined {
+function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMessage, seenThreads: readonly string[]): TimelineBoundary | FirstArrivalBoundary | { readonly reminder: true } | undefined {
   const source = message.source
   if (source.kind === 'agent-team-context-handoff') {
     return { key: `handoff:${seq}`, source: 'handoff', label: 'context handoff', seq, turn: -1, turnEndSeq: -1 }
@@ -320,10 +393,27 @@ function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMe
   if (source.form === 'notice' && source.summary === PRE_COMPACTION_NOTICE_SUMMARY) {
     return { key: `compaction:${seq}`, source: 'compaction', label: 'compaction notice', seq, turn: -1, turnEndSeq: -1 }
   }
+  if (source.form === 'notice' && source.summary !== undefined && REMINDER_NOTICE_SUMMARIES.has(source.summary)) {
+    return { reminder: true }
+  }
+  // The Threads this delivery first introduces anchor the boundary; a
+  // delivery that introduces none (pure re-delivery) is noise.
+  const firstArrivals = threadsQuotedInMessage(message).filter(ref => !seenThreads.includes(ref))
+  if (firstArrivals.length === 0) return undefined
   // A notice carries its own one-line account; other plugin forms (e.g.
   // identity instructions) have none and keep the generic delivery label.
   const label = source.form === 'notice' && source.summary !== undefined ? source.summary : 'Team delivery'
-  return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label, seq, turn: -1, turnEndSeq: -1 }
+  return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label, seq, turn: -1, turnEndSeq: -1, firstArrival: firstArrivals }
+}
+
+/** Thread refs structurally quoted in one delivered message body (`Thread: <ref>` lines). */
+function threadsQuotedInMessage(message: UserMessage): readonly string[] {
+  const refs: string[] = []
+  const text = message.content.filter(block => block.type === 'text').map(block => block.text ?? '').join('\n')
+  for (const match of text.matchAll(/Thread: (thread:[0-9a-f-]{6,})/g)) {
+    if (!refs.includes(match[1]!)) refs.push(match[1]!)
+  }
+  return refs
 }
 
 /**
@@ -350,6 +440,7 @@ function applyToolResult(
   message: ToolResultMessage,
   internalFailure: boolean,
   sessionId: string,
+  meta: unknown,
 ): AgentTeamContextProjectionState {
   const block = message.content[0]
   if (block === undefined || block.type !== 'tool-result') return state
@@ -363,7 +454,9 @@ function applyToolResult(
   const recorded = state.openCalls[index]!
   const openCalls = state.openCalls.filter(call => call.callId !== block.toolCallId)
   // A successful pair only: model-visible errors and internal failures carry
-  // neither checkpoint nor rollover intent.
+  // neither checkpoint, rollover intent, nor an effect boundary — the
+  // failure-face contract also holds for a team_message whose presentation
+  // meta projection failed (that lands as a ToolOutputError result).
   if (block.isError === true || internalFailure) return { ...state, openCalls }
   if (isRolloverToolName(recorded.name)) {
     const parsed = parseRolloverArguments(recorded.arguments)
@@ -389,14 +482,45 @@ function applyToolResult(
       checkpoints: [...state.checkpoints, { checkpointRef, name: parsed.name, resultSeq: seq, turn, turnEndSeq: -1 }],
     }
   }
-  // The only remaining open call name is the Team-claim mutation: a
-  // successful claim/done/release result entered model context, so it is a
-  // semantic Team boundary anchored to the containing turn.
-  return {
-    ...state,
-    openCalls,
-    boundaries: [...state.boundaries, { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: 'Team claim change', seq, turn, turnEndSeq: -1 }],
+  // Effect boundaries — the attribution matrix:
+  //   claim mutation → the Task ref from its call arguments (Task → Thread
+  //     resolution stays a query-time ledger concern);
+  //   team_message committed → reply/taskRef from args, start from the
+  //     structured presentation meta (`kind === 'committed'` guards every
+  //     typed rejection; no meta means no boundary — old logs refold without
+  //     start anchors by design, never by parsing render text);
+  //   team_thread follow/unfollow → the threadRef from its call arguments.
+  // A boundary without a resolvable ref is not produced.
+  const boundary = effectBoundaryFor(recorded, sessionId, seq, turn, meta)
+  if (boundary === undefined) return { ...state, openCalls }
+  return { ...state, openCalls, boundaries: [...state.boundaries, boundary] }
+}
+
+/** The effect boundary one successful Team-effect call produces, if its attribution resolves. */
+function effectBoundaryFor(
+  recorded: { readonly name: string; readonly arguments: string },
+  sessionId: string,
+  seq: number,
+  turn: number,
+  meta: unknown,
+): TimelineBoundary | undefined {
+  if (recorded.name === TEAM_CLAIM_TOOL_NAME) {
+    return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: TEAM_CLAIM_BOUNDARY_LABEL, seq, turn, turnEndSeq: -1 }
   }
+  if (recorded.name === TEAM_THREAD_TOOL_NAME) {
+    return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: TEAM_ATTENTION_BOUNDARY_LABEL, seq, turn, turnEndSeq: -1 }
+  }
+  if (recorded.name === TEAM_MESSAGE_TOOL_NAME) {
+    // The structured meta projection is the single attribution source for a
+    // start (the Thread is born in the result); replies carry their ref in
+    // the call arguments already, but the committed guard is meta-side for
+    // every action — typed rejections are successful calls, not errors.
+    if (meta === undefined || typeof meta !== 'object' || meta === null) return undefined
+    const { kind, threadRef } = meta as { kind?: unknown; threadRef?: unknown }
+    if (kind !== 'committed' || typeof threadRef !== 'string' || threadRef === '') return undefined
+    return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label: TEAM_MESSAGE_BOUNDARY_LABEL, seq, turn, turnEndSeq: -1 }
+  }
+  return undefined
 }
 
 function applyTurnEnd(state: AgentTeamContextProjectionState, seq: number, _turn: number): AgentTeamContextProjectionState {
@@ -436,11 +560,23 @@ function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, m
     next = { ...next, carriedCandidates: next.carriedCandidates.map(candidate =>
       candidate.message.id === message.id && !candidate.consumed ? { ...candidate, surfacedTurn: next.lastTurn } : candidate) }
   }
-  // A structural boundary delivery (handoff start, Team semantic notice,
-  // compaction notice) becomes a timeline candidate anchored to the
-  // containing turn; it resolves when that turn ends.
-  const boundary = boundaryFromUserMessage(sessionId, seq, message)
-  if (boundary !== undefined) next = { ...next, boundaries: [...next.boundaries, boundary] }
+  // A structural boundary delivery (handoff start, first-arrival Team notice,
+  // compaction notice) becomes a timeline candidate anchored to the containing
+  // turn; it resolves when that turn ends. Threads the delivery first
+  // introduces join seenThreads so later re-deliveries produce nothing.
+  const boundary = boundaryFromUserMessage(sessionId, seq, message, next.seenThreads)
+  if (boundary !== undefined && !('reminder' in boundary)) {
+    if ('firstArrival' in boundary) {
+      const { firstArrival, ...timelineBoundary } = boundary
+      next = {
+        ...next,
+        boundaries: [...next.boundaries, timelineBoundary],
+        seenThreads: [...next.seenThreads, ...firstArrival],
+      }
+    } else {
+      next = { ...next, boundaries: [...next.boundaries, boundary] }
+    }
+  }
   // The quiet continuation notice delivered for one checkpoint completes its
   // delivery state; replay repair reads this to avoid re-scheduling it.
   if (message.source.kind !== 'agent-team-context-continuation') return next

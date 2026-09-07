@@ -302,6 +302,13 @@ const teamMessage = markAgentTeamPreset(defineTool({
       : value.kind === 'stale_revision' ? `stale_revision: your baseRevision ${value.expectedRevision} is obsolete; ${value.threadRef}${value.taskRef === undefined ? '' : ` (${value.taskRef})`} is now at revision ${value.revision}. Read the Thread, then retry with baseRevision ${value.revision}.`
       : value.kind === 'member_not_following' ? `member_not_following: ${(value.memberIds ?? []).join(', ')} not following; the message was not committed. Only a Human can invite an unfollowed Agent — retry without mentioning them, or ask the Human.`
       : `${value.kind}: ${value.memberIds?.join(', ') ?? `${value.threadRef ?? ''}${value.taskRef === undefined ? '' : ` · Task ${value.taskRef}`} revision ${value.revision ?? ''}`}` }],
+    // Minimal durable projection for the Host's context timeline: the
+    // structured outcome identity (never the render text). The effect-anchor
+    // fold reads `kind === 'committed'` + threadRef from the persisted
+    // tool/result meta — a start's Thread is born here, in the result.
+    presentationMeta: (_args, value): Record<string, string> => value.kind === 'committed' && value.threadRef !== undefined
+      ? { kind: value.kind, threadRef: value.threadRef, ...(value.taskRef === undefined ? {} : { taskRef: value.taskRef }) }
+      : { kind: value.kind },
   },
   async execute(args, exec) {
     const agent = exec.agent

@@ -3318,6 +3318,50 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
+  it('rejects a second consecutive start boundary as multi-Thread — preserved, not a defect', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('twostart-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('twostart-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // A delivered mention seeds Thread A's first-arrival boundary; then the
+    // Member starts a second Thread B of its own. Thread B's start boundary
+    // retains facts from BOTH Threads, so it must be refused — the
+    // multi-Thread rejection is the designed behavior (a return would drop
+    // the other Thread's knowledge), never something to "fix".
+    const notice = await ctx.agentTeam.sendMessage({ requestId: requestId('twostart-a'), workspaceId, channelRef: channel.channel.channelRef, body: 'Thread A context', recipients: [memberId] })
+    if (notice.kind !== 'committed') throw new Error(`expected committed send, received ${notice.kind}`)
+    adapter.enqueue(textResponse('thread A context read.'))
+    await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
+      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
+    await live.whenIdle()
+
+    const readA = await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('twostart-read'), workspaceId, threadRef: notice.thread.threadRef })
+    adapter.enqueue(toolCallResponse('call-twostart-b', 'team_message', { action: 'start', channelRef: channel.channel.channelRef, body: 'Member starts thread B' }))
+    adapter.enqueue(textResponse('started thread B.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'start thread B' }], source: { kind: 'user' } }))
+    await waitForIdle(ctx, live)
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    const timeline = await ctx.agentTeam.contextTimelineForAgent(live, { memberId, limit: 24 })
+    const boundaries = timeline.items.filter(item => item.source === 'team-boundary')
+    // The start of Thread B is labeled by action class.
+    const startBoundary = boundaries.find(item => item.name === 'Team message')
+    expect(startBoundary).toBeDefined()
+    // Its retained prefix spans both Threads' facts, so it is refused.
+    expect(startBoundary!.affectedThreads).toContain(notice.thread.threadRef)
+    expect(startBoundary!.restorable).toBe(false)
+    expect(startBoundary!.reason).toContain('multiple Threads')
+    // The first-arrival boundary of Thread A stays single-Thread and restorable.
+    const firstArrival = boundaries.find(item => item.affectedThreads.length === 1)
+    expect(firstArrival).toBeDefined()
+    expect(firstArrival!.restorable).toBe(true)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('attributes a claim-mutation boundary through its Task and rejects the cross-Thread mix', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)

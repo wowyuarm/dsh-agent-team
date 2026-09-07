@@ -25,7 +25,7 @@ import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathA
 import { PressurePolicyCoordinator } from './pressure-policy.ts'
 import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
 import { createHandoffMessage } from './context-source.ts'
-import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
+import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, isReminderNoticeSummary, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import { ProgressNudgeCoordinator } from './progress-nudge.ts'
@@ -1731,31 +1731,48 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private threadsEnteringContext(events: readonly SessionEvent[], throughSeq: number): readonly AgentTeamThreadRef[] {
     const refs: AgentTeamThreadRef[] = []
-    const openClaims = new Map<string, { readonly name: string; readonly arguments: string }>()
+    const openAttributions = new Map<string, { readonly name: string; readonly arguments: string }>()
     const push = (ref: AgentTeamThreadRef | undefined): void => {
       if (ref !== undefined && !refs.includes(ref)) refs.push(ref)
     }
     for (const event of events) {
       if (event.seq > throughSeq) break
-      if (event.type === 'tool/call' && event.data.name === 'team_claim') {
-        openClaims.set(event.data.callId, { name: event.data.name, arguments: event.data.arguments })
+      if (event.type === 'tool/call' && (event.data.name === 'team_claim' || event.data.name === 'team_message')) {
+        openAttributions.set(event.data.callId, { name: event.data.name, arguments: event.data.arguments })
       } else if (event.type === 'tool/result') {
         const block = (event.data.message as { content?: Array<{ type?: string; toolCallId?: string; isError?: boolean }> }).content?.[0]
         if (block !== undefined && block.toolCallId !== undefined) {
-          const recorded = openClaims.get(block.toolCallId)
+          const recorded = openAttributions.get(block.toolCallId)
           if (recorded !== undefined && block.isError !== true) {
-            openClaims.delete(block.toolCallId)
+            openAttributions.delete(block.toolCallId)
             try {
-              const args = JSON.parse(recorded.arguments) as { taskRef?: unknown }
-              if (typeof args.taskRef === 'string' && args.taskRef !== '') push(this.requireLedger().threadForTask(args.taskRef as AgentTeamTaskRef))
+              const args = JSON.parse(recorded.arguments) as { taskRef?: unknown; threadRef?: unknown }
+              // A claim mutation resolves its Task overlay through the ledger;
+              // a team_message committed reply names its Thread in its call
+              // arguments; a committed start's Thread is born in the result
+              // and is read from the durable presentation meta.
+              if (recorded.name === 'team_claim' && typeof args.taskRef === 'string' && args.taskRef !== '') {
+                push(this.requireLedger().threadForTask(args.taskRef as AgentTeamTaskRef))
+              } else if (recorded.name === 'team_message') {
+                const meta = (event.data as { meta?: unknown }).meta
+                if (meta !== undefined && typeof meta === 'object' && (meta as { kind?: unknown }).kind === 'committed') {
+                  const metaThreadRef = (meta as { threadRef?: unknown }).threadRef
+                  if (typeof metaThreadRef === 'string' && metaThreadRef !== '') push(metaThreadRef as AgentTeamThreadRef)
+                } else if (typeof args.threadRef === 'string' && args.threadRef !== '') {
+                  push(args.threadRef as AgentTeamThreadRef)
+                }
+              }
             } catch {
-              // Malformed claim arguments contribute no attribution.
+              // Malformed call arguments contribute no attribution.
             }
           }
         }
       } else if (event.type === 'user/message') {
-        const source = event.data.source as { kind?: string; plugin?: string } | undefined
+        const source = event.data.source as { kind?: string; plugin?: string; form?: string; summary?: string } | undefined
         if (source?.kind !== 'plugin') continue
+        // Reminder notices never enter attribution — a progress nudge or a
+        // recovery instruction is not a Team fact.
+        if (source.form === 'notice' && source.summary !== undefined && isReminderNoticeSummary(source.summary)) continue
         const text = event.data.content.filter(block => block.type === 'text').map(block => block.text ?? '').join('\n')
         for (const match of text.matchAll(/Thread: (thread:[0-9a-f-]{6,})/g)) {
           push(match[1] as AgentTeamThreadRef)
