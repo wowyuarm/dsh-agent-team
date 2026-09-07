@@ -143,6 +143,27 @@ describe('context tools render the model-facing decision surface', () => {
     expect(description.toLowerCase()).toContain('checkpointref')
   })
 
+  it('hardens the checkpointRef copy against fabricated refs (the seq-7709 misuse)', () => {
+    const tools = contextTools()
+    const rollover = tools.get('context_rollover')!
+    // The tool description and the parameter description both instruct the
+    // model to omit checkpointRef for ordinary rollovers and to cite only
+    // an exact ref a context_timeline result listed as restorable — never
+    // a synthesized one. Dogfood showed "optional" alone does not stop a
+    // model from inventing `team-boundary-...` refs.
+    expect(rollover.description).toContain('never synthesize, guess, or reconstruct one')
+    // defineTool compiles parameter specs to JSON Schema: descriptions live
+    // under properties.<name>.description.
+    const parameter = (rollover.parameters as { properties?: Record<string, { description?: string }> }).properties?.checkpointRef
+    expect(parameter?.description).toContain('never synthesize or guess a ref')
+    expect(parameter?.description).toContain('Omit for the default fresh rollover')
+    // The timeline description keeps fresh rollovers on the direct path:
+    // consulting the timeline is for checkpointRef returns, not a
+    // prerequisite for the default fresh handoff.
+    const timeline = tools.get('context_timeline')!.description
+    expect(timeline).toContain('never requires consulting this timeline first')
+  })
+
   it('context_rollover renders the scheduled swap and keeps render text self-describing', () => {
     const tools = contextTools()
     const text = renderText(tools.get('context_rollover')!, { mode: 'fresh', status: 'scheduled' })
