@@ -14,7 +14,7 @@
  * @module @wowyuarm/dsh-agent-team/member-runtime
  */
 
-import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -247,9 +247,21 @@ export class MemberRuntime {
    * rewrite: when the legacy directory exists it is renamed onto the sanitized
    * path once (same-parent rename, atomic), so existing private memory
    * survives instead of being silently orphaned.
+   *
+   * A colon-form twin directory is also merged when it exists: a Member may
+   * have written files under the ledger identity spelling (the branded
+   * `member:<uuid>` ref is what every Team tool result shows, so a
+   * hand-assembled path carries the colon). Linux accepts the segment
+   * silently — two directories for one Member — while Windows would have
+   * failed the write outright. The twin is never a durable-Member-Fact
+   * candidate: only the files the Member actually wrote there are worth
+   * keeping, and `memory.md` cannot merge, so the sanitized copy always wins
+   * and twin-only notes/skills are moved in without overwriting.
    */
   async initializePrivateMemory(path: string, legacyPath?: string): Promise<void> {
     if (legacyPath !== undefined && legacyPath !== path) await migrateLegacyMemoryDirectory(legacyPath, path)
+    const twinPath = twinMemoryDirectoryPath(path)
+    if (twinPath !== undefined) await mergeTwinMemoryDirectory(twinPath, path)
     await mkdir(join(path, 'notes'), { recursive: true })
     await mkdir(join(path, 'skills'), { recursive: true })
     try {
@@ -318,4 +330,72 @@ async function migrateLegacyMemoryDirectory(legacyPath: string, path: string): P
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   await rename(legacyPath, path)
+}
+
+/** The colon-form twin path of one sanitized Member memory directory, when the segment form admits one. */
+function twinMemoryDirectoryPath(sanitizedPath: string): string | undefined {
+  const separator = Math.max(sanitizedPath.lastIndexOf('/'), sanitizedPath.lastIndexOf('\\'))
+  const prefix = separator === -1 ? '' : sanitizedPath.slice(0, separator + 1)
+  const finalSegment = separator === -1 ? sanitizedPath : sanitizedPath.slice(separator + 1)
+  // Only the exact sanitized identity segment (`member-<uuid>`) has a colon
+  // twin (`member:<uuid>`); any other segment shape has no identity mapping.
+  if (!/^member-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(finalSegment)) return undefined
+  return `${prefix}member:${finalSegment.slice('member-'.length)}`
+}
+
+/** The colon-twin trace name for one conflicting file: `note.md` → `note.colon-twin.md`. */
+function colonTwinTraceName(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot <= 0 ? `${name}.colon-twin` : `${name.slice(0, dot)}.colon-twin${name.slice(dot)}`
+}
+
+/**
+ * Merge a hand-created colon-form twin directory into the sanitized Member
+ * memory directory. Unlike the ledger legacy migration this is a merge, not a
+ * rename: the sanitized directory is the Member's live root (the injected
+ * paths and the skill provider point at it), so on a same-path conflict the
+ * live root's copy wins and the twin's losing copy is preserved beside it
+ * under a `.colon-twin` name instead of being silently discarded. Twin-only
+ * files move in under their own names; the emptied twin directory is then
+ * removed so the drift cannot silently recur.
+ */
+async function mergeTwinMemoryDirectory(twinPath: string, path: string): Promise<void> {
+  let twin: Awaited<ReturnType<typeof stat>>
+  try {
+    twin = await stat(twinPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return
+  }
+  if (!twin.isDirectory()) return
+  await mergeDirectoryContents(twinPath, path)
+  await rm(twinPath, { recursive: true, force: true })
+}
+
+/** Recursively move every twin file into the live root; an existing live file wins, its twin copy traced beside it. */
+async function mergeDirectoryContents(source: string, target: string): Promise<void> {
+  await mkdir(target, { recursive: true })
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourcePath = join(source, entry.name)
+    const targetPath = join(target, entry.name)
+    if (entry.isDirectory()) {
+      await mergeDirectoryContents(sourcePath, targetPath)
+    } else if (entry.isFile()) {
+      // rename(2) silently REPLACES an existing target on POSIX (the EEXIST
+      // error only exists on Windows, where the colon twin cannot exist at
+      // all), so a collision must be detected, not caught: probe the target
+      // first. Activation is the single serialized writer, so the
+      // probe-to-rename window has no concurrent writer to race.
+      let liveFilePresent = true
+      try {
+        await stat(targetPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        liveFilePresent = false
+      }
+      // The live root stays authoritative; the twin's losing copy stays
+      // traceable beside it instead of being silently discarded.
+      await rename(sourcePath, liveFilePresent ? join(target, colonTwinTraceName(entry.name)) : targetPath)
+    }
+  }
 }

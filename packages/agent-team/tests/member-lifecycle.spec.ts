@@ -3777,4 +3777,59 @@ describe('Agent Team Member private memory directory sanitization (issue #7)', (
       await expect(readFile(join(sanitized, 'notes', 'kept.md'), 'utf8')).resolves.toBe('persistent note')
     }
   })
+
+  it('merges a hand-created colon twin directory into the sanitized root on activation', async () => {
+    // The twin is NOT the ledger legacy directory: it is a directory the
+    // Member's own tool call created under the identity-ref spelling after
+    // the sanitized root already existed (the live Vera incident: 6 days of
+    // colon-form habit, the fix-migration renamed the old root, then a fresh
+    // colon write created a new twin beside it). No ledger path names it, so
+    // only activation-time twin detection can find it.
+    const { ctx } = await realHarness()
+    const memberId = 'member:1a2b3c4d-0000-4000-8000-000000000002' as AgentTeamMemberId
+    const parent = join(process.env.DSH_HOME!, 'agent-team', 'members')
+    const sanitized = join(parent, memberId.replaceAll(':', '-'))
+    const twin = join(parent, memberId)
+    const twinDirectoryExists = process.platform !== 'win32'
+    // The live root pre-exists (the injected paths and skill provider point
+    // at it) with its own memory.md and one note the twin does not know.
+    await mkdir(join(sanitized, 'notes'), { recursive: true })
+    await writeFile(join(sanitized, 'memory.md'), '# Member memory\n\n## Stable facts\n- live root fact\n')
+    await writeFile(join(sanitized, 'notes', 'live-only.md'), 'live root note')
+    if (twinDirectoryExists) {
+      await mkdir(join(twin, 'notes'), { recursive: true })
+      await writeFile(join(twin, 'notes', 'twin-only.md'), 'twin note')
+      await writeFile(join(twin, 'memory.md'), '# Member memory\n\n## Stable facts\n- twin fact\n')
+      // A nested twin-only skill survives the merge at its own relative path.
+      await mkdir(join(twin, 'skills', 'probe'), { recursive: true })
+      await writeFile(join(twin, 'skills', 'probe', 'SKILL.md'), 'twin skill')
+    }
+
+    const { MemberRuntime } = await import('../src/member-runtime.ts')
+    const runtime = new MemberRuntime({ ctx: ctx as never, liveMemberContext: () => { throw new Error('unused') }, runningAgents: new Set() })
+    // No legacyPath argument: the ledger never recorded the twin.
+    await runtime.initializePrivateMemory(sanitized)
+
+    if (twinDirectoryExists) {
+      // Content preservation: every twin-only file moved into the live root.
+      await expect(readFile(join(sanitized, 'notes', 'twin-only.md'), 'utf8')).resolves.toBe('twin note')
+      await expect(readFile(join(sanitized, 'skills', 'probe', 'SKILL.md'), 'utf8')).resolves.toBe('twin skill')
+      await expect(readFile(join(sanitized, 'notes', 'live-only.md'), 'utf8')).resolves.toBe('live root note')
+      // Conflict resolution is explicit: the live root's memory.md wins; the
+      // twin's losing copy stays traceable beside it, never silently dropped.
+      await expect(readFile(join(sanitized, 'memory.md'), 'utf8')).resolves.toContain('live root fact')
+      await expect(readFile(join(sanitized, 'memory.colon-twin.md'), 'utf8')).resolves.toContain('twin fact')
+      // The twin directory itself is gone: the drift cannot silently recur.
+      await expect(access(twin)).rejects.toThrow()
+    }
+
+    // Idempotent: a second activation without any twin present is a no-op
+    // and keeps every merged file.
+    await runtime.initializePrivateMemory(sanitized)
+    if (twinDirectoryExists) {
+      await expect(readFile(join(sanitized, 'notes', 'twin-only.md'), 'utf8')).resolves.toBe('twin note')
+      await expect(readFile(join(sanitized, 'memory.md'), 'utf8')).resolves.toContain('live root fact')
+      await expect(access(join(sanitized, 'notes'))).resolves.toBeUndefined()
+    }
+  })
 })
