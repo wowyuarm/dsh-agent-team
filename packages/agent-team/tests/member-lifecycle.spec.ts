@@ -3339,7 +3339,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
     await live.whenIdle()
 
-    const readA = await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('twostart-read'), workspaceId, threadRef: notice.thread.threadRef })
+    await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('twostart-read'), workspaceId, threadRef: notice.thread.threadRef })
     adapter.enqueue(toolCallResponse('call-twostart-b', 'team_message', { action: 'start', channelRef: channel.channel.channelRef, body: 'Member starts thread B' }))
     adapter.enqueue(textResponse('started thread B.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'start thread B' }], source: { kind: 'user' } }))

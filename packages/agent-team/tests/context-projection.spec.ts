@@ -367,7 +367,7 @@ describe('AgentTeam context projection — quiet continuation delivery', () => {
 
   it('scheduling twice is idempotent and delivery records only once', () => {
     const checkpointRef = checkpointRefFor(SID, 'call-x')
-    let state: AgentTeamContextProjectionState = { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [], boundaries: [], lastTurnEndSeq: -1 }
+    let state: AgentTeamContextProjectionState = { checkpoints: [], pending: null, continuations: [], carriedCandidates: [], lastTurn: 0, openCalls: [], boundaries: [], seenThreads: [], lastTurnEndSeq: -1 }
     state = withScheduledContinuation(state, checkpointRef)
     state = withScheduledContinuation(state, checkpointRef)
     expect(state.continuations).toHaveLength(1)
