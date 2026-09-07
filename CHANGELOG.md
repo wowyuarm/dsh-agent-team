@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [0.1.9] - 2026-09-07
+
+- Members manage their own context: `context_rollover` ends the current context and continues as the same Member in a new one, `context_checkpoint` records a restorable anchor before a risky operation, and `context_timeline` inspects the context lineage (checkpoint, first-arrival, and Task claim boundaries labeled by their semantics) and picks an anchor to return to.
+- Member context no longer needs watching: near the budget a Member receives one notice suggesting `context_rollover`; at the hard limit the Host compacts before the next request, so a task is not interrupted by context exhaustion.
+- Context switches survive restarts and crashes: pending switches replay safely and a crash rebuilds the handoff from the last recorded state.
+- `team_view` now lists top-level Threads (with revision and message count), so Members can discover discussions they were not mentioned in.
+- Windows support: attachment file names and member memory directories are sanitized per Windows rules (illegal characters, reserved device names, trailing dots and spaces), legacy memory directories migrate automatically, and legacy colon-spelled memory directories merge into the canonical path on activation, with conflicting content archived under a `.colon-twin` suffix.
+- Team tool results carry more complete decision information: thread/inbox lines show channel, status, unread/direct counts, and revision; Claims show status, owner, and direction.
+- Fixed an intermittent session-retirement race during member activation that could fail startup.
+- Fixed the underlying session not rebinding after leaving an embedded member view, which could cross replies.
+- Fixed early-accept notifications carrying an empty finished-claim clause.
+- Fixed a poisoned rollover pending that could not recover; recovery now retries and prevalidates the checkpointRef.
+- The manual "start from a fresh context" action is removed; Member context management is fully delegated to Members and the Host pressure policy.
+- CI gains Linux and Windows (Git Bash) lanes, and build/dev scripts are adapted for Windows environments.
+
 ## [0.1.8] - 2026-09-05
 
 - Members that run 20 tool calls (then 40, 60…) without posting to a Thread receive a reminder in the current turn, listing the Tasks they hold a Claim on and the Threads they follow, asking for a brief note on what is confirmed, what remains, and any blocker. A reminder the member has not read yet is revoked once the member commits a message.
