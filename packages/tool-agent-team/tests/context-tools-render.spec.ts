@@ -164,6 +164,28 @@ describe('context tools render the model-facing decision surface', () => {
     expect(timeline).toContain('never requires consulting this timeline first')
   })
 
+  it('timeline description states the effect-anchor boundary vocabulary (91c2299 labels)', () => {
+    const tools = contextTools()
+    const timeline = tools.get('context_timeline')!.description
+    // The description is the model's map from timeline item labels to their
+    // meaning when picking a checkpointRef. It must enumerate the labels the
+    // fold actually renders — the three effect classes and first arrival —
+    // and must not promise the retired push-side vocabulary (the live
+    // seq-8666 mis-selection showed an unmapped label invites wrong picks).
+    expect(timeline).toContain('Team message')
+    expect(timeline).toContain('Team task claim change')
+    expect(timeline).toContain('Team attention change')
+    expect(timeline).toContain('First arrival')
+    expect(timeline).toContain('first delivered notice')
+    expect(timeline).not.toContain('claim changes and structured Team notifications')
+    // The selectable-anchor sentence names the current boundary concept.
+    expect(timeline).toContain('A Team boundary is a selectable default checkpoint')
+    // The retired "delivery anchor" noun must not survive either: the
+    // pre-59ae952 wording lives on in shipped sessions' prompts, so a
+    // half-reverted description would still read as plausible prose.
+    expect(timeline).not.toContain('delivery anchor')
+  })
+
   it('context_rollover renders the scheduled swap and keeps render text self-describing', () => {
     const tools = contextTools()
     const text = renderText(tools.get('context_rollover')!, { mode: 'fresh', status: 'scheduled' })
