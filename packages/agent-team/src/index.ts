@@ -1841,7 +1841,7 @@ export default class AgentTeam extends TypertRemoteService {
    * lifecycle effect — the actual transition reacts to the successful tool
    * result through the context-management coordinator.
    */
-  requestNewContext(agent: Agent, request: AgentTeamNewContextToolRequest): AgentTeamNewContextToolOutcome {
+  async requestNewContext(agent: Agent, request: AgentTeamNewContextToolRequest): Promise<AgentTeamNewContextToolOutcome> {
     const member = this.memberForAgent(agent)
     if (member === undefined || member.state !== 'enabled') throw new Error('context_rollover requires an active Team Member')
     if (this.contextManagement.isTransitioning(member.memberId)) throw new Error('a context rollover is already scheduled for this Member; wait for it to finish before requesting another')
@@ -1860,16 +1860,17 @@ export default class AgentTeam extends TypertRemoteService {
     if (blocking.length > 0) {
       throw new Error(`context_rollover is refused while this Member owns jobs that would not survive the switch (${blocking.join(', ')}); collect or stop them first, then retry`)
     }
-    if (request.checkpointRef !== undefined) {
-      // Seeded return validation is async (it cold-reads archived ancestors),
-      // so the tool prevalidates the syntactic shape here and the transition
-      // revalidates the full guard set before committing; a violation found
-      // at transition time fails the swap and leaves the old generation
-      // recoverable rather than guessing.
-      if (!/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/.test(request.checkpointRef)) throw new Error('checkpointRef must be an opaque ref exactly as returned by context_timeline')
-      return { mode: 'from-checkpoint' }
-    }
-    return { mode: 'fresh' }
+    if (request.checkpointRef === undefined) return { mode: 'fresh' }
+    if (!/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/.test(request.checkpointRef)) throw new Error('checkpointRef must be an opaque ref exactly as returned by context_timeline')
+    // Full current-state prevalidation through the ONE resolver the swap
+    // itself uses: a ref that is fabricated, unattributable, nonshrinking,
+    // unmeasurable, over-budget, or blocked by multiple active Claims
+    // rejects HERE — a model-visible error result instead of a fake
+    // `scheduled` whose async swap always fails. The seed is resolved and
+    // discarded: the transition seam resolves it again, so only the mutable
+    // guard set (jobs, route limits, lineage growth) is revalidated there.
+    await this.resolveCheckpointSeed(member.memberId, agent, request.checkpointRef)
+    return { mode: 'from-checkpoint' }
   }
 
   /**

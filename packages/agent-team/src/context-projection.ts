@@ -353,19 +353,30 @@ function applyToolResult(
 ): AgentTeamContextProjectionState {
   const block = message.content[0]
   if (block === undefined || block.type !== 'tool-result') return state
-  // A successful pair only: model-visible errors and internal failures carry
-  // neither checkpoint nor rollover intent.
-  if (block.isError === true || internalFailure) return state
+  // A landed result — success or failure — consumes its paired open call.
+  // Leaving a failed result's call open would dangle it forever, and a
+  // provider retry reusing the callId would pair its fresh success result
+  // with these stale arguments. An unpaired result (no matching open call)
+  // touches nothing.
   const index = state.openCalls.findIndex(call => call.callId === block.toolCallId)
   if (index === -1) return state
   const recorded = state.openCalls[index]!
   const openCalls = state.openCalls.filter(call => call.callId !== block.toolCallId)
+  // A successful pair only: model-visible errors and internal failures carry
+  // neither checkpoint nor rollover intent.
+  if (block.isError === true || internalFailure) return { ...state, openCalls }
   if (isRolloverToolName(recorded.name)) {
     const parsed = parseRolloverArguments(recorded.arguments)
     if (parsed === undefined) return { ...state, openCalls }
-    // One pending intent at a time: a second successful call before the turn
-    // ends replaces nothing — the first owns the swap.
-    if (state.pending !== null) return { ...state, openCalls }
+    // One pending intent per unresolved turn: a second successful call inside
+    // the SAME turn replaces nothing — the first owns the swap. A pending
+    // whose turn ended is the ready (or, after a restart, recoverable)
+    // intent, NOT spent: the coordinator's process lock normally rejects a
+    // later call before it can reach this fold. Only once that lock is gone
+    // (the transition failed or never ran) can a later-turn successful
+    // rollover replace the ended intent — the retry path that recovers the
+    // Member when the tool kept answering `scheduled` but no swap came.
+    if (state.pending !== null && state.pending.turnEndSeq === -1) return { ...state, openCalls }
     return { ...state, openCalls, pending: { ...parsed, toolCallId: recorded.callId, resultSeq: seq, turn, turnEndSeq: -1 } }
   }
   if (recorded.name === CONTEXT_CHECKPOINT_TOOL_NAME) {

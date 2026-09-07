@@ -51,7 +51,13 @@ function userMessageEvent(message: UserMessage): SessionEvent {
   return { type: 'user/message', seq: nextSeq(), time: 0, data: message } as SessionEvent
 }
 
-function rolloverPair(turn: number, callId: string, args: { handoff: string; checkpointRef?: string; relatedFiles?: Array<{ path: string; reason: string }> }): SessionEvent[] {
+/**
+ * Call/result pair under the LEGACY `new_context` name: the pre-rename
+ * events crash recovery still folds. Tests of the current model-facing
+ * error→retry path must emit `CONTEXT_ROLLOVER_TOOL_NAME` explicitly
+ * instead of reusing this helper.
+ */
+function legacyRolloverPair(turn: number, callId: string, args: { handoff: string; checkpointRef?: string; relatedFiles?: Array<{ path: string; reason: string }> }): SessionEvent[] {
   return [
     contextToolCall(turn, callId, NEW_CONTEXT_TOOL_NAME, args),
     toolResult(turn, callId),
@@ -71,7 +77,7 @@ describe('AgentTeam context projection — rollover intent', () => {
   it('a successful context_rollover call/result pair creates pending intent', () => {
     const events = [
       turnStart(1),
-      ...rolloverPair(1, 'call-1', { handoff: 'continue from here' }),
+      ...legacyRolloverPair(1, 'call-1', { handoff: 'continue from here' }),
       turnEnd(1),
     ]
     const state = foldContextProjection(events, undefined, SID)
@@ -108,17 +114,18 @@ describe('AgentTeam context projection — rollover intent', () => {
     const legacyState = foldContextProjection(legacy, undefined, SID)
     expect(legacyState.pending).toMatchObject({ handoff: 'legacy intent' })
     expect(legacyState.pending?.checkpointRef).toBe('context-checkpoint-' + 'e'.repeat(64))
-    // Mixed lineage: an ancestor recorded the legacy call, the current
-    // generation records the new name — both folds resolve their own intent.
+    // Mixed-era same-Session log: one Session's durable events carry the
+    // legacy call from before the rename and a later-turn modern call — the
+    // fold never stitches lineage across Sessions, and the later turn's
+    // intent takes the slot after the ended legacy one.
     const modern = [
-      turnStart(1),
-      contextToolCall(1, 'call-modern', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'modern intent' }),
-      toolResult(1, 'call-modern'),
-      turnEnd(1),
+      turnStart(2),
+      contextToolCall(2, 'call-modern', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'modern intent' }),
+      toolResult(2, 'call-modern'),
+      turnEnd(2),
     ]
     const mixedState = foldContextProjection([...legacy, ...modern], undefined, SID)
-    // The first successful pair owns the swap; identity check only.
-    expect(mixedState.pending).not.toBeNull()
+    expect(mixedState.pending).toMatchObject({ toolCallId: 'call-modern', handoff: 'modern intent', turn: 2 })
   })
 
   it('failed, dangling, or malformed results never create intent', () => {
@@ -130,6 +137,10 @@ describe('AgentTeam context projection — rollover intent', () => {
       turnEnd(1),
     ], undefined, SID)
     expect(failed.pending).toBeNull()
+    // The landed error result consumed its paired open call: nothing stays
+    // dangling, so a provider retry reusing the callId cannot pair a fresh
+    // success result with these stale arguments.
+    expect(failed.openCalls).toEqual([])
     // Internal failure identity on the result event.
     const internal = foldContextProjection([
       turnStart(1),
@@ -158,18 +169,82 @@ describe('AgentTeam context projection — rollover intent', () => {
   it('a second successful call before the turn ends does not replace the first intent', () => {
     const events = [
       turnStart(1),
-      ...rolloverPair(1, 'call-1', { handoff: 'first' }),
-      ...rolloverPair(1, 'call-2', { handoff: 'second' }),
+      ...legacyRolloverPair(1, 'call-1', { handoff: 'first' }),
+      ...legacyRolloverPair(1, 'call-2', { handoff: 'second' }),
       turnEnd(1),
     ]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.pending?.handoff).toBe('first')
   })
 
+  it('a successful later-turn rollover replaces a spent pending intent', () => {
+    // A pending whose turn ended is the ready/recoverable intent — the
+    // coordinator's process lock rejects a later call on the normal path.
+    // But once that lock is gone (the transition failed or never ran) the
+    // ended intent is spent: locking it forever poisons the Member — the
+    // tool keeps answering `scheduled` while the coordinator never sees a
+    // new intent. A later-turn successful rollover must replace it so an
+    // explicit retry can recover the Member.
+    const events = [
+      turnStart(1),
+      ...legacyRolloverPair(1, 'call-invalid-checkpoint', { handoff: 'attempted checkpoint return', checkpointRef: 'context-checkpoint-' + 'f'.repeat(64) }),
+      turnEnd(1),
+      turnStart(2),
+      ...legacyRolloverPair(2, 'call-fresh-retry', { handoff: 'explicit fresh retry' }),
+      turnEnd(2),
+    ]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.pending).toMatchObject({ toolCallId: 'call-fresh-retry', handoff: 'explicit fresh retry', turn: 2 })
+    expect(state.pending?.checkpointRef).toBeUndefined()
+  })
+
+  it('a spent pending from the legacy new_context name is replaceable by a modern-name retry', () => {
+    // Mixed lineage across the rename: an old-generation ended pending
+    // (legacy name, failed swap — process lock gone) must not block the
+    // current generation's fresh `context_rollover` from taking over the
+    // intent slot.
+    const events = [
+      turnStart(1),
+      contextToolCall(1, 'call-legacy-spent', NEW_CONTEXT_TOOL_NAME, { handoff: 'legacy failed swap' }),
+      toolResult(1, 'call-legacy-spent'),
+      turnEnd(1),
+      turnStart(2),
+      contextToolCall(2, 'call-modern-retry', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'modern retry' }),
+      toolResult(2, 'call-modern-retry'),
+      turnEnd(2),
+    ]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.pending).toMatchObject({ toolCallId: 'call-modern-retry', handoff: 'modern retry', turn: 2 })
+  })
+
+  it('a provider retry reusing a callId after its error result folds the fresh arguments, not the stale ones', () => {
+    // The error result consumed its paired open call at landing; when the
+    // provider reuses the SAME callId for a later fresh retry in another
+    // turn, the successful result pairs with the retry's own arguments.
+    // Without the consumption, the stale invalid-checkpoint arguments would
+    // poison the fresh retry's intent. Both calls carry the current
+    // model-facing name: this is the live error-then-retry path, not the
+    // legacy decoder.
+    const events = [
+      turnStart(1),
+      contextToolCall(1, 'call-reused', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'invalid checkpoint attempt', checkpointRef: 'context-checkpoint-' + 'a'.repeat(64) }),
+      toolResult(1, 'call-reused', { isError: true }),
+      turnEnd(1),
+      turnStart(2),
+      contextToolCall(2, 'call-reused', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'fresh retry' }),
+      toolResult(2, 'call-reused'),
+      turnEnd(2),
+    ]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.pending).toMatchObject({ toolCallId: 'call-reused', handoff: 'fresh retry', turn: 2 })
+    expect(state.pending?.checkpointRef).toBeUndefined()
+    expect(state.openCalls).toEqual([])
+  })
+
   it('inherited fork-prefix calls never produce intent in a seeded child', () => {
     const parentEvents = [
       turnStart(1),
-      ...rolloverPair(1, 'call-parent', { handoff: 'old generation' }),
+      ...legacyRolloverPair(1, 'call-parent', { handoff: 'old generation' }),
       turnEnd(1),
     ]
     const childEvents: SessionEvent[] = [...parentEvents, turnStart(2), turnEnd(2)]
@@ -183,7 +258,7 @@ describe('AgentTeam context projection — rollover intent', () => {
   it('the live unit folds event-by-event to the same state as the cold fold', () => {
     const events = [
       turnStart(1),
-      ...rolloverPair(1, 'call-1', { handoff: 'live', relatedFiles: [{ path: 'src/index.ts', reason: 'in progress' }] }),
+      ...legacyRolloverPair(1, 'call-1', { handoff: 'live', relatedFiles: [{ path: 'src/index.ts', reason: 'in progress' }] }),
       turnEnd(1),
     ]
     const definition = agentTeamContextProjectionDefinition(SID)

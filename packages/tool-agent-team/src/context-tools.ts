@@ -76,7 +76,7 @@ const contextRollover = defineTool({
       throw new Error('context_rollover checkpointRef must be a non-empty string when supplied')
     }
     const checkpointRef = typeof suppliedRef === 'string' ? suppliedRef.trim() : undefined
-    const outcome = host.requestNewContext(agent, {
+    const outcome = await host.requestNewContext(agent, {
       memberId: current.memberId,
       ...(checkpointRef === undefined || checkpointRef === '' ? {} : { checkpointRef: checkpointRef as AgentTeamContextCheckpointRef }),
       ...(relatedFiles.length === 0 ? {} : { relatedFiles }),

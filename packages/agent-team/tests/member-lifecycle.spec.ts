@@ -1635,20 +1635,103 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     const sessionId = added.status.member.sessionId
 
     // A well-formed ref that resolves to no checkpoint in the Member's
-    // lineage passes the tool's shape validation but fails seed resolution
-    // at the transition: the swap aborts before any ledger commit, the old
-    // generation stays bound, and nothing is archived.
+    // lineage rejects at the tool boundary: existence prevalidation makes the
+    // failure model-visible as an error result instead of a fake `scheduled`
+    // whose async swap always fails. No pending intent, no turn conclusion,
+    // and the Member stays bound — recoverable by construction.
     const live = ctx.agents.get(sessionId)!
     adapter.enqueue(toolCallResponse('call-cp-ref', 'context_rollover', { handoff: 'attempted checkpoint return', checkpointRef: checkpointRefFor(sessionId, 'call-that-never-recorded') }))
-    adapter.enqueue(textResponse('the anchor does not exist; continuing in this context.'))
+    adapter.enqueue(textResponse('the anchor does not resolve; picking another path.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning to a checkpoint' }], source: { kind: 'user' } }))
-    // The rollover turn ends and the swap attempt fails asynchronously; wait
-    // for the turn to settle before asserting the unchanged binding.
     await waitForIdle(ctx, live)
     await new Promise(resolve => setTimeout(resolve, 100))
 
     const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
     expect(current.member.sessionId).toBe(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+    // The rejection is durable and model-visible, and no pending intent was
+    // recorded from the refused call.
+    const results = live.session.ownEvents().filter(event => event.type === 'tool/result')
+    const rejection = results.find(event => {
+      if (event.type !== 'tool/result') return false
+      return JSON.stringify(event.data.message.content).includes('does not resolve in this Member\'s lineage')
+    })
+    expect(rejection).toBeDefined()
+    const poisoned = foldContextProjection(live.session.ownEvents(), live.session.inheritedEventCount, live.session.id)
+    expect(poisoned.pending).toBeNull()
+
+    // An explicit later-turn fresh rollover still succeeds: the refused
+    // checkpoint call left nothing locked.
+    adapter.enqueue(toolCallResponse('call-cp-ref-retry', 'context_rollover', { handoff: 'explicit fresh retry after the refused return' }))
+    // The generation the retry swaps in consumes the handoff and answers.
+    adapter.enqueue(textResponse('Continuing from the fresh retry handoff.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over fresh instead' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.member.sessionId !== sessionId ? status : undefined
+    })
+    expect(renewed.member.sessionId).not.toBe(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('recovers from a transition that fails at the commit seam after a successful rollover result', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, jobsState } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('seam-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('seam-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    const live = ctx.agents.get(sessionId)!
+
+    // A rollover that PASSES tool-time validation can still fail at the
+    // lifecycle commit seam: a job may start between the tool result and the
+    // swap. Inject exactly that TOCTOU window through the seam the real Host
+    // rechecks — the turn/end observer fires after the successful result is
+    // durable and before the coordinator's idle-waited swap runs.
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== sessionId || event.type !== 'turn/end' || injected) return
+      injected = true
+      jobsState.jobs = [{ id: 'bash-seam', label: 'racing job', status: 'running', reported: false }]
+    })
+    adapter.enqueue(toolCallResponse('call-seam-nc', 'context_rollover', { handoff: 'seam-failing fresh rollover' }))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over while a job races the seam' }], source: { kind: 'user' } }))
+    // The turn ends; the swap runs after idle and fails at the seam guard,
+    // leaving the old generation bound and a SPENT pending intent in the
+    // projection — the recoverable poison state.
+    await waitForIdle(ctx, live)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    disposeObserver()
+    expect(injected).toBe(true)
+
+    const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!
+    expect(current.member.sessionId).toBe(sessionId)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+    const poisoned = foldContextProjection(live.session.ownEvents(), live.session.inheritedEventCount, live.session.id)
+    expect(poisoned.pending).toMatchObject({ toolCallId: 'call-seam-nc' })
+    expect(poisoned.pending?.turnEndSeq).not.toBe(-1)
+
+    // The blocking job settles; an explicit later-turn fresh rollover must
+    // replace the spent pending intent and complete the swap.
+    jobsState.jobs = []
+    adapter.enqueue(toolCallResponse('call-seam-retry', 'context_rollover', { handoff: 'explicit fresh retry after the seam failure' }))
+    // The generation the retry swaps in consumes the handoff and answers.
+    adapter.enqueue(textResponse('Continuing from the fresh retry handoff.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'the job settled; roll over fresh now' }], source: { kind: 'user' } }))
+    // First gate: the retry's successful result must land durably and REPLACE
+    // the spent pending intent in the projection — the poison state is
+    // provably undone at the fold before the binding moves.
+    const replaced = await waitFor(() => {
+      const state = foldContextProjection(live.session.ownEvents(), live.session.inheritedEventCount, live.session.id)
+      return state.pending?.toolCallId === 'call-seam-retry' && state.pending.turnEndSeq !== -1 ? state : undefined
+    })
+    expect(replaced.pending).toMatchObject({ handoff: 'explicit fresh retry after the seam failure' })
+
+    const renewed = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.member.sessionId !== sessionId ? status : undefined
+    })
+    expect(renewed.member.sessionId).not.toBe(sessionId)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
