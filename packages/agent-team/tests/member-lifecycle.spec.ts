@@ -1580,10 +1580,14 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     // Fresh generation: nothing inherited from the old log, and the lineage
     // parent points at the previous active Session.
     expect(ctx.agents.get(previousSessionId)).toBeUndefined()
-    const liveAfter = ctx.agents.get(newSessionId)!
+    // The ledger binding flips before the new Session activates; wait for
+    // the published handle AND the delivered handoff — the swap commits the
+    // binding first, activates and steers the handoff afterwards.
+    const liveAfter = await waitFor(() => ctx.agents.get(newSessionId)!)
     expect(liveAfter).not.toBe(liveBefore)
     expect(liveAfter.session.header.parentSession).toBe(previousSessionId)
     expect(liveAfter.session.inheritedEventCount).toBe(0)
+    await waitFor(() => liveAfter.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
     const ownEvents = liveAfter.session.ownEvents()
     // The only pre-handoff events are the constructor seed marker; the
     // handoff leads every model-facing event of the new generation.
@@ -2287,7 +2291,10 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const inherited = next.session.snapshotEvents(0 as never, next.session.inheritedEventCount)
     // The inherited prefix ends on the anchor's turn end; nothing later.
     expect(inherited.at(-1)!.seq).toBe(anchorTurnEndSeq)
-    // The handoff is the first own model-facing context.
+    // The handoff is the first own model-facing context. The binding flip
+    // precedes the handoff delivery (the swap steers it after activation);
+    // wait for the delivered event before asserting on it.
+    await waitFor(() => own.some(event => event.type === 'user/message') ? true : undefined)
     const firstUser = own.find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected handoff')
@@ -2371,6 +2378,8 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     const anchor = gen1Fold.checkpoints.find(entry => entry.checkpointRef === checkpointRefFor(firstSessionId, 'call-anc-cp'))!
     expect(gen3.session.inheritedEventCount).toBe(anchor.turnEndSeq + 1)
     // The handoff is the first own model-facing context of generation 3.
+    // The binding flip precedes the handoff delivery; wait for the event.
+    await waitFor(() => gen3.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
     const firstOwnUser = gen3.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstOwnUser?.type).toBe('user/message')
     if (firstOwnUser?.type !== 'user/message') throw new Error('expected handoff')
