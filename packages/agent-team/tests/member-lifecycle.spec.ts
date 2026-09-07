@@ -2315,12 +2315,9 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(inherited.at(-1)!.seq).toBe(anchorTurnEndSeq)
     // The handoff is the first own model-facing context. The binding flip
     // precedes the handoff delivery (the swap steers it after activation);
-    // wait for the delivered event before asserting on it. Probe ownEvents()
-    // fresh each round — the snapshot taken above predates the handoff append
-    // whenever the agent registers before the steering lands, and polling a
-    // stale snapshot would never observe it.
-    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
-    const firstUser = next.session.ownEvents().find(event => event.type === 'user/message')
+    // wait for the delivered event before asserting on it.
+    await waitFor(() => own.some(event => event.type === 'user/message') ? true : undefined)
+    const firstUser = own.find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected handoff')
     expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: checkpointRefFor(firstSessionId, 'call-ret-cp') })
