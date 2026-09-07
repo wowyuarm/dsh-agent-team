@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-This directory contains the maintained engineering documentation for this repository. `AGENTS.md` keeps only rules that every task must know; use this index for detailed workflows, architecture, domain language, and cross-repository navigation.
+This directory contains the maintained engineering documentation for this repository. The root `AGENTS.md` keeps only rules that every task must know; [`AGENTS.md`](AGENTS.md) here routes doc edits and maintenance — read it before changing anything under `docs/`. Use this index for detailed workflows, architecture, domain language, and cross-repository navigation.
 
 ## Documentation entry points
 
@@ -18,12 +18,7 @@ This directory contains the maintained engineering documentation for this reposi
 
 ## Documentation rules
 
-- Documentation records verifiable engineering facts, stable maintenance workflows, and still-valid architecture boundaries.
-- Source and tests define implementation behavior. When prose conflicts with code, fix the documentation; do not use documentation to describe behavior the code does not implement.
-- `.scratch/` contains active work and archived designs, research, tickets, prototypes, and validation evidence. It is not an authority for current implementation or APIs. Read [`.scratch/README.md`](../.scratch/README.md) first; link to archives from maintained docs only for historical context, and verify conclusions against source and tests before recording them.
-- Each fact has one maintained home. Commands, exports, manifests, and generated scripts remain authoritative in their own files; maintained docs record the maintenance rules, boundaries, and routes that are not obvious from those files.
-- When a code change invalidates current behavior, workflow, or boundaries in maintained docs, update the docs in the same change.
-- Write uncertain facts as `> TODO:` instead of guessing.
+Editing or adding a document under `docs/`? Routing branches and the maintenance discipline live in [`AGENTS.md`](AGENTS.md) — read it first.
 
 ## Where to start
 

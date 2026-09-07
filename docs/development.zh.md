@@ -136,6 +136,8 @@ node scripts/sync-paths.mjs
 
 **checkout 指针集中化且 fail-fast。** `scripts/harness-dir.mjs` 是所有消费方（Vitest、`sync-paths`、`build-client`、`generate-typert`、浏览器/预览 runner）共同解析的单一事实源：`DSH_HARNESS_DIR` 设定时优先；其次读 `sync-paths` 写下的 `.generated-harness` 标记（测试自动跟随 facade 生成时的同一 checkout——认证轮生成后忘了带 env 也不会让两者劈叉）；最后落到默认相邻名。解析出的目录不存在时立即中止，列出相邻真实存在的 Harness checkout 与修复指引，而不是等到跑测才炸出上面那些远端症状。
 
+**CI lanes。** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 在干净的 `ubuntu-latest` 与 `windows-latest` runner 上运行 typecheck 加完整测试套件——pull request、push 到 `master`、手动 `workflow_dispatch` 都会触发。两条 lane 执行上面相同的六步环境契约；Windows lane 的每一步经 git bash（`shell: bash`）运行，因为默认 pwsh 会破坏反斜杠续行；harness 包经目录 junction 链接，无需 symlink 权限。范围护栏：无 coverage matrix、无发布自动化、无 `test:browser`——浏览器验收始终是本地步骤。Windows lane 是文件系统标识符类 bug（issue #7/#8）的回归防线。唯一可调变量是 `DSH_HARNESS_TAG`；认证推进该 tag 时，workflow 的 env、本文档与 [`.hoplite/settings.json`](../.hoplite/settings.json) 三处同步更新——三处靠手工保持一致。开发脚本（`build-client`、`run-browser-test`、`run-preview`、`run-ui-preview`）已做 Windows 硬化，在该平台经 git bash 运行，本地 Windows 开发遵循同一环境契约。
+
 ## 外部安装验证
 
 发布形态是根 bundle：
