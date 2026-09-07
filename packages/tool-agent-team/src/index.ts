@@ -123,8 +123,9 @@ const teamInbox = defineTool({
         taskNumber: { type: 'number' },
       } } },
     } },
-    render: (_args, value) => [{ type: 'text', text: value.items.length === 0 ? 'No unread Team work.'
-      : value.items.map(item => `${item.threadRef}${item.taskRef === undefined ? '' : ` · ${item.taskRef}`}${item.taskNumber === undefined ? '' : ` (#${item.taskNumber})`} · ${item.directCount > 0 ? 'direct' : 'unread'}, ${item.unreadCount} update(s), revision ${item.revision}`).join('\n') }],
+    render: (_args, value) => [{ type: 'text', text: value.items.length === 0 ? `No unread Team work.${value.totalUnreadCount > 0 ? ` (${value.totalUnreadCount} unread on Threads beyond this bounded list — call again with a larger limit.)` : ''}`
+      : [`${value.totalUnreadCount} unread update(s) total, ${value.totalDirectCount} direct, across ${value.items.length} Thread(s) shown${value.totalUnreadCount > value.items.reduce((sum, item) => sum + item.unreadCount, 0) ? ' — more exist beyond this bounded list' : ''}`,
+        ...value.items.map(item => `${item.threadRef}${item.channelRef === undefined ? '' : ` · ${item.channelRef}`}${item.taskRef === undefined ? '' : ` · ${item.taskRef}`}${item.taskNumber === undefined ? '' : ` (#${item.taskNumber})`}${item.status === undefined ? '' : ` (${item.status})`} · ${item.unreadCount} unread, ${item.directCount} direct, revision ${item.revision}`)].join('\n') }],
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -176,10 +177,12 @@ const teamThread = defineTool({
       } },
     } },
     // Renders are the only channel a tool result reaches the model through:
-    // the header states the Task's standing, each activity line names the
-    // actor and every Claim the activity concluded, and an acceptance the
-    // reader just acknowledged carries one context-guidance section. History
-    // renders the same structured lines but never the advice.
+    // the header states the Thread ref and the Task's standing, each activity
+    // line names the actor and every Claim the activity concluded, message
+    // facts carry their unread/direct markers so a bounded batch can be
+    // re-read discriminately, an acceptance the reader just acknowledged
+    // carries one context-guidance section, and read/history footers state
+    // what remains or whether older facts exist.
     render: (_args, value) => {
       // The header always identifies the Thread first — the ref the model
       // must echo in its next team_message reply — then the Task's standing
@@ -191,11 +194,22 @@ const teamThread = defineTool({
         `revision ${value.revision}, following=${value.following}`,
       ].filter(part => part !== '').join(' · ')
       const lines = [header]
+      // The Claims snapshot is the collision surface: another Member's
+      // active Claim on this Task is invisible while facts alone render,
+      // yet exactly what the model must see before claiming its own angle.
+      for (const claim of value.claims) lines.push(`Claim ${claim.claimRef} · ${claim.state} — ${claim.owner}: ${claim.direction}`)
+      // The anchor is the Thread's root task statement. Render it whenever
+      // it is not already among the facts, so a model reading a Thread for
+      // the first time never loses the original ask.
+      if (!value.facts.some(fact => fact.sequence === value.anchor.sequence)) lines.push(`Anchor ${value.anchor.sequence} [${value.anchor.sender}] ${value.anchor.body}`)
       for (const fact of value.facts as FactView[]) {
         lines.push(fact.kind === 'message'
-          ? `${fact.sequence} [${fact.sender ?? 'unknown sender'}] ${fact.body}`
+          ? `${fact.sequence} [${fact.sender ?? 'unknown sender'}]${fact.unread === undefined ? '' : fact.direct === true ? ' [direct]' : fact.unread === true ? ' [unread]' : ''} ${fact.body}`
           : activityLine(fact))
+        if (fact.kind !== 'message' && fact.unread === true) lines.push(`${fact.sequence} … (unread activity)`)
       }
+      if (value.kind === 'read') lines.push(`Read through sequence ${value.readThroughSequence}; ${value.remainingUnreadCount ?? 0} unread update(s) remaining — call team_thread read again${(value.remainingUnreadCount ?? 0) > 0 ? '' : ' when new work arrives'}.`)
+      if (value.kind === 'history') lines.push(`History cursor ${value.cursor}; hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — older facts exist; page again with beforeSequence set to the cursor.' : ' — no older facts remain.'}`)
       if (value.kind === 'read' && value.contextAdvice !== undefined) lines.push(...adviceLines(value.contextAdvice))
       return [{ type: 'text', text: lines.join('\n') }]
     },
@@ -283,7 +297,10 @@ const teamMessage = markAgentTeamPreset(defineTool({
       recipientMemberId: { type: 'string' }, recipientHandle: { type: 'string' }, delivered: { type: 'boolean' }, deliveryNote: { type: 'string' },
     } },
     render: (_args, value) => [{ type: 'text', text: value.kind === 'dm-sent' ? `DM ${value.delivered === false ? 'recorded but not delivered' : 'delivered'} to @${value.recipientHandle} (${value.recipientMemberId})${value.deliveryNote === undefined ? '' : `: ${value.deliveryNote}`}`
-      : value.kind === 'committed' ? `Message ${value.messageRef} committed at revision ${value.revision}.`
+      : value.kind === 'committed' ? `Message ${value.messageRef} committed at revision ${value.revision} on ${value.threadRef}${value.taskRef === undefined ? '' : ` (${value.taskRef})`}.`
+      : value.kind === 'unread_required' ? `unread_required: ${value.threadRef}${value.taskRef === undefined ? '' : ` (${value.taskRef})`} has ${value.unreadCount} unread update(s), ${value.directCount} direct at revision ${value.revision}. Read the pending updates (team_thread read) before retrying this send.`
+      : value.kind === 'stale_revision' ? `stale_revision: your baseRevision ${value.expectedRevision} is obsolete; ${value.threadRef}${value.taskRef === undefined ? '' : ` (${value.taskRef})`} is now at revision ${value.revision}. Read the Thread, then retry with baseRevision ${value.revision}.`
+      : value.kind === 'member_not_following' ? `member_not_following: ${(value.memberIds ?? []).join(', ')} not following; the message was not committed. Only a Human can invite an unfollowed Agent — retry without mentioning them, or ask the Human.`
       : `${value.kind}: ${value.memberIds?.join(', ') ?? `${value.threadRef ?? ''}${value.taskRef === undefined ? '' : ` · Task ${value.taskRef}`} revision ${value.revision ?? ''}`}` }],
   },
   async execute(args, exec) {
@@ -359,7 +376,12 @@ const teamClaim = defineTool({
       unreadCount: { type: 'number' }, directCount: { type: 'number' },
       claims: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true } } } },
     } },
-    render: (_args, value) => [{ type: 'text', text: [`${value.kind}: ${value.taskRef} · ${value.status}, revision ${value.revision}`,
+    render: (_args, value) => [{ type: 'text', text: [
+      value.kind === 'unread_required'
+        ? `unread_required: ${value.taskRef} (${value.threadRef}) has ${value.unreadCount} unread update(s), ${value.directCount} direct at revision ${value.revision}. Read the pending updates (team_thread read) before retrying this Claim mutation.`
+        : value.kind === 'stale_revision'
+          ? `stale_revision: your baseRevision ${value.expectedRevision} is obsolete; ${value.taskRef} (${value.threadRef}) is now at revision ${value.revision}. Read the Thread, then retry with baseRevision ${value.revision}.`
+          : `${value.kind}: ${value.taskRef} (${value.threadRef}) · ${value.status}, revision ${value.revision}`,
       ...value.claims.map(claim => `${claim.claimRef} · ${claim.state} — ${claim.owner}: ${claim.direction}`)].join('\n') }],
   },
   async execute(args, exec) {
@@ -418,8 +440,9 @@ const teamView = defineTool({
         ? value.threads.map(thread => `${thread.threadRef} · ${thread.channelRef}${thread.taskRef === undefined ? '' : ` · ${thread.taskRef}${thread.taskNumber === undefined ? '' : ` (#${thread.taskNumber})`} (${thread.status})`} · ${thread.messageCount} message(s), revision ${thread.revision}`)
         : ['No Team Threads.']),
       ...(value.tasks.length > 0
-        ? value.tasks.map(task => `${task.taskRef} · ${task.status}`)
+        ? value.tasks.map(task => `${task.taskRef} · ${task.threadRef} · ${task.channelRef} · ${task.status}, revision ${task.revision}`)
         : ['No Team Tasks.']),
+      `cursor ${value.cursor}, hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — more items exist; call team_view again with cursor set to this value.' : ' — no further pages.'}`,
     ].join('\n') }],
   },
   async execute(args, exec) {
