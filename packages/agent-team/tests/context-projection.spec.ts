@@ -434,7 +434,7 @@ describe('AgentTeam context projection — timeline boundaries', () => {
     ]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
-    expect(state.boundaries[0]).toMatchObject({ source: 'team-boundary', label: 'Team claim change' })
+    expect(state.boundaries[0]).toMatchObject({ source: 'team-boundary', label: 'Team task claim change' })
   })
 
   it('a structured Team notice is a team boundary on its Thread\'s first arrival; a relay DM and a checkpoint continuation are not', () => {
@@ -451,9 +451,10 @@ describe('AgentTeam context projection — timeline boundaries', () => {
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
     expect(state.boundaries[0]!.source).toBe('team-boundary')
-    // The boundary carries the notice's own account, so default timeline
-    // items are distinguishable instead of all reading "Team delivery".
-    expect(state.boundaries[0]!.label).toBe('Team Inbox has unread work.')
+    // The boundary label states WHAT first arrived (the Thread), not the
+    // notice's own generic "unread work" account — that is the decision
+    // surface a checkpointRef pick needs.
+    expect(state.boundaries[0]!.label).toBe('First arrival: thread:4d5e6f70-8b9c-4d5e-0f1a-2b3c4d5e6f70')
   })
 
   it('a structured Team notice without a summary keeps the generic delivery label on first arrival', () => {
@@ -463,7 +464,7 @@ describe('AgentTeam context projection — timeline boundaries', () => {
     const events = [turnStart(1), userMessageEvent(instructions), turnEnd(1)]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
-    expect(state.boundaries[0]).toMatchObject({ source: 'team-boundary', label: 'Team delivery' })
+    expect(state.boundaries[0]).toMatchObject({ source: 'team-boundary', label: 'First arrival: thread:5e6f7081-9c0d-4e5f-1a2b-3c4d5e6f7081' })
   })
 
   it('a pre-compaction notice is a compaction boundary', () => {
@@ -694,7 +695,7 @@ describe('AgentTeam context projection — effect-anchored team boundaries', () 
     expect(state.boundaries).toHaveLength(0)
   })
 
-  it('a claim mutation still produces its boundary (preserved behavior)', () => {
+  it('a claim mutation still produces its boundary (preserved behavior, renamed label)', () => {
     const events = [
       turnStart(1),
       contextToolCall(1, 'call-claim', 'team_claim', { action: 'claim', taskRef: 'task:x', baseRevision: 1, direction: 'do it' }),
@@ -703,7 +704,7 @@ describe('AgentTeam context projection — effect-anchored team boundaries', () 
     ]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
-    expect(state.boundaries[0]!.label).toBe('Team claim change')
+    expect(state.boundaries[0]!.label).toBe('Team task claim change')
   })
 
   it('cold-refold of a v2-shaped log (no seenThreads field) matches folding from empty', () => {
@@ -727,7 +728,37 @@ describe('AgentTeam context projection — effect-anchored team boundaries', () 
     ]
     const refolded = foldContextProjection(events, undefined, SID)
     expect(refolded.boundaries).toHaveLength(2)
-    expect(refolded.boundaries.some(boundary => boundary.label === 'Team claim change')).toBe(true)
-    expect(refolded.boundaries.filter(boundary => boundary.source === 'team-boundary' && boundary.label === 'Team Inbox has unread work.')).toHaveLength(1)
+    expect(refolded.boundaries.some(boundary => boundary.label === 'Team task claim change')).toBe(true)
+    expect(refolded.boundaries.filter(boundary => boundary.source === 'team-boundary' && boundary.label === 'First arrival: thread:3c4d5e6f-7a8b-4c5d-0e1f-2a3b4c5d6e7f')).toHaveLength(1)
+  })
+
+  it('a first-arrival notice boundary labels the Thread it introduces, not the notice summary', () => {
+    // The inbox notice summary says only "unread work" — the timeline's
+    // decision surface needs WHAT arrived (which Thread first entered the
+    // context), so the boundary label is rewritten from the first-arrival
+    // facts, never the notice's own account.
+    const events = [
+      turnStart(1),
+      userMessageEvent(teamNotice('Team Inbox has unread work.', 'Direct Team mention\nThread: thread:4d5e6f70-8b9c-4d5e-0f1a-2b3c4d5e6f70 task handover')),
+      turnEnd(1),
+    ]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]!.label).toBe('First arrival: thread:4d5e6f70-8b9c-4d5e-0f1a-2b3c4d5e6f70')
+  })
+
+  it('a first-arrival boundary introducing two Threads labels both, in delivery order', () => {
+    // One delivered notice may quote two Threads that are both new to this
+    // Session (e.g. a handover mention plus its Task thread); the label
+    // carries both first arrivals so the model sees the full attribution
+    // before deciding whether the anchor is single-Thread selectable.
+    const events = [
+      turnStart(1),
+      userMessageEvent(teamNotice('Team Inbox has unread work.', 'Thread: thread:1a2b3c4d-5e6f-4a5b-8c9d-0e1f2a2b4c5d and\nThread: thread:2b3c4d5e-6f7a-4b5c-9d0e-1f2a3b4c5d6e both new')),
+      turnEnd(1),
+    ]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.boundaries).toHaveLength(1)
+    expect(state.boundaries[0]!.label).toBe('First arrival: thread:1a2b3c4d-5e6f-4a5b-8c9d-0e1f2a2b4c5d, thread:2b3c4d5e-6f7a-4b5c-9d0e-1f2a3b4c5d6e')
   })
 })

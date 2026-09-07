@@ -43,7 +43,7 @@ const TEAM_THREAD_TOOL_NAME = 'team_thread'
 /** Fixed action-category labels for effect boundaries (mirrors the claim label's shape). */
 const TEAM_MESSAGE_BOUNDARY_LABEL = 'Team message'
 const TEAM_ATTENTION_BOUNDARY_LABEL = 'Team attention change'
-const TEAM_CLAIM_BOUNDARY_LABEL = 'Team claim change'
+const TEAM_CLAIM_BOUNDARY_LABEL = 'Team task claim change'
 
 /**
  * Notice summaries that are pure reminders, never semantic Team facts: a
@@ -324,10 +324,13 @@ export function foldContextProjection(events: readonly SessionEvent[], inherited
  */
 export const agentTeamContextProjectionDefinition = (sessionId: string): ProjectionDefinition<'agentTeamContext', AgentTeamContextProjectionState> => ({
   key: 'agentTeamContext',
-  // v3: effect-anchored team boundaries — seenThreads (per-Thread first
-  // arrival) plus team_message/team_thread follow-effect boundaries. A
-  // persisted v2 row fails the ver match and refolds from the full log.
-  stateVersion: 3,
+  // v4: first-arrival boundary labels — notice-class boundaries label the
+  // Threads they first introduce (`First arrival: …`) instead of the
+  // notice's own summary, and the claim boundary label names its Task
+  // surface (`Team task claim change`). Labels are fold-time synthesized,
+  // not stored facts, so a persisted v3 row must not survive next to the
+  // new vocabulary: the ver mismatch refolds it from the full log.
+  stateVersion: 4,
   stateSchema,
   init: (_header: SessionHeader, _inheritedEventCount: SessionLogOffset): AgentTeamContextProjectionState => emptyState(),
   apply: (state, event) => applyContextEvent(state, event, sessionId),
@@ -400,9 +403,12 @@ function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMe
   // delivery that introduces none (pure re-delivery) is noise.
   const firstArrivals = threadsQuotedInMessage(message).filter(ref => !seenThreads.includes(ref))
   if (firstArrivals.length === 0) return undefined
-  // A notice carries its own one-line account; other plugin forms (e.g.
-  // identity instructions) have none and keep the generic delivery label.
-  const label = source.form === 'notice' && source.summary !== undefined ? source.summary : 'Team delivery'
+  // The label states WHAT first arrived — the Thread refs this delivery
+  // introduced into the context — never the notice's own generic account
+  // (e.g. "unread work"): the timeline's decision surface needs the
+  // attribution before a checkpointRef pick, and it is only knowable here,
+  // at the fold, where first arrival is computed.
+  const label = `First arrival: ${firstArrivals.join(', ')}`
   return { key: boundaryRefFor(sessionId, seq), source: 'team-boundary', label, seq, turn: -1, turnEndSeq: -1, firstArrival: firstArrivals }
 }
 
