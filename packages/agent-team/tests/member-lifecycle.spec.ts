@@ -2682,6 +2682,50 @@ describe('Agent Team pressure policy integration (ticket 03)', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
+  it('names the atomic completion without an empty finished-Claim clause when the only Claim was early-accepted', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('emptyclause-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('emptyclause-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('emptyclause-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Ship the early accept', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+    const builderAgent = ctx.agents.get(builder.status.member.sessionId)!
+    adapter.enqueue(textResponse('builder saw the task.'))
+    await waitForIdle(ctx, builderAgent)
+    await ctx.agentTeam.readThreadForAgent(builderAgent, { requestId: requestId('emptyclause-initial-read'), workspaceId, taskRef: started.task!.taskRef })
+    // The owner still holds an ACTIVE Claim at accept time (early accept):
+    // the accept completes it atomically, so acceptedOwn === completedOwn
+    // for this reader. The combined-semantics branch must not then render
+    // an empty "finished Claim" list — regression against the review
+    // finding on commit afd2c16.
+    const claimed = await ctx.agentTeam.changeClaimForAgent(builderAgent, { requestId: requestId('emptyclause-claim'), workspaceId, taskRef: started.task!.taskRef, action: 'claim', baseRevision: started.thread.revision, direction: 'implement' })
+    if (claimed.kind !== 'committed') throw new Error(`expected committed claim, received ${claimed.kind}`)
+    const humanRead = await ctx.agentTeam.readThread({ requestId: requestId('emptyclause-human-read'), workspaceId, taskRef: started.task!.taskRef })
+    adapter.enqueue(textResponse('builder saw the atomic completion.'))
+    const builderIdle = new Promise<void>(resolve => {
+      const dispose = ctx.on('agent/status', ({ agent: subject, status }) => {
+        if (subject !== builderAgent || status !== 'idle') return
+        dispose()
+        resolve()
+      })
+    })
+    const accepted = await ctx.agentTeam.changeTask({ requestId: requestId('emptyclause-accept'), workspaceId, taskRef: started.task!.taskRef, action: 'accept', baseRevision: humanRead.thread.revision })
+    if (accepted.kind !== 'committed') throw new Error(`expected committed accept, received ${accepted.kind}`)
+    await builderIdle
+    const claimRef = (claimed as { claim: { claimRef: string } }).claim.claimRef
+    const builderRequest = JSON.stringify(adapter.requests.at(-1)!.messages)
+    expect(builderRequest).toContain('accept')
+    // The single-Claim early-accept owner gets the completed semantics
+    // alone, naming the Claim the acceptance completed — never an empty
+    // "finished Claim" clause.
+    expect(builderRequest).toContain('your open Claim')
+    expect(builderRequest).toContain(claimRef)
+    expect(builderRequest).toContain('was completed with it')
+    expect(builderRequest).not.toContain('finished Claim')
+    expect(builderRequest).not.toMatch(/Claim\s{2,}/)
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('derives the pressure budgets from the Member\'s current pinned route, honoring route changes', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId, pressureState } = await realHarness(adapter)

@@ -2480,11 +2480,16 @@ export default class AgentTeam extends TypertRemoteService {
     if (activity.kind === 'accept' && activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID && readerId !== undefined) {
       const acceptedOwn = (activity.acceptedClaimRefs ?? []).filter(claimRef => this.requireLedger().getClaim(claimRef)?.owner === readerId)
       const completedOwn = (activity.completedClaimRefs ?? []).filter(claimRef => this.requireLedger().getClaim(claimRef)?.owner === readerId)
-      if (acceptedOwn.length > 0 && completedOwn.length > 0) {
-        return `Team Task update\n${actor} accepted Task ${activity.taskRef}. Your Claim ${completedOwn.join(', ')} was completed with the acceptance, and your finished Claim ${acceptedOwn.filter(claimRef => !completedOwn.includes(claimRef)).join(', ')} was accepted. No further work is needed.`
+      // The early-accept-only reader holds no finished Claim: every own Claim
+      // was completed atomically, so the "finished Claim" clause's ref list
+      // would be empty. Render the completed semantics alone instead of a
+      // sentence with a dangling empty list.
+      const finishedOwn = acceptedOwn.filter(claimRef => !completedOwn.includes(claimRef))
+      if (completedOwn.length > 0 && finishedOwn.length > 0) {
+        return `Team Task update\n${actor} accepted Task ${activity.taskRef}. Your Claim ${completedOwn.join(', ')} was completed with the acceptance, and your finished Claim ${finishedOwn.join(', ')} was accepted. No further work is needed.`
       }
       if (completedOwn.length > 0) {
-        return `Team Task update\n${actor} accepted Task ${activity.taskRef} and your open Claim was completed with it. No further work is needed.`
+        return `Team Task update\n${actor} accepted Task ${activity.taskRef} and your open Claim ${completedOwn.join(', ')} was completed with it. No further work is needed.`
       }
       if (acceptedOwn.length > 0) {
         return `Team Task update\n${actor} accepted Task ${activity.taskRef}; your finished Claim ${acceptedOwn.join(', ')} was accepted. No further work is needed.`
