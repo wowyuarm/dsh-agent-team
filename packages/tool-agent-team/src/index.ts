@@ -181,7 +181,12 @@ const teamThread = defineTool({
     // reader just acknowledged carries one context-guidance section. History
     // renders the same structured lines but never the advice.
     render: (_args, value) => {
+      // The header always identifies the Thread first — the ref the model
+      // must echo in its next team_message reply — then the Task's standing
+      // when the Thread is taskful. An empty-facts status/follow result
+      // still carries the same identifying surface.
       const header = [
+        value.threadRef,
         value.taskRef === undefined ? '' : `${value.taskRef} · ${value.status}${value.resolution === undefined ? '' : `/${value.resolution}`}`,
         `revision ${value.revision}, following=${value.following}`,
       ].filter(part => part !== '').join(' · ')
