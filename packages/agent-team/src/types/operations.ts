@@ -147,7 +147,7 @@ export interface AgentTeamMemberSessionRolledOverOperation extends AgentTeamOper
      * source log, from seq 0 through the checkpoint's `turn/end` inclusive.
      */
     readonly sourceThroughSeq?: SessionLogOffset
-    /** Seq of the successful `new_context` tool result in the previous Session log. */
+    /** Seq of the successful `context_rollover` tool result in the previous Session log. */
     readonly handoffEventSeq: SessionSeq
     /** The checkpoint a return was addressed to; absent on a fresh rollover. */
     readonly checkpointRef?: AgentTeamContextCheckpointRef

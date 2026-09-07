@@ -33,7 +33,7 @@ export interface AgentTeamContextHandoffSource {
   readonly newSessionId: string
   /** Why the rollover happened. */
   readonly trigger: 'model' | 'pressure'
-  /** Seq of the successful `new_context` tool result in the previous Session log. */
+  /** Seq of the successful `context_rollover` tool result in the previous Session log. */
   readonly handoffEventSeq: number
   /** The checkpoint a return was seeded from; absent on a fresh rollover. */
   readonly checkpointRef?: string

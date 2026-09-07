@@ -6,6 +6,7 @@ import { SessionLogOffset, SessionSeq, type SessionEvent } from '@deepseek-ai/ds
 const SID = 'agent-team-test-session'
 import {
   CONTEXT_CHECKPOINT_TOOL_NAME,
+  CONTEXT_ROLLOVER_TOOL_NAME,
   NEW_CONTEXT_TOOL_NAME,
   agentTeamContextProjectionDefinition,
   checkpointRefFor,
@@ -50,7 +51,7 @@ function userMessageEvent(message: UserMessage): SessionEvent {
   return { type: 'user/message', seq: nextSeq(), time: 0, data: message } as SessionEvent
 }
 
-function newContextPair(turn: number, callId: string, args: { handoff: string; checkpointRef?: string; relatedFiles?: Array<{ path: string; reason: string }> }): SessionEvent[] {
+function rolloverPair(turn: number, callId: string, args: { handoff: string; checkpointRef?: string; relatedFiles?: Array<{ path: string; reason: string }> }): SessionEvent[] {
   return [
     contextToolCall(turn, callId, NEW_CONTEXT_TOOL_NAME, args),
     toolResult(turn, callId),
@@ -67,16 +68,57 @@ function checkpointPair(turn: number, callId: string, name: string): SessionEven
 beforeEach(() => { eventSeq = 0 })
 
 describe('AgentTeam context projection — rollover intent', () => {
-  it('a successful new_context call/result pair creates pending intent', () => {
+  it('a successful context_rollover call/result pair creates pending intent', () => {
     const events = [
       turnStart(1),
-      ...newContextPair(1, 'call-1', { handoff: 'continue from here' }),
+      ...rolloverPair(1, 'call-1', { handoff: 'continue from here' }),
       turnEnd(1),
     ]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.pending).toMatchObject({ handoff: 'continue from here', turn: 1, turnEndSeq: events.at(-1)!.seq })
     expect(state.pending?.resultSeq).toBe(events[2]!.seq)
     expect(state.pending?.relatedFiles).toEqual([])
+  })
+
+  it('the current tool name creates pending intent identically', () => {
+    // The model-facing tool is `context_rollover`; a successful pair under
+    // the new name produces the same pending intent shape.
+    const events = [
+      turnStart(1),
+      contextToolCall(1, 'call-rollover', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'new name, same swap' }),
+      toolResult(1, 'call-rollover'),
+      turnEnd(1),
+    ]
+    const state = foldContextProjection(events, undefined, SID)
+    expect(state.pending).toMatchObject({ handoff: 'new name, same swap', turn: 1 })
+  })
+
+  it('the legacy new_context name still folds into pending intent — crash recovery of old logs', () => {
+    // Sessions recorded before the rename carry durable `new_context`
+    // call/result pairs. The projection must keep recognizing them: this is
+    // the legacy decoder for pending rollovers and checkpoint returns, not a
+    // tool alias — no new tool call can carry the old name, but recovery of
+    // an existing Member generation depends on the old events still folding.
+    const legacy = [
+      turnStart(1),
+      contextToolCall(1, 'call-legacy', NEW_CONTEXT_TOOL_NAME, { handoff: 'legacy intent', checkpointRef: 'context-checkpoint-' + 'e'.repeat(64) }),
+      toolResult(1, 'call-legacy'),
+      turnEnd(1),
+    ]
+    const legacyState = foldContextProjection(legacy, undefined, SID)
+    expect(legacyState.pending).toMatchObject({ handoff: 'legacy intent' })
+    expect(legacyState.pending?.checkpointRef).toBe('context-checkpoint-' + 'e'.repeat(64))
+    // Mixed lineage: an ancestor recorded the legacy call, the current
+    // generation records the new name — both folds resolve their own intent.
+    const modern = [
+      turnStart(1),
+      contextToolCall(1, 'call-modern', CONTEXT_ROLLOVER_TOOL_NAME, { handoff: 'modern intent' }),
+      toolResult(1, 'call-modern'),
+      turnEnd(1),
+    ]
+    const mixedState = foldContextProjection([...legacy, ...modern], undefined, SID)
+    // The first successful pair owns the swap; identity check only.
+    expect(mixedState.pending).not.toBeNull()
   })
 
   it('failed, dangling, or malformed results never create intent', () => {
@@ -116,8 +158,8 @@ describe('AgentTeam context projection — rollover intent', () => {
   it('a second successful call before the turn ends does not replace the first intent', () => {
     const events = [
       turnStart(1),
-      ...newContextPair(1, 'call-1', { handoff: 'first' }),
-      ...newContextPair(1, 'call-2', { handoff: 'second' }),
+      ...rolloverPair(1, 'call-1', { handoff: 'first' }),
+      ...rolloverPair(1, 'call-2', { handoff: 'second' }),
       turnEnd(1),
     ]
     const state = foldContextProjection(events, undefined, SID)
@@ -127,7 +169,7 @@ describe('AgentTeam context projection — rollover intent', () => {
   it('inherited fork-prefix calls never produce intent in a seeded child', () => {
     const parentEvents = [
       turnStart(1),
-      ...newContextPair(1, 'call-parent', { handoff: 'old generation' }),
+      ...rolloverPair(1, 'call-parent', { handoff: 'old generation' }),
       turnEnd(1),
     ]
     const childEvents: SessionEvent[] = [...parentEvents, turnStart(2), turnEnd(2)]
@@ -141,7 +183,7 @@ describe('AgentTeam context projection — rollover intent', () => {
   it('the live unit folds event-by-event to the same state as the cold fold', () => {
     const events = [
       turnStart(1),
-      ...newContextPair(1, 'call-1', { handoff: 'live', relatedFiles: [{ path: 'src/index.ts', reason: 'in progress' }] }),
+      ...rolloverPair(1, 'call-1', { handoff: 'live', relatedFiles: [{ path: 'src/index.ts', reason: 'in progress' }] }),
       turnEnd(1),
     ]
     const definition = agentTeamContextProjectionDefinition(SID)

@@ -347,8 +347,15 @@ export interface AgentTeamTaskActivity extends AgentTeamActivityBase {
   readonly kind: 'promote' | 'accept' | 'close' | 'reopen'
   /** Claims atomically released by close; absent for other Task transitions. */
   readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
-  /** Active claims the Human acceptance completed alongside the Task; absent for plain accepts. */
+  /** Active claims the Human acceptance completed alongside the Task; absent when none were active. */
   readonly completedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
+  /**
+   * Every done Claim at acceptance time, including pre-finished ones — the
+   * durable discriminator accept markers deliver from. Always present on
+   * new accepts (possibly empty); legacy records predate it and keep the
+   * completed-only wake semantics.
+   */
+  readonly acceptedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
 }
 
 /** One automatic, public release summary caused by a membership lifecycle action. */

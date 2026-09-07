@@ -9,9 +9,90 @@ import type {
   AgentTeamThreadRef,
 } from '@wowyuarm/dsh-agent-team/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { AgentTeamContextAdvice } from '@wowyuarm/dsh-agent-team/types'
 
 export const name = 'wowyuarm-agent-team-tools'
 export const inject = ['tools']
+
+/** Model-facing view of one structured Thread activity fact, shared by read and history. */
+interface ActivityFactView {
+  readonly sequence: number
+  readonly kind: 'activity'
+  readonly activity: string
+  readonly actor: string
+  readonly taskRef: string
+  readonly claimRef?: string
+  readonly claimRefs?: string[]
+  readonly completedClaimRefs?: string[]
+  readonly acceptedClaimRefs?: string[]
+  readonly releasedClaimRefs?: string[]
+  readonly unread?: boolean
+  readonly direct?: boolean
+}
+
+/** Model-facing view of one message fact. */
+interface MessageFactView {
+  readonly sequence: number
+  readonly kind: 'message'
+  readonly body: string
+  readonly sender: string
+  readonly mentions: string[]
+  readonly unread?: boolean
+  readonly direct?: boolean
+}
+
+type FactView = MessageFactView | ActivityFactView
+
+/** Model-facing view of read-time context advice; absent fields mean unmeasured. */
+interface ContextAdviceView {
+  readonly usageTokens?: number
+  readonly taskBoundaryThreshold?: number
+  readonly handoffAt?: number
+  readonly hardLimit?: number
+  readonly action: string
+  readonly guidance: string
+}
+
+function activityFactView(
+  sequence: number,
+  activity: { readonly kind: string; readonly actor: string; readonly taskRef: AgentTeamTaskRef
+    readonly claimRef?: AgentTeamClaimRef | undefined; readonly claimRefs?: readonly AgentTeamClaimRef[] | undefined
+    readonly completedClaimRefs?: readonly AgentTeamClaimRef[] | undefined; readonly acceptedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
+    readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined },
+  markers?: { readonly unread: boolean; readonly direct: boolean } | undefined,
+): ActivityFactView {
+  return {
+    sequence, kind: 'activity', activity: activity.kind, actor: activity.actor, taskRef: activity.taskRef,
+    ...(activity.claimRef === undefined ? {} : { claimRef: activity.claimRef }),
+    ...(activity.claimRefs === undefined || activity.claimRefs.length === 0 ? {} : { claimRefs: [...activity.claimRefs] }),
+    ...(activity.completedClaimRefs === undefined || activity.completedClaimRefs.length === 0 ? {} : { completedClaimRefs: [...activity.completedClaimRefs] }),
+    ...(activity.acceptedClaimRefs === undefined || activity.acceptedClaimRefs.length === 0 ? {} : { acceptedClaimRefs: [...activity.acceptedClaimRefs] }),
+    ...(activity.releasedClaimRefs === undefined || activity.releasedClaimRefs.length === 0 ? {} : { releasedClaimRefs: [...activity.releasedClaimRefs] }),
+    ...(markers === undefined ? {} : { unread: markers.unread, direct: markers.direct }),
+  }
+}
+
+function adviceView(advice: AgentTeamContextAdvice): ContextAdviceView {
+  return {
+    ...(advice.usageTokens === undefined ? {} : { usageTokens: advice.usageTokens }),
+    ...(advice.taskBoundaryThreshold === undefined ? {} : { taskBoundaryThreshold: advice.taskBoundaryThreshold }),
+    ...(advice.handoffAt === undefined ? {} : { handoffAt: advice.handoffAt }),
+    ...(advice.hardLimit === undefined ? {} : { hardLimit: advice.hardLimit }),
+    action: advice.action, guidance: advice.guidance,
+  }
+}
+
+/** Render one structured activity fact as a self-describing decision-surface line. */
+function activityLine(fact: ActivityFactView): string {
+  const segments = [`${fact.sequence}`, fact.actor, fact.activity]
+  segments.push(`Task ${fact.taskRef}`)
+  if (fact.claimRef !== undefined) segments.push(`Claim ${fact.claimRef}`)
+  if (fact.claimRefs !== undefined) segments.push(`claims released ${fact.claimRefs.join(', ')}`)
+  if (fact.completedClaimRefs !== undefined) segments.push(`completed claims ${fact.completedClaimRefs.join(', ')}`)
+  if (fact.acceptedClaimRefs !== undefined) segments.push(`accepted claims ${fact.acceptedClaimRefs.join(', ')}`)
+  if (fact.releasedClaimRefs !== undefined) segments.push(`released claims ${fact.releasedClaimRefs.join(', ')}`)
+  return segments.join(' ')
+}
 
 function service(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>): AgentTeam {
   const host = agent.ctx.get('agentTeam') as AgentTeam | undefined
@@ -87,14 +168,32 @@ const teamThread = defineTool({
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
       } } },
       facts: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, activity: { type: 'string' }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
+        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, activity: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
       } } },
+      contextAdvice: { type: 'object', additionalProperties: false, properties: {
+        usageTokens: { type: 'number' }, taskBoundaryThreshold: { type: 'number' }, handoffAt: { type: 'number' }, hardLimit: { type: 'number' },
+        action: { type: 'string', required: true }, guidance: { type: 'string', required: true },
+      } },
     } },
-    render: (_args, value) => [{ type: 'text', text: value.facts.length === 0
-      ? `${value.threadRef} · revision ${value.revision}, following=${value.following}`
-      : [`revision ${value.revision}`, ...value.facts.map(fact => fact.kind === 'message'
+    // Renders are the only channel a tool result reaches the model through:
+    // the header states the Task's standing, each activity line names the
+    // actor and every Claim the activity concluded, and an acceptance the
+    // reader just acknowledged carries one context-guidance section. History
+    // renders the same structured lines but never the advice.
+    render: (_args, value) => {
+      const header = [
+        value.taskRef === undefined ? '' : `${value.taskRef} · ${value.status}${value.resolution === undefined ? '' : `/${value.resolution}`}`,
+        `revision ${value.revision}, following=${value.following}`,
+      ].filter(part => part !== '').join(' · ')
+      const lines = [header]
+      for (const fact of value.facts as FactView[]) {
+        lines.push(fact.kind === 'message'
           ? `${fact.sequence} [${fact.sender ?? 'unknown sender'}] ${fact.body}`
-          : `${fact.sequence} ${fact.activity}`)].join('\n') }],
+          : activityLine(fact))
+      }
+      if (value.kind === 'read' && value.contextAdvice !== undefined) lines.push(...adviceLines(value.contextAdvice))
+      return [{ type: 'text', text: lines.join('\n') }]
+    },
   },
   async execute(args, exec) {
     const agent = exec.agent
@@ -120,13 +219,13 @@ const teamThread = defineTool({
       const status = host.attentionStatusForAgent(agent, base)
       return threadResult('history', history, status.attention, history.facts.map(fact => fact.kind === 'message'
           ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions] }
-          : { sequence: fact.sequence, kind: 'activity', activity: fact.activity.kind }), { cursor: history.cursor, hasMore: history.hasMore })
+          : activityFactView(fact.sequence, fact.activity)), { cursor: history.cursor, hasMore: history.hasMore })
     }
     if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('read does not accept history arguments')
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
         ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], unread: entry.unread, direct: entry.direct }
-        : { sequence: entry.fact.sequence, kind: 'activity', activity: entry.fact.activity.kind, unread: entry.unread, direct: entry.direct }), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount })
+        : activityFactView(entry.fact.sequence, entry.fact.activity, { unread: entry.unread, direct: entry.direct })), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount, ...(read.contextAdvice === undefined ? {} : { contextAdvice: adviceView(read.contextAdvice) }) })
   },
 })
 
@@ -134,9 +233,9 @@ function threadResult(
   kind: 'status' | 'follow' | 'unfollow' | 'read' | 'history',
   snapshot: Awaited<ReturnType<AgentTeam['readThreadForAgent']>> | ReturnType<AgentTeam['threadHistoryForAgent']>,
   attention: Awaited<ReturnType<AgentTeam['readThreadForAgent']>>['attention'],
-  facts: Array<{ sequence: number; kind: string; body?: string; sender?: string; mentions?: string[]; activity?: string; unread?: boolean; direct?: boolean }>,
-  extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number } = {},
-) {
+  facts: FactView[],
+  extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number; contextAdvice?: ContextAdviceView } = {},
+): { anchor: { messageRef: string; sender: string; body: string; sequence: number }; threadRef: string; revision: number; kind: string; following: boolean; taskRef?: string; status?: string; resolution?: string; readThroughSequence?: number; remainingUnreadCount?: number; cursor?: number; hasMore?: boolean; claims: Array<{ claimRef: string; direction: string; state: string; owner: string }>; facts: FactView[]; contextAdvice?: ContextAdviceView } {
   return {
     kind, threadRef: snapshot.thread.threadRef, revision: snapshot.thread.revision,
     ...(snapshot.task === undefined ? {} : { taskRef: snapshot.task.taskRef, status: snapshot.task.status, resolution: snapshot.task.resolution }),
@@ -147,6 +246,15 @@ function threadResult(
     claims: snapshot.claims.map(claim => ({ claimRef: claim.claimRef, direction: claim.direction, state: claim.state, owner: claim.owner })),
     facts,
   }
+}
+
+/** Render one read-time acceptance advice; unavailable never prints a fabricated number. */
+function adviceLines(advice: ContextAdviceView): string[] {
+  const measured = advice.usageTokens !== undefined && advice.taskBoundaryThreshold !== undefined && advice.handoffAt !== undefined && advice.hardLimit !== undefined
+  const summary = measured
+    ? `${advice.usageTokens!.toLocaleString('en-US')} tokens used; Task-boundary threshold ${advice.taskBoundaryThreshold!.toLocaleString('en-US')}; normal handoff at ${advice.handoffAt!.toLocaleString('en-US')}; hard limit ${advice.hardLimit!.toLocaleString('en-US')}.`
+    : 'Context usage could not be measured for this acceptance.'
+  return [`Context guidance — ${summary}`, `Action: ${advice.action}. ${advice.guidance}`]
 }
 
 const teamMessage = markAgentTeamPreset(defineTool({

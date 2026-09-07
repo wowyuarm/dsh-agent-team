@@ -102,6 +102,7 @@ import type {
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
+  AgentTeamContextAdvice,
   AgentTeamThreadObservations,
   AgentTeamThreadObservationsRequest,
   AgentTeamUpdateChannelRequest,
@@ -137,6 +138,12 @@ const CONTEXT_HARD_LIMIT_CAP = 256_000
 const CONTEXT_HANDOFF_AT_CAP = 200_000
 const CONTEXT_HANDOFF_RESERVE = 8_000
 const CONTEXT_SAFE_OUTPUT_RESERVE = 16_000
+/**
+ * Usage at or above which an acknowledged acceptance advises a fresh
+ * rollover instead of keeping the context; capped by the route's effective
+ * handoff budget so narrow routes get a proportionally earlier boundary.
+ */
+const ACCEPT_TASK_BOUNDARY_THRESHOLD = 128_000
 
 /** One parked long-poll, restricted to one change scope when it declares one. */
 interface ChangeWaiter {
@@ -220,7 +227,7 @@ export interface AgentTeamTimelineToolRequest {
 
 /** One structural timeline item: a checkpoint or boundary candidate with pricing. */
 export interface AgentTeamTimelineItem {
-  /** Opaque stable ref; the selection surface for `new_context.checkpointRef`. */
+  /** Opaque stable ref; the selection surface for `context_rollover.checkpointRef`. */
   readonly checkpointRef: string
   /** Semantic label: the model-supplied checkpoint name or boundary label. */
   readonly name: string
@@ -236,7 +243,7 @@ export interface AgentTeamTimelineItem {
    * nothing attributable was delivered.
    */
   readonly affectedThreads: readonly string[]
-  /** Whether `new_context` accepts this ref as a seed target. */
+  /** Whether `context_rollover` accepts this ref as a seed target. */
   readonly restorable: boolean
   /** When not restorable, the concise reason. */
   readonly reason?: string
@@ -341,7 +348,7 @@ export default class AgentTeam extends TypertRemoteService {
   })
   /**
    * Context self-management: the one deep module that turns a Member's
-   * successful `new_context` tool result into its next private context
+   * successful `context_rollover` tool result into its next private context
    * generation. The ledger owns the binding audit, the Session projection
    * owns intent, and this coordinator owns only reconstructible process
    * state. See docs/architecture.md and docs/team-collaboration.md.
@@ -1191,7 +1198,59 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.memberCall(agent, request.workspaceId)
     const result = await this.requireLedger().readThread({ ...request, actor })
     if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    const value = result.value
+    // Private read-time enrich: an acceptance the reader just acknowledged is
+    // a natural Task boundary, so the Host prices the reader's context once,
+    // after the durable read has committed. Never a ledger fact, never
+    // persisted, and a measurement failure degrades to an explicit
+    // `unavailable` — the committed read is never reversed.
+    const advice = await this.acceptanceContextAdvice(agent, value)
+    return advice === undefined ? value : Object.freeze({ ...value, contextAdvice: advice })
+  }
+
+  /**
+   * Context advice for one acceptance acknowledged by this read: only when
+   * the read carried an unread accept activity AND the Task is still done.
+   * Repeat reads (nothing unread), history-style reads, and reopened Tasks
+   * carry no advice — the acceptance no longer stands.
+   */
+  private async acceptanceContextAdvice(agent: Agent, read: AgentTeamThreadReadResult): Promise<AgentTeamContextAdvice | undefined> {
+    if (read.task === undefined || read.task.resolution !== 'accepted' || read.task.status !== 'done') return undefined
+    const acknowledgedAccept = read.facts.some(entry => entry.unread && entry.fact.kind === 'activity'
+      && entry.fact.activity.kind === 'accept')
+    if (!acknowledgedAccept) return undefined
+    return this.contextAdviceFor(agent)
+  }
+
+  /** Price the reading Member's context against its current route's budgets. */
+  private async contextAdviceFor(agent: Agent): Promise<AgentTeamContextAdvice> {
+    try {
+      const limits = await this.routeLimitsForAgent(agent)
+      if (limits === undefined) return this.unavailableAdvice()
+      const taskBoundaryThreshold = Math.min(ACCEPT_TASK_BOUNDARY_THRESHOLD, limits.handoffAt)
+      if (limits.usageTokens >= limits.handoffAt) {
+        return Object.freeze({ usageTokens: limits.usageTokens, taskBoundaryThreshold, handoffAt: limits.handoffAt, hardLimit: limits.hardLimit,
+          action: 'handoff-now',
+          guidance: 'You are at or above the handoff budget. Finish the current atomic action and unsettled evidence, then call context_rollover with a fresh handoff now.' })
+      }
+      if (limits.usageTokens >= taskBoundaryThreshold) {
+        return Object.freeze({ usageTokens: limits.usageTokens, taskBoundaryThreshold, handoffAt: limits.handoffAt, hardLimit: limits.hardLimit,
+          action: 'rollover',
+          guidance: 'Finish the acceptance closeout, persist only durable reusable conclusions, collect or stop jobs, then call context_rollover with a fresh handoff covering every other active Claim. Do not return to an old checkpoint solely because this Task was accepted.' })
+      }
+      return Object.freeze({ usageTokens: limits.usageTokens, taskBoundaryThreshold, handoffAt: limits.handoffAt, hardLimit: limits.hardLimit,
+        action: 'keep',
+        guidance: 'Keep the current context for possible acceptance follow-up. This acceptance is already a timeline boundary; do not create a redundant checkpoint. Record a checkpoint only before the next noisy or risky phase.' })
+    } catch {
+      // Any measurement failure degrades explicitly; the read stays durable.
+      return this.unavailableAdvice()
+    }
+  }
+
+  private unavailableAdvice(): AgentTeamContextAdvice {
+    return Object.freeze({ usageTokens: undefined, taskBoundaryThreshold: undefined, handoffAt: undefined, hardLimit: undefined,
+      action: 'unavailable',
+      guidance: 'Context usage could not be measured for this acceptance; manage context by your existing pressure policy.' })
   }
 
   /**
@@ -1535,7 +1594,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Agent-only checkpoint request validation: the tool calls this inside its
-   * own running turn. Like `new_context`, the tool performs no side effect —
+   * own running turn. Like `context_rollover`, the tool performs no side effect —
    * the durable checkpoint is the successful `tool/call`+`tool/result` pair
    * the Session projection folds; the ref returned here is deterministic
    * from this Member Session's identity plus the tool call id, so the model
@@ -1784,13 +1843,13 @@ export default class AgentTeam extends TypertRemoteService {
    */
   requestNewContext(agent: Agent, request: AgentTeamNewContextToolRequest): AgentTeamNewContextToolOutcome {
     const member = this.memberForAgent(agent)
-    if (member === undefined || member.state !== 'enabled') throw new Error('new_context requires an active Team Member')
+    if (member === undefined || member.state !== 'enabled') throw new Error('context_rollover requires an active Team Member')
     if (this.contextManagement.isTransitioning(member.memberId)) throw new Error('a context rollover is already scheduled for this Member; wait for it to finish before requesting another')
     if (this.runningAgents.has(agent.id) !== true) {
       // The tool runs inside the Member's own turn, so a non-running agent at
       // this point is a harness anomaly; refuse rather than schedule a swap
       // outside the turn fence.
-      throw new Error('new_context must run inside this Member\'s own running turn')
+      throw new Error('context_rollover must run inside this Member\'s own running turn')
     }
     // Job ownership guard: disposing the old Agent cancels its running jobs
     // and orphaned terminal-but-unreported output would vanish with it. The
@@ -1799,7 +1858,7 @@ export default class AgentTeam extends TypertRemoteService {
     // settle between this validation and the swap.
     const blocking = this.ownedJobsBlockingRollover(agent)
     if (blocking.length > 0) {
-      throw new Error(`new_context is refused while this Member owns jobs that would not survive the switch (${blocking.join(', ')}); collect or stop them first, then retry`)
+      throw new Error(`context_rollover is refused while this Member owns jobs that would not survive the switch (${blocking.join(', ')}); collect or stop them first, then retry`)
     }
     if (request.checkpointRef !== undefined) {
       // Seeded return validation is async (it cold-reads archived ancestors),
@@ -1969,7 +2028,7 @@ export default class AgentTeam extends TypertRemoteService {
         this.validateMemberPreset(agentCtx)
         installModelSelection(agentCtx, selected)
         // Admission gate for pending context rollovers: once a successful
-        // new_context result is durable, queued input must not open another
+        // context_rollover result is durable, queued input must not open another
         // old-generation model request. The turn-stop boundary captures the
         // inbox (non-Team input is carried to the new generation), and a
         // racing pre-step rejects instead of admitting claimed messages.
@@ -2413,11 +2472,23 @@ export default class AgentTeam extends TypertRemoteService {
   private activityNotification(activity: AgentTeamActivity, readerId?: AgentTeamMemberId): string {
     const actor = activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID
       ? 'human' : this.requireLedger().getMember(activity.actor)?.handle ?? activity.actor
-    // Early acceptance completes the reader's own open Claim inside the accept
-    // operation: say so plainly, or the owner keeps working on a done Task.
-    if (activity.kind === 'accept' && activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID && readerId !== undefined
-      && activity.completedClaimRefs?.some(claimRef => this.requireLedger().getClaim(claimRef)?.owner === readerId)) {
-      return `Team Task update\n${actor} accepted Task ${activity.taskRef} and your open Claim was completed with it. No further work is needed.`
+    // An acceptance concludes the reader's own Claims in two ways: a Claim
+    // already finished before the accept was accepted (its work stands), and
+    // a still-open Claim the accept completed atomically (no further work is
+    // needed). Both must be said plainly, or the owner keeps working on a
+    // done Task or never learns its contribution was accepted.
+    if (activity.kind === 'accept' && activity.actor === AGENT_TEAM_HUMAN_MEMBER_ID && readerId !== undefined) {
+      const acceptedOwn = (activity.acceptedClaimRefs ?? []).filter(claimRef => this.requireLedger().getClaim(claimRef)?.owner === readerId)
+      const completedOwn = (activity.completedClaimRefs ?? []).filter(claimRef => this.requireLedger().getClaim(claimRef)?.owner === readerId)
+      if (acceptedOwn.length > 0 && completedOwn.length > 0) {
+        return `Team Task update\n${actor} accepted Task ${activity.taskRef}. Your Claim ${completedOwn.join(', ')} was completed with the acceptance, and your finished Claim ${acceptedOwn.filter(claimRef => !completedOwn.includes(claimRef)).join(', ')} was accepted. No further work is needed.`
+      }
+      if (completedOwn.length > 0) {
+        return `Team Task update\n${actor} accepted Task ${activity.taskRef} and your open Claim was completed with it. No further work is needed.`
+      }
+      if (acceptedOwn.length > 0) {
+        return `Team Task update\n${actor} accepted Task ${activity.taskRef}; your finished Claim ${acceptedOwn.join(', ')} was accepted. No further work is needed.`
+      }
     }
     if (activity.kind === 'claim' || activity.kind === 'done' || activity.kind === 'release') {
       return `Team Task update\n${actor} ${activity.kind} Claim ${activity.claimRef} on Task ${activity.taskRef}.`

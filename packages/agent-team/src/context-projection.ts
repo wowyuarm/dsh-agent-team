@@ -3,7 +3,9 @@
  *
  * One pure synchronous fold over a Member Session log derives every
  * context-management fact the Host needs: pending rollover intent (a
- * successful `new_context` call/result pair), explicit checkpoints (a
+ * successful `context_rollover` call/result pair — under the legacy
+ * `new_context` name for Sessions recorded before the rename), explicit
+ * checkpoints (a
  * successful `context_checkpoint` pair resolved by its containing `turn/end`),
  * handoff/compaction boundaries, and quiet-continuation delivery state. The
  * fold is the single authority for these facts — no second store, and callers
@@ -12,7 +14,7 @@
  * A seeded child Session folds with `inheritedEventCount` respected: events
  * inherited from the fork prefix are already resolved history, never fresh
  * intent. The cold fold and the registered unit both start past the inherited
- * cut, so an inherited historical `new_context` call can never schedule
+ * cut, so an inherited historical rollover call can never schedule
  * another transition in the child.
  * @module @wowyuarm/dsh-agent-team/context-projection
  */
@@ -36,7 +38,21 @@ const TEAM_CLAIM_TOOL_NAME = 'team_claim'
 
 /** Stable tool names the projection recognizes. */
 export const CONTEXT_CHECKPOINT_TOOL_NAME = 'context_checkpoint'
+export const CONTEXT_ROLLOVER_TOOL_NAME = 'context_rollover'
+/**
+ * Legacy decoder name: the rollover tool was renamed `new_context` →
+ * `context_rollover`, and Sessions recorded before the rename still carry
+ * durable `new_context` call/result pairs. The projection keeps folding them
+ * — pending rollovers and crash recovery of existing Members depend on old
+ * events still resolving intent — but this is a log decoder, not a tool
+ * alias: no new call can carry the old name.
+ */
 export const NEW_CONTEXT_TOOL_NAME = 'new_context'
+
+/** Whether one recorded tool name is a rollover call under the current or the legacy name. */
+function isRolloverToolName(name: string): boolean {
+  return name === CONTEXT_ROLLOVER_TOOL_NAME || name === NEW_CONTEXT_TOOL_NAME
+}
 
 /** One completed-turn checkpoint anchor in this Session lineage. */
 export interface ContextCheckpointEntry {
@@ -52,18 +68,18 @@ export interface ContextCheckpointEntry {
   readonly turnEndSeq: number
 }
 
-/** Arguments the model passed to one successful `new_context` call. */
-export interface NewContextArguments {
+/** Arguments the model passed to one successful rollover call. */
+export interface RolloverToolArguments {
   readonly handoff: string
   readonly checkpointRef?: AgentTeamContextCheckpointRef | undefined
   readonly relatedFiles: readonly { readonly path: string; readonly reason: string }[]
 }
 
 /** Rollover intent waiting for the containing turn to finish and the Agent to idle. */
-export interface PendingRolloverIntent extends NewContextArguments {
-  /** The provider-issued call id of the successful `new_context` call. */
+export interface PendingRolloverIntent extends RolloverToolArguments {
+  /** The provider-issued call id of the successful rollover call. */
   readonly toolCallId: string
-  /** Seq of the successful `new_context` tool result. */
+  /** Seq of the successful rollover tool result. */
   readonly resultSeq: number
   /** Turn containing the successful call; the swap waits for its end. */
   readonly turn: number
@@ -214,7 +230,7 @@ export function checkpointRefFor(sessionId: string, callId: string): AgentTeamCo
  * anchoring event seq. Consecutive generations routinely repeat event seqs,
  * so the Session identity must be part of the key or two generations'
  * boundaries at the same seq collide — the timeline would silently drop the
- * ancestor item and a `new_context` return would resolve the wrong boundary.
+ * ancestor item and a `context_rollover` return would resolve the wrong boundary.
  */
 export function boundaryRefFor(sessionId: string, seq: number): AgentTeamContextCheckpointRef {
   return `team-boundary-${createHash('sha256').update(JSON.stringify([sessionId, seq])).digest('hex')}` as AgentTeamContextCheckpointRef
@@ -260,7 +276,7 @@ export const agentTeamContextProjectionDefinition = (sessionId: string): Project
  */
 function applyContextEvent(state: AgentTeamContextProjectionState, event: SessionEvent, sessionId: string): AgentTeamContextProjectionState {
   if (event.type === 'tool/call') {
-    if (event.data.name !== NEW_CONTEXT_TOOL_NAME && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME && event.data.name !== TEAM_CLAIM_TOOL_NAME) return state
+    if (!isRolloverToolName(event.data.name) && event.data.name !== CONTEXT_CHECKPOINT_TOOL_NAME && event.data.name !== TEAM_CLAIM_TOOL_NAME) return state
     // Only Team-claim mutations (not `list`) are semantic timeline candidates.
     if (event.data.name === TEAM_CLAIM_TOOL_NAME && !argumentsAreClaimMutation(event.data.arguments)) return state
     return { ...state, openCalls: [...state.openCalls, { callId: event.data.callId, name: event.data.name, arguments: event.data.arguments }] }
@@ -344,8 +360,8 @@ function applyToolResult(
   if (index === -1) return state
   const recorded = state.openCalls[index]!
   const openCalls = state.openCalls.filter(call => call.callId !== block.toolCallId)
-  if (recorded.name === NEW_CONTEXT_TOOL_NAME) {
-    const parsed = parseNewContextArguments(recorded.arguments)
+  if (isRolloverToolName(recorded.name)) {
+    const parsed = parseRolloverArguments(recorded.arguments)
     if (parsed === undefined) return { ...state, openCalls }
     // One pending intent at a time: a second successful call before the turn
     // ends replaces nothing — the first owns the swap.
@@ -473,7 +489,7 @@ function argumentsAreClaimMutation(raw: string): boolean {
   return action === 'claim' || action === 'done' || action === 'release'
 }
 
-function parseNewContextArguments(raw: string): NewContextArguments | undefined {
+function parseRolloverArguments(raw: string): RolloverToolArguments | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)

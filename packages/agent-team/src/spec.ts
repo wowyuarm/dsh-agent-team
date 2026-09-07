@@ -225,6 +225,7 @@ const taskActivitySchema = z.object({
   kind: z.union([z.literal('promote'), z.literal('accept'), z.literal('close'), z.literal('reopen')]),
   releasedClaimRefs: z.array(claimRefSchema).min(1).optional(),
   completedClaimRefs: z.array(claimRefSchema).min(1).optional(),
+  acceptedClaimRefs: z.array(claimRefSchema).optional(),
 }).strict()
 
 const claimsReleasedActivitySchema = z.object({

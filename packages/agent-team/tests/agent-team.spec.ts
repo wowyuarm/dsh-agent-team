@@ -183,12 +183,16 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const accepted = committed((await ledger.changeTask({ requestId: requestId('accept'), workspaceId: alpha, taskRef: started.task.taskRef,
       action: 'accept', baseRevision: started.thread.revision, actor: agentTeamHumanActor() })).value)
     // Direct acceptance of work finished outside the ledger: no Claims to
-    // complete, so the activity carries no claim lists and the inbox delta
-    // stays empty for members who never followed the Thread.
+    // complete, so the activity carries no completion list. The acceptance
+    // list is still written (explicitly empty): it is the durable
+    // discriminator every done Claim owner is notified from, even when the
+    // list is empty, and its presence distinguishes new accepts from legacy
+    // records that carry neither list.
     expect(accepted.task).toMatchObject({ status: 'done', resolution: 'accepted' })
     expect(accepted.claims).toEqual([])
     expect(accepted.activity.kind).toBe('accept')
     expect(accepted.activity.completedClaimRefs).toBeUndefined()
+    expect(accepted.activity.acceptedClaimRefs).toEqual([])
 
     const view = ledger.view({ workspaceId: alpha })
     expect(view.activities).toEqual([expect.objectContaining({ kind: 'accept', taskRef: started.task.taskRef })])
@@ -198,6 +202,112 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const cold = replayLedger(test)
     expect(() => cold.validate()).not.toThrow()
     expect(cold.view({ workspaceId: alpha }).tasks.find(task => task.taskRef === started.task.taskRef)).toMatchObject({ status: 'done', resolution: 'accepted' })
+  })
+
+  it('notifies every done Claim owner on a normal accept and dedupes multi-claim owners into one marker', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:agent-ship', 'ship')
+    const { actor: actorTwo } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:agent-fix', 'fix')
+    // Two Claims: the same owner finished one earlier (normal flow, the claim
+    // was done BEFORE the accept), another member still holds an active one.
+    const firstRead = (await ledger.readThread({ requestId: requestId('read-claim-1'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    const firstClaim = committed((await ledger.changeClaim({ requestId: requestId('claim-1'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'one', baseRevision: firstRead.thread.revision, actor })).value)
+    const readDone1 = (await ledger.readThread({ requestId: requestId('read-done-1'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    committed((await ledger.changeClaim({ requestId: requestId('done-1'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'done', claimRef: firstClaim.claim.claimRef, baseRevision: readDone1.thread.revision, actor })).value)
+    const secondRead = (await ledger.readThread({ requestId: requestId('read-claim-2'), workspaceId: alpha, taskRef: started.task.taskRef, actor: actorTwo })).value
+    const activeClaim = committed((await ledger.changeClaim({ requestId: requestId('claim-2'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'two', baseRevision: secondRead.thread.revision, actor: actorTwo })).value)
+    // The finished owner claims a second direction and finishes it too: both
+    // done Claims belong to the same owner and must produce ONE marker.
+    const thirdRead = (await ledger.readThread({ requestId: requestId('read-claim-3'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    const secondOwnClaim = committed((await ledger.changeClaim({ requestId: requestId('claim-3'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'three', baseRevision: thirdRead.thread.revision, actor })).value)
+    const readDone3 = (await ledger.readThread({ requestId: requestId('read-done-3'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    committed((await ledger.changeClaim({ requestId: requestId('done-3'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'done', claimRef: secondOwnClaim.claim.claimRef, baseRevision: readDone3.thread.revision, actor })).value)
+
+    const humanRead = (await ledger.readThread({ requestId: requestId('human-read-accept'), workspaceId: alpha, taskRef: started.task.taskRef,
+      actor: agentTeamHumanActor() })).value
+    const accepted = committed((await ledger.changeTask({ requestId: requestId('normal-accept'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'accept', baseRevision: humanRead.thread.revision, actor: agentTeamHumanActor() })).value)
+    // Early acceptance still completes the active Claim; the acceptance list
+    // covers every done Claim at commit time — both the pre-finished pair and
+    // the atomically completed one.
+    expect(accepted.activity.completedClaimRefs).toEqual([activeClaim.claim.claimRef])
+    expect(accepted.activity.acceptedClaimRefs).toEqual([firstClaim.claim.claimRef, activeClaim.claim.claimRef, secondOwnClaim.claim.claimRef].sort())
+
+    // The previously-done owner wakes from a normal accept — the old ledger
+    // stayed silent here — with exactly one unread item for this Thread.
+    const inbox = ledger.inbox(actor, { workspaceId: alpha })
+    expect(inbox.totalUnreadCount).toBe(1)
+    expect(inbox.items[0]?.thread.threadRef).toBe(started.task.threadRef)
+    const cold = replayLedger(test)
+    expect(() => cold.validate()).not.toThrow()
+    expect(cold.inbox(actor, { workspaceId: alpha }).totalUnreadCount).toBe(1)
+  })
+
+  it('cold-replays a legacy plain accept without the acceptance discriminator and keeps it silent', async () => {
+    // The pre-discriminator ledger shape: a plain accept whose activity
+    // carries NEITHER claim list and whose inbox delta is empty. The
+    // validator must verify this shape exactly as recorded — computing the
+    // marker recipients from today's all-done rule would fail the replay of
+    // every existing ledger. The done owner has unfollowed after finishing
+    // (legal once its Claim is no longer active), so the accept marker is
+    // its only possible wake: the discriminator is what makes the
+    // difference between the new shape (1 unread) and the legacy shape
+    // (silent, exactly as recorded).
+    const pool = new MemoryMediaPool()
+    const test = await harness(pool)
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:agent-done', 'done-owner')
+    const memberRead = (await ledger.readThread({ requestId: requestId('member-legacy-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    const claim = committed((await ledger.changeClaim({ requestId: requestId('legacy-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'legacy', baseRevision: memberRead.thread.revision, actor })).value)
+    const readDone = (await ledger.readThread({ requestId: requestId('legacy-done-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    committed((await ledger.changeClaim({ requestId: requestId('legacy-done'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'done', claimRef: claim.claim.claimRef, baseRevision: readDone.thread.revision, actor })).value)
+    // The finished owner steps back from the Thread before the accept. The
+    // attention change does not advance the Thread revision, so the accept
+    // below still bases on the human read.
+    const unfollowed = (await ledger.changeAttention({ requestId: requestId('legacy-unfollow'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'unfollow', actor })).value
+    expect(unfollowed.attention).toBeUndefined()
+    const humanRead = (await ledger.readThread({ requestId: requestId('legacy-human-read'), workspaceId: alpha, taskRef: started.task.taskRef,
+      actor: agentTeamHumanActor() })).value
+    const accepted = committed((await ledger.changeTask({ requestId: requestId('legacy-accept'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'accept', baseRevision: humanRead.thread.revision, actor: agentTeamHumanActor() })).value)
+    expect(accepted.activity.completedClaimRefs).toBeUndefined()
+    expect(accepted.activity.acceptedClaimRefs).toEqual([claim.claim.claimRef])
+    // New-shape accept: the unfollowed done owner still learns about the
+    // acceptance through the discriminator's marker; assert that here so
+    // the rewrite below is a real downgrade to the legacy shape.
+    expect(ledger.inbox(actor, { workspaceId: alpha }).totalUnreadCount).toBe(1)
+
+    // Rewrite the recorded operation to the legacy shape: strip the
+    // discriminator and empty the inbox delta, as an old ledger recorded it.
+    const records = [...pool.media.get('agent_team')!.tables.get('operations')!.entries()]
+    await test.fiber.dispose()
+    cleanups.pop()
+    const legacy = records.map(([key, operation]) => {
+      if (typeof operation !== 'object' || operation === null || (operation as AgentTeamOperation).kind !== 'team/task-changed') return [key, operation] as [string, unknown]
+      const changed = operation as Extract<AgentTeamOperation, { kind: 'team/task-changed' }>
+      if (changed.data.activity.activityRef !== accepted.activity.activityRef) return [key, operation] as [string, unknown]
+      const { acceptedClaimRefs: _stripped, ...activity } = changed.data.activity as { acceptedClaimRefs?: unknown }
+      return [key, { ...changed, data: { ...changed.data, activity, inbox: { attention: { set: [], removed: [] }, directMarkers: { added: [], removed: [] }, activityMarkers: { added: [], removed: [] } } } }] as [string, unknown]
+    })
+    const revived = await harness(storedPool(legacy))
+    expect(() => replayLedger(revived).validate()).not.toThrow()
+    // Legacy plain accept: the unfollowed done owner stays silent, exactly
+    // as recorded — no discriminator, no marker, no ordinary visibility.
+    const revivedLedger = replayLedger(revived)
+    expect(revivedLedger.inbox(actor, { workspaceId: alpha }).totalUnreadCount).toBe(0)
   })
 
   it('records DMs as audit-only operations with idempotent retries and unchanged projections', async () => {

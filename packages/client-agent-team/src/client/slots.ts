@@ -105,7 +105,7 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     /**
      * Host clear-context remote kept as a hidden migration escape hatch.
      * The visible row action is retired: Members manage their own context
-     * through the new_context tool (see docs/architecture.md).
+     * through the context_rollover tool (see docs/architecture.md).
      */
     clearMemberContext: (request: AgentTeamClearMemberContextRequest) => Promise<RemoteResult<AgentTeamClearMemberContextResult>>
     archiveMember: (request: AgentTeamArchiveMemberRequest) => Promise<RemoteResult<AgentTeamArchiveMemberResult>>

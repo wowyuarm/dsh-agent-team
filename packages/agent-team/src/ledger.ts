@@ -167,7 +167,7 @@ export interface AgentTeamAuthorizedRenewMemberSessionRequest {
 /**
  * Member-authored intent to continue in its next private context generation.
  * The requestId and new Session id derive stably from the successful
- * `new_context` tool call so crash replay converges on one operation.
+ * `context_rollover` tool call so crash replay converges on one operation.
  */
 export interface AgentTeamAuthorizedRolloverMemberSessionRequest {
   readonly requestId: AgentTeamRequestId
@@ -179,7 +179,7 @@ export interface AgentTeamAuthorizedRolloverMemberSessionRequest {
   readonly previousSessionId: SessionId
   /** The next generation Session, derived from the successful tool call. */
   readonly newSessionId: SessionId
-  /** Seq of the successful `new_context` tool result in the previous Session log. */
+  /** Seq of the successful `context_rollover` tool result in the previous Session log. */
   readonly handoffEventSeq: SessionSeq
   /** Why the rollover happened: the model asked, or honored a pressure notice. */
   readonly trigger: 'model' | 'pressure'
@@ -1088,6 +1088,15 @@ export class AgentTeamLedger {
             : claim)
       const releasedClaims = claims.filter(claim => claim.state === 'released' && this.state.claims.get(claim.claimRef)?.state === 'active')
       const completedClaims = claims.filter(claim => claim.state === 'done' && this.state.claims.get(claim.claimRef)?.state === 'active')
+      // Every done Claim at commit time — pre-finished and atomically
+      // completed alike — is the acceptance discriminator: the one list
+      // accept markers deliver from, so a normal accept no longer stays
+      // silent about the Members whose work it accepted. Sorted lexically
+      // so replay validation compares stably regardless of claim-ref
+      // generation order.
+      const acceptedClaims = request.action === 'accept'
+        ? claims.filter(claim => claim.state === 'done').sort((left, right) => left.claimRef.localeCompare(right.claimRef))
+        : []
       const resolution = request.action === 'reopen' ? 'open' as const : request.action === 'accept' ? 'accepted' as const : 'closed' as const
       const status = resolution === 'accepted' ? 'done' as const : resolution === 'closed' ? 'closed' as const
         : this.deriveTaskStatus(task.taskRef, claims)
@@ -1096,12 +1105,13 @@ export class AgentTeamLedger {
       const activity: AgentTeamTaskActivity = Object.freeze({ activityRef: this.ref('activity'), kind: request.action,
         taskRef: task.taskRef, threadRef: task.threadRef, actor: request.actor.memberId, sequence,
         ...(releasedClaims.length === 0 ? {} : { releasedClaimRefs: Object.freeze(releasedClaims.map(claim => claim.claimRef)) }),
-        ...(completedClaims.length === 0 ? {} : { completedClaimRefs: Object.freeze(completedClaims.map(claim => claim.claimRef)) }) })
+        ...(completedClaims.length === 0 ? {} : { completedClaimRefs: Object.freeze(completedClaims.map(claim => claim.claimRef)) }),
+        ...(request.action === 'accept' ? { acceptedClaimRefs: Object.freeze(acceptedClaims.map(claim => claim.claimRef)) } : {}) })
       const inbox = request.action === 'close'
         ? this.closeThreadInbox(activity, thread.threadRef)
         : request.action === 'reopen'
           ? this.reopenThreadInbox(activity, thread.threadRef)
-          : this.acceptThreadInbox(activity, thread.threadRef, completedClaims.map(claim => claim.owner))
+          : this.acceptThreadInbox(activity, thread.threadRef, acceptedClaims.map(claim => claim.owner))
       const operation: AgentTeamTaskChangedOperation = Object.freeze({
         ...this.operationBase(request, sequence), kind: 'team/task-changed',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
@@ -2013,13 +2023,24 @@ export class AgentTeamLedger {
       const expectedCompletedClaimRefs = operation.data.claims
         .filter(claim => projection.claims.get(claim.claimRef)?.state === 'active' && claim.state === 'done')
         .map(claim => claim.claimRef)
+      // New-shape accepts carry the acceptance discriminator: every done
+      // Claim at commit time, sorted. Legacy accepts predate it; the
+      // recorded wake semantics for them stay completed-only (the old rule)
+      // so every existing ledger replays unchanged.
+      const expectedAcceptedClaimRefs = operation.data.claims
+        .filter(claim => claim.state === 'done')
+        .map(claim => claim.claimRef)
+        .sort((left, right) => left.localeCompare(right))
       if (task.resolution !== expectedResolution || task.status !== expectedStatus
         || (activity.kind !== 'close' && activity.releasedClaimRefs !== undefined)
         || (activity.kind !== 'accept' && activity.completedClaimRefs !== undefined)
+        || (activity.kind !== 'accept' && activity.acceptedClaimRefs !== undefined)
         || (activity.kind === 'close' && !this.sameList(activity.releasedClaimRefs ?? [], operation.data.claims
           .filter(claim => projection.claims.get(claim.claimRef)?.state === 'active' && claim.state === 'released')
           .map(claim => claim.claimRef)))
-        || !this.sameList(activity.completedClaimRefs ?? [], expectedCompletedClaimRefs)) {
+        || !this.sameList(activity.completedClaimRefs ?? [], expectedCompletedClaimRefs)
+        || (activity.kind === 'accept' && activity.acceptedClaimRefs !== undefined
+          && !this.sameList(activity.acceptedClaimRefs, expectedAcceptedClaimRefs))) {
         throw new Error('invalid Task state transition')
       }
       const priorClaims = [...projection.claims.values()].filter(claim => claim.taskRef === task.taskRef).sort((left, right) => left.claimRef.localeCompare(right.claimRef))
@@ -2040,7 +2061,11 @@ export class AgentTeamLedger {
         ? this.closeThreadInboxFrom(projection, activity, thread.threadRef)
         : activity.kind === 'reopen'
           ? this.reopenThreadInboxFrom(projection, activity, thread.threadRef)
-          : this.acceptThreadInboxFrom(projection, activity, thread.threadRef, expectedCompletedClaimRefs)
+          // Presence of the discriminator picks the wake rule: new accepts
+          // wake every done owner; legacy records keep the completed-only
+          // delta exactly as recorded.
+          : this.acceptThreadInboxFrom(projection, activity, thread.threadRef,
+            activity.acceptedClaimRefs !== undefined ? activity.acceptedClaimRefs : expectedCompletedClaimRefs)
       if (!isDeepStrictEqual(operation.data.inbox, expectedInbox)) throw new Error('invalid Task inbox projection')
       this.validateInboxDelta(operation.data.inbox, projection, refs, [], [], [activity])
       return
@@ -2615,21 +2640,23 @@ export class AgentTeamLedger {
   }
 
   /**
-   * Early acceptance completes open Claims inside the accept operation; their
-   * owners learn about it through activity markers regardless of whether they
-   * still follow the Thread. Plain accepts (no completed Claims) stay silent.
+   * Acceptance notifies every done Claim owner — pre-finished (the normal
+   * flow) and atomically completed (early acceptance) alike — through
+   * activity markers regardless of whether they still follow the Thread.
+   * The actor never notifies itself. Legacy records without the acceptance
+   * discriminator keep the old completed-only wake semantics on replay.
    */
-  private acceptThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef, completedOwners: readonly AgentTeamMemberId[]): AgentTeamInboxDelta {
-    if (completedOwners.length === 0) return this.inboxDelta()
-    const recipients = [...new Set(completedOwners)].filter(memberId => memberId !== activity.actor)
+  private acceptThreadInbox(activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef, acceptedOwners: readonly AgentTeamMemberId[]): AgentTeamInboxDelta {
+    if (acceptedOwners.length === 0) return this.inboxDelta()
+    const recipients = [...new Set(acceptedOwners)].filter(memberId => memberId !== activity.actor)
     const markers = recipients.map(memberId => Object.freeze({ memberId, threadRef,
       activityRef: activity.activityRef, sequence: activity.sequence }))
     return this.inboxDelta([], [], [], [], markers)
   }
 
-  private acceptThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef, completedClaimRefs: readonly AgentTeamClaimRef[]): AgentTeamInboxDelta {
-    if (completedClaimRefs.length === 0) return this.inboxDelta()
-    const owners = completedClaimRefs.map(claimRef => projection.claims.get(claimRef)?.owner).filter(owner => owner !== undefined)
+  private acceptThreadInboxFrom(projection: Projection, activity: AgentTeamTaskActivity, threadRef: AgentTeamThreadRef, claimRefs: readonly AgentTeamClaimRef[]): AgentTeamInboxDelta {
+    if (claimRefs.length === 0) return this.inboxDelta()
+    const owners = claimRefs.map(claimRef => projection.claims.get(claimRef)?.owner).filter(owner => owner !== undefined)
     return this.acceptThreadInbox(activity, threadRef, owners)
   }
 

@@ -211,7 +211,7 @@ describe('Agent Team pressure policy (ticket 03)', () => {
     expect(text).toContain('256000')
     expect(text).toContain('claim:a (unify forms)')
     expect(text).toContain('1 running')
-    expect(text).toContain('new_context')
+    expect(text).toContain('context_rollover')
     expect(text.length).toBeLessThan(1200)
   })
 })

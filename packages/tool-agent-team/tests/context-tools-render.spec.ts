@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { registerContextTools } from '../src/context-tools.ts'
+import { AGENT_TEAM_TOOL_NAMES } from '@wowyuarm/dsh-agent-team/host'
 
 /**
  * Render-layer discriminating tests: renders are the only channel a tool
  * result reaches the model through, so every field the model must act on
  * (the checkpoint ref, per-anchor verdicts) has to appear in the rendered
  * text — a schema field the render drops is model-invisible (this exact
- * regression made seeded new_context unusable in live dogfooding).
+ * regression made seeded returns unusable in live dogfooding).
  */
 function contextTools(): Map<string, ToolDefinition> {
   const registered = new Map<string, ToolDefinition>()
@@ -69,7 +70,7 @@ describe('context tools render the model-facing decision surface', () => {
       checkpointRef: 'context-checkpoint-' + 'd'.repeat(64),
       name: 'post-rollover smoke anchor',
     })
-    // The ref is the new_context selection surface: without it in the text
+    // The ref is the context_rollover selection surface: without it in the text
     // the model has no legitimate way to reference the anchor it recorded.
     expect(text).toContain('context-checkpoint-' + 'd'.repeat(64))
     expect(text).toContain('post-rollover smoke anchor')
@@ -95,7 +96,7 @@ describe('context tools render the model-facing decision surface', () => {
         for (const thread of item.affectedThreads) expect(text).toContain(thread)
       }
       if (item.restorable) {
-        // A restorable anchor must carry its full ref for new_context.
+        // A restorable anchor must carry its full ref for context_rollover.
         expect(text).toContain(item.checkpointRef)
         expect(text).toContain('restorable')
       } else {
@@ -123,5 +124,31 @@ describe('context tools render the model-facing decision surface', () => {
     const text = renderText(tools.get('context_timeline')!, { usageTokens: 1, hardLimit: 256000, handoffAt: 200000, items })
     for (const item of items) expect(text).toContain(item.checkpointRef)
     expect(text).toContain('anchor-23')
+  })
+
+  it('registers the rollover tool under its lifecycle name and not the legacy one', () => {
+    const tools = contextTools()
+    // Hard rename: the model-facing surface is `context_rollover` only. The
+    // legacy `new_context` name must not survive as a second registration —
+    // two synonyms would let stale sessions call a tool nobody documents.
+    expect(tools.has('context_rollover')).toBe(true)
+    expect(tools.has('new_context')).toBe(false)
+    // The Host's capability roster agrees: preset validation would fail on
+    // a roster/tool split.
+    expect([...AGENT_TEAM_TOOL_NAMES]).toContain('context_rollover')
+    expect([...AGENT_TEAM_TOOL_NAMES]).not.toContain('new_context')
+    // The description states both modes of the same generation swap.
+    const description = tools.get('context_rollover')!.description
+    expect(description).toContain('context_rollover')
+    expect(description.toLowerCase()).toContain('checkpointref')
+  })
+
+  it('context_rollover renders the scheduled swap and keeps render text self-describing', () => {
+    const tools = contextTools()
+    const text = renderText(tools.get('context_rollover')!, { mode: 'fresh', status: 'scheduled' })
+    expect(text).toContain('rollover')
+    expect(text).toContain('fresh')
+    const seeded = renderText(tools.get('context_rollover')!, { mode: 'from-checkpoint', status: 'scheduled' })
+    expect(seeded).toContain('from-checkpoint')
   })
 })

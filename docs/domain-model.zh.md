@@ -100,11 +100,11 @@ Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 a
 
 ## Context Checkpoint（上下文检查点）
 
-Member 在自己的 Session 内通过成功的 `context_checkpoint` 工具对记录的命名、已 resolve 的锚点。它在所属 turn 完成时 resolve；ref 由 tool call id 确定性派生。checkpoint 本身不改变任何东西——只有 Member 在 `new_context` 中引用它时才成为回返目标；seed 子代中继承的 checkpoints 保持为惰性历史。
+Member 在自己的 Session 内通过成功的 `context_checkpoint` 工具对记录的命名、已 resolve 的锚点。它在所属 turn 完成时 resolve；ref 由 tool call id 确定性派生。checkpoint 本身不改变任何东西——只有 Member 在 `context_rollover` 中引用它时才成为回返目标；seed 子代中继承的 checkpoints 保持为惰性历史。
 
 ## Context Handoff（上下文交接）
 
-Member 通过 `new_context` 传递的私有桥接正文；它绝不是 ledger 事实。ledger 只记录可验证的信封（session 锚点、result sequence、trigger）；正文恰好一次地保存在新代际 Session 日志中，作为其第一份 model-facing context。落在 rollover 的 durable commit 与投递之间的崩溃会从上一 Session 的 durable intent 重建它，且仅一次。
+Member 通过 `context_rollover` 传递的私有桥接正文；它绝不是 ledger 事实。ledger 只记录可验证的信封（session 锚点、result sequence、trigger）；正文恰好一次地保存在新代际 Session 日志中，作为其第一份 model-facing context。落在 rollover 的 durable commit 与投递之间的崩溃会从上一 Session 的 durable intent 重建它，且仅一次。
 
 ## Suspend
 

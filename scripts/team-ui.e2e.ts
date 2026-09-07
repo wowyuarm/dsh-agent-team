@@ -305,7 +305,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await agentEditor.getByRole('button', { name: '关闭', exact: true }).click()
 
   // The manual clear-context entry is retired (ticket 01): Members manage
-  // their own context through the new_context tool, so every row menu must
+  // their own context through the context_rollover tool, so every row menu must
   // omit the entry entirely and no confirm dialog exists. Model-initiated
   // rollover and the live follow are covered by the member-lifecycle
   // integration tests and the Client component suite; the full
@@ -365,7 +365,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
   // With clear-context retired there is no Human-initiated rollover in this
   // journey: the embedded Member Session simply stays live for its current
-  // generation (model-driven new_context rollover and the Client follow are
+  // generation (model-driven context rollover and the Client follow are
   // covered by the member-lifecycle integration tests and the Client
   // component suite; the full model-driven browser journey lands with
   // ticket 04). The pane keeps rendering the Member's live Session — blank

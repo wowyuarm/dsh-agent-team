@@ -248,7 +248,7 @@ describe('Team agent surfaces', () => {
     await b.view.findByText('builder')
 
     // The manual clear-context row action is retired: Members manage their
-    // own context through the new_context tool, and every row menu —
+    // own context through the context_rollover tool, and every row menu —
     // available, working, error, unavailable — omits the entry entirely.
     for (const handle of ['builder', 'worker', 'failed', 'offline']) {
       fireEvent.click(b.view.getByRole('button', { name: `${handle} 的操作` }))

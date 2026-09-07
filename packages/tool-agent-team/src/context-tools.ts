@@ -4,7 +4,7 @@
  * durable intent, and every lifecycle side effect — generation swap, Session
  * creation, inbox handling — happens in the Host coordinator after the
  * result is durably appended. `concludeTurn()` rides the success result of
- * `new_context` and `context_checkpoint`, so sibling calls settle in model
+ * `context_rollover` and `context_checkpoint`, so sibling calls settle in model
  * order before the turn closes.
  * @module @wowyuarm/dsh-agent-team/context-tools
  */
@@ -28,9 +28,9 @@ function member(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>) 
 const MAX_HANDOFF_CHARS = 32 * 1024
 const MAX_RELATED_FILES = 32
 
-const newContext = defineTool({
-  name: 'new_context',
-  description: 'Continue as the same Team Member in a new private context. Without checkpointRef the context starts fresh and empty, seeded only by your handoff — this is the default, cheapest path at context pressure. With a context_timeline checkpointRef the new context resumes from that completed-turn anchor plus your handoff; use it to discard a failed later branch while keeping the earlier working set. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state (files, git, jobs, browser state, remote calls); one explicit next step. A context change never rolls back any external effect — describe current state so the next generation can re-verify. Record anything worth keeping in your private memory/notes first. Collect or stop your background jobs before calling: a rollover is refused while jobs this Member owns are still running.',
+const contextRollover = defineTool({
+  name: 'context_rollover',
+  description: 'context_rollover: end this context generation and continue as the same Team Member in a new one. Without checkpointRef the context starts fresh and empty, seeded only by your handoff — this is the default, cheapest path at context pressure. With a context_timeline checkpointRef the new context resumes from that completed-turn anchor plus your handoff; use it to discard a failed later branch while keeping the earlier working set. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state (files, git, jobs, browser state, remote calls); one explicit next step. A context change never rolls back any external effect — describe current state so the next generation can re-verify. Record anything worth keeping in your private memory/notes first. Collect or stop your background jobs before calling: a rollover is refused while jobs this Member owns are still running.',
   parameters: {
     handoff: { type: 'string', required: true, description: 'Prose handoff for the next context generation: objective, active Threads/Claims, verified facts, inferences, external side effects and their verification state, next step.' },
     checkpointRef: { type: 'string', description: 'Opaque checkpoint ref exactly as returned by context_timeline; resumes from that completed-turn anchor instead of an empty context.' },
@@ -44,14 +44,14 @@ const newContext = defineTool({
   },
   async execute(args, exec) {
     const agent = exec.agent
-    if (agent === undefined) throw new Error('new_context requires an Agent session')
+    if (agent === undefined) throw new Error('context_rollover requires an Agent session')
     const current = member(agent)
     const host = service(agent)
     const handoff = typeof args.handoff === 'string' ? args.handoff : ''
-    if (handoff.trim() === '') throw new Error('new_context requires a non-empty handoff')
-    if (handoff.length > MAX_HANDOFF_CHARS) throw new Error(`new_context handoff exceeds ${MAX_HANDOFF_CHARS} characters`)
+    if (handoff.trim() === '') throw new Error('context_rollover requires a non-empty handoff')
+    if (handoff.length > MAX_HANDOFF_CHARS) throw new Error(`context_rollover handoff exceeds ${MAX_HANDOFF_CHARS} characters`)
     const relatedFilesInput = Array.isArray(args.relatedFiles) ? args.relatedFiles : []
-    if (relatedFilesInput.length > MAX_RELATED_FILES) throw new Error(`new_context accepts at most ${MAX_RELATED_FILES} related files`)
+    if (relatedFilesInput.length > MAX_RELATED_FILES) throw new Error(`context_rollover accepts at most ${MAX_RELATED_FILES} related files`)
     // Tool argument validation is layered: the Harness schema (required and
     // type checks) rejects at the execute boundary, and this body adds the
     // checks the schema cannot express — each related file is validated
@@ -59,10 +59,10 @@ const newContext = defineTool({
     // envelope with empty fields.
     const relatedFiles: Array<{ path: string; reason: string }> = []
     for (const [index, entry] of relatedFilesInput.entries()) {
-      if (typeof entry !== 'object' || entry === null) throw new Error(`new_context relatedFiles[${index}] must be an object with path and reason`)
+      if (typeof entry !== 'object' || entry === null) throw new Error(`context_rollover relatedFiles[${index}] must be an object with path and reason`)
       const candidate = entry as { path?: unknown; reason?: unknown }
-      if (typeof candidate.path !== 'string' || candidate.path.trim() === '') throw new Error(`new_context relatedFiles[${index}].path must be a non-empty string`)
-      if (typeof candidate.reason !== 'string' || candidate.reason.trim() === '') throw new Error(`new_context relatedFiles[${index}].reason must be a non-empty string`)
+      if (typeof candidate.path !== 'string' || candidate.path.trim() === '') throw new Error(`context_rollover relatedFiles[${index}].path must be a non-empty string`)
+      if (typeof candidate.reason !== 'string' || candidate.reason.trim() === '') throw new Error(`context_rollover relatedFiles[${index}].reason must be a non-empty string`)
       relatedFiles.push({ path: candidate.path, reason: candidate.reason })
     }
     // Tool schemas are open at the root (Harness parameter specs set no
@@ -73,7 +73,7 @@ const newContext = defineTool({
     const raw = args as { checkpointRef?: unknown }
     const suppliedRef = Object.hasOwn(raw, 'checkpointRef') ? raw.checkpointRef : undefined
     if (suppliedRef !== undefined && (typeof suppliedRef !== 'string' || suppliedRef.trim() === '')) {
-      throw new Error('new_context checkpointRef must be a non-empty string when supplied')
+      throw new Error('context_rollover checkpointRef must be a non-empty string when supplied')
     }
     const checkpointRef = typeof suppliedRef === 'string' ? suppliedRef.trim() : undefined
     const outcome = host.requestNewContext(agent, {
@@ -88,7 +88,7 @@ const newContext = defineTool({
 
 const contextCheckpoint = defineTool({
   name: 'context_checkpoint',
-  description: 'Record a named checkpoint at the end of the current turn: an opaque, private, restorable anchor for this Member\'s context lineage. Use it before a noisy or risky phase — a broad refactor, an experiment whose value is unproven — when returning to the current completed state may later be useful. The checkpoint resolves only when this turn completes; the Host continues work in the next turn automatically. A checkpoint never snapshots files, git, jobs, or any external state: returning to one (via new_context with its checkpointRef) resumes the conversation prefix and nothing else. Checkpoints are private context structure, not Team facts, and are never visible to other Members.',
+  description: 'Record a named checkpoint at the end of the current turn: an opaque, private, restorable anchor for this Member\'s context lineage. Use it before a noisy or risky phase — a broad refactor, an experiment whose value is unproven — when returning to the current completed state may later be useful. The checkpoint resolves only when this turn completes; the Host continues work in the next turn automatically. A checkpoint never snapshots files, git, jobs, or any external state: returning to one (via context_rollover with its checkpointRef) resumes the conversation prefix and nothing else. Checkpoints are private context structure, not Team facts, and are never visible to other Members.',
   parameters: {
     name: { type: 'string', required: true, description: 'Short semantic label for this checkpoint, shown in context_timeline.' },
   },
@@ -96,7 +96,7 @@ const contextCheckpoint = defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       checkpointRef: { type: 'string', required: true }, name: { type: 'string', required: true },
     } },
-    // The ref is the selection surface for `new_context`: rendering only the
+    // The ref is the selection surface for `context_rollover`: rendering only the
     // name left the model with no legitimate way to cite the anchor it just
     // recorded. Renders are the only channel results reach the model through.
     render: (_args, value) => [{ type: 'text', text: `Checkpoint recorded: ${value.name} (ref: ${value.checkpointRef}). Work continues in the next turn; the Host will continue automatically.` }],
@@ -142,7 +142,7 @@ const contextTimeline = defineTool({
     // The item list is the whole decision surface: without each anchor's
     // ref, label, source, size estimates, affected Threads, and
     // restorable/reason verdict, the model cannot pick a `checkpointRef` for
-    // `new_context` — the summary line alone left the tool unusable for
+    // `context_rollover` — the summary line alone left the tool unusable for
     // seeded returns. The Host bounds items (default 12, at most 24), so this
     // list cannot grow unbounded.
     render: (_args, value) => {
@@ -172,7 +172,7 @@ const contextTimeline = defineTool({
 })
 
 export function registerContextTools(ctx: { readonly tools: { register(tool: unknown): void } }): void {
-  ctx.tools.register(newContext)
+  ctx.tools.register(contextRollover)
   ctx.tools.register(contextCheckpoint)
   ctx.tools.register(contextTimeline)
 }

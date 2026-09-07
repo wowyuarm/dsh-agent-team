@@ -178,7 +178,7 @@ export interface AgentTeamClearMemberContextResult {
 /**
  * Member-authored intent (carried by its live Agent) to continue in its next
  * private context generation. The requestId and new Session id derive stably
- * from the successful `new_context` tool call so crash replay converges on
+ * from the successful `context_rollover` tool call so crash replay converges on
  * one operation and one generation.
  */
 export interface AgentTeamRolloverSessionRequest {
@@ -189,7 +189,7 @@ export interface AgentTeamRolloverSessionRequest {
   readonly previousSessionId: AgentTeamMemberSessionId
   /** The next generation Session, derived from the successful tool call. */
   readonly newSessionId: AgentTeamMemberSessionId
-  /** Seq of the successful `new_context` tool result in the previous Session log. */
+  /** Seq of the successful `context_rollover` tool result in the previous Session log. */
   readonly handoffEventSeq: AgentTeamMemberSessionSeq
   /** Why the rollover happened: the model asked, or honored a pressure notice. */
   readonly trigger: 'model' | 'pressure'
@@ -539,6 +539,26 @@ export interface AgentTeamThreadReadRequest {
   readonly taskRef?: AgentTeamTaskRef
 }
 
+/**
+ * Private, read-time context guidance for one acceptance the reading Member
+ * just acknowledged. Host-computed after the durable read committed; never a
+ * ledger fact, never persisted, and absent unless this read acknowledged an
+ * unread acceptance of a Task that is still done.
+ */
+export interface AgentTeamContextAdvice {
+  /** Current measured usage of the reading Member's context; absent when unmeasured. */
+  readonly usageTokens?: number | undefined
+  /** Usage at or above which a fresh rollover is advised; min(128K, handoffAt); absent when unmeasured. */
+  readonly taskBoundaryThreshold?: number | undefined
+  /** Effective handoff budget of the Member's current route; absent when unmeasured. */
+  readonly handoffAt?: number | undefined
+  /** Effective hard limit of the Member's current route; absent when unmeasured. */
+  readonly hardLimit?: number | undefined
+  /** keep | rollover | handoff-now | unavailable. */
+  readonly action: 'keep' | 'rollover' | 'handoff-now' | 'unavailable'
+  readonly guidance: string
+}
+
 export interface AgentTeamThreadReadResult {
   readonly receipt: AgentTeamOperationReceipt
   readonly task?: AgentTeamTask
@@ -553,6 +573,8 @@ export interface AgentTeamThreadReadResult {
   readonly remainingUnreadCount: number
   readonly attention?: AgentTeamThreadAttention
   readonly consumedDirectMarkers: readonly AgentTeamDirectMarker[]
+  /** Present only when this read acknowledged an unread acceptance of a still-done Task. */
+  readonly contextAdvice?: AgentTeamContextAdvice
 }
 
 /** Non-mutating Thread history request. */

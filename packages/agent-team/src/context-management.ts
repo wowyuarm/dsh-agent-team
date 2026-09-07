@@ -1,6 +1,6 @@
 /**
  * Context-management coordinator: the one deep module that turns a Member's
- * successful `new_context` tool result into its next private context
+ * successful `context_rollover` tool result into its next private context
  * generation.
  *
  * Authority split (see docs/architecture.md):
@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto'
 import { createCheckpointContinuationMessage, createHandoffMessage } from './context-source.ts'
 import {
   CONTEXT_CHECKPOINT_TOOL_NAME,
-  NEW_CONTEXT_TOOL_NAME,
+  CONTEXT_ROLLOVER_TOOL_NAME,
   continuationDelivered,
   foldContextProjection,
   type AgentTeamContextProjectionState,
@@ -420,7 +420,7 @@ export class ContextManagementCoordinator {
 }
 
 /** Tool names this module owns; the preset validation requires all of them. */
-export const CONTEXT_TOOL_NAMES = Object.freeze([CONTEXT_CHECKPOINT_TOOL_NAME, NEW_CONTEXT_TOOL_NAME, 'context_timeline'] as const)
+export const CONTEXT_TOOL_NAMES = Object.freeze([CONTEXT_CHECKPOINT_TOOL_NAME, CONTEXT_ROLLOVER_TOOL_NAME, 'context_timeline'] as const)
 
 /** Re-exported for Host wiring: cold-fold helper for archived ancestors. */
 export { foldContextProjection }
