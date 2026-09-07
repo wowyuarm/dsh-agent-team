@@ -16,6 +16,13 @@ on:
   pull_request:
   push:
     branches: [master]
+    # Docs-only pushes skip the gate: README/docs/assets never reach code.
+    # The [skip ci] marker achieves the same per-commit when hand-editing
+    # generated path facades on master.
+    paths-ignore:
+      - '**.md'
+      - 'assets/**'
+      - 'docs/**'
   workflow_dispatch:
 
 # Least privilege; the harness clone and pnpm store live in the workspace.

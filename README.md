@@ -17,7 +17,7 @@ An opt-in plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-
 - **Workspaces organize everything.** Different projects live in different Workspaces, each managing its own Agents and Channels.
 - **The Human routes Channels and responsibilities.** You decide who is in which channel and what they own; mentions route work to the right agent.
 - **Task Threads carry one line of progress.** Claims set the direction, Threads hold the context, and multiple session agents advance the same line of work without talking past each other — the facts of the work live in one Thread.
-- **No context babysitting.** Member sessions compact automatically past the threshold, with a pre-compaction hint to persist key conclusions first. Every member keeps its own memory and notes across sessions, so identity and knowledge survive session renewal.
+- **No context babysitting.** Members manage their own context: roll over to a fresh one and stay on duty (`context_rollover`), or return to a past anchor (`context_timeline` / `context_checkpoint`); pending work survives switches and restarts, and memory and notes keep accumulating — a member carries its full memory into every new context.
 
 ## Preview
 
@@ -27,13 +27,13 @@ Agent Team is opt-in: after installation the ordinary DSH page stays as-is, and 
 
 Entering Team mode shows Channels, managed Agents, and the collaboration timeline:
 
-![Team mode in the DSH Web UI: Channels and seven online Agents in the sidebar; the Main Channel shows Task references and the composer’s task switch](assets/readme/team-mode.png)
+![Team mode in the DSH Web UI: Channels and online Agent members in the sidebar, with the Main Channel showing Task references](assets/readme/team-mode.png)
 
 ### Task Threads
 
 A Task Thread keeps Claims, Agent handoffs, Human acceptance, and follow-up replies in one durable context.
 
-![Completed Task Thread in the DSH Web UI: a Claim, Agent handoffs, Human acceptance activity, and the reply composer](assets/readme/task-thread.png)
+![Task Thread in the DSH Web UI: Claims, Agent handoffs, Human acceptance activity, and the reply composer](assets/readme/task-thread.png)
 
 If this looks useful, a star on [GitHub](https://github.com/wowyuarm/dsh-agent-team) helps other DSH users find it.
 

@@ -3,6 +3,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve, basename, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+// Slow CI machines (windows lane) can stretch multi-generation rollover
+// chains past the default per-test budget. Every test here boots a real
+// Host harness and waits on asynchronous session transitions, so both this
+// per-test budget and the waitFor deadline below (kept equal) need headroom.
+vi.setConfig({ testTimeout: 60_000 })
+
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -1832,8 +1838,12 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
   })
 })
 
-/** Wait until the predicate holds or the deadline passes. */
-async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise<T> {
+/**
+ * Wait until the predicate holds or the deadline passes. The default budget
+ * mirrors the file-level testTimeout: multi-generation rollover chains take
+ * real driver turns on slow CI machines and can exceed a tight 5s poll.
+ */
+async function waitFor<T>(probe: () => T | undefined, timeoutMs = 60_000): Promise<T> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const value = probe()
@@ -1926,9 +1936,14 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
     })
     const secondSessionId = first.member.sessionId
 
+    // Generation 2: wait for the ledger flip AND the new agent's
+    // registration before steering input at it — the flip precedes the
+    // retire/activate span, so the agent is not yet in ctx.agents when
+    // members() first reports the new sessionId.
     adapter.enqueue(toolCallResponse('same-call-id', 'context_rollover', { handoff: 'second handoff' }))
     adapter.enqueue(textResponse('second continuation.'))
-    ctx.agents.get(secondSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'second' }], source: { kind: 'user' } }))
+    const secondSessionAgent = await waitFor(() => ctx.agents.get(secondSessionId))
+    secondSessionAgent.followup(createUserMessage({ content: [{ type: 'text', text: 'second' }], source: { kind: 'user' } }))
     const second = await waitFor(() => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== secondSessionId ? current : undefined
@@ -1974,17 +1989,22 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
     // The `:` merge collision: `x:y` and `x-y` must derive distinct
     // generations even though a naive `replaceAll(':', '-')` would alias them.
     const secondSessionId = hostileSessionId
+    // The ledger flip precedes the retire/activate span: wait for the new
+    // agent's registration, not just the members() projection.
     adapter.enqueue(toolCallResponse('x:y', 'context_rollover', { handoff: 'colon pair' }))
     adapter.enqueue(textResponse('colon continuation.'))
-    ctx.agents.get(secondSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'colon' }], source: { kind: 'user' } }))
+    const secondSessionAgent = await waitFor(() => ctx.agents.get(secondSessionId))
+    secondSessionAgent.followup(createUserMessage({ content: [{ type: 'text', text: 'colon' }], source: { kind: 'user' } }))
     const colon = await waitFor(() => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== secondSessionId ? current : undefined
     })
     const thirdSessionId = colon.member.sessionId
+    // Same flip-to-registration window as above: wait for the agent itself.
     adapter.enqueue(toolCallResponse('x-y', 'context_rollover', { handoff: 'dash pair' }))
     adapter.enqueue(textResponse('dash continuation.'))
-    ctx.agents.get(thirdSessionId)!.followup(createUserMessage({ content: [{ type: 'text', text: 'dash' }], source: { kind: 'user' } }))
+    const thirdSessionAgent = await waitFor(() => ctx.agents.get(thirdSessionId))
+    thirdSessionAgent.followup(createUserMessage({ content: [{ type: 'text', text: 'dash' }], source: { kind: 'user' } }))
     const dash = await waitFor(() => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== thirdSessionId ? current : undefined
@@ -2034,7 +2054,9 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 5000): Promise
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== previousSessionId ? current : undefined
     })
-    const liveAfter = ctx.agents.get(renewed.member.sessionId)!
+    // The flip precedes the retire/activate span: wait for the new agent's
+    // registration before reading its session log.
+    const liveAfter = await waitFor(() => ctx.agents.get(renewed.member.sessionId))
     await waitFor(() => liveAfter.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
     // The first model-facing user message of the new generation is the
     // handoff snapshot, not the rederived Team Inbox notice.
@@ -2293,9 +2315,12 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(inherited.at(-1)!.seq).toBe(anchorTurnEndSeq)
     // The handoff is the first own model-facing context. The binding flip
     // precedes the handoff delivery (the swap steers it after activation);
-    // wait for the delivered event before asserting on it.
-    await waitFor(() => own.some(event => event.type === 'user/message') ? true : undefined)
-    const firstUser = own.find(event => event.type === 'user/message')
+    // wait for the delivered event before asserting on it. Probe ownEvents()
+    // fresh each round — the snapshot taken above predates the handoff append
+    // whenever the agent registers before the steering lands, and polling a
+    // stale snapshot would never observe it.
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    const firstUser = next.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected handoff')
     expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: checkpointRefFor(firstSessionId, 'call-ret-cp') })
