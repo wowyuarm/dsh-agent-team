@@ -794,6 +794,42 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(() => replayLedger(revived).validate()).not.toThrow()
   })
 
+  it('normalizes bare pre-occurredAt Activity facts with their committing operation instant during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Legacy task' })))
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const claimed = committed((await ledger.changeClaim({ requestId: requestId('claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    await ledger.readThread({ requestId: requestId('member-read-claim'), workspaceId: alpha, taskRef: started.task.taskRef, actor })
+    await ledger.readThread({ requestId: requestId('human-read-claim'), workspaceId: alpha, taskRef: started.task.taskRef, actor: agentTeamHumanActor() })
+    const accepted = committed((await ledger.changeTask({ requestId: requestId('accept'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'accept', baseRevision: claimed.thread.revision, actor: agentTeamHumanActor() })).value)
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind === 'team/thread-read') {
+        const facts = typed.data.facts.map(fact => {
+          if (fact.fact.kind === 'message') {
+            const { occurredAt: _factDropped, ...message } = fact.fact.message
+            return { ...fact, fact: { kind: 'message' as const, sequence: fact.fact.sequence, message, mentions: fact.fact.mentions } }
+          }
+          const { occurredAt: _envelopeDropped, ...activityFact } = fact.fact
+          return { ...fact, fact: { kind: 'activity' as const, sequence: activityFact.sequence, activity: activityFact.activity } }
+        })
+        return [id, { ...typed, data: { ...typed.data, facts } }] as [string, unknown]
+      }
+      return [id, typed] as [string, unknown]
+    })
+    const revived = await harness(storedPool(records))
+    const replayed = replayLedger(revived)
+    expect(() => replayed.validate()).not.toThrow()
+    const read = (await replayed.readThread({ requestId: requestId('revived-read'), workspaceId: alpha, taskRef: started.task.taskRef, actor })).value
+    expect(read.facts.filter(fact => fact.unread).map(fact => fact.fact.kind === 'activity' ? fact.fact.activity.kind : 'message')).toEqual(['accept'])
+    expect(read.facts.find(fact => fact.fact.kind === 'activity' && fact.unread)!.fact.occurredAt).toBe(accepted.receipt.occurredAt)
+    expect(read.attention).toMatchObject({ memberId: member.memberId, readThroughSequence: read.readThroughSequence })
+  })
+
   it('fails loud on malformed durable records and an invariant catches projection divergence', async () => {
     await expect(harness(storedPool([['operation:bad', { sequence: 'one' }]]))).rejects.toThrow(/does not match its schema/)
     const test = await harness()

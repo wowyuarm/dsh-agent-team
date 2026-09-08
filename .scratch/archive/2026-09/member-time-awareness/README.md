@@ -1,9 +1,9 @@
 # Team Member 时间感知
 
-**状态：** 已完成并归档（2026-09-08）。实现：`packages/agent-team/src/time-format.ts`（唯一 UTC+8 固定偏移 formatter）、`packages/agent-team/src/member-time-context.ts`（per-step durable clock snapshot，preset row `member-time-context`）、`AgentTeamThreadFact` envelope `occurredAt`（单一 per-sequence operation 投影）、inbox `newestOccurredAt`、view `lastActivityAt`、通知 `Occurred at:`、DM 时刻、mutation receipt `Committed at:`；测试见 `member-time.spec.ts` / `member-time-context.spec.ts` / `member-time-context-integration.spec.ts` / `time-format.spec.ts` 及 lifecycle/render 断言；稳定契约已写入 `docs/team-collaboration(.zh).md`、`docs/domain-model(.zh).md`、`CHANGELOG.md`、tool README 双语对。实现 task:85d48cd8（#69）。  
-**最后检查：** 2026-09-08  
-**当前前沿：** 无待办。时区两次拍板（固定 UTC+8 + 显式偏移，取代本文 UTC 默认值）以 [spec.md](spec.md) 为准；多时区配置留给未来配置层任务。  
-**完成条件：** （原条件）Member 在每次模型 step 都知道可核对的当前时刻和经过时长；所有面向 Member 的 Team 协作事实携带准确事件时刻；测试覆盖长时间 idle、resume、rollover、compaction、时钟回拨和旧 ledger replay——已全部交付并通过完整检查梯（typecheck / test 475 通过 / lint / build / test:browser / pack --dry-run / git diff --check）。  
+**状态：** 已完成并归档（2026-09-08）。实现：`packages/agent-team/src/time-format.ts`（唯一 UTC+8 固定偏移 formatter）、`packages/agent-team/src/member-time-context.ts`（per-step durable clock snapshot，preset row `member-time-context`）、`AgentTeamThreadFact` envelope `occurredAt`（单一 per-sequence operation 投影）、inbox `newestOccurredAt`、view `lastActivityAt`、通知 `Occurred at:`、DM 时刻、mutation receipt `Committed at:`；测试见 `member-time.spec.ts` / `member-time-context.spec.ts` / `member-time-context-integration.spec.ts` / `time-format.spec.ts` 及 lifecycle/render 断言；稳定契约已写入 `docs/team-collaboration(.zh).md`、`docs/domain-model(.zh).md`、`CHANGELOG.md`、tool README 双语对。实现 task:85d48cd8（#69）。
+**最后检查：** 2026-09-08
+**当前前沿：** 无待办。时区两次拍板（固定 UTC+8 + 显式偏移，取代本文 UTC 默认值）以 [spec.md](spec.md) 为准；多时区配置留给未来配置层任务。
+**完成条件：** （原条件）Member 在每次模型 step 都知道可核对的当前时刻和经过时长；所有面向 Member 的 Team 协作事实携带准确事件时刻；测试覆盖长时间 idle、resume、rollover、compaction、时钟回拨和旧 ledger replay——已全部交付并通过完整检查梯（typecheck / test 475 通过 / lint / build / test:browser / pack --dry-run / git diff --check）。
 **正式文档出口：** 已完成（见上）。以下正文保留为归档时的设计过程记录。
 
 ## 结论

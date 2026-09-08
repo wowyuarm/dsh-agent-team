@@ -3579,16 +3579,18 @@ export class AgentTeamLedger {
   private sortedRecords(): Array<[AgentTeamOperationId, AgentTeamOperation]> {
     const records = [...this.table.entries()].sort((left, right) => left[1].sequence - right[1].sequence)
     const occurrences = new Map<AgentTeamMessageRef, string>()
+    const instants = new Map<number, string>()
     for (const [, operation] of records) {
+      instants.set(operation.sequence, operation.occurredAt)
       if (operation.kind === 'team/message-sent' || operation.kind === 'team/thread-replied') {
         occurrences.set(operation.data.message.messageRef, operation.data.message.occurredAt ?? operation.occurredAt)
       }
     }
-    return records.map(([id, operation]) => [id, this.normalizeOperation(operation, occurrences)])
+    return records.map(([id, operation]) => [id, this.normalizeOperation(operation, occurrences, instants)])
   }
 
   /** Ledgers written before message occurredAt existed store bare messages; Thread reads resolve instants from the originating operations. */
-  private normalizeOperation(operation: AgentTeamOperation, occurrences: Map<AgentTeamMessageRef, string>): AgentTeamOperation {
+  private normalizeOperation(operation: AgentTeamOperation, occurrences: Map<AgentTeamMessageRef, string>, instants: Map<number, string>): AgentTeamOperation {
     if (operation.kind !== 'team/thread-read') return operation
     const stamp = (message: AgentTeamStoredMessage): AgentTeamMessage => (
       message.occurredAt === undefined
@@ -3597,9 +3599,9 @@ export class AgentTeamLedger {
     )
     const stampEnvelope = (envelope: AgentTeamStoredThreadFact): AgentTeamThreadFact => envelope.kind === 'message'
       ? { kind: 'message', sequence: envelope.sequence, message: stamp(envelope.message), mentions: envelope.mentions,
-        occurredAt: envelope.occurredAt ?? envelope.message.occurredAt ?? operation.occurredAt }
+        occurredAt: envelope.occurredAt ?? envelope.message.occurredAt ?? occurrences.get(envelope.message.messageRef) ?? operation.occurredAt }
       : { kind: 'activity', sequence: envelope.sequence, activity: envelope.activity,
-        occurredAt: envelope.occurredAt ?? operation.occurredAt }
+        occurredAt: envelope.occurredAt ?? instants.get(envelope.sequence) ?? operation.occurredAt }
     const facts = operation.data.facts.map((fact): AgentTeamThreadReadFact => (
       { ...fact, fact: stampEnvelope(fact.fact) }
     ))
