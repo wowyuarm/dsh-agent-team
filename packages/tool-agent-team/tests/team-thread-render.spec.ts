@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { apply } from '../src/index.ts'
+import { renderText, teamTools } from './render-text.ts'
 
 /**
  * Render-layer discriminating tests for the Team collaboration tools.
@@ -9,19 +8,6 @@ import { apply } from '../src/index.ts'
  * accepted what, or that its own Claim was completed by the acceptance —
  * the regression this suite locks out.
  */
-function tools(): Map<string, ToolDefinition> {
-  const registered = new Map<string, ToolDefinition>()
-  apply({ tools: { register: (tool: unknown) => {
-    const definition = tool as ToolDefinition
-    registered.set(definition.name, definition)
-  } } } as never)
-  return registered
-}
-
-function renderText(tool: ToolDefinition, value: unknown): string {
-  const blocks = tool.output.render({}, value as never)
-  return blocks.map(block => block.type === 'text' ? block.text : '').join('\n')
-}
 
 const ACCEPT_FACT = {
   sequence: 8190,
@@ -37,7 +23,7 @@ const ACCEPT_FACT = {
 
 describe('team_thread renders the model-facing decision surface', () => {
   it('an accept activity renders actor, Task ref, and the Claims it concluded — not a bare kind', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:cb7e5eca-9a73-4fa6-9fdf-260996597e7d',
       taskRef: 'task:205a8ba6-f3c6-4fbc-95b7-c3448191f730',
       revision: 8190, status: 'done', resolution: 'accepted', following: true,
@@ -61,7 +47,7 @@ describe('team_thread renders the model-facing decision surface', () => {
   })
 
   it('an unread accept with usage below the task-boundary threshold advises keeping the context', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:x', taskRef: 'task:x', revision: 100, status: 'done', resolution: 'accepted', following: true,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [], facts: [ACCEPT_FACT],
@@ -80,7 +66,7 @@ describe('team_thread renders the model-facing decision surface', () => {
   })
 
   it('an unread accept at or above the threshold advises a fresh rollover after closeout', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:x', taskRef: 'task:x', revision: 100, status: 'done', resolution: 'accepted', following: true,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [], facts: [ACCEPT_FACT],
@@ -97,7 +83,7 @@ describe('team_thread renders the model-facing decision surface', () => {
   })
 
   it('an unread accept already at handoffAt advises handing off now', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:x', taskRef: 'task:x', revision: 100, status: 'done', resolution: 'accepted', following: true,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [], facts: [ACCEPT_FACT],
@@ -113,7 +99,7 @@ describe('team_thread renders the model-facing decision surface', () => {
   })
 
   it('a read without unread accepts renders no context advice section', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:x', revision: 100, following: false,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [],
@@ -127,7 +113,7 @@ describe('team_thread renders the model-facing decision surface', () => {
     expect(text).not.toContain('Context guidance')
     expect(text).not.toContain('usageTokens')
     // The empty-facts status path keeps the same identifying header.
-    const statusText = renderText(tools().get('team_thread')!, {
+    const statusText = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'status', threadRef: 'thread:x', revision: 100, following: false,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [],
@@ -137,7 +123,7 @@ describe('team_thread renders the model-facing decision surface', () => {
     expect(statusText).toContain('thread:x')
     expect(statusText.split('\n')[0]).toContain('thread:x')
     // Advice never appears for a non-accept activity even when unread.
-    const activityText = renderText(tools().get('team_thread')!, {
+    const activityText = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:x', revision: 100, following: false,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [],
@@ -148,7 +134,7 @@ describe('team_thread renders the model-facing decision surface', () => {
   })
 
   it('history renders structured activities but never context advice', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'history', threadRef: 'thread:x', taskRef: 'task:x', revision: 100, status: 'done', resolution: 'accepted', following: true,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [],
@@ -161,7 +147,7 @@ describe('team_thread renders the model-facing decision surface', () => {
   })
 
   it('an unavailable measurement renders an explicit fallback, never a fabricated threshold verdict', () => {
-    const text = renderText(tools().get('team_thread')!, {
+    const text = renderText(teamTools().get('team_thread')!, {}, {
       kind: 'read', threadRef: 'thread:x', taskRef: 'task:x', revision: 100, status: 'done', resolution: 'accepted', following: true,
       anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
       claims: [], facts: [ACCEPT_FACT],

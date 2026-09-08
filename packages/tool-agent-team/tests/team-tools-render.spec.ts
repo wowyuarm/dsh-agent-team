@@ -391,11 +391,14 @@ describe('team_message renders its outcome', () => {
     expect(stale).not.toContain('baseRevision')
 
     const notFollowing = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 8394, body: 'x' }, {
-      kind: 'member_not_following', memberIds: ['member:6d5ac10d-3ef6-4466-a1f7-d105ca1b6da5'], threadRef: THREAD,
+      kind: 'member_not_following', memberIds: ['member:6d5ac10d-3ef6-4466-a1f7-d105ca1b6da5'], threadRef: THREAD, revision: 8394,
     })
     expect(notFollowing).toContain('Not committed — member_not_following.')
     expect(notFollowing).toContain('member:6d5ac10d-3ef6-4466-a1f7-d105ca1b6da5 not following')
     expect(notFollowing).toContain('Only a Human can invite an unfollowed Agent')
+    // The structured revision stays present for compatibility and never renders.
+    expect(notFollowing).not.toContain('8394')
+    expect(notFollowing).not.toContain('baseRevision')
   })
 })
 
@@ -427,23 +430,28 @@ describe('team_claim renders the affected Claim', () => {
   it('claim/done/release name different actions, render the affected Claim first, and hand off exactly one token', () => {
     const created = renderText(teamTools().get('team_claim')!, { action: 'claim', taskRef: TASK, baseRevision: 9024, direction: 'Audit the render recovery paths' }, {
       kind: 'committed', action: 'claim', taskRef: TASK, threadRef: THREAD, revision: 9028, status: 'in_progress',
-      claim: { claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }, claims: [],
+      claim: { claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' },
+      claims: [{ claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }],
     })
     expect(created).toContain('Committed — Claim created.')
     expect(created.indexOf(CLAIM)).toBeLessThan(created.indexOf(THREAD))
     expect(created).toContain(`${CLAIM} · active — member:owner: Audit the render recovery paths`)
     expect(occurrences(created, 'baseRevision')).toBe(1)
+    // Structured claims stay real (compat), yet the render never appends the archive.
+    expect(occurrences(created, 'claim:')).toBe(1)
 
     const done = renderText(teamTools().get('team_claim')!, { action: 'done', taskRef: TASK, baseRevision: 9028, claimRef: CLAIM }, {
       kind: 'committed', action: 'done', taskRef: TASK, threadRef: THREAD, revision: 9024, status: 'in_review',
-      claim: { claimRef: CLAIM, direction: 'd', state: 'done', owner: 'member:owner' }, claims: [],
+      claim: { claimRef: CLAIM, direction: 'd', state: 'done', owner: 'member:owner' },
+      claims: [{ claimRef: CLAIM, direction: 'd', state: 'done', owner: 'member:owner' }],
     })
     expect(done).toContain('Committed — Claim completed.')
     expect(done).toContain('in_review')
 
     const released = renderText(teamTools().get('team_claim')!, { action: 'release', taskRef: TASK, baseRevision: 9028, claimRef: CLAIM }, {
       kind: 'committed', action: 'release', taskRef: TASK, threadRef: THREAD, revision: 9030, status: 'todo',
-      claim: { claimRef: CLAIM, direction: 'd', state: 'released', owner: 'member:owner' }, claims: [],
+      claim: { claimRef: CLAIM, direction: 'd', state: 'released', owner: 'member:owner' },
+      claims: [{ claimRef: CLAIM, direction: 'd', state: 'released', owner: 'member:owner' }],
     })
     expect(released).toContain('Committed — Claim released.')
     // A committed mutation appends no Claim archive: only the affected Claim renders.
@@ -455,7 +463,8 @@ describe('team_claim renders the affected Claim', () => {
 
   it('claim rejections share the outcome-first form with no numeric revision or token', () => {
     const unread = renderText(teamTools().get('team_claim')!, { action: 'claim', taskRef: TASK, baseRevision: 8000, direction: 'd' }, {
-      kind: 'unread_required', taskRef: TASK, threadRef: THREAD, revision: 8394, unreadCount: 2, directCount: 1, claims: [],
+      kind: 'unread_required', taskRef: TASK, threadRef: THREAD, revision: 8394, status: 'in_progress', unreadCount: 2, directCount: 1,
+      claims: [{ claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }],
     })
     expect(unread).toContain('Not committed — unread_required.')
     expect(unread).toContain(`${THREAD} · ${TASK} · 2 unread, 1 direct`)
@@ -465,7 +474,8 @@ describe('team_claim renders the affected Claim', () => {
     expect(unread).not.toContain('Active Claims')
 
     const stale = renderText(teamTools().get('team_claim')!, { action: 'done', taskRef: TASK, baseRevision: 8387, claimRef: CLAIM }, {
-      kind: 'stale_revision', taskRef: TASK, threadRef: THREAD, expectedRevision: 8387, revision: 8394, claims: [],
+      kind: 'stale_revision', taskRef: TASK, threadRef: THREAD, expectedRevision: 8387, revision: 8394, status: 'in_progress',
+      claims: [{ claimRef: CLAIM, direction: 'Audit the render recovery paths', state: 'active', owner: 'member:owner' }],
     })
     expect(stale).toContain('Not committed — the Thread changed after your last read (stale_revision).')
     expect(stale).not.toContain('8387')
@@ -484,11 +494,13 @@ describe('descriptions state the cross-tool workflow', () => {
     }
   })
 
-  it('team_thread description names read as the only token source; team_view says address book', () => {
+  it('team_thread description names read as the only read-side token source; team_view says address book', () => {
     const tools = teamTools()
-    expect(tools.get('team_thread')!.description).toContain('only source of a next-write token')
+    expect(tools.get('team_thread')!.description).toContain('only read-side source of a next-write token')
+    expect(tools.get('team_thread')!.description).toContain('committed public mutations hand off the token as well')
     expect(tools.get('team_view')!.description).toContain('address book')
     expect(tools.get('team_inbox')!.description).toContain('without marking anything read')
     expect(tools.get('team_claim')!.description).toContain('collision surface')
+    expect(tools.get('team_claim')!.description).toContain('or your own last committed mutation')
   })
 })

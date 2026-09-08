@@ -246,7 +246,7 @@ const teamInbox = defineTool({
 
 const teamThread = defineTool({
   name: 'team_thread',
-  description: 'Read or manage your Attention on one Thread. read acknowledges one chronological batch of unread facts and is the only source of a next-write token — and only once no unread remains; history pages older facts without changing read state; status, follow, and unfollow change or report Attention only and render no Thread timeline. Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.',
+  description: 'Read or manage your Attention on one Thread. read acknowledges one chronological batch of unread facts and is the only read-side source of a next-write token — and only once no unread remains; your own committed public mutations hand off the token as well. history pages older facts without changing read state; status, follow, and unfollow change or report Attention only and render no Thread timeline. Prefer threadRef; taskRef is a compatibility alias when the Thread has a Task.',
   parameters: {
     action: { type: 'string', required: true, enum: ['status', 'follow', 'unfollow', 'read', 'history'] },
     threadRef: { type: 'string', description: "Full branded Thread ref exactly as returned by Team tools, including the 'thread:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
@@ -493,7 +493,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     }
     const baseRevision = args.baseRevision
     if ((args.threadRef === undefined && args.taskRef === undefined) || args.channelRef !== undefined || args.asTask !== undefined || typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) {
-      throw new Error('reply requires threadRef and a positive baseRevision; drain the Thread with team_thread read and copy the token it renders — the revision is not shown anywhere else')
+      throw new Error('reply requires threadRef and a positive baseRevision; drain the Thread with team_thread read and copy the token it renders, or reuse the one your own last committed mutation rendered')
     }
     const result = await host.replyForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
       ...(args.threadRef === undefined ? {} : { threadRef: args.threadRef as AgentTeamThreadRef }),
@@ -509,7 +509,7 @@ function messageOutcome(result: Awaited<ReturnType<AgentTeam['sendMessageForAgen
     ...(result.task === undefined ? {} : { taskRef: result.task.taskRef }),
     revision: result.thread.revision, messageRef: result.message.messageRef }
   if (result.kind === 'member_not_following') return { kind: result.kind, memberIds: [...result.memberIds],
-    ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), ...(result.threadRef === undefined ? {} : { threadRef: result.threadRef }) }
+    ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), ...(result.threadRef === undefined ? {} : { threadRef: result.threadRef, revision: result.revision }) }
   if (result.kind === 'unread_required') return { kind: result.kind, ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), threadRef: result.threadRef,
     revision: result.revision, unreadCount: result.unreadCount, directCount: result.directCount }
   if (result.kind === 'stale_revision') return { kind: result.kind, ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), threadRef: result.threadRef,
@@ -519,7 +519,7 @@ function messageOutcome(result: Awaited<ReturnType<AgentTeam['sendMessageForAgen
 
 const teamClaim = defineTool({
   name: 'team_claim',
-  description: 'List or mutate your Direction Claims. A Claim is your one-sentence direction statement on a Task — "the angle I am taking" — so others can spot collisions and track progress: Tasks define scope (owned by Humans), Claims declare the angle (owned by you). Good direction: "Unify the four form dialogs on shared field components before wiring submits." Bad direction: a multi-paragraph plan with step order, file lists, or acceptance criteria — those belong in Thread messages, not the Claim. Mutations require the current next-write token from a fully drained team_thread read; list refreshes the collision surface only and authorizes no mutation.',
+  description: 'List or mutate your Direction Claims. A Claim is your one-sentence direction statement on a Task — "the angle I am taking" — so others can spot collisions and track progress: Tasks define scope (owned by Humans), Claims declare the angle (owned by you). Good direction: "Unify the four form dialogs on shared field components before wiring submits." Bad direction: a multi-paragraph plan with step order, file lists, or acceptance criteria — those belong in Thread messages, not the Claim. Mutations require the current next-write token from a fully drained team_thread read (or your own last committed mutation); list refreshes the collision surface only and authorizes no mutation.',
   parameters: {
     action: { type: 'string', required: true, enum: ['list', 'claim', 'done', 'release'] },
     taskRef: { type: 'string', required: true, description: "Full branded Task ref exactly as returned by Team tools, including the 'task:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
@@ -529,7 +529,7 @@ const teamClaim = defineTool({
   output: {
     schema: { type: 'object', additionalProperties: false, properties: {
       kind: { type: 'string', required: true }, action: { type: 'string' }, taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true },
-      revision: { type: 'number', required: true }, expectedRevision: { type: 'number' }, status: { type: 'string' },
+      revision: { type: 'number', required: true }, expectedRevision: { type: 'number' }, status: { type: 'string', required: true },
       unreadCount: { type: 'number' }, directCount: { type: 'number' },
       claim: { type: 'object', additionalProperties: false, properties: {
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
@@ -574,17 +574,22 @@ const teamClaim = defineTool({
         claims: listed.claims.map(claimView) }
     }
     const baseRevision = args.baseRevision
-    if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error('claim mutation requires a positive baseRevision; drain the Thread with team_thread read and copy the token it renders — the revision is not shown anywhere else')
+    if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error('claim mutation requires a positive baseRevision; drain the Thread with team_thread read and copy the token it renders, or reuse the one your own last committed mutation rendered')
     if (args.action === 'claim' && (args.direction === undefined || args.claimRef !== undefined)) throw new Error('claim requires direction and does not accept claimRef')
     if ((args.action === 'done' || args.action === 'release') && (args.claimRef === undefined || args.direction !== undefined)) throw new Error(`${args.action} requires claimRef and does not accept direction`)
     const result = await host.changeClaimForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base, action: args.action,
       baseRevision, ...(args.direction === undefined ? {} : { direction: args.direction }), ...(args.claimRef === undefined ? {} : { claimRef: args.claimRef as AgentTeamClaimRef }) })
+    // Structured compatibility: every mutation outcome re-reads the real
+    // Claim archive and Task status, exactly as the parent version did —
+    // the render layer is what omits the archive, never the structured value.
+    const listed = host.listClaimsForAgent(agent, base)
+    const claims = listed.claims.map(claimView)
     if (result.kind === 'committed') return { kind: result.kind, action: args.action, taskRef: result.task.taskRef, threadRef: result.thread.threadRef,
-      revision: result.thread.revision, status: result.task.status, claim: claimView(result.claim), claims: [] }
-    if (result.kind === 'unread_required') return { kind: result.kind, taskRef: result.taskRef ?? args.taskRef, threadRef: result.threadRef,
-      revision: result.revision, unreadCount: result.unreadCount, directCount: result.directCount, claims: [] }
-    return { kind: result.kind, taskRef: result.taskRef ?? args.taskRef, threadRef: result.threadRef, expectedRevision: result.expectedRevision,
-      revision: result.revision, claims: [] }
+      revision: result.thread.revision, status: result.task.status, claim: claimView(result.claim), claims }
+    if (result.kind === 'unread_required') return { kind: result.kind, taskRef: listed.task.taskRef, threadRef: result.threadRef,
+      revision: result.revision, status: listed.task.status, unreadCount: result.unreadCount, directCount: result.directCount, claims }
+    return { kind: result.kind, taskRef: listed.task.taskRef, threadRef: result.threadRef, expectedRevision: result.expectedRevision,
+      revision: result.revision, status: listed.task.status, claims }
   },
 })
 

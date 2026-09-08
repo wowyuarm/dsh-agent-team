@@ -1,9 +1,11 @@
 # Team tools render information architecture
 
-**Status:** Both implementation tickets complete (2026-09-08); cumulative implementation and verification evidence delivered to the Thread. Awaiting Reeve's unified technical review, then Cole's final simplification pass.
+**Status:** Both implementation tickets complete (2026-09-08); cumulative delivery `440624f` reviewed by Reeve with verdict 不通过 — six blockers. Tars's focused follow-up commit closes them; awaiting Reeve's delta re-review, then Cole's final simplification pass.
 **Last checked:** 2026-09-08.
 
 ## Current frontier
+
+- Tars is landing the focused follow-up for Reeve's six blockers: (1) the token story unified to its two legal surfaces across descriptions, READMEs, validation errors, the preset workflow clause, and tests; (2) claim mutations/rejections restore the real structured `status`/`claims` via the post-mutation list (render still shows the affected Claim only); (3) `member_not_following.revision` passthrough restored plus an execute-level regression assertion; (4) `team-thread-render.spec.ts` deduped onto the shared render-text helper; (5) bilingual docs' Active-Claims row wording matches the rendered template; (6) raw trace artifacts (`analyze-trace.mjs`, `trace-analysis.json`, `inspect-oversized.mjs`) deleted — they persisted raw chat bodies; durable conclusions live in `materials/cole-trace-audit.md`.
 
 - Tars completed `issues/01-discover-and-read-current-thread.md` and `issues/02-mutate-and-align-model-contract.md`: address-book `team_view` (Threads sole catalog, newest-first, bounded subject, inline Task standing, Thread-only cursor), inbox header/two-counts/truncation conclusions, five-action `team_thread` renders with the A/B/C orientation discriminator and zero-unread-only next-write token, message/claim outcome-first renders (committed verbs, affected-Claim-first, shared rejection formatter with no numeric revision), `baseRevision` parameter descriptions, preset workflow normalization, package READMEs, bilingual collaboration docs, and CHANGELOG `[Unreleased]`.
 - Verification on the final state: `npm run build` clean; `npm test` 435 passed / 1 skipped (includes the 79-test lifecycle suite and generate:typert, with no diff in generated artifacts); `npm run typecheck` clean; `npm run lint` clean (0 warnings, 0 errors).
@@ -43,5 +45,4 @@ When implementation is accepted, move durable behavior into the bilingual `docs/
 - [`materials/reeve-first-principles.md`](materials/reeve-first-principles.md) — Reeve's independent intent and failure-mode audit plus candidate interface families.
 - [`materials/cole-trace-audit.md`](materials/cole-trace-audit.md) — Cole's independent simplification/repetition audit and trace-backed challenges.
 - [`materials/interface-options.md`](materials/interface-options.md) — earlier explicit-scope versus progressive alternatives; retained as comparison evidence, with its recommendation superseded.
-- [`analyze-trace.mjs`](analyze-trace.mjs) / [`trace-analysis.json`](trace-analysis.json) — Cole's cross-Member trace evidence extraction.
-- [`inspect-oversized.mjs`](inspect-oversized.mjs) — Cole's locator for structurally dense real results.
+- Raw trace artifacts (`analyze-trace.mjs`, `trace-analysis.json`, `inspect-oversized.mjs`) were deleted per the review data-hygiene blocker: they persisted raw chat bodies from real session logs, against the `.scratch` transient-artifact rule. The durable aggregates survive in `materials/cole-trace-audit.md`.

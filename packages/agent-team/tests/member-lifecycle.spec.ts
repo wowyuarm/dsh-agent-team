@@ -716,17 +716,31 @@ describe('Agent Team Member lifecycle', () => {
     const reply = await call('team_message', { action: 'reply', taskRef: started.task!.taskRef, body: 'Current reply', baseRevision: update.thread.revision })
     expect(reply).toMatchObject({ kind: 'committed', taskRef: started.task!.taskRef })
 
+    // A reply mentioning an Agent who does not follow the Thread rejects as
+    // member_not_following, and the structured value keeps the Host-supplied
+    // threadRef/revision passthrough — asserted at execute/result level, not
+    // only through a hand-written render fixture.
+    const notFollowing = await call('team_message', { action: 'reply', taskRef: started.task!.taskRef, body: 'Reviewer, please look', baseRevision: reply.revision, mentions: [reviewer.status.member.memberId] })
+    expect(notFollowing).toMatchObject({ kind: 'member_not_following', taskRef: started.task!.taskRef, threadRef: started.thread.threadRef, revision: reply.revision })
+    expect(notFollowing.memberIds).toEqual([reviewer.status.member.memberId])
+
     expect(await call('team_thread', { action: 'unfollow', taskRef: started.task!.taskRef })).toMatchObject({ following: false })
     const claim = await call('team_claim', { action: 'claim', taskRef: started.task!.taskRef, direction: 'implementation', baseRevision: reply.revision })
-    // A committed Claim mutation returns the authoritative affected Claim, not a post-mutation archive.
-    expect(claim).toMatchObject({ kind: 'committed', action: 'claim', threadRef: started.thread.threadRef, status: 'in_progress', claim: expect.objectContaining({ owner: builder.status.member.memberId, direction: 'implementation', state: 'active' }) })
+    // A committed Claim mutation returns the authoritative affected Claim;
+    // the structured claims archive and Task status stay real (compat) —
+    // the render is what omits the archive, never the structured value.
+    expect(claim).toMatchObject({ kind: 'committed', action: 'claim', threadRef: started.thread.threadRef, status: 'in_progress',
+      claim: expect.objectContaining({ owner: builder.status.member.memberId, direction: 'implementation', state: 'active' }),
+      claims: [expect.objectContaining({ owner: builder.status.member.memberId, direction: 'implementation', state: 'active' })] })
     expect(await call('team_thread', { action: 'status', taskRef: started.task!.taskRef })).toMatchObject({ following: true })
     expect(await call('team_claim', { action: 'list', taskRef: started.task!.taskRef })).toMatchObject({ kind: 'listed', claims: [expect.objectContaining({ direction: 'implementation' })] })
     const done = await call('team_claim', { action: 'done', taskRef: started.task!.taskRef, claimRef: claim.claim.claimRef, baseRevision: claim.revision })
-    expect(done).toMatchObject({ kind: 'committed', action: 'done', status: 'in_review', claim: expect.objectContaining({ state: 'done' }) })
+    expect(done).toMatchObject({ kind: 'committed', action: 'done', status: 'in_review', claim: expect.objectContaining({ state: 'done' }),
+      claims: [expect.objectContaining({ direction: 'implementation', state: 'done' })] })
     const secondClaim = await call('team_claim', { action: 'claim', taskRef: started.task!.taskRef, direction: 'follow-up', baseRevision: done.revision })
     const released = await call('team_claim', { action: 'release', taskRef: started.task!.taskRef, claimRef: secondClaim.claim.claimRef, baseRevision: secondClaim.revision })
-    expect(released).toMatchObject({ kind: 'committed', action: 'release', claim: expect.objectContaining({ direction: 'follow-up', state: 'released' }) })
+    expect(released).toMatchObject({ kind: 'committed', action: 'release', claim: expect.objectContaining({ direction: 'follow-up', state: 'released' }),
+      claims: [expect.objectContaining({ direction: 'implementation', state: 'done' }), expect.objectContaining({ direction: 'follow-up', state: 'released' })] })
 
     const humanReadAfterClaims = await ctx.agentTeam.readThread({ requestId: requestId('protocol-human-read-after-claims'), workspaceId,
       taskRef: started.task!.taskRef })

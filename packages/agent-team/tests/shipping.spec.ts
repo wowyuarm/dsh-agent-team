@@ -87,6 +87,11 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
+    // The one token story has exactly two legal surfaces: a fully drained
+    // read hands off the next-write token, and a committed public mutation's
+    // returned token may basis the next deliberate mutation.
+    expect(preset).toContain('copy the next-write token that fully drained read renders')
+    expect(preset).toContain("a successful public mutation's returned token may basis the next deliberate mutation")
     // The persona distinguishes the two reply channels: direct session talk
     // with the Human answers in plain text; ledger-backed Team Threads are
     // what team_message.reply is for.
@@ -105,6 +110,10 @@ describe('Agent Team shipping contract', () => {
     expect([...toolSource.matchAll(/name: '(team_[a-z]+)'/g)].map(match => match[1])).toEqual([
       'team_inbox', 'team_thread', 'team_message', 'team_claim', 'team_view',
     ])
+    // Validation errors teach the same two token surfaces as the descriptions,
+    // never a single-source story.
+    expect(toolSource).toContain('or reuse the one your own last committed mutation rendered')
+    expect(toolSource).not.toContain('the revision is not shown anywhere else')
 
     const manifest = JSON.parse(manifestText) as {
       name: string

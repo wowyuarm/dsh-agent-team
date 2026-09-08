@@ -2,8 +2,9 @@
 
 Independent evidence note for the render-IA work item. Extracted offline from the
 four current members' session logs (`~/.dsh/sessions/--home-yu-projects-dsh-agent-team--`,
-multi-frame zstd) by `../analyze-trace.mjs`; raw aggregates in `../trace-analysis.json`.
-Evidence only — no interface decision here.
+multi-frame zstd) by a throwaway analyzer (since deleted with its raw output per the
+`.scratch` transient-artifact rule — it persisted full chat bodies); only the durable
+aggregates below are kept. Evidence only — no interface decision here.
 
 Corpus: Cole 251 team calls, Momo 628, Ferry 614, Reeve 16 (Reeve's session is a
 fresh rollover; his history lives in the archived rollover sessions). Full team
