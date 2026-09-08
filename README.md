@@ -114,6 +114,7 @@ Published packages include built artifacts. A local checkout needs the adjacent 
 - The bundle is single-host. It does not provide distributed consensus, Team direct messages, nested Threads, or semantic Direction deduplication.
 - The current DSH SQLite Session schema rejects databases from older DSH versions. Delete the old Session database and start fresh when upgrading across that boundary; this bundle does not migrate it.
 - Team-managed Agent Sessions use `danger-full-access`. Use them only in trusted Workspaces.
+- The npm package publishes only the runtime surface (`cordis.patch.yml`, compiled `packages/*/lib`, `preset/`, `core-skills/`, READMEs — see the `files` list in `package.json`); `scripts/` are repository-only development tooling and are not shipped.
 
 ## Development
 

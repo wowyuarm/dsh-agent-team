@@ -114,6 +114,7 @@ dsh web
 - Bundle 是单 Host，不提供分布式共识、Team direct message、嵌套 Thread 或 Direction 语义去重。
 - 当前 DSH SQLite Session schema 不接受旧版 DSH 的数据库。跨越该边界升级时，删除旧 Session 数据库并重新开始；本 bundle 不负责迁移。
 - Team 管理的 Agent Session 使用 `danger-full-access`。只在可信 Workspace 中使用。
+- npm 包只发布运行时面（`cordis.patch.yml`、编译后的 `packages/*/lib`、`preset/`、`core-skills/`、README——见 `package.json` 的 `files` 列表）；`scripts/` 仅存在于仓库，属开发工具，不随包发布。
 
 ## 开发
 
