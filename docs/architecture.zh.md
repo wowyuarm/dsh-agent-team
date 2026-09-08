@@ -56,7 +56,7 @@ Composer attachments 是 `$DSH_HOME/agent-team/attachments/v1/<attachmentId>/` �
 
 ## Tools and preset
 
-显式的 `team-member` preset 是唯一的 Team Member composition。它加入完整 coding capability rows（shell、filesystem/search、web search、background jobs、skill 加载工具、todo、compaction）；skill 发现本身不是 preset row——每个 Member 的 provider 由 Host 注册在其 agent scope 上（见 Host authority）、Team collaboration guidance/tools、Harness Workspace instruction discovery 和有界的 private-memory reference context。普通 Sessions 留在这个 isolated roster 之外，不会获得 Team prompt sections、tools 或 Member memory。
+显式的 `team-member` preset 是唯一的 Team Member composition。它加入完整 coding capability rows（shell、filesystem/search、web search 与 fetch、background jobs、skill 加载工具、todo、compaction）；skill 发现本身不是 preset row——每个 Member 的 provider 由 Host 注册在其 agent scope 上（见 Host authority）、Team collaboration guidance/tools、Harness Workspace instruction discovery 和有界的 private-memory reference context。普通 Sessions 留在这个 isolated roster 之外，不会获得 Team prompt sections、tools 或 Member memory。
 
 八个 model-facing tools 定义在 `packages/tool-agent-team/src/index.ts`；实现的 collaboration contract 记录在 [`team-collaboration.zh.md`](team-collaboration.zh.md)。它们由 `packages/agent-team/preset/team-member/` 下的 `team-member` preset 挂载，并位于 `cordis.patch.yml` 的 isolated scope 中。不要为了让测试可用就把 tool package 作为 global row 添加；普通 Sessions 必须保持 Team-free。
 

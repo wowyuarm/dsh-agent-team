@@ -80,11 +80,15 @@
 - id: team-tools
   name: '@wowyuarm/dsh-agent-team/tools'
 
-# The host owns the Web service and search provider; the Team preset exposes only the model-facing tool.
+# The host owns the Web service and both providers; the Team preset exposes only
+# the model-facing tools. Fetch resolves the host's anonymous HTTP provider, so
+# Members get the same search + follow-up-fetch loop as the shipped standard
+# preset (the search guidance automatically recommends web_fetch once it is
+# registered).
 - id: tool-web
   name: '@deepseek-ai/dsh-tool-web'
   config:
-    fetch: false
+    fetch: true
     searchTimeoutMs: 60000
 
 - id: compaction

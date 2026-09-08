@@ -49,7 +49,7 @@ When changing a Host capability, read package source/tests first and then the ma
 
 ## Tools and preset
 
-The explicit `team-member` preset is the only Team Member composition. It adds coding capability rows (shell, filesystem/search, web search, background jobs, the skill loader tool, todo, compaction), collaboration guidance/tools, Harness Workspace instruction discovery, and bounded private-memory context. Skill discovery itself is not a preset row: each Member's provider is Host-registered on its agent scope (see Host authority). Ordinary Sessions remain outside this roster and receive no Team prompt sections, tools, or Member memory.
+The explicit `team-member` preset is the only Team Member composition. It adds coding capability rows (shell, filesystem/search, web search and fetch, background jobs, the skill loader tool, todo, compaction), collaboration guidance/tools, Harness Workspace instruction discovery, and bounded private-memory context. Skill discovery itself is not a preset row: each Member's provider is Host-registered on its agent scope (see Host authority). Ordinary Sessions remain outside this roster and receive no Team prompt sections, tools, or Member memory.
 
 The eight tools are defined in `packages/tool-agent-team/src/index.ts`; their contract is in [`team-collaboration.md`](team-collaboration.md). They mount under the isolated `team-member` preset. The Web Client is the only Human control surface and delegates every mutation through `ctx.agentTeam` typed Remote; do not restore a slash-command adapter.
 
