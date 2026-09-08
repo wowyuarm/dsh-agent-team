@@ -1,12 +1,16 @@
 /**
- * Team Member per-step clock context.
+ * Team Member turn-level clock context.
  *
- * Every eligible model step of a Team Member appends one durable,
- * source-attributed clock snapshot: the current instant in the fixed Team
- * coordination zone (UTC+8), the elapsed time since the preceding
- * model-visible event (or the preceding snapshot within the same turn), and
- * the ordering authority note. The snapshot is an observation, never ledger
- * authority: sequence and revision, not wall-clock time, order Team facts.
+ * The first model step of every eligible Team Member turn appends one
+ * durable, source-attributed clock snapshot: the current instant in the
+ * fixed Team coordination zone (UTC+8), the elapsed time since the
+ * preceding model-visible event, and the ordering authority note. Later
+ * steps of the same turn stay quiet unless the turn runs longer than the
+ * refresh interval, in which case one snapshot lands per elapsed interval —
+ * a tool-dense turn of quick steps produces exactly one line, while a turn
+ * that grinds for minutes still shows its real span. The snapshot is an
+ * observation, never ledger authority: sequence and revision, not
+ * wall-clock time, order Team facts.
  *
  * This plugin deliberately does not mount the shipped
  * `@deepseek-ai/dsh-time-context`: its browser-zone policy asks the model to
@@ -30,6 +34,15 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { formatTeamDuration, formatTeamTimestamp } from './time-format.ts'
 
 export const name = 'wowyuarm-agent-team-member-time-context'
+
+/** Default minimum spacing between two snapshots within one turn, in ms. */
+export const CLOCK_REFRESH_INTERVAL_MS = 60_000
+
+/** Plugin configuration: the snapshot refresh interval, overridable per preset. */
+export interface Config {
+  /** Minimum spacing between two snapshots within one turn, in ms. Default 60_000. */
+  refreshIntervalMs?: number
+}
 
 /** Folded clock baselines for one Member Session. */
 interface ClockBaseline {
@@ -81,6 +94,19 @@ export function foldClockBaseline(events: readonly { readonly type: string; read
   return state
 }
 
+/**
+ * Whether this step should append a clock snapshot: the first step of a turn
+ * always does (every wake starts with a fresh instant), and a later step
+ * does only when the turn has run longer than the refresh interval since
+ * the last landed snapshot. Skipped steps produce nothing and never
+ * backfill — their span folds into the next snapshot's elapsed.
+ * @internal exported for tests.
+ */
+export function shouldSampleClock(step: number, now: number, baseline: ClockBaseline, refreshIntervalMs: number): boolean {
+  if (step === 1) return true
+  return baseline.lastTurnInjectionTime === null || now - baseline.lastTurnInjectionTime >= refreshIntervalMs
+}
+
 /** Render one durable clock snapshot text. @internal exported for tests. */
 export function renderClockSnapshot(input: { readonly now: number; readonly turn: number; readonly step: number; readonly previous: number | undefined }): string {
   // A wall-clock rollback clamps elapsed to 0s without rewriting history.
@@ -91,7 +117,8 @@ export function renderClockSnapshot(input: { readonly now: number; readonly turn
     + 'Team collaboration timestamps use UTC+8. Sequence and revision, not wall-clock time, determine ordering and concurrency.'
 }
 
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config = {}): void {
+  const refreshIntervalMs = config.refreshIntervalMs ?? CLOCK_REFRESH_INTERVAL_MS
   ctx.on('agent/pre-step', async ({ agent, turn, step, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
@@ -106,6 +133,9 @@ export function apply(ctx: Context): void {
     // elapsed across generations: a missing prior event renders
     // `unavailable`, not a fabricated baseline.
     const baseline = foldClockBaseline(agent.session.ownEvents())
+    // Turn-first-step always samples; later steps sample only at the refresh
+    // interval, so a quick tool-dense turn stays at one line.
+    if (!shouldSampleClock(step, now, baseline, refreshIntervalMs)) return decision
     const previous = step === 1
       ? baseline.lastMessageTime ?? undefined
       : baseline.lastTurnInjectionTime ?? undefined

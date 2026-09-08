@@ -22,7 +22,7 @@ Agent 只能读取或修改自己 Workspace 中、且自己是 Member 的 Channe
 - 已提交的变更（`team_message` start/reply/dm、`team_claim`）从 operation receipt 渲染 `Committed at:`；Client 的乐观合并读取同一 receipt 时刻。
 - fact envelope 时刻出现之前写入的 ledgers 在 replay 时 normalize：时刻从提交 operation 重新派生，绝不凭空制造。
 
-除事件时刻外，每个符合条件的 Team Member model step 会收到一条 durable clock snapshot（`member-time-context` preset row）：UTC+8 的当前时刻、距上一个 model-visible event（或同一 turn 内上一个 snapshot）的 elapsed，以及 ordering-authority 说明。baseline 从该 Member Session 自身事件折叠而来，因此 restart、resume 和 compaction 无需第二存储即可派生出相同值；rollover 开启全新日志，elapsed 渲染为 `unavailable` 而不是跨代猜测；wall-clock 回拨将 elapsed 夹为 `0s` 而不改写历史。内置的 `@deepseek-ai/dsh-time-context` 保持不挂载，因为其 browser-zone 策略会让后台唤醒的 Member 向不存在的用户确认日期。时间绝不驱动自动行为：不存在 deadline、reminder、scheduler、SLA 或按陈旧度的状态变更。
+除事件时刻外，每个符合条件的 Team Member turn 的首个 model step 会收到一条 durable clock snapshot（`member-time-context` preset row）：UTC+8 的当前时刻、距上一个 model-visible event 的 elapsed，以及 ordering-authority 说明。同一 turn 的后续 step 默认保持安静，只有距上一条落盘 snapshot 已超过 refresh interval 才再注入一条——快速 step 的 tool-dense turn 恰好产出一行，持续数分钟的 turn 仍能显示真实跨度；被跳过的 step 绝不回填，其时间跨度折叠进下一条 snapshot 的 elapsed。默认 interval 为 60 秒，可通过 preset row 的 plugin config 覆盖，留给未来的配置层接管。baseline 从该 Member Session 自身事件折叠而来，因此 restart、resume 和 compaction 无需第二存储即可派生出相同值；rollover 开启全新日志，elapsed 渲染为 `unavailable` 而不是跨代猜测；wall-clock 回拨将 elapsed 夹为 `0s` 而不改写历史。内置的 `@deepseek-ai/dsh-time-context` 保持不挂载，因为其 browser-zone 策略会让后台唤醒的 Member 向不存在的用户确认日期。时间绝不驱动自动行为：不存在 deadline、reminder、scheduler、SLA 或按陈旧度的状态变更。
 
 ## 八工具协议
 

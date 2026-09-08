@@ -31,10 +31,10 @@ async function preStep(ctx: Context, agent: Agent, turn = 1, step = 1): Promise<
   }, async () => ({ kind: 'enter', messages: [] }))
 }
 
-async function mount(ctx: Context): Promise<void> {
+async function mount(ctx: Context, config?: memberTimeContext.Config): Promise<void> {
   const loader = Object.create(Loader.prototype) as Loader
   const plugin = loader.unwrapExports(memberTimeContext) as Parameters<Context['plugin']>[0]
-  await ctx.plugin(plugin)
+  await ctx.plugin(plugin, config)
 }
 
 function snapshotText(decision: PreStepDecision): string | undefined {
@@ -97,14 +97,35 @@ describe('Team Member clock composition', () => {
     const first = await preStep(ctx, agent, 1, 1)
     const firstText = snapshotText(first)
     expect(firstText).toContain('Elapsed since the preceding model-visible event: unavailable.')
-    // The injected snapshot becomes a session event, as the loop would log it.
+    // The injected snapshot becomes a session event, as the loop would log
+    // it, at a realistic epoch time so the refresh gate sees true spacing.
     const injected = first.kind === 'enter' ? first.messages.at(-1) as UserMessage : undefined
-    events.push({ type: 'user/message', time: 2_000, data: injected! })
+    events.push({ type: 'user/message', time: Date.now(), data: injected! })
 
-    const second = await preStep(ctx, agent, 1, 2)
-    const secondText = snapshotText(second)
-    expect(secondText).toContain('Elapsed since the preceding step context:')
-    expect(secondText).not.toContain('unavailable')
+    // A quick follow-up step inside the refresh interval stays quiet: the
+    // turn keeps its single snapshot, exactly the density decision.
+    const quietStep = await preStep(ctx, agent, 1, 2)
+    expect(quietStep).toEqual({ kind: 'enter', messages: [] })
+
+    // Once the turn outlives the interval since the landed snapshot, the
+    // next step samples again with the elapsed against that snapshot.
+    const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+    const refreshed = await (async () => {
+      // Mount with a tiny interval for this check: a second plugin instance
+      // with refreshIntervalMs 50 exercises the same gate on real clocks.
+      const ctx2 = new Context()
+      const events2: Array<{ type: string; time: number; data?: unknown }> = [...events]
+      const agent2 = fakeAgent(ctx2, events2)
+      ctx2.provide('agentTeam', { memberForAgent: () => ({ memberId: 'member:clock' }) } as never)
+      await mount(ctx2, { refreshIntervalMs: 50 })
+      await wait(60)
+      const decision = await preStep(ctx2, agent2, 1, 3)
+      await ctx2.fiber.dispose()
+      return decision
+    })()
+    const refreshedText = snapshotText(refreshed)
+    expect(refreshedText).toContain('Elapsed since the preceding step context:')
+    expect(refreshedText).not.toContain('unavailable')
     await ctx.fiber.dispose()
   })
 

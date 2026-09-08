@@ -98,3 +98,36 @@ describe('renderClockSnapshot states elapsed explicitly', () => {
     expect(text).toContain('Elapsed since the preceding step context: 0s.')
   })
 })
+
+describe('shouldSampleClock gates snapshots to turn starts and refresh intervals', () => {
+  const baselineAfter = (events: Parameters<typeof memberTimeContext.foldClockBaseline>[0]) => memberTimeContext.foldClockBaseline(events)
+
+  it('the first step of a turn always samples, regardless of prior state', () => {
+    const fresh = baselineAfter([])
+    expect(memberTimeContext.shouldSampleClock(1, 1_000, fresh, 60_000)).toBe(true)
+    const seeded = baselineAfter([clockSnapshot(500)])
+    expect(memberTimeContext.shouldSampleClock(1, 600, seeded, 60_000)).toBe(true)
+  })
+
+  it('a later step inside the refresh interval stays quiet', () => {
+    const baseline = baselineAfter([clockSnapshot(10_000)])
+    // 7s after the landed snapshot: below the 60s interval, no injection.
+    expect(memberTimeContext.shouldSampleClock(2, 17_000, baseline, 60_000)).toBe(false)
+    expect(memberTimeContext.shouldSampleClock(5, 59_999, baseline, 60_000)).toBe(false)
+  })
+
+  it('a later step samples once the turn outlives the refresh interval since the last snapshot', () => {
+    const baseline = baselineAfter([clockSnapshot(10_000)])
+    expect(memberTimeContext.shouldSampleClock(2, 70_000, baseline, 60_000)).toBe(true)
+    // The refresh baseline is the last landed snapshot, so a long-running
+    // turn samples once per elapsed interval.
+    const refreshed = baselineAfter([clockSnapshot(70_000)])
+    expect(memberTimeContext.shouldSampleClock(3, 100_000, refreshed, 60_000)).toBe(false)
+    expect(memberTimeContext.shouldSampleClock(3, 130_001, refreshed, 60_000)).toBe(true)
+  })
+
+  it('a later step with no landed snapshot in the turn samples (cannot happen after step 1, defensive)', () => {
+    const baseline = baselineAfter([ordinaryMessage(1_000)])
+    expect(memberTimeContext.shouldSampleClock(2, 1_500, baseline, 60_000)).toBe(true)
+  })
+})

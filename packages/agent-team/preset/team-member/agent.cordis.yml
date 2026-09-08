@@ -66,12 +66,16 @@
 - id: member-context
   name: '@wowyuarm/dsh-agent-team/member-context'
 
-# Per-step durable Team clock: current instant (fixed UTC+8), elapsed since
-# the preceding model-visible event, and the ordering-authority note. The
-# shipped dsh-time-context stays unmounted: its browser-zone policy would ask
+# Turn-level durable Team clock: the first step of every turn renders the
+# current instant (fixed UTC+8), elapsed since the preceding model-visible
+# event, and the ordering-authority note; later steps of the same turn stay
+# quiet unless the turn outlives the refresh interval. The shipped
+# dsh-time-context stays unmounted: its browser-zone policy would ask
 # background-woken Members to confirm dates with an absent user.
 - id: member-time-context
   name: '@wowyuarm/dsh-agent-team/member-time-context'
+  config:
+    refreshIntervalMs: 60000
 
 - id: team-tools
   name: '@wowyuarm/dsh-agent-team/tools'

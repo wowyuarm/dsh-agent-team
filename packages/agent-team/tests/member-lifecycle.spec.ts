@@ -857,7 +857,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
-  it('injects one durable clock snapshot into every eligible Member model step', async () => {
+  it('injects one durable clock snapshot at turn start and stays quiet within the refresh interval', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('clock-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -867,30 +867,39 @@ describe('Agent Team Member lifecycle', () => {
       body: 'Drive the clock', recipients: [builder.status.member.memberId] })
     if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
 
-    // One real Member turn from the direct-mention wake: every model step
-    // inside the turn prepends one durable clock snapshot.
+    // One real, tool-dense Member turn from the direct-mention wake: two
+    // tool steps, then the closing text. The turn's first step appends one
+    // durable clock snapshot; the quick follow-up steps fall inside the
+    // default refresh interval and stay quiet, so the whole turn produces
+    // exactly one snapshot line.
+    adapter.enqueue(toolCallResponse('clock-tool-1', 'team_view', {}))
+    adapter.enqueue(toolCallResponse('clock-tool-2', 'team_inbox', {}))
     adapter.enqueue(textResponse('Clock observed.'))
     await waitForIdle(ctx, agent)
-    expect(adapter.requests.length).toBeGreaterThanOrEqual(1)
-    const request = JSON.stringify(adapter.requests[0]!.messages)
-    // The snapshot is model-visible inside the request itself.
-    expect(request).toContain('Team clock sampled while preparing turn ')
-    expect(request).toContain('Team collaboration timestamps use UTC+8.')
+    expect(adapter.requests).toHaveLength(3)
+    const first = JSON.stringify(adapter.requests[0]!.messages)
+    // The snapshot is model-visible inside the turn's first request.
+    expect(first).toContain('Team clock sampled while preparing turn ')
+    expect(first).toContain('Team collaboration timestamps use UTC+8.')
+    const last = JSON.stringify(adapter.requests[2]!.messages)
+    // The closing step still carries the turn's single snapshot in history.
+    const lastSnapshots = adapter.requests[2]!.messages.filter(message =>
+      (message as { source?: { plugin?: string } }).source?.plugin === 'wowyuarm-agent-team-member-time-context')
+    expect(lastSnapshots).toHaveLength(1)
+    expect(last).toContain('Team clock sampled while preparing turn ')
     const snapshots = agent.session.ownEvents().filter(event => event.type === 'user/message'
       && (event.data as { source?: { plugin?: string; form?: string } }).source?.plugin === 'wowyuarm-agent-team-member-time-context')
-    expect(snapshots.length).toBeGreaterThanOrEqual(1)
-    for (const event of snapshots) {
-      const data = event.data as { content: Array<{ type: string; text: string }>; source: { kind: string; form: string; sections?: unknown[] } }
-      expect(data.source.form).toBe('snapshot')
-      // ContextFormed snapshot messages must carry sections.
-      expect(Array.isArray(data.source.sections)).toBe(true)
-      const text = data.content[0]!.text
-      expect(text).toContain('Team clock sampled while preparing turn ')
-      expect(text).toMatch(/Elapsed since the preceding (model-visible event|step context): (unavailable|[0-9dhms ]+)\./)
-      expect(text).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
-      // Absolute instants only: no relative time vocabulary.
-      expect(text).not.toContain(' ago')
-    }
+    expect(snapshots).toHaveLength(1)
+    const data = snapshots[0]!.data as { content: Array<{ type: string; text: string }>; source: { kind: string; form: string; sections?: unknown[] } }
+    expect(data.source.form).toBe('snapshot')
+    // ContextFormed snapshot messages must carry sections.
+    expect(Array.isArray(data.source.sections)).toBe(true)
+    const text = data.content[0]!.text
+    expect(text).toContain('Team clock sampled while preparing turn ')
+    expect(text).toMatch(/Elapsed since the preceding model-visible event: (unavailable|[0-9dhms ]+)\./)
+    expect(text).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
+    // Absolute instants only: no relative time vocabulary.
+    expect(text).not.toContain(' ago')
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
