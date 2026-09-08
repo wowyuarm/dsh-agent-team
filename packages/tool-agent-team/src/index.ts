@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@wowyuarm/dsh-agent-team/host'
+import { formatTeamTimestamp } from '@wowyuarm/dsh-agent-team/time-format'
 import { registerContextTools } from './context-tools.ts'
 import type {
   AgentTeamClaimRef,
@@ -24,6 +25,7 @@ interface ActivityFactView {
   readonly activity: string
   readonly actor: string
   readonly taskRef: string
+  readonly occurredAt?: string
   readonly claimRef?: string
   readonly claimRefs?: string[]
   readonly completedClaimRefs?: string[]
@@ -39,6 +41,7 @@ interface MessageFactView {
   readonly kind: 'message'
   readonly body: string
   readonly sender: string
+  readonly occurredAt?: string
   readonly mentions: string[]
   readonly unread?: boolean
   readonly direct?: boolean
@@ -75,9 +78,11 @@ function activityFactView(
     readonly completedClaimRefs?: readonly AgentTeamClaimRef[] | undefined; readonly acceptedClaimRefs?: readonly AgentTeamClaimRef[] | undefined
     readonly releasedClaimRefs?: readonly AgentTeamClaimRef[] | undefined },
   markers?: { readonly unread: boolean; readonly direct: boolean } | undefined,
+  occurredAt?: string | undefined,
 ): ActivityFactView {
   return {
     sequence, kind: 'activity', activity: activity.kind, actor: activity.actor, taskRef: activity.taskRef,
+    ...(occurredAt === undefined ? {} : { occurredAt }),
     ...(activity.claimRef === undefined ? {} : { claimRef: activity.claimRef }),
     ...(activity.claimRefs === undefined || activity.claimRefs.length === 0 ? {} : { claimRefs: [...activity.claimRefs] }),
     ...(activity.completedClaimRefs === undefined || activity.completedClaimRefs.length === 0 ? {} : { completedClaimRefs: [...activity.completedClaimRefs] }),
@@ -201,7 +206,7 @@ const teamInbox = defineTool({
       items: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true },
         taskRef: { type: 'string' }, status: { type: 'string' }, revision: { type: 'number', required: true }, unreadCount: { type: 'number', required: true }, directCount: { type: 'number', required: true },
-        taskNumber: { type: 'number' },
+        taskNumber: { type: 'number' }, newestOccurredAt: { type: 'string' },
       } } },
     } },
     // Triage surface only: totals plus both counters per row (direct renders
@@ -218,7 +223,7 @@ const teamInbox = defineTool({
       const shown = value.items.reduce((sum, item) => sum + item.unreadCount, 0)
       return [{ type: 'text', text: [
         `Inbox — ${value.totalUnreadCount} unread update(s) total, ${value.totalDirectCount} direct, across ${value.items.length} Thread(s) shown${value.totalUnreadCount > shown ? `; ${value.totalUnreadCount - shown} more on Threads beyond this bounded list — call again with a larger limit.` : '.'}`,
-        ...value.items.map(item => `${item.threadRef}${item.channelRef === undefined ? '' : ` · ${item.channelRef}`}${item.taskRef === undefined ? '' : ` · ${taskStanding(item)}`} · ${item.unreadCount} unread, ${item.directCount} direct`),
+        ...value.items.map(item => `${item.threadRef}${item.channelRef === undefined ? '' : ` · ${item.channelRef}`}${item.taskRef === undefined ? '' : ` · ${taskStanding(item)}`} · ${item.unreadCount} unread, ${item.directCount} direct${item.newestOccurredAt === undefined ? '' : ` · newest ${formatTeamTimestamp(item.newestOccurredAt)}`}`),
         'Read a selected Thread with team_thread read. Listing changes no read state and supplies no write token.',
       ].join('\n') }]
     },
@@ -237,7 +242,7 @@ const teamInbox = defineTool({
         const taskNumber = item.task === undefined ? undefined : taskNumbers.get(item.task.taskRef)
         return { threadRef: item.thread.threadRef, channelRef: item.channelRef,
           ...(item.task === undefined ? {} : { taskRef: item.task.taskRef, status: item.task.status }),
-          revision: item.thread.revision, unreadCount: item.unreadCount, directCount: item.directCount,
+          revision: item.thread.revision, unreadCount: item.unreadCount, directCount: item.directCount, newestOccurredAt: item.newestOccurredAt,
           ...(taskNumber === undefined ? {} : { taskNumber }) }
       }),
     }
@@ -259,13 +264,13 @@ const teamThread = defineTool({
       revision: { type: 'number', required: true }, status: { type: 'string' }, resolution: { type: 'string' }, taskNumber: { type: 'number' },
       following: { type: 'boolean', required: true }, readThroughSequence: { type: 'number' }, remainingUnreadCount: { type: 'number' }, cursor: { type: 'number' }, hasMore: { type: 'boolean' },
       anchor: { type: 'object', required: true, additionalProperties: false, properties: {
-        messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, body: { type: 'string', required: true }, sequence: { type: 'number', required: true },
+        messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, body: { type: 'string', required: true }, sequence: { type: 'number', required: true }, occurredAt: { type: 'string' },
       } },
       claims: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
       } } },
       facts: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, activity: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
+        sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, body: { type: 'string' }, sender: { type: 'string' }, occurredAt: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, activity: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' },
       } } },
       contextAdvice: { type: 'object', additionalProperties: false, properties: {
         usageTokens: { type: 'number' }, taskBoundaryThreshold: { type: 'number' }, handoffAt: { type: 'number' }, hardLimit: { type: 'number' },
@@ -293,7 +298,7 @@ const teamThread = defineTool({
         // anchor; a continuation orients on the shared bounded subject. An
         // anchor already selected as a fact never repeats.
         if (!facts.some(fact => fact.sequence === value.anchor.sequence)) {
-          if (args.beforeSequence === undefined) lines.push('', `Anchor ${value.anchor.sequence} [${value.anchor.sender}]`, value.anchor.body)
+          if (args.beforeSequence === undefined) lines.push('', `Anchor ${value.anchor.sequence}${value.anchor.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(value.anchor.occurredAt)}`} [${value.anchor.sender}]`, value.anchor.body)
           else lines.push(`  — ${boundedSubject(value.anchor.body)}`)
         }
         lines.push('', 'Facts')
@@ -318,7 +323,7 @@ const teamThread = defineTool({
       // read) the shared bounded subject — never the full anchor.
       const anchorInFacts = facts.some(fact => fact.sequence === value.anchor.sequence)
       const hasBackground = facts.some(fact => fact.unread === false)
-      if (!anchorInFacts && hasBackground) lines.push('', `Anchor ${value.anchor.sequence} [${value.anchor.sender}]`, value.anchor.body)
+      if (!anchorInFacts && hasBackground) lines.push('', `Anchor ${value.anchor.sequence}${value.anchor.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(value.anchor.occurredAt)}`} [${value.anchor.sender}]`, value.anchor.body)
       if (!anchorInFacts && !hasBackground) lines.push(`  — ${boundedSubject(value.anchor.body)}`)
       const activeClaims = value.claims.filter(claim => claim.state === 'active')
       if (activeClaims.length > 0) {
@@ -362,22 +367,23 @@ const teamThread = defineTool({
       const history = host.threadHistoryForAgent(agent, { ...base, ...(args.beforeSequence === undefined ? {} : { beforeSequence: args.beforeSequence }), ...(args.limit === undefined ? {} : { limit: args.limit }) })
       const status = host.attentionStatusForAgent(agent, base)
       return threadResult('history', history, status.attention, history.facts.map(fact => fact.kind === 'message'
-          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions] }
-          : activityFactView(fact.sequence, fact.activity)), { cursor: history.cursor, hasMore: history.hasMore, ...taskNumberOf(history.task) })
+          ? { sequence: fact.sequence, kind: 'message', body: fact.message.body, sender: fact.message.sender, mentions: [...fact.mentions], occurredAt: fact.occurredAt }
+          : activityFactView(fact.sequence, fact.activity, undefined, fact.occurredAt)), { cursor: history.cursor, hasMore: history.hasMore, ...taskNumberOf(history.task) })
     }
     if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error('read does not accept history arguments')
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base })
     return threadResult('read', read, read.attention, read.facts.map(entry => entry.fact.kind === 'message'
-        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], unread: entry.unread, direct: entry.direct }
-        : activityFactView(entry.fact.sequence, entry.fact.activity, { unread: entry.unread, direct: entry.direct })), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount, ...(read.contextAdvice === undefined ? {} : { contextAdvice: adviceView(read.contextAdvice) }), ...taskNumberOf(read.task) })
+        ? { sequence: entry.fact.sequence, kind: 'message', body: entry.fact.message.body, sender: entry.fact.message.sender, mentions: [...entry.fact.mentions], unread: entry.unread, direct: entry.direct, occurredAt: entry.fact.occurredAt }
+        : activityFactView(entry.fact.sequence, entry.fact.activity, { unread: entry.unread, direct: entry.direct }, entry.fact.occurredAt)), { readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.remainingUnreadCount, ...(read.contextAdvice === undefined ? {} : { contextAdvice: adviceView(read.contextAdvice) }), ...taskNumberOf(read.task) })
   },
 })
 
 /** One rendered fact line; markers are inline, never a separate ellipsis line. */
 function factLine(fact: FactView): string {
+  const at = fact.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(fact.occurredAt)}`
   return fact.kind === 'message'
-    ? `${fact.sequence} [${fact.sender ?? 'unknown sender'}]${factMarkers(fact)} ${fact.body}`
-    : `${activityLine(fact)}${factMarkers(fact)}`
+    ? `${fact.sequence}${at} [${fact.sender ?? 'unknown sender'}]${factMarkers(fact)} ${fact.body}`
+    : `${activityLine(fact)}${at}${factMarkers(fact)}`
 }
 
 /** One collision-surface Claim line, shared by read and history-free listing. */
@@ -391,7 +397,7 @@ function threadResult(
   attention: Awaited<ReturnType<AgentTeam['readThreadForAgent']>>['attention'],
   facts: FactView[],
   extra: { cursor?: number; hasMore?: boolean; readThroughSequence?: number; remainingUnreadCount?: number; contextAdvice?: ContextAdviceView; taskNumber?: number } = {},
-): { anchor: { messageRef: string; sender: string; body: string; sequence: number }; threadRef: string; revision: number; kind: string; following: boolean; taskRef?: string; status?: string; resolution?: string; taskNumber?: number; readThroughSequence?: number; remainingUnreadCount?: number; cursor?: number; hasMore?: boolean; claims: ClaimView[]; facts: FactView[]; contextAdvice?: ContextAdviceView } {
+): { anchor: { messageRef: string; sender: string; body: string; sequence: number; occurredAt?: string }; threadRef: string; revision: number; kind: string; following: boolean; taskRef?: string; status?: string; resolution?: string; taskNumber?: number; readThroughSequence?: number; remainingUnreadCount?: number; cursor?: number; hasMore?: boolean; claims: ClaimView[]; facts: FactView[]; contextAdvice?: ContextAdviceView } {
   return {
     kind, threadRef: snapshot.thread.threadRef, revision: snapshot.thread.revision,
     ...(snapshot.task === undefined ? {} : { taskRef: snapshot.task.taskRef, status: snapshot.task.status, resolution: snapshot.task.resolution }),
@@ -399,7 +405,7 @@ function threadResult(
     following: attention !== undefined,
     ...extra,
     ...(attention === undefined || extra.readThroughSequence !== undefined ? {} : { readThroughSequence: attention.readThroughSequence }),
-    anchor: { messageRef: snapshot.anchor.messageRef, sender: snapshot.anchor.sender, body: snapshot.anchor.body, sequence: snapshot.anchor.sequence },
+    anchor: { messageRef: snapshot.anchor.messageRef, sender: snapshot.anchor.sender, body: snapshot.anchor.body, sequence: snapshot.anchor.sequence, occurredAt: snapshot.anchor.occurredAt },
     claims: snapshot.claims.map(claimView),
     facts,
   }
@@ -432,7 +438,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       kind: { type: 'string', required: true }, action: { type: 'string' }, taskRef: { type: 'string' }, threadRef: { type: 'string' }, revision: { type: 'number' },
       expectedRevision: { type: 'number' }, messageRef: { type: 'string' }, memberIds: { type: 'array', items: { type: 'string' } }, unreadCount: { type: 'number' }, directCount: { type: 'number' },
-      recipientMemberId: { type: 'string' }, recipientHandle: { type: 'string' }, delivered: { type: 'boolean' }, deliveryNote: { type: 'string' },
+      recipientMemberId: { type: 'string' }, recipientHandle: { type: 'string' }, delivered: { type: 'boolean' }, deliveryNote: { type: 'string' }, occurredAt: { type: 'string' },
     } },
     render: (_args, value) => {
       if (value.kind === 'dm-sent') {
@@ -441,12 +447,13 @@ const teamMessage = markAgentTeamPreset(defineTool({
           'No automatic redelivery will occur; do not blindly send a duplicate.',
           `Reason: ${value.deliveryNote ?? 'the recipient session could not be woken'}`,
         ].join('\n') }]
-        return [{ type: 'text', text: `Delivered — DM to @${value.recipientHandle} (${value.recipientMemberId}).` }]
+        return [{ type: 'text', text: `Delivered — DM to @${value.recipientHandle} (${value.recipientMemberId})${value.occurredAt === undefined ? '' : ` at ${formatTeamTimestamp(value.occurredAt)}`}.` }]
       }
       if (value.kind === 'committed' && value.messageRef !== undefined && value.threadRef !== undefined && value.revision !== undefined) {
         return [{ type: 'text', text: [
           value.action === 'start' ? 'Committed — Thread created.' : 'Committed — reply added.',
           [value.messageRef, value.threadRef, ...(value.taskRef === undefined ? [] : [value.taskRef])].join(' · '),
+          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
           nextWriteLine(value.revision),
         ].join('\n') }]
       }
@@ -483,7 +490,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
       try {
         const result = await host.dmForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: current.workspaceId,
           recipientMemberId: args.memberRef as AgentTeamMemberId, body: args.body })
-        return { kind: 'dm-sent', recipientMemberId: result.recipient.memberId, recipientHandle: result.recipient.handle, delivered: true }
+        return { kind: 'dm-sent', recipientMemberId: result.recipient.memberId, recipientHandle: result.recipient.handle, delivered: true, occurredAt: result.receipt.occurredAt }
       } catch (error) {
         if (error instanceof AgentTeamDmDeliveryError) {
           return { kind: 'dm-sent', recipientMemberId: error.recipientMemberId, recipientHandle: error.recipientHandle, delivered: false, deliveryNote: error.message }
@@ -507,7 +514,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
 function messageOutcome(result: Awaited<ReturnType<AgentTeam['sendMessageForAgent']>> | Awaited<ReturnType<AgentTeam['replyForAgent']>>, action: 'start' | 'reply') {
   if (result.kind === 'committed') return { kind: result.kind, action, threadRef: result.thread.threadRef,
     ...(result.task === undefined ? {} : { taskRef: result.task.taskRef }),
-    revision: result.thread.revision, messageRef: result.message.messageRef }
+    revision: result.thread.revision, messageRef: result.message.messageRef, occurredAt: result.receipt.occurredAt }
   if (result.kind === 'member_not_following') return { kind: result.kind, memberIds: [...result.memberIds],
     ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), ...(result.threadRef === undefined ? {} : { threadRef: result.threadRef, revision: result.revision }) }
   if (result.kind === 'unread_required') return { kind: result.kind, ...(result.taskRef === undefined ? {} : { taskRef: result.taskRef }), threadRef: result.threadRef,
@@ -530,7 +537,7 @@ const teamClaim = defineTool({
     schema: { type: 'object', additionalProperties: false, properties: {
       kind: { type: 'string', required: true }, action: { type: 'string' }, taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true },
       revision: { type: 'number', required: true }, expectedRevision: { type: 'number' }, status: { type: 'string', required: true },
-      unreadCount: { type: 'number' }, directCount: { type: 'number' },
+      unreadCount: { type: 'number' }, directCount: { type: 'number' }, occurredAt: { type: 'string' },
       claim: { type: 'object', additionalProperties: false, properties: {
         claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
       } },
@@ -555,6 +562,7 @@ const teamClaim = defineTool({
           `Committed — Claim ${value.action === 'claim' ? 'created' : value.action === 'done' ? 'completed' : 'released'}.`,
           `${value.claim.claimRef} · ${value.claim.state} — ${value.claim.owner}: ${value.claim.direction}`,
           `${value.threadRef} · ${value.taskRef} · ${value.status}`,
+          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
           nextWriteLine(value.revision),
         ].join('\n') }]
       }
@@ -585,7 +593,7 @@ const teamClaim = defineTool({
     const listed = host.listClaimsForAgent(agent, base)
     const claims = listed.claims.map(claimView)
     if (result.kind === 'committed') return { kind: result.kind, action: args.action, taskRef: result.task.taskRef, threadRef: result.thread.threadRef,
-      revision: result.thread.revision, status: result.task.status, claim: claimView(result.claim), claims }
+      revision: result.thread.revision, status: result.task.status, claim: claimView(result.claim), claims, occurredAt: result.receipt.occurredAt }
     if (result.kind === 'unread_required') return { kind: result.kind, taskRef: listed.task.taskRef, threadRef: result.threadRef,
       revision: result.revision, status: listed.task.status, unreadCount: result.unreadCount, directCount: result.directCount, claims }
     return { kind: result.kind, taskRef: listed.task.taskRef, threadRef: result.threadRef, expectedRevision: result.expectedRevision,
@@ -608,7 +616,7 @@ const teamView = defineTool({
       } } },
       threads: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
         threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, revision: { type: 'number', required: true }, messageCount: { type: 'number', required: true }, subject: { type: 'string', required: true },
-        taskRef: { type: 'string' }, status: { type: 'string' }, taskNumber: { type: 'number' },
+        taskRef: { type: 'string' }, status: { type: 'string' }, taskNumber: { type: 'number' }, lastActivityAt: { type: 'string' },
       } } },
       tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number', required: true } } } },
       cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true }, page: { type: 'string' },
@@ -631,7 +639,7 @@ const teamView = defineTool({
       }
       lines.push('Threads')
       if (value.threads.length === 0) lines.push(`No top-level Threads${!continuation && value.channels.length === 1 ? ` in ${value.channels[0]!.channelRef}` : ''} at this cursor.`)
-      else lines.push(...value.threads.map(thread => `${thread.threadRef} · ${thread.channelRef}${thread.taskRef === undefined ? ' · taskless' : ` · ${taskStanding(thread)}`} — ${thread.subject}`))
+      else lines.push(...value.threads.map(thread => `${thread.threadRef} · ${thread.channelRef}${thread.taskRef === undefined ? ' · taskless' : ` · ${taskStanding(thread)}`} — ${thread.subject}${thread.lastActivityAt === undefined ? '' : ` · last activity ${formatTeamTimestamp(thread.lastActivityAt)}`}`))
       lines.push(`Thread cursor ${value.cursor}; hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — older Thread anchors exist; page again with this cursor.' : ' — no older Threads remain.'}`)
       if (!continuation) {
         lines.push('', 'Members — current')
@@ -659,7 +667,7 @@ const teamView = defineTool({
         const thread = item.thread
         const task = item.task
         return { threadRef: thread.threadRef, channelRef: item.message.channelRef, revision: thread.revision, messageCount: item.messageCount,
-          subject: boundedSubject(item.message.body),
+          subject: boundedSubject(item.message.body), lastActivityAt: item.lastActivityAt,
           ...(task === undefined ? {} : { taskRef: task.taskRef, status: task.status, ...(item.taskNumber === undefined ? {} : { taskNumber: item.taskNumber }) }) }
       }),
       tasks: view.tasks.map(task => ({ taskRef: task.taskRef, threadRef: task.threadRef, channelRef: task.channelRef,

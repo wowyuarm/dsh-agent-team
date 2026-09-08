@@ -36,6 +36,8 @@ export interface AgentTeamOperationReceipt {
   readonly operationId: AgentTeamOperationId
   readonly requestId: AgentTeamRequestId
   readonly sequence: number
+  /** Wall-clock instant of the committing operation; the one source results carry for optimistic fact instants. */
+  readonly occurredAt: string
 }
 
 /** Human intent to create a Workspace Channel with its initial Members. */
@@ -522,6 +524,8 @@ export interface AgentTeamInboxItem {
   readonly unreadCount: number
   readonly directCount: number
   readonly newestSequence: number
+  /** Instant of the newest unread fact, from the same snapshot as newestSequence. */
+  readonly newestOccurredAt: string
   readonly attention?: AgentTeamThreadAttention
 }
 
@@ -629,6 +633,8 @@ export interface AgentTeamViewItem {
   readonly thread: AgentTeamThread
   readonly taskNumber?: number
   readonly messageCount: number
+  /** Instant of the latest fact on this Thread (message or activity), projected from its committing operation. */
+  readonly lastActivityAt: string
 }
 
 export interface AgentTeamViewRequest {

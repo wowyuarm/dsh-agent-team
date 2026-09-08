@@ -198,6 +198,8 @@ async function realHarness(
   await writeFile(join(presetDir, 'agent.cordis.yml'), [
     "- id: member-context",
     "  name: '@wowyuarm/dsh-agent-team/member-context'",
+    "- id: member-time-context",
+    "  name: '@wowyuarm/dsh-agent-team/member-time-context'",
     "- id: team-tools",
     "  name: '@wowyuarm/dsh-agent-team/tools'",
     "- id: compaction",
@@ -810,7 +812,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(relays).toHaveLength(2)
     const secondText = (relays[1]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text
     expect(secondText).toContain('most recent prior DM')
-    expect(secondText).toContain('(them → you) quick check: is the build green?')
+    expect(secondText).toMatch(/\(them → you, at [^)]+\+08:00\) quick check: is the build green\?/)
     expect(secondText.slice(secondText.indexOf('[most recent prior DM'))).not.toContain('still green?')
 
     // A reply DM in the mirror direction: the builder now reads the reviewer's
@@ -826,7 +828,7 @@ describe('Agent Team Member lifecycle', () => {
       && (event.data as { source?: { form?: string } }).source?.form === 'relay')
     expect(senderRelays).toHaveLength(1)
     const mirrorText = (senderRelays[0]!.data as { content: Array<{ type: string; text: string }> }).content[0]!.text
-    expect(mirrorText).toContain('(you → them) still green?')
+    expect(mirrorText).toMatch(/\(you → them, at [^)]+\+08:00\) still green\?/)
 
     // Parameter matrix: human recipients, unknown Members, and stray fields.
     const bad = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-dm-bad-${++callNumber}`), name: 'team_message', arguments: { action: 'dm', memberRef: AGENT_TEAM_HUMAN_MEMBER_ID, body: 'hi' }, agent: sender })
@@ -852,6 +854,43 @@ describe('Agent Team Member lifecycle', () => {
     ctx.agentTeam['handles'].delete(reviewer.status.member.memberId)
     await expect(ctx.agentTeam.dmForAgent(sender, { requestId: requestId('dm-undelivered'), workspaceId,
       recipientMemberId: reviewer.status.member.memberId, body: 'are you back?' })).rejects.toMatchObject({ name: 'AgentTeamDmDeliveryError', recipientHandle: 'reviewer' })
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
+  it('injects one durable clock snapshot into every eligible Member model step', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('clock-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('clock-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('clock-start'), workspaceId, channelRef: channel.channel.channelRef,
+      body: 'Drive the clock', recipients: [builder.status.member.memberId] })
+    if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
+
+    // One real Member turn from the direct-mention wake: every model step
+    // inside the turn prepends one durable clock snapshot.
+    adapter.enqueue(textResponse('Clock observed.'))
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests.length).toBeGreaterThanOrEqual(1)
+    const request = JSON.stringify(adapter.requests[0]!.messages)
+    // The snapshot is model-visible inside the request itself.
+    expect(request).toContain('Team clock sampled while preparing turn ')
+    expect(request).toContain('Team collaboration timestamps use UTC+8.')
+    const snapshots = agent.session.ownEvents().filter(event => event.type === 'user/message'
+      && (event.data as { source?: { plugin?: string; form?: string } }).source?.plugin === 'wowyuarm-agent-team-member-time-context')
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+    for (const event of snapshots) {
+      const data = event.data as { content: Array<{ type: string; text: string }>; source: { kind: string; form: string; sections?: unknown[] } }
+      expect(data.source.form).toBe('snapshot')
+      // ContextFormed snapshot messages must carry sections.
+      expect(Array.isArray(data.source.sections)).toBe(true)
+      const text = data.content[0]!.text
+      expect(text).toContain('Team clock sampled while preparing turn ')
+      expect(text).toMatch(/Elapsed since the preceding (model-visible event|step context): (unavailable|[0-9dhms ]+)\./)
+      expect(text).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
+      // Absolute instants only: no relative time vocabulary.
+      expect(text).not.toContain(' ago')
+    }
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
@@ -950,6 +989,9 @@ describe('Agent Team Member lifecycle', () => {
     expect(request).toContain('Please investigate the top-level wake path')
     expect(request).toContain('human')
     expect(request).toContain(committed.task!.taskRef)
+    // The notification states the absolute commit instant in UTC+8.
+    expect(request).toContain('Occurred at: ')
+    expect(request).toMatch(/Occurred at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
   })
 
   it('delivers an agent-created top-level mention to the mentioned Member', async () => {
@@ -986,6 +1028,7 @@ describe('Agent Team Member lifecycle', () => {
     expect(request).toContain(started.threadRef)
     expect(request).not.toContain('Task undefined')
     expect(request).toContain('relevant threadRef')
+    expect(request).toMatch(/Occurred at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00/)
   })
 
   it('bounds automatic direct context while retaining omitted Messages in durable Inbox', async () => {

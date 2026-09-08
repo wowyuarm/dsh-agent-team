@@ -504,3 +504,96 @@ describe('descriptions state the cross-tool workflow', () => {
     expect(tools.get('team_claim')!.description).toContain('or your own last committed mutation')
   })
 })
+
+describe('team tools render absolute event instants in UTC+8', () => {
+  it('fact lines and the anchor carry the fixed-offset instant; absent occurredAt renders none', () => {
+    const withInstants = renderText(teamTools().get('team_thread')!, { action: 'read', threadRef: THREAD }, {
+      kind: 'read', threadRef: THREAD, taskRef: TASK, revision: 9010, status: 'in_progress', resolution: 'open', following: true,
+      anchor: { messageRef: 'message:anchor', sender: 'human', body: 'Investigate startup failure', sequence: 101, occurredAt: '2026-08-20T03:11:00.000Z' },
+      claims: [],
+      facts: [
+        { sequence: 118, kind: 'message', body: 'Reproduced on Windows', sender: 'member:builder', mentions: [], occurredAt: '2026-08-20T04:06:12.000Z', unread: false, direct: false },
+        { sequence: 126, kind: 'activity', activity: 'accept', actor: 'human', taskRef: TASK, occurredAt: '2026-08-21T01:30:44.000Z', unread: true, direct: false },
+      ],
+      readThroughSequence: 126, remainingUnreadCount: 0,
+    })
+    expect(withInstants).toContain('Anchor 101 2026-08-20T11:11:00+08:00 [human]')
+    expect(withInstants).toContain('118 2026-08-20T12:06:12+08:00 [member:builder] Reproduced on Windows')
+    expect(withInstants).toContain('126 human accept Task task:3245ad40-43fd-4191-a416-7dcaf3a340f2 2026-08-21T09:30:44+08:00 [unread]')
+    // No relative time text: the render carries absolute instants only.
+    expect(withInstants).not.toContain('ago')
+    expect(withInstants).not.toContain('yesterday')
+    // Absent occurredAt (pre-envelope fixtures) renders no timestamp column.
+    const withoutInstants = renderText(teamTools().get('team_thread')!, { action: 'read', threadRef: THREAD }, {
+      kind: 'read', threadRef: THREAD, revision: 9010, following: false,
+      anchor: { messageRef: 'message:anchor', sender: 'human', body: 'anchor', sequence: 1 },
+      claims: [],
+      facts: [{ sequence: 12, kind: 'message', body: 'plain message', sender: 'human', mentions: [] }],
+      readThroughSequence: 12, remainingUnreadCount: 0,
+    })
+    expect(withoutInstants).toContain('12 [human] plain message')
+    expect(withoutInstants).not.toContain('+08:00')
+  })
+
+  it('history renders the same fact instants as read — the cache invariant at the render layer', () => {
+    const anchor = { messageRef: 'message:anchor', sender: 'human', body: 'Investigate startup failure', sequence: 101, occurredAt: '2026-08-20T03:11:00.000Z' }
+    // The read carries positive unread === false markers so it renders the
+    // full anchor (branch B); history always orients on the full anchor.
+    const facts = [
+      { sequence: 118, kind: 'message', body: 'Reproduced on Windows', sender: 'member:builder', mentions: [], occurredAt: '2026-08-20T04:06:12.000Z', unread: false, direct: false },
+      { sequence: 126, kind: 'activity', activity: 'accept', actor: 'human', taskRef: TASK, occurredAt: '2026-08-21T01:30:44.000Z', unread: false, direct: false },
+    ] as never
+    const read = renderText(teamTools().get('team_thread')!, { action: 'read', threadRef: THREAD }, {
+      kind: 'read', threadRef: THREAD, revision: 9010, following: true, anchor, claims: [], facts,
+      readThroughSequence: 126, remainingUnreadCount: 0,
+    })
+    const history = renderText(teamTools().get('team_thread')!, { action: 'history', threadRef: THREAD }, {
+      kind: 'history', threadRef: THREAD, revision: 9010, following: true, anchor, claims: [], facts,
+      cursor: 118, hasMore: true,
+    })
+    expect(read).toContain('118 2026-08-20T12:06:12+08:00 [member:builder] Reproduced on Windows')
+    expect(history).toContain('118 2026-08-20T12:06:12+08:00 [member:builder] Reproduced on Windows')
+    expect(read).toContain('126 human accept Task task:3245ad40-43fd-4191-a416-7dcaf3a340f2 2026-08-21T09:30:44+08:00')
+    expect(history).toContain('126 human accept Task task:3245ad40-43fd-4191-a416-7dcaf3a340f2 2026-08-21T09:30:44+08:00')
+    expect(read).toContain('Anchor 101 2026-08-20T11:11:00+08:00 [human]')
+    expect(history).toContain('Anchor 101 2026-08-20T11:11:00+08:00 [human]')
+  })
+
+  it('inbox rows carry the newest unread instant; view rows carry last activity', () => {
+    const inbox = renderText(teamTools().get('team_inbox')!, {}, {
+      totalUnreadCount: 4, totalDirectCount: 1,
+      items: [{ threadRef: THREAD, channelRef: CHANNEL, taskRef: TASK, status: 'in_progress', revision: 100, unreadCount: 4, directCount: 1, taskNumber: 7, newestOccurredAt: '2026-09-08T08:58:41.000Z' }],
+    })
+    expect(inbox).toContain(`4 unread, 1 direct · newest 2026-09-08T16:58:41+08:00`)
+    const view = renderText(teamTools().get('team_view')!, {}, {
+      channels: [], members: [],
+      threads: [{ threadRef: THREAD, channelRef: CHANNEL, revision: 1, messageCount: 3, subject: 'Investigate startup failure', lastActivityAt: '2026-08-21T01:30:44.000Z' }],
+      tasks: [], cursor: 0, hasMore: false,
+    })
+    expect(view).toContain('— Investigate startup failure · last activity 2026-08-21T09:30:44+08:00')
+  })
+
+  it('committed mutations and delivered DMs state their commit instant', () => {
+    const reply = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 8201, body: 'x' }, {
+      kind: 'committed', action: 'reply', messageRef: 'message:9a1d', threadRef: THREAD, revision: 8202, occurredAt: '2026-09-08T09:00:00.000Z',
+    })
+    expect(reply).toContain('Committed at 2026-09-08T17:00:00+08:00')
+    const claim = renderText(teamTools().get('team_claim')!, { action: 'claim', taskRef: TASK, baseRevision: 8201, direction: 'x' }, {
+      kind: 'committed', action: 'claim', taskRef: TASK, threadRef: THREAD, revision: 8202, status: 'in_progress',
+      claim: { claimRef: CLAIM, direction: 'x', state: 'active', owner: 'member:me' }, claims: [], occurredAt: '2026-09-08T09:00:00.000Z',
+    })
+    expect(claim).toContain('Committed at 2026-09-08T17:00:00+08:00')
+    const dm = renderText(teamTools().get('team_message')!, { action: 'dm', memberRef: 'member:peer', body: 'x' }, {
+      kind: 'dm-sent', recipientMemberId: 'member:peer', recipientHandle: 'Cole', delivered: true, occurredAt: '2026-09-08T09:00:00.000Z',
+    })
+    expect(dm).toBe('Delivered — DM to @Cole (member:peer) at 2026-09-08T17:00:00+08:00.')
+  })
+
+  it('absent instants on committed outcomes render no timestamp line, keeping old fixtures stable', () => {
+    const reply = renderText(teamTools().get('team_message')!, { action: 'reply', threadRef: THREAD, baseRevision: 8201, body: 'x' }, {
+      kind: 'committed', action: 'reply', messageRef: 'message:9a1d', threadRef: THREAD, revision: 8202,
+    })
+    expect(reply).not.toContain('Committed at')
+    expect(reply).not.toContain('+08:00')
+  })
+})

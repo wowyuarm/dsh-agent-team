@@ -1,0 +1,119 @@
+/**
+ * Team Member per-step clock context.
+ *
+ * Every eligible model step of a Team Member appends one durable,
+ * source-attributed clock snapshot: the current instant in the fixed Team
+ * coordination zone (UTC+8), the elapsed time since the preceding
+ * model-visible event (or the preceding snapshot within the same turn), and
+ * the ordering authority note. The snapshot is an observation, never ledger
+ * authority: sequence and revision, not wall-clock time, order Team facts.
+ *
+ * This plugin deliberately does not mount the shipped
+ * `@deepseek-ai/dsh-time-context`: its browser-zone policy asks the model to
+ * confirm dates with the user whenever a request carries no unique browser
+ * zone, which is the normal case for background Member wakes (Inbox, DM,
+ * recovery, continuation). The Team coordination zone is fixed instead. If
+ * the harness grows a public non-browser/canonical-zone policy, retire this
+ * row in favor of configuring that plugin.
+ *
+ * State is folded from the Member Session's own events — the same
+ * manual-fold pattern the Host's context projection uses — so restart,
+ * request reconstruction, and compaction all derive identical baselines
+ * without a second durable store.
+ * @module @wowyuarm/dsh-agent-team/member-time-context
+ */
+
+import type { Context } from '@deepseek-ai/cordis'
+import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import { formatTeamDuration, formatTeamTimestamp } from './time-format.ts'
+
+export const name = 'wowyuarm-agent-team-member-time-context'
+
+/** Folded clock baselines for one Member Session. */
+interface ClockBaseline {
+  /** Event time of the latest model-visible event (user/assistant message or tool result), or null. */
+  readonly lastMessageTime: number | null
+  /** Event time of this plugin's latest durable snapshot, or null. */
+  readonly lastInjectionTime: number | null
+  /** Latest snapshot time within the currently open turn, or null before one lands. */
+  readonly lastTurnInjectionTime: number | null
+  /** The open turn, or -1 between turns; a new turn clears the turn-local baseline. */
+  readonly openTurn: number
+}
+
+function emptyBaseline(): ClockBaseline {
+  return { lastMessageTime: null, lastInjectionTime: null, lastTurnInjectionTime: null, openTurn: -1 }
+}
+
+/**
+ * Fold one session event into the clock baseline. Uninterested events return
+ * the same state reference.
+ * @internal exported for tests.
+ */
+export function applyClockEvent(state: ClockBaseline, event: { readonly type: string; readonly time: number; readonly data?: unknown }): ClockBaseline {
+  switch (event.type) {
+    case 'turn/start':
+      return (event.data as { turn: number }).turn === state.openTurn ? state
+        : { ...state, lastTurnInjectionTime: null, openTurn: (event.data as { turn: number }).turn }
+    case 'turn/end':
+      return state.openTurn === -1 ? state : { ...state, lastTurnInjectionTime: null, openTurn: -1 }
+    case 'user/message': {
+      const source = (event.data as UserMessage).source
+      const injected = source.kind === 'plugin' && source.plugin === name
+      const withMessage = state.lastMessageTime === event.time ? state : { ...state, lastMessageTime: event.time }
+      if (!injected) return withMessage
+      return { ...withMessage, lastInjectionTime: event.time, lastTurnInjectionTime: event.time }
+    }
+    case 'assistant/message':
+    case 'tool/result':
+      return state.lastMessageTime === event.time ? state : { ...state, lastMessageTime: event.time }
+    default:
+      return state
+  }
+}
+
+/** Fold a whole event log into the clock baseline. @internal exported for tests. */
+export function foldClockBaseline(events: readonly { readonly type: string; readonly time: number; readonly data?: unknown }[]): ClockBaseline {
+  let state = emptyBaseline()
+  for (const event of events) state = applyClockEvent(state, event)
+  return state
+}
+
+/** Render one durable clock snapshot text. @internal exported for tests. */
+export function renderClockSnapshot(input: { readonly now: number; readonly turn: number; readonly step: number; readonly previous: number | undefined }): string {
+  // A wall-clock rollback clamps elapsed to 0s without rewriting history.
+  const elapsed = input.previous === undefined ? 'unavailable' : formatTeamDuration(input.now - input.previous)
+  const baseline = input.step === 1 ? 'model-visible event' : 'step context'
+  return `Team clock sampled while preparing turn ${input.turn}, step ${input.step}: ${formatTeamTimestamp(new Date(input.now).toISOString())}\n`
+    + `Elapsed since the preceding ${baseline}: ${elapsed}.\n`
+    + 'Team collaboration timestamps use UTC+8. Sequence and revision, not wall-clock time, determine ordering and concurrency.'
+}
+
+export function apply(ctx: Context): void {
+  ctx.on('agent/pre-step', async ({ agent, turn, step, signal }, next): Promise<PreStepDecision> => {
+    const decision = await next()
+    if (decision.kind === 'reject' || signal.aborted) return decision
+    // The Host service is resolved at step time, never through plugin inject
+    // (same reason as member-context: the row mounts while the Host itself
+    // is still restoring Members).
+    const host = ctx.get('agentTeam')
+    if (host === undefined) return decision
+    if ((host as { memberForAgent(subject: unknown): unknown }).memberForAgent(agent) === undefined) return decision
+    const now = Date.now()
+    // A rollover starts a fresh Session log, so the fold never guesses
+    // elapsed across generations: a missing prior event renders
+    // `unavailable`, not a fabricated baseline.
+    const baseline = foldClockBaseline(agent.session.ownEvents())
+    const previous = step === 1
+      ? baseline.lastMessageTime ?? undefined
+      : baseline.lastTurnInjectionTime ?? undefined
+    const text = renderClockSnapshot({ now, turn, step, previous })
+    const message = createUserMessage({
+      content: [{ type: 'text', text }],
+      source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name, text }] },
+    })
+    return { kind: 'enter', messages: [...decision.messages, message] }
+  }, { prepend: true })
+}

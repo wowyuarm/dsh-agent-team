@@ -803,7 +803,7 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     const table = domain.table('operations')
     const [id, operation] = [...table.entries()][0]!
     await table.put(id, { ...(operation as AgentTeamOperation), sequence: 2 })
-    expect(() => test.ctx.emit('agent-team/committed', { receipt: { operationId: id as AgentTeamOperationId, requestId: AGENT_TEAM_INITIALIZE_REQUEST_ID, sequence: 2 } })).toThrow(/invariant violated/)
+    expect(() => test.ctx.emit('agent-team/committed', { receipt: { operationId: id as AgentTeamOperationId, requestId: AGENT_TEAM_INITIALIZE_REQUEST_ID, sequence: 2, occurredAt: (operation as AgentTeamOperation).occurredAt } })).toThrow(/invariant violated/)
   })
 
   it('rejects cross-Workspace refs and preserves durability before projection mutation', async () => {

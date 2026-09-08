@@ -238,8 +238,9 @@ const activitySchema = z.discriminatedUnion('kind', [claimActivitySchema, taskAc
 
 const threadFactSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('message'), sequence: z.number().int().positive(), message: messageSchema,
-    mentions: z.array(memberIdSchema) }).strict(),
-  z.object({ kind: z.literal('activity'), sequence: z.number().int().positive(), activity: activitySchema }).strict(),
+    mentions: z.array(memberIdSchema), occurredAt: z.string().datetime().optional() }).strict(),
+  z.object({ kind: z.literal('activity'), sequence: z.number().int().positive(), activity: activitySchema,
+    occurredAt: z.string().datetime().optional() }).strict(),
 ])
 
 const readFactSchema = z.object({

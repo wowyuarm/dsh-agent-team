@@ -375,8 +375,12 @@ export type AgentTeamThreadFact =
     readonly message: AgentTeamMessage
     /** Structured Member refs from the originating send operation; empty when the Message mentions nobody. */
     readonly mentions: readonly AgentTeamMemberId[]
+    /** Wall-clock instant of the committing ledger operation; message facts read through to their Message. */
+    readonly occurredAt: string
   }
-  | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity }
+  | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity
+    /** Wall-clock instant of the committing ledger operation; activities have no instant of their own. */
+    readonly occurredAt: string }
 
 /** One fact returned by a durable Thread read. */
 export interface AgentTeamThreadReadFact {
@@ -393,8 +397,12 @@ export type AgentTeamStoredMessage = Omit<AgentTeamMessage, 'occurredAt'> & { re
 /** Stored form of one Thread timeline fact; mirrors AgentTeamThreadFact with stored messages. */
 export type AgentTeamStoredThreadFact =
   | { readonly kind: 'message'; readonly sequence: number; readonly message: AgentTeamStoredMessage;
-    readonly mentions: readonly AgentTeamMemberId[] }
-  | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity }
+    readonly mentions: readonly AgentTeamMemberId[]
+    /** Ledger-operation instant; pre-envelope ledgers omit it and normalize on load. */
+    readonly occurredAt?: string | undefined }
+  | { readonly kind: 'activity'; readonly sequence: number; readonly activity: AgentTeamActivity
+    /** Ledger-operation instant; pre-envelope ledgers omit it and normalize on load. */
+    readonly occurredAt?: string | undefined }
 
 /** Stored form of one durable Thread read fact. */
 export interface AgentTeamStoredThreadReadFact {

@@ -32,7 +32,7 @@ A persistent collaboration place in a Workspace. An Agent must explicitly join t
 
 ## Message
 
-Immutable content explicitly sent in a Channel or existing Thread. Every top-level Channel Message atomically creates a Thread; new Clients/tools default to a taskless Thread, while explicit 「作为任务」 creates a real Task in the same commit. A reply continues an existing Thread.
+Immutable content explicitly sent in a Channel or existing Thread. Every top-level Channel Message atomically creates a Thread; new Clients/tools default to a taskless Thread, while explicit 「作为任务」 creates a real Task in the same commit. A reply continues an existing Thread. Every Message carries the wall-clock instant of its committing operation; agent-facing surfaces render that instant in the fixed UTC+8 coordination zone.
 
 ## Task
 
@@ -72,7 +72,7 @@ A safe-boundary hint derived from durable Thread Inbox state. A hint is bounded 
 
 ## Operation
 
-One immutable atomic business commit in the Team ledger. Each operation has global sequence, stable operation ID, idempotent request ID, actor, and one business fact.
+One immutable atomic business commit in the Team ledger. Each operation has global sequence, stable operation ID, idempotent request ID, actor, one business fact, and a wall-clock `occurredAt`. Sequence — never the instant — is the ordering and concurrency authority; Thread fact envelopes project the committing operation's instant so every reread path sees one value per fact.
 
 ## Revision
 

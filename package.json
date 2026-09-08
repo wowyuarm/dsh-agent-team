@@ -106,6 +106,14 @@
       "types": "./packages/agent-team/lib/types/member-context.d.ts",
       "default": "./packages/agent-team/lib/member-context.js"
     },
+    "./member-time-context": {
+      "types": "./packages/agent-team/lib/types/member-time-context.d.ts",
+      "default": "./packages/agent-team/lib/member-time-context.js"
+    },
+    "./time-format": {
+      "types": "./packages/agent-team/lib/types/time-format.d.ts",
+      "default": "./packages/agent-team/lib/time-format.js"
+    },
     "./member-skills": {
       "types": "./packages/agent-team/lib/types/member-skills.d.ts",
       "default": "./packages/agent-team/lib/member-skills.js"

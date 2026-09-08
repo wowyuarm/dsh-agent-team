@@ -80,6 +80,7 @@ import type {
   AgentTeamStaleRevision,
   AgentTeamStatus,
   AgentTeamStoredMessage,
+  AgentTeamStoredThreadFact,
   AgentTeamTask,
   AgentTeamTaskActivity,
   AgentTeamTaskChangedOperation,
@@ -116,6 +117,7 @@ import type {
   AgentTeamView,
   AgentTeamViewRequest,
 } from './types.ts'
+import { formatTeamTimestamp } from './time-format.ts'
 
 /** Stable Human Member identity shared by every replay of one dshHome Team. */
 export const AGENT_TEAM_HUMAN_MEMBER_ID = 'member:human' as AgentTeamMemberId
@@ -1292,7 +1294,7 @@ export class AgentTeamLedger {
       // mirror: the reader sent it to the other Member → (you → them).
       const direction = pair ? 'them → you' : 'you → them'
       const truncated = operation.data.body.length > 160 ? `${operation.data.body.slice(0, 160)}…` : operation.data.body
-      return `(${direction}) ${truncated}`
+      return `(${direction}, at ${formatTeamTimestamp(operation.occurredAt)}) ${truncated}`
     }
     return undefined
   }
@@ -1323,8 +1325,12 @@ export class AgentTeamLedger {
       const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
       const directCount = unread.filter(item => item.direct).length
       const attention = this.attentionFor(authorized.memberId, thread.threadRef)
+      // Same snapshot, same source as newestSequence: the instant hangs off
+      // the newest unread fact itself, never a second lookup that could
+      // observe a different commit between the two reads.
+      const newest = unread.at(-1)!.fact
       items.push(Object.freeze({ channelRef, ...(task === undefined ? {} : { task }), thread, unreadCount: unread.length, directCount,
-        newestSequence: unread.at(-1)!.fact.sequence, ...(attention === undefined ? {} : { attention }) }))
+        newestSequence: newest.sequence, newestOccurredAt: newest.occurredAt, ...(attention === undefined ? {} : { attention }) }))
     }
     items.sort((left, right) => right.directCount - left.directCount || right.newestSequence - left.newestSequence || left.thread.threadRef.localeCompare(right.thread.threadRef))
     const selected = items.slice(0, limit)
@@ -1507,8 +1513,10 @@ export class AgentTeamLedger {
       const message = fact.message
       const thread = this.requireThread(message.threadRef)
       const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
+      const facts = this.state.factsByThread.get(thread.threadRef) ?? []
       return Object.freeze({ message, mentions: fact.mentions, ...(task === undefined ? {} : { task, taskNumber: taskNumbers.get(task.taskRef) ?? 0 }), thread,
-        messageCount: this.state.messageCountByThread.get(thread.threadRef) ?? 0 })
+        messageCount: this.state.messageCountByThread.get(thread.threadRef) ?? 0,
+        lastActivityAt: facts.at(-1)?.occurredAt ?? '' })
     })
     const initialization = this.initialization()
     const nextCursor = selected.length === 0 ? cursor : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
@@ -2380,7 +2388,7 @@ export class AgentTeamLedger {
     if (operation.kind === 'team/channel-member-removed') {
       target.memberships.get(operation.data.channelRef)?.delete(operation.data.memberId)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
       for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -2392,7 +2400,7 @@ export class AgentTeamLedger {
       // channel state instead.
       target.channels.set(operation.data.channel.channelRef, operation.data.channel)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
       for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -2402,7 +2410,7 @@ export class AgentTeamLedger {
       target.members.set(operation.data.member.memberId, operation.data.member)
       for (const membership of target.memberships.values()) membership.delete(operation.data.member.memberId)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
       for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -2414,14 +2422,14 @@ export class AgentTeamLedger {
       // member state instead.
       target.members.set(operation.data.member.memberId, operation.data.member)
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity)
+      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
       for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
       for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
     if (operation.kind === 'team/thread-promoted') {
-      this.appendActivityFact(target, operation.data.activity)
+      this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -2431,7 +2439,7 @@ export class AgentTeamLedger {
       const { message, mentions } = operation.data
       target.messages.push(message)
       target.mentionsByMessage.set(message.messageRef, Object.freeze([...mentions]))
-      this.appendMessageFact(target, message, mentions)
+      this.appendMessageFact(target, message, mentions, message.occurredAt ?? operation.occurredAt)
       if (operation.data.task !== undefined) target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       if (message.topLevel) target.channelRefByThread.set(message.threadRef, message.channelRef)
@@ -2440,7 +2448,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/claim-created' || operation.kind === 'team/claim-done' || operation.kind === 'team/claim-released') {
       target.claims.set(operation.data.claim.claimRef, operation.data.claim)
-      this.appendActivityFact(target, operation.data.activity)
+      this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -2448,7 +2456,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/task-changed') {
       for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      this.appendActivityFact(target, operation.data.activity)
+      this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
       this.applyInboxDelta(target, operation.data.inbox)
@@ -2471,8 +2479,9 @@ export class AgentTeamLedger {
     target: Pick<Projection, 'orderedFacts' | 'factsByThread' | 'messageCountByThread'>,
     message: AgentTeamMessage,
     mentions: readonly AgentTeamMemberId[],
+    occurredAt: string,
   ): void {
-    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'message', sequence: message.sequence, message, mentions })
+    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'message', sequence: message.sequence, message, mentions, occurredAt })
     target.orderedFacts.push(fact)
     const facts = target.factsByThread.get(message.threadRef) ?? []
     facts.push(fact)
@@ -2480,8 +2489,8 @@ export class AgentTeamLedger {
     target.messageCountByThread.set(message.threadRef, (target.messageCountByThread.get(message.threadRef) ?? 0) + 1)
   }
 
-  private appendActivityFact(target: Pick<Projection, 'orderedFacts' | 'factsByThread'>, activity: AgentTeamActivity): void {
-    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'activity', sequence: activity.sequence, activity })
+  private appendActivityFact(target: Pick<Projection, 'orderedFacts' | 'factsByThread'>, activity: AgentTeamActivity, occurredAt: string): void {
+    const fact: AgentTeamThreadFact = Object.freeze({ kind: 'activity', sequence: activity.sequence, activity, occurredAt })
     target.orderedFacts.push(fact)
     const facts = target.factsByThread.get(activity.threadRef) ?? []
     facts.push(fact)
@@ -2531,7 +2540,8 @@ export class AgentTeamLedger {
     const background = firstRead
       ? projection.messages.filter(message => message.threadRef === thread.threadRef && message.sequence < attention.startSequence)
         .map(message => Object.freeze({ kind: 'message' as const, sequence: message.sequence, message,
-          mentions: projection.mentionsByMessage.get(message.messageRef) ?? [] }))
+          mentions: projection.mentionsByMessage.get(message.messageRef) ?? [],
+          occurredAt: this.occurredAtForFactFrom(projection, message.sequence, message.occurredAt) }))
         .filter(fact => !unreadFactKeys.has(this.threadFactKey(fact))).slice(-12)
       : []
     const combined = [...background.map(fact => this.readFactFrom(projection, memberId, fact, false)), ...unreadFacts]
@@ -2610,6 +2620,23 @@ export class AgentTeamLedger {
 
   private threadFactsFrom(projection: Projection, threadRef: AgentTeamThreadRef): readonly AgentTeamThreadFact[] {
     return projection.factsByThread.get(threadRef) ?? []
+  }
+
+  /**
+   * The one per-fact instant projection: a fact's wall-clock time is the
+   * occurredAt of the ledger operation that committed it, looked up by
+   * sequence inside the same read snapshot. Every agent-facing surface
+   * (Thread facts, notifications, DM history, mutation results) resolves
+   * through this single path, never a second parallel lookup.
+   */
+  private occurredAtForFactFrom(projection: Projection, sequence: number, fallback?: string | undefined): string {
+    if (fallback !== undefined) return fallback
+    // Facts arrive in ledger sequence order and `ordered` is append-only, so
+    // the entry at index sequence - 1 is the committing operation. The index
+    // read is guarded for hypothetical projections whose prefix has not yet
+    // caught up; those callers always pass an explicit fallback instead.
+    const operation = projection.ordered[sequence - 1]
+    return operation?.occurredAt ?? ''
   }
 
   private messageInboxDelta(
@@ -3513,7 +3540,7 @@ export class AgentTeamLedger {
   }
 
   private receipt(operation: AgentTeamOperation): AgentTeamOperationReceipt {
-    return Object.freeze({ operationId: operation.operationId, requestId: operation.requestId, sequence: operation.sequence })
+    return Object.freeze({ operationId: operation.operationId, requestId: operation.requestId, sequence: operation.sequence, occurredAt: operation.occurredAt })
   }
 
   private removalResult(operation: AgentTeamMemberRemovedOperation): AgentTeamRemoveMemberResult {
@@ -3568,11 +3595,13 @@ export class AgentTeamLedger {
         ? { ...message, occurredAt: occurrences.get(message.messageRef) ?? operation.occurredAt }
         : { ...message, occurredAt: message.occurredAt }
     )
+    const stampEnvelope = (envelope: AgentTeamStoredThreadFact): AgentTeamThreadFact => envelope.kind === 'message'
+      ? { kind: 'message', sequence: envelope.sequence, message: stamp(envelope.message), mentions: envelope.mentions,
+        occurredAt: envelope.occurredAt ?? envelope.message.occurredAt ?? operation.occurredAt }
+      : { kind: 'activity', sequence: envelope.sequence, activity: envelope.activity,
+        occurredAt: envelope.occurredAt ?? operation.occurredAt }
     const facts = operation.data.facts.map((fact): AgentTeamThreadReadFact => (
-      fact.fact.kind === 'message'
-        ? { ...fact, fact: { kind: 'message', sequence: fact.fact.sequence, message: stamp(fact.fact.message),
-          mentions: fact.fact.mentions } }
-        : { ...fact, fact: fact.fact }
+      { ...fact, fact: stampEnvelope(fact.fact) }
     ))
     return { ...operation, data: { ...operation.data, anchor: stamp(operation.data.anchor), facts } }
   }

@@ -66,7 +66,7 @@ function factKey(fact: AgentTeamThreadFact): ThreadFactKey {
 }
 
 function messageFact(message: ReadProjection['anchor'], mentions: readonly AgentTeamMemberId[] = []): AgentTeamThreadFact {
-  return { kind: 'message', sequence: message.sequence, message, mentions }
+  return { kind: 'message', sequence: message.sequence, message, mentions, occurredAt: message.occurredAt }
 }
 
 function mergeFacts(...groups: readonly (readonly AgentTeamThreadFact[])[]): readonly AgentTeamThreadFact[] {
@@ -518,7 +518,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         setProjection(current => current === undefined ? current
           : { ...current, task: committed.task, thread: committed.thread })
         setCurrentFacts(current => {
-          const merged = mergeFacts(current, [{ kind: 'activity', sequence: committed.activity.sequence, activity: committed.activity }])
+          const merged = mergeFacts(current, [{ kind: 'activity', sequence: committed.activity.sequence, activity: committed.activity, occurredAt: committed.receipt.occurredAt }])
           currentFactsRef.current = merged
           return merged
         })
@@ -557,7 +557,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         const committed = result.value as Extract<typeof result.value, { kind: 'committed' }>
         setProjection(current => current === undefined ? current : { ...current, task: committed.task, thread: committed.thread, claims: committed.claims })
         setCurrentFacts(current => {
-          const merged = mergeFacts(current, [{ kind: 'activity', sequence: committed.activity.sequence, activity: committed.activity }])
+          const merged = mergeFacts(current, [{ kind: 'activity', sequence: committed.activity.sequence, activity: committed.activity, occurredAt: committed.receipt.occurredAt }])
           currentFactsRef.current = merged
           return merged
         })
@@ -612,7 +612,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       if (result.value.kind === 'committed') {
         const committed = result.value as Extract<typeof result.value, { kind: 'committed' }>
         setCurrentFacts(current => {
-          const merged = mergeFacts(current, [{ kind: 'message', sequence: committed.message.sequence, message: committed.message, mentions: [...recipients].sort() }])
+          const merged = mergeFacts(current, [{ kind: 'message', sequence: committed.message.sequence, message: committed.message, mentions: [...recipients].sort(), occurredAt: committed.receipt.occurredAt }])
           currentFactsRef.current = merged
           return merged
         })

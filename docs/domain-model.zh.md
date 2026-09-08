@@ -32,7 +32,7 @@ Workspace 内的持久协作场所。Agent Member 必须显式加入 Channel 才
 
 ## Message
 
-Member 在 Channel 或已有 Thread 中显式发出的不可变内容。每条 Channel 顶层 Message 原子创建一个 Thread；新 Client/tool 默认创建 taskless Thread，显式选择「作为任务」才在同一次提交中附加真实 Task。Thread Message 只延续已有 Thread。
+Member 在 Channel 或已有 Thread 中显式发出的不可变内容。每条 Channel 顶层 Message 原子创建一个 Thread；新 Client/tool 默认创建 taskless Thread，显式选择「作为任务」才在同一次提交中附加真实 Task。Thread Message 只延续已有 Thread。每条 Message 携带其提交 operation 的 wall-clock 时刻；agent-facing 表面在固定的 UTC+8 协调时区下渲染该时刻。
 
 ## Task
 
@@ -76,7 +76,7 @@ Host 由 durable Thread Inbox 状态派生给 Agent 的安全边界提示。Tick
 
 ## Operation
 
-Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有全局递增 sequence、稳定 operation id、幂等 request id、actor 和一种业务事实。
+Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有全局递增 sequence、稳定 operation id、幂等 request id、actor、一种业务事实和一个 wall-clock `occurredAt`。顺序与并发 authority 是 sequence——绝不是时刻；Thread fact envelope 投影其提交 operation 的时刻，使每条 fact 在任何重读路径上只见一个值。
 
 ## Revision
 

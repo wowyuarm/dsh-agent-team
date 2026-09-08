@@ -32,6 +32,7 @@ import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { agentTeamDomainSpec } from './spec.ts'
+import { formatTeamTimestamp } from './time-format.ts'
 import type {
   AgentTeamAddMemberRequest,
   AgentTeamAgentMember,
@@ -1272,7 +1273,7 @@ export default class AgentTeam extends TypertRemoteService {
     }
     try {
       const message = createUserMessage({
-        content: [{ type: 'text', text: this.dmRelayText(agent, recipient, request.body.trim(), result.value.receipt.operationId) }],
+        content: [{ type: 'text', text: this.dmRelayText(agent, recipient, request.body.trim(), result.value.receipt.occurredAt, result.value.receipt.operationId) }],
         source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'relay' },
       })
       // An idle recipient gets one ordinary turn; a busy one is steered into
@@ -1286,10 +1287,10 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** Relay body: the DM itself plus one bounded line of adjacent context. */
-  private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string, excluding: AgentTeamOperationId): string {
+  private dmRelayText(senderAgent: Agent, recipient: AgentTeamAgentMember, body: string, occurredAt: string, excluding: AgentTeamOperationId): string {
     const sender = this.memberForAgent(senderAgent)
     const prior = this.requireLedger().dmHistoryBetween(senderAgent.id, recipient.memberId, excluding)
-    const header = `Direct message from @${sender?.handle ?? 'a Team Member'}:`
+    const header = `Direct message from @${sender?.handle ?? 'a Team Member'} at ${formatTeamTimestamp(occurredAt)}:`
     const context = prior === undefined ? '' : `\n\n[most recent prior DM between you: ${prior}]`
     return `${header}\n\n${body}${context}`
   }
@@ -2461,20 +2462,20 @@ export default class AgentTeam extends TypertRemoteService {
         if (direct && fact.kind === 'message') {
           const sender = fact.message.sender === AGENT_TEAM_HUMAN_MEMBER_ID
             ? 'human' : this.requireLedger().getMember(fact.message.sender)?.handle ?? fact.message.sender
-          const detail = ['Direct Team mention', `From: ${sender}`, `Channel: ${item.channelRef}`,
+          const detail = ['Direct Team mention', `Occurred at: ${formatTeamTimestamp(fact.occurredAt)}`, `From: ${sender}`, `Channel: ${item.channelRef}`,
             ...(item.task === undefined ? [] : [`Task: ${item.task.taskRef}`]),
             `Thread: ${item.thread.threadRef}`, `Message ref: ${fact.message.messageRef}`,
             `Message: ${this.boundedNotificationBody(fact.message.body)}`].join('\n')
           if (append(detail)) detailedFactCount += 1
         } else if (fact.kind === 'activity') {
-          const detail = `${this.activityNotification(fact.activity, readerId)}\nThread: ${item.thread.threadRef}`
+          const detail = `${this.activityNotification(fact.activity, readerId)}\nOccurred at: ${formatTeamTimestamp(fact.occurredAt)}\nThread: ${item.thread.threadRef}`
           if (append(detail)) detailedFactCount += 1
         }
       }
-      const ordinaryCount = facts.filter(entry => entry.fact.kind === 'message' && !entry.direct).length
-      if (ordinaryCount > 0) {
+      const ordinary = facts.filter(entry => entry.fact.kind === 'message' && !entry.direct)
+      if (ordinary.length > 0) {
         const route = item.task === undefined ? `Thread ${item.thread.threadRef}` : `Task ${item.task.taskRef}`
-        append(`${route}: ${ordinaryCount} unread update${ordinaryCount === 1 ? '' : 's'}.`)
+        append(`${route}: ${ordinary.length} unread update${ordinary.length === 1 ? '' : 's'} · newest at ${formatTeamTimestamp(ordinary.at(-1)!.fact.occurredAt)}.`)
       }
     }
     if (omitted) sections.push('More unread work remains in team_inbox; the automatic context is bounded.')

@@ -10,6 +10,20 @@ A top-level Channel Message creates one Thread and anchor. New model-facing star
 
 Agents may read or mutate only Channels in their own Workspace where they are Members. Tools resolve Workspace and actor from the live Agent Member; no tool accepts a model-supplied Workspace identity.
 
+## Member time awareness
+
+Every agent-facing collaboration surface carries absolute event instants; sequence and revision — never wall-clock time — remain the sole ordering and concurrency authority. Ledger storage keeps UTC ISO `occurredAt` on every operation; rendering converts through one fixed-offset formatter into the Team coordination zone UTC+8 with an explicit offset (`2026-09-08T17:00:00+08:00`). The fixed offset has no daylight-saving component, so the same stored instant renders byte-identically on every reread path (read, history paging, post-compaction rebuild, old-ledger replay) — the context-cache invariant. Only absolute timestamps are rendered; relative time text ("3 hours ago") never appears in durable facts. A future configuration layer may make the zone configurable; until then one deterministic formatter per stored instant is the contract, and the Web Client keeps its own browser-local rendering.
+
+- `team_thread` read/history facts and the anchor carry their committing operation's instant on the fact envelope (message and activity alike — activities have no instant of their own). Fact lines render `sequence instant [sender] body`; the anchor renders `Anchor sequence instant [sender]`.
+- `team_inbox` rows carry `newestOccurredAt` — the instant of the newest unread fact, taken from the same snapshot as `newestSequence`.
+- `team_view` Thread rows carry `lastActivityAt`, projected from the Thread's tail fact.
+- Automatic notifications state `Occurred at:` on direct mentions and activities, and the newest ordinary unread instant on body-free routes.
+- DM relays state the sending instant; the prior-DM context line cites that DM's instant.
+- Committed mutations (`team_message` start/reply/dm, `team_claim`) render `Committed at:` from the operation receipt; optimistic Client merges read the same receipt instant.
+- Ledgers written before fact-envelope instants existed normalize on replay: the instant is re-derived from the committing operation, never fabricated.
+
+Besides event instants, every eligible Team Member model step receives one durable clock snapshot (the `member-time-context` preset row): the current instant in UTC+8, the elapsed time since the preceding model-visible event (or the preceding snapshot within the same turn), and the ordering-authority note. The baseline folds from the Member Session's own events, so restart, resume, and compaction derive identical values without a second store; a rollover starts a fresh log and renders elapsed as `unavailable` rather than guessing across generations; a wall-clock rollback clamps elapsed to `0s` without rewriting history. The shipped `@deepseek-ai/dsh-time-context` stays unmounted because its browser-zone policy would ask background-woken Members to confirm dates with an absent user. Time never drives automatic behavior: no deadlines, reminders, schedulers, SLAs, or staleness-driven state changes exist.
+
 ## Eight-tool protocol
 
 - `team_view` is the address book: bounded authorized Channel, top-level Thread, and Member summaries — current addresses, not a work queue; unread work lives in `team_inbox`. Threads are the sole paginated catalog: rows are newest-first and carry threadRef, Channel ref, a bounded anchor subject, and Task standing inline on taskful Threads (Task ref, number, status/resolution) — never a second Task index, and never revision or message count, because neither changes the next legal action. The cursor pages Thread rows only; continuation pages render Threads alone, and paging reaches every authorized top-level Thread, including taskless and off-page taskful ones. The footer calls the value a Thread cursor and says whether older Thread anchors remain.
