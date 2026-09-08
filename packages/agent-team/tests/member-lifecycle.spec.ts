@@ -591,7 +591,7 @@ describe('Agent Team Member lifecycle', () => {
     let callNumber = 0
     const call = async (name: string, args: unknown) => {
       const result = await ctx.tools.execute({ signal: new AbortController().signal, callId: ToolCallId(`team-protocol-${++callNumber}`), name, arguments: args, agent })
-      expect(result.isError).toBe(false)
+      expect(result.isError, `${name} ${JSON.stringify(args)}: ${result.isError ? result.error.message : 'ok'}`).toBe(false)
       expect(result.concludesTurn).toBeUndefined()
       if (result.isError) throw new Error(result.error.message)
       return result.value as Record<string, any>
@@ -625,8 +625,10 @@ describe('Agent Team Member lifecycle', () => {
     const taskful = threadDirectory.threads.find((thread: { threadRef: string }) => thread.threadRef === taskfulStart.threadRef)
     expect(taskful).toMatchObject({ channelRef: channel.channel.channelRef, messageCount: 1, taskRef: taskfulStart.taskRef, status: 'todo' })
     expect(typeof taskful.taskNumber).toBe('number')
-    // Directory entries stay summaries: no anchor or reply bodies leak.
-    expect(JSON.stringify(threadDirectory.threads)).not.toContain('Agent-led taskless discussion')
+    // Directory entries stay address-book summaries: each Thread row carries
+    // its bounded anchor subject (the approved output enrichment), and reply
+    // bodies still never leak — only the anchor becomes the subject.
+    expect(taskless.subject).toBe('Agent-led taskless discussion')
     expect(JSON.stringify(threadDirectory.threads)).not.toContain('One follow-up reply')
     // A second Member who joined after both Threads started sees them too.
     const lateJoinerAgent = ctx.agents.get(reviewer.status.member.sessionId)!
@@ -716,14 +718,15 @@ describe('Agent Team Member lifecycle', () => {
 
     expect(await call('team_thread', { action: 'unfollow', taskRef: started.task!.taskRef })).toMatchObject({ following: false })
     const claim = await call('team_claim', { action: 'claim', taskRef: started.task!.taskRef, direction: 'implementation', baseRevision: reply.revision })
-    expect(claim).toMatchObject({ kind: 'committed', threadRef: started.thread.threadRef, status: 'in_progress', claims: [expect.objectContaining({ owner: builder.status.member.memberId, direction: 'implementation', state: 'active' })] })
+    // A committed Claim mutation returns the authoritative affected Claim, not a post-mutation archive.
+    expect(claim).toMatchObject({ kind: 'committed', action: 'claim', threadRef: started.thread.threadRef, status: 'in_progress', claim: expect.objectContaining({ owner: builder.status.member.memberId, direction: 'implementation', state: 'active' }) })
     expect(await call('team_thread', { action: 'status', taskRef: started.task!.taskRef })).toMatchObject({ following: true })
     expect(await call('team_claim', { action: 'list', taskRef: started.task!.taskRef })).toMatchObject({ kind: 'listed', claims: [expect.objectContaining({ direction: 'implementation' })] })
-    const done = await call('team_claim', { action: 'done', taskRef: started.task!.taskRef, claimRef: claim.claims[0].claimRef, baseRevision: claim.revision })
-    expect(done).toMatchObject({ kind: 'committed', status: 'in_review', claims: [expect.objectContaining({ state: 'done' })] })
+    const done = await call('team_claim', { action: 'done', taskRef: started.task!.taskRef, claimRef: claim.claim.claimRef, baseRevision: claim.revision })
+    expect(done).toMatchObject({ kind: 'committed', action: 'done', status: 'in_review', claim: expect.objectContaining({ state: 'done' }) })
     const secondClaim = await call('team_claim', { action: 'claim', taskRef: started.task!.taskRef, direction: 'follow-up', baseRevision: done.revision })
-    const released = await call('team_claim', { action: 'release', taskRef: started.task!.taskRef, claimRef: secondClaim.claims[1].claimRef, baseRevision: secondClaim.revision })
-    expect(released).toMatchObject({ kind: 'committed', claims: expect.arrayContaining([expect.objectContaining({ direction: 'follow-up', state: 'released' })]) })
+    const released = await call('team_claim', { action: 'release', taskRef: started.task!.taskRef, claimRef: secondClaim.claim.claimRef, baseRevision: secondClaim.revision })
+    expect(released).toMatchObject({ kind: 'committed', action: 'release', claim: expect.objectContaining({ direction: 'follow-up', state: 'released' }) })
 
     const humanReadAfterClaims = await ctx.agentTeam.readThread({ requestId: requestId('protocol-human-read-after-claims'), workspaceId,
       taskRef: started.task!.taskRef })

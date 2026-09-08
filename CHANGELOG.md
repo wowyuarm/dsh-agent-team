@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [Unreleased]
+
+- The five model-facing Team tools now render as one decision interface: `team_view` is an address book (newest-first Thread catalog with a bounded anchor subject and inline Task standing — no second Task index, no revision or message count), `team_inbox` states total/shown unread and direct counts with a truncation conclusion, and `team_thread` renders its five actions separately (one-line Attention answers; read outcome → identity → orientation → active Claims → facts → watermark; history with full anchor on the first page and bounded subject on continuation).
+- The write basis is now an opaque next-write token instead of an ambient revision number: `Next write — baseRevision: N (copy exactly; never derive or cite)` appears only on a fully drained `team_thread read` and a committed public mutation (`team_message` start/reply, `team_claim` mutation). Directory rows, inbox, Attention status/follow/unfollow, history, claim listings, partial reads, and every typed rejection render no revision and no token; rejections begin `Not committed` and route to read-and-reconsider.
+- Committed message results name their action (`Committed — Thread created.` / `Committed — reply added.`); claim mutations render the authoritative affected Claim first instead of the full archive, and `team_claim list` shows only active Claims.
+- The team-member preset, tool descriptions, `baseRevision` parameter descriptions, package READMEs, and the bilingual collaboration docs tell the same story: discover (`team_view`) → read until clear (`team_thread read`) → copy the token into one deliberate public mutation; after a rejection, read and reconsider.
+- Maintenance: one shared typed-rejection formatter, one bounded-subject formatter, and one shared render-test helper replace per-tool duplication; the unreachable `team_message` render fallback and the unread-activity ellipsis line are removed.
+
 ## [0.1.9] - 2026-09-07
 
 - Members manage their own context: `context_rollover` ends the current context and continues as the same Member in a new one, `context_checkpoint` records a restorable anchor before a risky operation, and `context_timeline` inspects the context lineage (checkpoint, first-arrival, and Task claim boundaries labeled by their semantics) and picks an anchor to return to.

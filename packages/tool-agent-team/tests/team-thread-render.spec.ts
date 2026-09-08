@@ -46,10 +46,10 @@ describe('team_thread renders the model-facing decision surface', () => {
       facts: [ACCEPT_FACT],
       readThroughSequence: 8190, remainingUnreadCount: 0,
     })
-    // The header always names the Thread ref first, then the Task's
-    // resolution — never just the Thread revision.
+    // The outcome line names the Thread, and the context line carries the
+    // Task's standing — never just the Thread revision.
     expect(text).toContain('thread:cb7e5eca-9a73-4fa6-9fdf-260996597e7d')
-    expect(text.indexOf('thread:cb7e5eca-9a73-4fa6-9fdf-260996597e7d')).toBe(0)
+    expect(text.split('\n')[0]).toContain('thread:cb7e5eca-9a73-4fa6-9fdf-260996597e7d')
     expect(text).toContain('task:205a8ba6-f3c6-4fbc-95b7-c3448191f730')
     expect(text).toContain('accepted')
     // The activity line names the actor and every Claim the acceptance
@@ -120,10 +120,10 @@ describe('team_thread renders the model-facing decision surface', () => {
       facts: [{ sequence: 12, kind: 'message', body: 'plain message', sender: 'human', mentions: [], unread: false, direct: false }],
       readThroughSequence: 12, remainingUnreadCount: 0,
     })
-    // Taskless results keep the identifying surface: the header still leads
-    // with the Thread ref even when there is no Task standing to state.
+    // Taskless results keep the identifying surface: the outcome line still
+    // names the Thread even when there is no Task standing to state.
     expect(text).toContain('thread:x')
-    expect(text.indexOf('thread:x')).toBe(0)
+    expect(text.split('\n')[0]).toContain('thread:x')
     expect(text).not.toContain('Context guidance')
     expect(text).not.toContain('usageTokens')
     // The empty-facts status path keeps the same identifying header.
@@ -135,7 +135,7 @@ describe('team_thread renders the model-facing decision surface', () => {
       readThroughSequence: 12, remainingUnreadCount: 0,
     })
     expect(statusText).toContain('thread:x')
-    expect(statusText.indexOf('thread:x')).toBe(0)
+    expect(statusText.split('\n')[0]).toContain('thread:x')
     // Advice never appears for a non-accept activity even when unread.
     const activityText = renderText(tools().get('team_thread')!, {
       kind: 'read', threadRef: 'thread:x', revision: 100, following: false,
