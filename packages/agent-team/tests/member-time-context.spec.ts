@@ -130,4 +130,12 @@ describe('shouldSampleClock gates snapshots to turn starts and refresh intervals
     const baseline = baselineAfter([ordinaryMessage(1_000)])
     expect(memberTimeContext.shouldSampleClock(2, 1_500, baseline, 60_000)).toBe(true)
   })
+
+  it('the shipped default interval is 30 minutes: an ordinary turn stays at one line, a half-hour turn refreshes once', () => {
+    const interval = memberTimeContext.CLOCK_REFRESH_INTERVAL_MS
+    expect(interval).toBe(1_800_000)
+    const baseline = baselineAfter([clockSnapshot(10_000)])
+    expect(memberTimeContext.shouldSampleClock(5, 10_000 + 29 * 60_000, baseline, interval)).toBe(false)
+    expect(memberTimeContext.shouldSampleClock(5, 10_000 + 30 * 60_000, baseline, interval)).toBe(true)
+  })
 })

@@ -75,7 +75,7 @@
 - id: member-time-context
   name: '@wowyuarm/dsh-agent-team/member-time-context'
   config:
-    refreshIntervalMs: 60000
+    refreshIntervalMs: 1800000
 
 - id: team-tools
   name: '@wowyuarm/dsh-agent-team/tools'

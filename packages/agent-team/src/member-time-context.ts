@@ -8,7 +8,7 @@
  * steps of the same turn stay quiet unless the turn runs longer than the
  * refresh interval, in which case one snapshot lands per elapsed interval —
  * a tool-dense turn of quick steps produces exactly one line, while a turn
- * that grinds for minutes still shows its real span. The snapshot is an
+ * that outlives the interval still shows its real span. The snapshot is an
  * observation, never ledger authority: sequence and revision, not
  * wall-clock time, order Team facts.
  *
@@ -36,11 +36,11 @@ import { formatTeamDuration, formatTeamTimestamp } from './time-format.ts'
 export const name = 'wowyuarm-agent-team-member-time-context'
 
 /** Default minimum spacing between two snapshots within one turn, in ms. */
-export const CLOCK_REFRESH_INTERVAL_MS = 60_000
+export const CLOCK_REFRESH_INTERVAL_MS = 1_800_000
 
 /** Plugin configuration: the snapshot refresh interval, overridable per preset. */
 export interface Config {
-  /** Minimum spacing between two snapshots within one turn, in ms. Default 60_000. */
+  /** Minimum spacing between two snapshots within one turn, in ms. Default 1_800_000 (30 minutes). */
   refreshIntervalMs?: number
 }
 
