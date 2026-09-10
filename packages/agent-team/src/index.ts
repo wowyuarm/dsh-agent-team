@@ -165,6 +165,36 @@ export function markAgentTeamPreset<T extends object>(definition: T): T {
   return definition
 }
 
+/**
+ * Whether the running dsh loads workspace packages from source via tsx.
+ *
+ * The Harness `tsconfig.base.json` maps `@deepseek-ai/*` package names onto
+ * `src/` directories; tsx honors those paths, so a CLI launched with
+ * `node --import tsx/esm apps/cli/src/bin.ts` imports `@deepseek-ai/dsh-scope`
+ * from `src/index.ts` while a profile-installed bundle resolves the compiled
+ * `lib/index.js` — two module instances with independent scope keys.
+ */
+export function isTsxDevMode(): boolean {
+  const flags = [...process.execArgv]
+  const nodeOptions = process.env.NODE_OPTIONS
+  if (nodeOptions !== undefined) flags.push(...nodeOptions.split(/\s+/))
+  return flags.some(flag => flag.includes('tsx'))
+}
+
+/**
+ * The activation diagnostic for a dsh-scope module-instance mismatch.
+ *
+ * `agentPresets.mount` already rejected an unscoped context, so a scope key
+ * the harness sees but this bundle does not can only mean the two sides
+ * loaded different physical copies of `@deepseek-ai/dsh-scope`.
+ */
+export function teamPresetScopeMismatchMessage(tsxDevMode: boolean): string {
+  if (tsxDevMode) {
+    return 'selected preset is not team-enabled: the dsh CLI is running from source via tsx (tsconfig paths resolve @deepseek-ai/dsh-scope to src/), so the harness and this bundle load different module instances; start dsh with the compiled CLI instead (pnpm dsh, node apps/cli/lib/bin.js, or npx @deepseek-ai/dsh)'
+  }
+  return 'selected preset is not team-enabled: this bundle and the harness resolved different physical copies of @deepseek-ai/dsh-scope; run pnpm install in the profile directory so node_modules matches the lockfile, then restart'
+}
+
 export interface AgentTeamCommitted {
   readonly receipt: AgentTeamOperationReceipt
 }
@@ -2262,6 +2292,11 @@ export default class AgentTeam extends TypertRemoteService {
     const scope = scopeOf(agentCtx)
     const teamMessage = this.ctx.tools.get('team_message', scope)
     if ((teamMessage as Record<PropertyKey, unknown> | undefined)?.[AGENT_TEAM_PRESET_MARKER] !== true) {
+      // `agentPresets.mount` already rejected an unscoped context, so a scope
+      // key the harness sees but this bundle does not means the two sides
+      // loaded different module instances of @deepseek-ai/dsh-scope (the
+      // common trigger is running the CLI from source via tsx).
+      if (scope === undefined) throw new Error(teamPresetScopeMismatchMessage(isTsxDevMode()))
       throw new Error('selected preset is not team-enabled')
     }
     const available = new Set(this.ctx.tools.schemas(scope).map(tool => tool.name))
