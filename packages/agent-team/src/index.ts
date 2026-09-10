@@ -15,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
-import { SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -505,7 +505,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.startAttachmentGc(ledger)
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
-    const persistedSessions = new Set((await this.persistedSessionHeaders()).map(header => header.id))
+    const persistedSessions = new Set((await this.persistedSessionHeaders()).map(snapshot => snapshot.header.id))
     for (const member of ledger.listMembers()) {
       if (member.state === 'enabled') await this.activateMember(member, undefined, persistedSessions)
       else if (member.state === 'inactive') await this.memberRuntime.cleanupRemovedMember(member)
@@ -514,19 +514,14 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Whether one Member Session has durable persisted content, decided through
-   * {@link SessionPersistenceService.inspect} rather than a bare metadata
-   * listing: inspection first awaits any in-flight retirement drain for the
-   * id, so a resume racing a suspend's fire-and-forget final flush cannot
-   * mistake a still-draining persisted Session for an unpersisted one and
-   * fork a fresh generation over it.
+   * {@link SessionPersistence.stat} rather than a bare metadata listing: the
+   * backend reports a still-draining session through its pending header, so a
+   * resume racing a suspend's fire-and-forget final flush cannot mistake a
+   * still-draining persisted Session for an unpersisted one and fork a fresh
+   * generation over it.
    */
   private async sessionPersisted(sessionId: SessionId): Promise<boolean> {
-    try {
-      await this.ctx.sessionPersistence.inspect(sessionId)
-      return true
-    } catch {
-      return false
-    }
+    return (await this.ctx.sessionPersistence.stat(sessionId)) !== undefined
   }
 
   /** Resolve one exact live Agent to its durable Team Member; forks do not inherit identity. */
@@ -1440,10 +1435,14 @@ export default class AgentTeam extends TypertRemoteService {
         live = false
       } else {
         try {
-          const inspection = await this.ctx.sessionPersistence.inspect(sessionId)
-          events = inspection.events
-          inheritedEventCount = inspection.inheritedEventCount
-          parentSession = inspection.meta.parentSession
+          const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
+          try {
+            events = (await handle.read()).events
+            inheritedEventCount = handle.inheritedEventCount
+            parentSession = handle.header.parentSession
+          } finally {
+            await handle.close()
+          }
         } catch (error) {
           throw new Error(`checkpoint '${checkpointRef}' could not be resolved: its source Session is unreadable (${error instanceof Error ? error.message : String(error)})`)
         }
@@ -1525,8 +1524,12 @@ export default class AgentTeam extends TypertRemoteService {
     if (previousSessionId === undefined) return
     let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
     try {
-      const result = await this.ctx.sessionPersistence.inspect(previousSessionId)
-      inspection = result
+      const handle = await this.ctx.sessionPersistence.open(previousSessionId, 'read')
+      try {
+        inspection = { events: (await handle.read()).events, inheritedEventCount: handle.inheritedEventCount }
+      } finally {
+        await handle.close()
+      }
     } catch (error) {
       this.ctx.logger.warn(`agent-team: rollover handoff reconstruction could not read the previous Session '${previousSessionId}': ${error instanceof Error ? error.message : String(error)}`)
       return
@@ -1561,7 +1564,12 @@ export default class AgentTeam extends TypertRemoteService {
   private async recordedCheckpointPrefix(seed: { readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }): Promise<{ readonly prefix: readonly SessionEvent[] }> {
     let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
     try {
-      inspection = await this.ctx.sessionPersistence.inspect(seed.sourceSessionId)
+      const handle = await this.ctx.sessionPersistence.open(seed.sourceSessionId, 'read')
+      try {
+        inspection = { events: (await handle.read()).events, inheritedEventCount: handle.inheritedEventCount }
+      } finally {
+        await handle.close()
+      }
     } catch (error) {
       throw new Error(`the recorded checkpoint-return seed source Session '${seed.sourceSessionId}' is unreadable: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -1609,9 +1617,16 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.info(`agent-team: skipping carried-input replay for member '${this.memberLabel(member.memberId)}': the current Session '${agent.session.id}' already started a generation`)
       return 0
     }
-    let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
+    let inspectionEvents: readonly SessionEvent[]
+    let inspectionInherited: SessionLogOffset
     try {
-      inspection = await this.ctx.sessionPersistence.inspect(transition.previousSessionId)
+      const handle = await this.ctx.sessionPersistence.open(transition.previousSessionId, 'read')
+      try {
+        inspectionEvents = (await handle.read()).events
+        inspectionInherited = handle.inheritedEventCount
+      } finally {
+        await handle.close()
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       // Log-corruption class: bounded fail-open. The current Session's own
@@ -1623,7 +1638,7 @@ export default class AgentTeam extends TypertRemoteService {
       }
       throw new Error(`the previous Session '${transition.previousSessionId}' holding the Member's carried input is unreadable: ${detail}`)
     }
-    const state = foldContextProjection(inspection.events, inspection.inheritedEventCount, transition.previousSessionId)
+    const state = foldContextProjection(inspectionEvents, inspectionInherited, transition.previousSessionId)
     const carried = carriedInputOf(state)
     if (carried.length === 0) return 0
     const known = new Set<string>()
@@ -1704,11 +1719,16 @@ export default class AgentTeam extends TypertRemoteService {
         live = false
       } else {
         try {
-          const inspection = await this.ctx.sessionPersistence.inspect(sessionId)
-          state = foldContextProjection(inspection.events, inspection.inheritedEventCount, sessionId)
-          sourceEvents = inspection.events
-          sourceSessionId = sessionId
-          sessionId = inspection.meta.parentSession
+          const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
+          try {
+            const { events } = await handle.read()
+            state = foldContextProjection(events, handle.inheritedEventCount, sessionId)
+            sourceEvents = events
+            sourceSessionId = sessionId
+            sessionId = handle.header.parentSession
+          } finally {
+            await handle.close()
+          }
         } catch {
           // An unreadable ancestor ends the lineage walk here.
           sessionId = undefined
@@ -1745,15 +1765,17 @@ export default class AgentTeam extends TypertRemoteService {
     if (meter === undefined) return undefined
     if (live) return meter.measure(agent.session)?.totalTokens
     try {
-      using borrowed = await this.ctx.sessionPersistence.borrowSession(sessionId)
-      // The borrow resolves the exact Session object for both shapes: the
-      // live instance for an attached Session, the prepared one for an
-      // archived ancestor. Measuring through the service context's store
-      // would need an inject this service does not declare.
-      const session = borrowed.source === 'live'
-        ? agent.session.id === sessionId ? agent.session : undefined
-        : borrowed.preparedSession
-      return session === undefined ? undefined : meter.measure(session)?.totalTokens
+      // 0.1.5 removed borrowSession: rebuild a detached Session from the
+      // stored log so the seed's retained cost is priced by the SOURCE's own
+      // replay, never the current generation's.
+      const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
+      try {
+        const { events } = await handle.read()
+        const session = Session.create(sessionId, events, handle.header, handle.inheritedEventCount)
+        return meter.measure(session)?.totalTokens
+      } finally {
+        await handle.close()
+      }
     } catch {
       return undefined
     }
@@ -2093,7 +2115,7 @@ export default class AgentTeam extends TypertRemoteService {
       // allow-list filters the catalog by name through the live ref below.
       // `swap` is bound by the provider at activation (no-op until then).
       const skillSelection: MemberSkillSelectionRef = { current: member.capabilities?.skills?.allow, swap: () => {} }
-      const setup = async (agentCtx: Context) => {
+      const setup = async (agentCtx: Context, agent: Agent) => {
         await this.ctx.agentPresets.mount(agentCtx, member.presetId)
         this.memberRuntime.applyMemberToolPolicy(agentCtx, member)
         this.validateMemberPreset(agentCtx)
@@ -2136,8 +2158,6 @@ export default class AgentTeam extends TypertRemoteService {
         })
         return {
           commit: () => {
-            const agent = agentCtx.agent
-            if (agent === undefined) throw new Error('agent-team setup has no unpublished Agent')
             // The member scope composes no sandbox-policy service (the preset
             // owns no sandbox row), so read the last logged mode straight from
             // the session log; `sandbox/mode` is log-only and never joins the

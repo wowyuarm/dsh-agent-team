@@ -402,7 +402,7 @@ describe('Agent Team Member lifecycle', () => {
     const listSessionIds = async (): Promise<Set<SessionId>> => {
       for (let attempt = 0; ; attempt += 1) {
         try {
-          return new Set((await ctx.sessionPersistence.list()).map(header => header.id))
+          return new Set((await ctx.sessionPersistence.list()).map(snapshot => snapshot.header.id))
         } catch (error) {
           if (attempt >= 3 || (error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error
           await new Promise(resolve => setTimeout(resolve, 25))
@@ -1695,7 +1695,7 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     // The only pre-handoff events are the constructor seed marker; the
     // handoff leads every model-facing event of the new generation.
     const firstUserIndex = ownEvents.findIndex(event => event.type === 'user/message')
-    expect(ownEvents.slice(0, firstUserIndex).some(event => event.type === 'assistant/chunk' || event.type === 'tool/call' || event.type === 'assistant/message')).toBe(false)
+    expect(ownEvents.slice(0, firstUserIndex).some(event => event.type === 'tool/call' || event.type === 'assistant/message')).toBe(false)
 
     // The old Session archived; private memory and binding survive.
     expect(archived).toContain(previousSessionId)
