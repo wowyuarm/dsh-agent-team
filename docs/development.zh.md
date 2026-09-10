@@ -115,7 +115,7 @@ node scripts/sync-paths.mjs
 
 **按顺序准备：**
 
-1. clone `../deepseek-harness`，checkout 最新认证 release tag（当前 `dsh-v0.1.2-rc.1`，随认证前进），再 `corepack pnpm install`（workspace 全量一次到位）与 `corepack pnpm build:lib`。统一用 `corepack pnpm`——两个仓库的 `packageManager` 都锁 `pnpm@11.7.0`，裸 `pnpm` 依赖环境预装且版本可能漂移。不要复用上一次构建遗留的 `lib/` 或 `node_modules/`——旧产物可能掩盖声明或运行时不兼容。
+1. clone `../deepseek-harness`，checkout 最新认证 release tag（当前 `dsh-v0.1.5-rc.1`，随认证前进），再 `corepack pnpm install`（workspace 全量一次到位）与 `corepack pnpm build:lib`。统一用 `corepack pnpm`——两个仓库的 `packageManager` 都锁 `pnpm@11.7.0`，裸 `pnpm` 依赖环境预装且版本可能漂移。不要复用上一次构建遗留的 `lib/` 或 `node_modules/`——旧产物可能掩盖声明或运行时不兼容。
 2. 工作流需要 `test:browser` 时，用 `corepack pnpm build:web` 构建 Harness `apps/web` dist；workspace install 已备好其依赖。
 3. 在本仓库内用 `corepack pnpm install` 安装依赖。绝不能运行 `npm install`：它会静默破坏指向相邻 checkout vendor 包的 workspace 符号链接，故障随后才以误导性的 `Cannot find module 'zod'` 暴露。
 4. 用 `node scripts/link-harness-packages.mjs` 把 Harness 的 workspace 与 vendor 包链接进本仓库 `node_modules`，再 `npm run build` 构建 bundle。宿主测试从本仓库根按真实 `node_modules` 查找解析 preset row 与 bundle 自身的未发布 row（如 `@wowyuarm/dsh-agent-team/member-context`）——与已发布 bundle 的 profile 安装布局一致。
