@@ -185,8 +185,8 @@ npm run test:browser
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.2-rc.1`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、262 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
+当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、489 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
 
-这个候选版本落在旧 peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.2-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.1-rc.2` 上。三处上游移除决定了这一点：`effectiveSandboxMode` 从 `dsh-sandbox-policy` 移除（改为读取 `sandboxMode` session projection）、`session.events` 变为 `snapshotEvents(SessionLogOffset, SessionLogOffset)`、`AgentPresets` 增加 `includeShippedRoot`。`@deepseek-ai/dsh-client-runtime` 已被上游删除，因此它的 peer 与 `dsh.client.inject` 顺序行一并移除；把它留在旧区间会直接导致安装失败。
+这个候选版本落在旧 `>=0.1.2-rc.1 <0.2.0` peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.5-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.2-rc.1` 线。六处上游断裂决定了这一点：`ctx.agent` 从 `AgentSetup` 移除（setup 现在以第二个参数接收活的 `Agent`）；根 `conversation` slot 变成 keyed `main` 条目（Team 以 key `conversation`、priority `-100` 注册 `main`，harness 用 `renderSlot('main', {}, { entryKey: 'conversation' })` 渲染）；`SessionPersistence.inspect()`/`borrowSession()` 被 handle API 取代（`open(id, 'read')` + `read()` + `close()`、`stat()` 返回 header 快照、以及脱离实例的 `Session.create` 工厂）；`assistant/chunk` 事件类型退出 Session 词汇表；`MessageText` 退出 `dsh-client-ui-primitives`（TeamMessage 直接渲染文本）；keyed slot 冲突诊断文案取代了测试中的单 slot 表述。Session persistence 现在是随附的 JSONL backend，带 released-format 迁移链（v0/v1/v2 → V3），因此之前关于 SQLite schema 丢弃的说明不再适用。
 
-两条上游事实只记录、不修补：`@deepseek-ai/dsh-api-workspace-controller` 的声明在 `skipLibCheck: false` 下报错（`TypertClientRemote` 上没有 `workspace` 属性），单独 import 该包即可复现；Member Session 现在内嵌的 shipped composer 会暴露全部全局命令词汇，这是单独跟踪的产品决策，不是兼容性缺陷。
+两条验证事实只记录、不修补。隔离的 Harness checkout 在跑 Team 套件前需要 `pnpm build:native-system`：JSONL backend 的 flock 租约锁会加载一个被 gitignore 的 Node-API 插件（`native/system/packages/<platform>/bin/{glibc|musl}/system.node`），只有原生构建会产出它。另外 `npm run typecheck` 在 `npm run build` 之前会因 `@wowyuarm/dsh-agent-team/time-format` 与 `member-time-context` 的 import 失败——它们经由构建产物 `lib/` 的 self-link 解析，不在 sync-paths `own` map 里；先 build（潜在仓库缺口，不是兼容性缺陷）。

@@ -41,7 +41,7 @@ Task Thread 把 Claim、Agent 交接、Human 验收和后续回复保留在同�
 
 ### 1. 检查 DSH
 
-当前版本已针对 DSH `0.1.2-rc.1` 完成认证。如果还没有安装 `dsh`，先使用官方 package 启动 DSH：
+当前版本已针对 DSH `0.1.5-rc.1` 完成认证。如果还没有安装 `dsh`，先使用官方 package 启动 DSH：
 
 ```sh
 npx @deepseek-ai/dsh web
