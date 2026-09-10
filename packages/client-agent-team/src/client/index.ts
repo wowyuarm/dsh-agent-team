@@ -71,9 +71,13 @@ function registerModeShadow<T extends object>(
   navigation: TeamNavigation,
   changes: TeamChangeStream,
   drafts: TeamDraftStore,
-  name: 'sidebar.workspaces' | 'conversation' | 'sidebar.settings',
+  name: 'sidebar.workspaces' | 'main' | 'sidebar.settings',
   component: T,
   extraInject?: () => Record<string, unknown>,
+  // Keyed seats (`main`) address one panel by key; the reserved 'conversation'
+  // key is where the shipped Conversation registers, so the Team seat shadows
+  // that same panel instead of adding a second one.
+  entryKey?: string,
 ): void {
   // Stay in Team mode: the conversation shadow stands down for Member Session
   // views (see registerModeShadow), so the shipped conversation root renders
@@ -110,13 +114,14 @@ function registerModeShadow<T extends object>(
     let dispose: (() => void) | undefined
     const reconcile = (): void => {
       const snapshot = navigation.getSnapshot()
-      // The conversation seat yields to the shipped conversation root while a
+      // The main panel seat yields to the shipped conversation root while a
       // Member Session view is embedded; both sidebar seats stay shadowed so
       // the Team chrome keeps working around the Member conversation.
-      const active = snapshot.mode === 'team' && !(name === 'conversation' && snapshot.memberSessionId !== undefined)
+      const active = snapshot.mode === 'team' && !(name === 'main' && snapshot.memberSessionId !== undefined)
       if (active && dispose === undefined) {
         dispose = ctx.slots.register({
           name,
+          ...(entryKey === undefined ? {} : { key: entryKey }),
           priority: -100,
           locale: NS,
           inject: () => ({
@@ -124,7 +129,7 @@ function registerModeShadow<T extends object>(
             ...extraInject?.(),
             ...navigation.actions(),
             ...sharedRemotes,
-            ...(name === 'conversation' ? {
+            ...(name === 'main' ? {
               readThread: (request: AgentTeamThreadReadRequest) => ctx.remote.agentTeam.readThread(request),
               loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
               threadObservations: (request: AgentTeamThreadObservationsRequest) => ctx.remote.agentTeam.threadObservations(request),
@@ -234,7 +239,7 @@ function applyUi(ctx: ClientContext): void {
   }, TeamFooterAction as never))
 
   registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
-  registerModeShadow(ctx, navigation, changes, drafts, 'conversation', TeamConversation as never)
+  registerModeShadow(ctx, navigation, changes, drafts, 'main', TeamConversation as never, undefined, 'conversation')
   registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 

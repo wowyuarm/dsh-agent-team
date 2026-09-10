@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { MarkdownText, MessageText, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamMemberId, AgentTeamMessageAttachment, AgentTeamTaskRef } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamConversationProps } from './slots.ts'
@@ -111,7 +111,7 @@ export function TeamMessage({ senderName, memberId, human, body, occurredAt, men
           : <Fragment key={index}>{renderRefs(segment.text, onOpenRef, taskLabel, refLabel)}</Fragment>)}
       </div>
     : plan.render === 'literal'
-      ? <div className={css.messageText}>{onOpenRef === undefined ? <MessageText text={displayBody} /> : renderRefs(displayBody, onOpenRef, taskLabel, refLabel)}</div>
+      ? <div className={css.messageText}>{onOpenRef === undefined ? displayBody : renderRefs(displayBody, onOpenRef, taskLabel, refLabel)}</div>
       : <div ref={markdownRef} className={css.messageMarkdown}><MarkdownText key={`${displayBody}:${onOpenRef === undefined ? 'literal' : 'refs'}`} text={displayBody} labels={markdownLabels} /></div>
   return (
     <article className={css.messageRow} data-human={human || undefined} data-grouped={grouped || undefined}>

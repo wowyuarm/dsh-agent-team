@@ -19,13 +19,13 @@ class ResizeObserverStub {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub)
 
-type FrameProps = PropsRenderSlots<'sidebar' | 'conversation'>
+type FrameProps = PropsRenderSlots<'sidebar' | 'main'>
 function Frame({ renderSlot }: FrameProps) {
   const [collapsed, setCollapsed] = useState(false)
   return <>
     <button type="button" data-test-control onClick={() => { setCollapsed(value => !value) }}>Toggle fixture sidebar</button>
     {renderSlot('sidebar', { collapsed, width: collapsed ? 56 : 280 })}
-    {renderSlot('conversation', {})}
+    {renderSlot('main', {}, { entryKey: 'conversation' })}
   </>
 }
 
@@ -322,7 +322,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   })
   await runtime.root.declare({
     sidebar: { kind: 'single', scope: 'root' },
-    conversation: { kind: 'single', scope: 'session-maybe' },
+    main: { kind: 'keyed', scope: 'root' },
   } as never, Frame as never)
   await runtime.mount({ inject: [...injectSidebar], apply: applySidebar })
   // The shipped ConversationRoot occupies the conversation seat — the same

@@ -11,6 +11,20 @@ import { loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 
 const root = resolve(import.meta.dirname, '../../../')
 
+// The shipped bundle patch stack resolves against the SAME harness checkout
+// the rest of the build uses (env override for certification rounds, then the
+// .generated-harness marker, then the daily sibling) — never a hardcoded
+// name, or a compat round would sweep the daily checkout's rows instead of
+// the candidate's.
+async function shippedHarnessName(): Promise<string> {
+  const marker = resolve(root, '.generated-harness')
+  try {
+    return process.env.DSH_HARNESS_DIR?.trim() || (await readFile(marker, 'utf8')).trim() || 'deepseek-harness'
+  } catch {
+    return process.env.DSH_HARNESS_DIR?.trim() || 'deepseek-harness'
+  }
+}
+
 describe('Agent Team shipping contract', () => {
   it('ships an opt-in Host patch and one explicit team-member preset', async () => {
     const [patch, preset, manifestText] = await Promise.all([
@@ -33,9 +47,11 @@ describe('Agent Team shipping contract', () => {
     expect(patch).toContain("name: '@deepseek-ai/dsh-storage-sqlite'")
     const composed = applyEntryPatches([], [
       // rc.1 moved the storage rows from web-app into the base bundle; the
-      // real layer stack is base → web-app → this bundle.
-      ...loadOverlayPatches('shipping contract', resolve(root, '../deepseek-harness/packages/bundle/base/cordis.patch.yml')),
-      ...loadOverlayPatches('shipping contract', resolve(root, '../deepseek-harness/packages/bundle/web-app/cordis.patch.yml')),
+      // real layer stack is base → web-app → this bundle. The stack resolves
+      // against the harness checkout this run was generated against, so a
+      // certification round sweeps the CANDIDATE's rows, not the daily ones.
+      ...loadOverlayPatches('shipping contract', resolve(root, `../${await shippedHarnessName()}/packages/bundle/base/cordis.patch.yml`)),
+      ...loadOverlayPatches('shipping contract', resolve(root, `../${await shippedHarnessName()}/packages/bundle/web-app/cordis.patch.yml`)),
       ...loadOverlayPatches('shipping contract', resolve(root, 'cordis.patch.yml')),
     ], () => {})
     const ids = composed.map(entry => entry.id)

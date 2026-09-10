@@ -46,7 +46,7 @@ async function bench(persisted: string | null = null) {
   const root = () => null
   slots.register({ name: 'root', children: {
     sidebar: { kind: 'single', scope: 'root' },
-    conversation: { kind: 'single', scope: 'session-maybe' },
+    main: { kind: 'keyed', scope: 'root' },
   } } as never, root)
   slots.register({ name: 'sidebar', children: {
     'sidebar.workspaces': { kind: 'single', scope: 'root' },
@@ -55,8 +55,15 @@ async function bench(persisted: string | null = null) {
   } } as never, root)
   slots.register({ name: 'sidebar.workspaces', priority: 0 }, root)
   slots.register({ name: 'sidebar.settings', priority: 0 }, root)
-  slots.register({ name: 'conversation', priority: 0, children: {
+  // The shipped Conversation occupies the keyed main panel under the reserved
+  // 'conversation' key and declares the composer seats below it, mirroring
+  // the 0.1.5 ui-layout + ui-conversation tree.
+  slots.register({ name: 'main', key: 'conversation', priority: 0, children: {
+    'main.conversation': { kind: 'single', scope: 'session-maybe' },
+  } } as never, root)
+  slots.register({ name: 'main.conversation', priority: 0, children: {
     'conversation.composer.bar': { kind: 'single', scope: 'session-maybe' },
+    'conversation.input.dock': { kind: 'list', scope: 'session' },
   } } as never, root)
   return { ctx, slots }
 }
@@ -68,20 +75,20 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
 
     expect(slots.entriesOfSlot('sidebar.workspaces')).toHaveLength(1)
-    expect(slots.entriesOfSlot('conversation')).toHaveLength(1)
+    expect(slots.entriesOfSlot('main')).toHaveLength(1)
     expect(slots.entriesOfSlot('sidebar.settings')).toHaveLength(1)
     expect(slots.entries('sidebar.footer.action')).toHaveLength(1)
 
     ctx.teamNavigation.actions().enterTeam()
     expect(slots.entries('sidebar.workspaces')).toHaveLength(2)
-    expect(slots.entries('conversation')).toHaveLength(2)
+    expect(slots.entries('main')).toHaveLength(2)
     expect(slots.entries('sidebar.settings')).toHaveLength(2)
     expect(slots.entriesOfSlot('sidebar.workspaces')[0]!.options.priority).toBe(-100)
     expect(slots.spec('sidebar.workspaces.directoryFlow')).toBeUndefined()
 
     ctx.teamNavigation.actions().leaveTeam()
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('main')).toHaveLength(1)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
 
     await fiber.dispose()
@@ -94,7 +101,7 @@ describe('Team Client slot takeover', () => {
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     ctx.teamNavigation.actions().enterTeam()
-    expect(() => slots.register({ name: 'conversation', priority: -100 }, () => null))
+    expect(() => slots.register({ name: 'main', key: 'conversation', priority: -100 }, () => null))
       .toThrow(/already has a registration at priority -100/i)
   })
 
@@ -104,16 +111,16 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
     for (let index = 0; index < 3; index += 1) {
       ctx.teamNavigation.actions().enterTeam()
-      expect(slots.entriesOfSlot('conversation')[0]!.options.priority).toBe(-100)
+      expect(slots.entriesOfSlot('main')[0]!.options.priority).toBe(-100)
       ctx.teamNavigation.actions().leaveTeam()
       expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-      expect(slots.entries('conversation')).toHaveLength(1)
+      expect(slots.entries('main')).toHaveLength(1)
       expect(slots.entries('sidebar.settings')).toHaveLength(1)
     }
     ctx.teamNavigation.actions().enterTeam()
     await fiber.dispose()
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
-    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('main')).toHaveLength(1)
     expect(slots.entries('sidebar.settings')).toHaveLength(1)
     expect(slots.entries('sidebar.footer.action')).toHaveLength(0)
   })
@@ -123,9 +130,9 @@ describe('Team Client slot takeover', () => {
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     expect(ctx.teamNavigation.getSnapshot().mode).toBe('team')
-    expect(slots.entries('conversation')).toHaveLength(2)
+    expect(slots.entries('main')).toHaveLength(2)
     await fiber.dispose()
-    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('main')).toHaveLength(1)
   })
 
   it('keeps Team chrome mounted for a Member Session view and restores the return session on leave', async () => {
@@ -154,7 +161,7 @@ describe('Team Client slot takeover', () => {
     expect(sessions.open).toHaveBeenCalledWith('session:builder')
     expect(ctx.teamNavigation.getSnapshot()).toMatchObject({ mode: 'team', memberSessionId: 'session:builder', returnToSessionId: 'session:human-origin' })
     // The conversation seat yields to the shipped root while both sidebars stay.
-    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('main')).toHaveLength(1)
     // The Member view registers no composer surface at all: the shipped
     // InputBar owns the bar, its trigger overlay, and the dock — the Team
     // chrome is sidebar-only around the embedded session.
@@ -177,7 +184,7 @@ describe('Team Client slot takeover', () => {
     expect(sessions.open).toHaveBeenLastCalledWith('session:human-origin')
     expect(ctx.teamNavigation.getSnapshot()).toEqual({ mode: 'conversation', workspaceId: 'workspace:one' })
     expect(slots.entries('conversation.input.dock')).toHaveLength(0)
-    expect(slots.entriesOfSlot('conversation')).toHaveLength(1)
+    expect(slots.entriesOfSlot('main')).toHaveLength(1)
     expect(slots.entries('sidebar.workspaces')).toHaveLength(1)
 
     await fiber.dispose()
@@ -189,11 +196,11 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
     ctx.teamNavigation.actions().enterTeam()
     ctx.teamNavigation.actions().enterMemberSession('session:builder' as never, 'session:return' as never)
-    expect(slots.entries('conversation')).toHaveLength(1)
+    expect(slots.entries('main')).toHaveLength(1)
 
     ctx.teamNavigation.actions().selectChannel('channel:engineering' as never)
     expect(ctx.teamNavigation.getSnapshot().memberSessionId).toBeUndefined()
-    expect(slots.entries('conversation')).toHaveLength(2)
+    expect(slots.entries('main')).toHaveLength(2)
 
     await fiber.dispose()
   })

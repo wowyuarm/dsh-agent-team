@@ -118,7 +118,7 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
     selectedChannelRef?: AgentTeamChannelRef
   }
 
-export type TeamConversationProps = PropsRuntime<'conversation'> & PropsLocale<'team'> & TeamNavigationActions & {
+export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> & TeamNavigationActions & {
   navigation: TeamNavigationSource
   /** Keyed composer draft cache; one store per Client context. */
   drafts: TeamDraftStore
