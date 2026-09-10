@@ -63,7 +63,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // exchange; the scaffold's authenticatedUrl establishes the session cookie.
   await page.goto(scaffold.authenticatedUrl)
   await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'team-workspace')
-  const ordinaryComposer = page.locator('[data-composer-input][contenteditable="true"][data-placeholder="描述你想要构建的内容… / 调用指令 @ 文件或对话"]')
+  const ordinaryComposer = page.locator('[data-composer-input][contenteditable="true"][data-placeholder="描述你想要构建的内容, / 调用指令, @ 文件或对话"]')
   await expect.poll(() => ordinaryComposer.count()).toBe(1)
 
   expect(scaffold.ctx.clientModules.graph().entries.some(entry => entry.id === '@wowyuarm/dsh-agent-team')).toBe(true)
@@ -134,6 +134,10 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await joinEditor.waitFor()
   for (const handle of ['builder', 'reviewer']) {
     const row = joinEditor.locator('[class*="editMemberRow"]').filter({ hasText: `@${handle}` })
+    // rc.1: member activation lands asynchronously (handle-based persistence
+    // + async AgentLoop create); the roster can briefly show the new member
+    // as unavailable before its handle registers.
+    await expect.poll(async () => await row.getByRole('button', { name: '添加' }).isEnabled(), { timeout: 30_000 }).toBe(true)
     await row.getByRole('button', { name: '添加' }).click()
   }
   await expect.poll(async () => await joinEditor.getByRole('button', { name: '移除', exact: true }).count()).toBe(2)
