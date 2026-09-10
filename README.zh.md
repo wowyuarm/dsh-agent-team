@@ -108,15 +108,6 @@ dsh web
 
 发布包已经包含构建产物。只有开发检查需要相邻的 Harness repository，终端用户安装不需要它。
 
-## 兼容性与限制
-
-- 当前版本已针对 DSH `0.1.2-rc.1` 完成认证，并且要求该版本：更早的 DSH 版本不受支持。
-- Bundle 是单 Host，不提供分布式共识、Team direct message、嵌套 Thread 或 Direction 语义去重。
-- 当前 DSH SQLite Session schema 不接受旧版 DSH 的数据库。跨越该边界升级时，删除旧 Session 数据库并重新开始；本 bundle 不负责迁移。
-- Team 管理的 Agent Session 使用 `danger-full-access`。只在可信 Workspace 中使用。
-- 用 tsx 从源码运行 Harness 本体（`node --import tsx/esm apps/cli/src/bin.ts`）与市场安装的 bundle 不兼容：tsconfig paths 让 Harness 侧把 `@deepseek-ai/*` 包解析到 `src/`，而 bundle 加载编译产物 `lib/`，`@deepseek-ai/dsh-scope` 的两个模块实例会导致成员激活失败（`selected preset is not team-enabled`）。请改用编译产物启动（`pnpm dsh`、`node apps/cli/lib/bin.js` 或 `npx @deepseek-ai/dsh`）。
-- npm 包只发布运行时面（`cordis.patch.yml`、编译后的 `packages/*/lib`、`preset/`、`core-skills/`、README——见 `package.json` 的 `files` 列表）；`scripts/` 仅存在于仓库，属开发工具，不随包发布。
-
 ## 开发
 
 维护中的文档入口是 [`docs/README.zh.md`](docs/README.zh.md)。常用检查命令：

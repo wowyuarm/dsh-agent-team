@@ -2713,19 +2713,27 @@ export class AgentTeamLedger {
   }
 
   private removeMemberThreadInbox(memberId: AgentTeamMemberId, threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
-    const removed = [...this.state.attention.values()].filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
+    return this.removeMemberThreadInboxFrom(this.state, memberId, threadRefs)
+  }
+
+  private removeMemberThreadInboxFrom(projection: Projection, memberId: AgentTeamMemberId, threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
+    const removed = [...projection.attention.values()].filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
       .map(attention => Object.freeze({ memberId, threadRef: attention.threadRef }))
-    const markers = [...this.state.directMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
-    const activityMarkers = [...this.state.activityMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    const markers = [...projection.directMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
+    const activityMarkers = [...projection.activityMarkers.values()].filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
     return this.inboxDelta([], removed, [], markers, [], activityMarkers)
   }
 
   /** Attention and marker cleanup for EVERY Member on the given Threads. */
   private channelArchivalInbox(threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
-    const removed = [...this.state.attention.values()].filter(attention => threadRefs.has(attention.threadRef))
+    return this.channelArchivalInboxFrom(this.state, threadRefs)
+  }
+
+  private channelArchivalInboxFrom(projection: Projection, threadRefs: ReadonlySet<AgentTeamThreadRef>): AgentTeamInboxDelta {
+    const removed = [...projection.attention.values()].filter(attention => threadRefs.has(attention.threadRef))
       .map(attention => Object.freeze({ memberId: attention.memberId, threadRef: attention.threadRef }))
-    const markers = [...this.state.directMarkers.values()].filter(marker => threadRefs.has(marker.threadRef))
-    const activityMarkers = [...this.state.activityMarkers.values()].filter(marker => threadRefs.has(marker.threadRef))
+    const markers = [...projection.directMarkers.values()].filter(marker => threadRefs.has(marker.threadRef))
+    const activityMarkers = [...projection.activityMarkers.values()].filter(marker => threadRefs.has(marker.threadRef))
     return this.inboxDelta([], removed, [], markers, [], activityMarkers)
   }
 
@@ -3187,8 +3195,13 @@ export class AgentTeamLedger {
     return projection.memberships.get(channelRef)?.has(memberId) === true
   }
 
+  /** Every Thread of the Channel, taskful or taskless — the scope both cleanup validators replay against. */
   private channelThreadRefs(channelRef: AgentTeamChannelRef): Set<AgentTeamThreadRef> {
-    return new Set([...this.state.tasks.values()].filter(task => task.channelRef === channelRef).map(task => task.threadRef))
+    return this.channelThreadRefsFrom(this.state, channelRef)
+  }
+
+  private channelThreadRefsFrom(projection: Projection, channelRef: AgentTeamChannelRef): Set<AgentTeamThreadRef> {
+    return new Set([...projection.threads.keys()].filter(threadRef => this.channelRefForThreadFrom(projection, threadRef) === channelRef))
   }
 
   private assertJoinableMember(workspaceId: WorkspaceId, memberId: AgentTeamMemberId): void {
@@ -3586,7 +3599,51 @@ export class AgentTeamLedger {
         occurrences.set(operation.data.message.messageRef, operation.data.message.occurredAt ?? operation.occurredAt)
       }
     }
-    return records.map(([id, operation]) => [id, this.normalizeOperation(operation, occurrences, instants)])
+    // Replay against a scratch projection while normalizing, so a legacy
+    // cleanup repair sees the same state its validator will.
+    const projection = emptyProjection()
+    return records.map(([id, operation]) => {
+      const normalized = this.repairLegacyChannelCleanup(this.normalizeOperation(operation, occurrences, instants), projection)
+      this.applyTo(projection, normalized)
+      return [id, normalized]
+    })
+  }
+
+  /**
+   * Releases up to 0.1.9 scoped Channel archival and Channel member-removal
+   * inbox cleanup to taskful Threads only (the collector read the Task
+   * projection), so archiving or member removal in a Channel holding a
+   * taskless Thread with Attention or markers wrote an incomplete inbox and
+   * every later load rejected the record, leaving the profile unable to boot.
+   * Records carrying exactly that legacy cleanup are repaired in memory the
+   * same way pre-envelope Thread reads are; any other inbox still fails
+   * validation, so a forgery is not silently accepted.
+   */
+  private repairLegacyChannelCleanup(operation: AgentTeamOperation, projection: Projection): AgentTeamOperation {
+    if (operation.kind === 'team/channel-archived') {
+      const channelRef = operation.data.channel.channelRef
+      const expected = this.channelArchivalInboxFrom(projection, this.channelThreadRefsFrom(projection, channelRef))
+      if (!isDeepStrictEqual(operation.data.inbox, expected)
+        && isDeepStrictEqual(operation.data.inbox, this.channelArchivalInboxFrom(projection, this.legacyChannelThreadRefs(projection, channelRef)))) {
+        return { ...operation, data: { ...operation.data, inbox: expected } }
+      }
+      return operation
+    }
+    if (operation.kind === 'team/channel-member-removed') {
+      const { channelRef, memberId } = operation.data
+      const expected = this.removeMemberThreadInboxFrom(projection, memberId, this.channelThreadRefsFrom(projection, channelRef))
+      if (!isDeepStrictEqual(operation.data.inbox, expected)
+        && isDeepStrictEqual(operation.data.inbox, this.removeMemberThreadInboxFrom(projection, memberId, this.legacyChannelThreadRefs(projection, channelRef)))) {
+        return { ...operation, data: { ...operation.data, inbox: expected } }
+      }
+      return operation
+    }
+    return operation
+  }
+
+  /** The pre-fix Channel Thread scope: only Threads carrying a Task. */
+  private legacyChannelThreadRefs(projection: Projection, channelRef: AgentTeamChannelRef): Set<AgentTeamThreadRef> {
+    return new Set([...projection.tasks.values()].filter(task => task.channelRef === channelRef).map(task => task.threadRef))
   }
 
   /** Ledgers written before message occurredAt existed store bare messages; Thread reads resolve instants from the originating operations. */

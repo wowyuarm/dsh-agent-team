@@ -685,6 +685,54 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(() => replayLedger(replayed).validate()).not.toThrow()
   })
 
+  it('cleans a removed Member Attention on taskless Threads of the Channel and replays', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('taskless-remove-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const chat = committed((await ledger.sendMessage({ requestId: requestId('taskless-remove-chat'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'plain conversation', asTask: false, actor: agentTeamHumanActor(), recipients: [actor.memberId] })).value)
+
+    const removed = (await ledger.removeChannelMember({ requestId: requestId('taskless-remove'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, memberId: member.memberId, actor: agentTeamHumanActor() })).value
+    const operation = ledger.getOperation(removed.receipt.operationId)!
+    expect(operation.kind === 'team/channel-member-removed' ? operation.data.inbox.attention.removed : [])
+      .toEqual(expect.arrayContaining([{ memberId: member.memberId, threadRef: chat.thread.threadRef }]))
+    ledger.validate()
+
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const replayed = await harness(storedPool(records))
+    expect(() => replayLedger(replayed)).not.toThrow()
+  })
+
+  it('repairs a legacy Channel member-removal record that omitted taskless-Thread cleanup on load', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('legacy-remove-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const chat = committed((await ledger.sendMessage({ requestId: requestId('legacy-remove-chat'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'plain conversation', asTask: false, actor: agentTeamHumanActor(), recipients: [actor.memberId] })).value)
+    const removed = (await ledger.removeChannelMember({ requestId: requestId('legacy-remove'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, memberId: member.memberId, actor: agentTeamHumanActor() })).value
+    // Rewrite the removal to the 0.1.7-0.1.9 shape: cleanup scoped to taskful Threads only.
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/channel-member-removed') return [id, typed] as [string, unknown]
+      const dropTaskless = (entries: readonly { threadRef: string }[]) => entries.filter(entry => entry.threadRef !== chat.thread.threadRef)
+      return [id, { ...typed, data: { ...typed.data, inbox: {
+        attention: { set: [], removed: dropTaskless(typed.data.inbox.attention.removed) },
+        directMarkers: { added: [], removed: dropTaskless(typed.data.inbox.directMarkers.removed) },
+        activityMarkers: { added: [], removed: dropTaskless(typed.data.inbox.activityMarkers.removed) },
+      } } }] as [string, unknown]
+    })
+    const legacy = await harness(storedPool(records))
+    const legacyLedger = replayLedger(legacy)
+    expect(() => legacyLedger.validate()).not.toThrow()
+    const repaired = legacyLedger.getOperation(removed.receipt.operationId)!
+    expect(repaired.kind === 'team/channel-member-removed' ? repaired.data.inbox.attention.removed : [])
+      .toEqual(expect.arrayContaining([{ memberId: member.memberId, threadRef: chat.thread.threadRef }]))
+  })
+
   it('rejects a structurally valid Thread read with a forged watermark during replay', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
@@ -1183,6 +1231,85 @@ describe('AgentTeam Channel archival ledger', () => {
       return [id, { ...typed, data: { ...typed.data, claims: [] } }] as [string, unknown]
     })
     await expect(harness(storedPool(records))).rejects.toThrow(/invalid released Claim projection/)
+  })
+
+  it('archives a Channel containing a taskless Thread: cleanup covers it and cold restart replays', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('taskless-arch-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const channelRef = channel.channel.channelRef
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channelRef)
+    // A taskless Thread carries Human and Member Attention that archival must clear.
+    const chat = committed((await ledger.sendMessage({ requestId: requestId('taskless-arch-chat'), workspaceId: alpha, channelRef,
+      body: 'plain conversation', asTask: false, actor: agentTeamHumanActor(), recipients: [actor.memberId] })).value)
+    // A taskful Thread keeps the archival snapshot meaningful (claim release).
+    const started = withTask(committed((await ledger.sendMessage({ requestId: requestId('taskless-arch-start'), workspaceId: alpha, channelRef,
+      body: 'Task', actor: agentTeamHumanActor() })).value))
+    committed((await ledger.changeClaim({ requestId: requestId('taskless-arch-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'work', baseRevision: started.thread.revision, actor })).value)
+
+    const archived = (await ledger.archiveChannel({ requestId: requestId('taskless-arch-archive'), workspaceId: alpha, channelRef, actor: agentTeamHumanActor() })).value
+    const operation = ledger.getOperation(archived.receipt.operationId)!
+    const removed = operation.kind === 'team/channel-archived' ? operation.data.inbox.attention.removed : []
+    expect(removed.map(entry => entry.threadRef)).toEqual(expect.arrayContaining([chat.thread.threadRef, started.thread.threadRef]))
+    ledger.validate()
+
+    // Cold restart: replay must accept the archive snapshot it wrote itself.
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()] as Array<[string, unknown]>
+    const replayed = await harness(storedPool(records))
+    expect(() => replayLedger(replayed)).not.toThrow()
+    expect(replayLedger(replayed).view({ workspaceId: alpha }).channels).toEqual([])
+  })
+
+  it('repairs a legacy Channel archival record that omitted taskless-Thread cleanup on load', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('legacy-arch-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    const chat = committed((await ledger.sendMessage({ requestId: requestId('legacy-arch-chat'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'plain conversation', asTask: false, actor: agentTeamHumanActor(), recipients: [actor.memberId] })).value)
+    const archived = (await ledger.archiveChannel({ requestId: requestId('legacy-arch-archive'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })).value
+    // Rewrite the archive to the 0.1.7-0.1.9 shape: cleanup scoped to taskful Threads only.
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/channel-archived') return [id, typed] as [string, unknown]
+      const dropTaskless = (removed: readonly { threadRef: string }[]) => removed.filter(entry => entry.threadRef !== chat.thread.threadRef)
+      return [id, { ...typed, data: { ...typed.data, inbox: {
+        attention: { set: [], removed: dropTaskless(typed.data.inbox.attention.removed) },
+        directMarkers: { added: [], removed: dropTaskless(typed.data.inbox.directMarkers.removed) },
+        activityMarkers: { added: [], removed: dropTaskless(typed.data.inbox.activityMarkers.removed) },
+      } } }] as [string, unknown]
+    })
+    const legacy = await harness(storedPool(records))
+    const legacyLedger = replayLedger(legacy)
+    expect(() => legacyLedger.validate()).not.toThrow()
+    const repaired = legacyLedger.getOperation(archived.receipt.operationId)!
+    expect(repaired.kind === 'team/channel-archived' ? repaired.data.inbox.attention.removed.map(entry => entry.threadRef) : [])
+      .toContain(chat.thread.threadRef)
+  })
+
+  it('still rejects a forged Channel archival inbox during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('forged-inbox-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    committed((await ledger.sendMessage({ requestId: requestId('forged-inbox-chat'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'plain conversation', asTask: false, actor: agentTeamHumanActor(), recipients: [actor.memberId] })).value)
+    const started = withTask(committed((await ledger.sendMessage({ requestId: requestId('forged-inbox-start'), workspaceId: alpha, channelRef: channel.channel.channelRef,
+      body: 'Task', actor: agentTeamHumanActor() })).value))
+    committed((await ledger.changeClaim({ requestId: requestId('forged-inbox-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'work', baseRevision: started.thread.revision, actor })).value)
+    await ledger.archiveChannel({ requestId: requestId('forged-inbox-archive'), workspaceId: alpha, channelRef: channel.channel.channelRef, actor: agentTeamHumanActor() })
+    // Forge the opposite omission (drop a taskful-Thread cleanup entry): not the legacy shape, so it must still fail.
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/channel-archived') return [id, typed] as [string, unknown]
+      return [id, { ...typed, data: { ...typed.data, inbox: {
+        ...typed.data.inbox,
+        attention: { set: [], removed: typed.data.inbox.attention.removed.filter(entry => entry.threadRef !== started.thread.threadRef) },
+      } } }] as [string, unknown]
+    })
+    await expect(harness(storedPool(records))).rejects.toThrow(/invalid Channel archival inbox cleanup/)
   })
 })
 
