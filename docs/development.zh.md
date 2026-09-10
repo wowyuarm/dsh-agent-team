@@ -115,7 +115,7 @@ node scripts/sync-paths.mjs
 
 **按顺序准备：**
 
-1. clone `../deepseek-harness`，checkout 最新认证 release tag（当前 `dsh-v0.1.5-rc.1`，随认证前进），再 `corepack pnpm install`（workspace 全量一次到位）与 `corepack pnpm build:lib`。统一用 `corepack pnpm`——两个仓库的 `packageManager` 都锁 `pnpm@11.7.0`，裸 `pnpm` 依赖环境预装且版本可能漂移。不要复用上一次构建遗留的 `lib/` 或 `node_modules/`——旧产物可能掩盖声明或运行时不兼容。
+1. 先 `corepack enable pnpm` 落地 shim，再 clone `../deepseek-harness`，checkout 最新认证 release tag（当前 `dsh-v0.1.5-rc.1`，随认证前进），然后 `corepack pnpm install`（workspace 全量一次到位）、`corepack pnpm build:lib` 与 `corepack pnpm build:native-system`。shim 是必需的：认证 Harness 自身的 script 内部会调裸 `pnpm`（`build:lib`、`build:web`），而 `corepack pnpm` 只在自己进程内解析；缺了 shim 这些步骤会以 `pnpm: not found` 失败。两个仓库的 `packageManager` 都锁 `pnpm@11.7.0`，shim 因此解析到该版本，而非环境预装的任意版本。native 这一步是独立的构建，不会由别处替我们完成：host addon 被 gitignore，Harness 的 `test` script 会在自己的 Vitest 之前用 `build:native-system` 构建它，而本仓库是直接对那个 checkout 跑 Vitest——全新 clone 缺了它会表现为宿主 Team 激活失败（`Agent is not an active Team Member`），而不是缺模块报错。`--host-addon-only` 在非 Linux/macOS 上直接退出、不构建，因此该步骤在所有平台都安全。不要复用上一次构建遗留的 `lib/` 或 `node_modules/`——旧产物可能掩盖声明或运行时不兼容。
 2. 工作流需要 `test:browser` 时，用 `corepack pnpm build:web` 构建 Harness `apps/web` dist；workspace install 已备好其依赖。
 3. 在本仓库内用 `corepack pnpm install` 安装依赖。绝不能运行 `npm install`：它会静默破坏指向相邻 checkout vendor 包的 workspace 符号链接，故障随后才以误导性的 `Cannot find module 'zod'` 暴露。
 4. 用 `node scripts/link-harness-packages.mjs` 把 Harness 的 workspace 与 vendor 包链接进本仓库 `node_modules`，再 `npm run build` 构建 bundle。宿主测试从本仓库根按真实 `node_modules` 查找解析 preset row 与 bundle 自身的未发布 row（如 `@wowyuarm/dsh-agent-team/member-context`）——与已发布 bundle 的 profile 安装布局一致。
@@ -136,7 +136,7 @@ node scripts/sync-paths.mjs
 
 **checkout 指针集中化且 fail-fast。** `scripts/harness-dir.mjs` 是所有消费方（Vitest、`sync-paths`、`build-client`、`generate-typert`、浏览器/预览 runner）共同解析的单一事实源：`DSH_HARNESS_DIR` 设定时优先；其次读 `sync-paths` 写下的 `.generated-harness` 标记（测试自动跟随 facade 生成时的同一 checkout——认证轮生成后忘了带 env 也不会让两者劈叉）；最后落到默认相邻名。解析出的目录不存在时立即中止，列出相邻真实存在的 Harness checkout 与修复指引，而不是等到跑测才炸出上面那些远端症状。
 
-**CI lanes。** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 在干净的 `ubuntu-latest` 与 `windows-latest` runner 上运行 typecheck 加完整测试套件——pull request、push 到 `master`、手动 `workflow_dispatch` 都会触发。两条 lane 执行上面相同的六步环境契约；Windows lane 的每一步经 git bash（`shell: bash`）运行，因为默认 pwsh 会破坏反斜杠续行；harness 包经目录 junction 链接，无需 symlink 权限。范围护栏：无 coverage matrix、无发布自动化、无 `test:browser`——浏览器验收始终是本地步骤。Windows lane 是文件系统标识符类 bug（issue #7/#8）的回归防线。唯一可调变量是 `DSH_HARNESS_TAG`；认证推进该 tag 时，workflow 的 env、本文档与 [`.hoplite/settings.json`](../.hoplite/settings.json) 三处同步更新——三处靠手工保持一致。开发脚本（`build-client`、`run-browser-test`、`run-preview`、`run-ui-preview`）已做 Windows 硬化，在该平台经 git bash 运行，本地 Windows 开发遵循同一环境契约。
+**CI lanes。** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 在干净的 `ubuntu-latest` 与 `windows-latest` runner 上运行 typecheck 加完整测试套件——pull request、push 到 `master`、手动 `workflow_dispatch` 都会触发。两条 lane 执行上面相同的六步环境契约；Windows lane 的每一步经 git bash（`shell: bash`）运行，因为默认 pwsh 会破坏反斜杠续行；harness 包经目录 junction 链接，无需 symlink 权限。范围护栏：无 coverage matrix、无发布自动化、无 `test:browser`——浏览器验收始终是本地步骤。Windows lane 是文件系统标识符类 bug（issue #7/#8）的回归防线。唯一可调变量是 `DSH_HARNESS_TAG`；认证推进该 tag 时，workflow 的 env、本文档与 [`.hoplite/settings.json`](../.hoplite/settings.json) 三处同步更新——三处靠手工保持一致。若该次 tag 推进同时移动了 DSH peers，必须在同一改动里提交 `pnpm-lock.yaml`：CI 以 `frozen-lockfile` 安装，而本地装一次就会就地重写 lockfile，把这个不一致一直掩盖到 CI 上才暴露。开发脚本（`build-client`、`run-browser-test`、`run-preview`、`run-ui-preview`）已做 Windows 硬化，在该平台经 git bash 运行，本地 Windows 开发遵循同一环境契约。
 
 ## 外部安装验证
 

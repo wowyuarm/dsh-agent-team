@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh-storage-sqlite':
-        specifier: '>=0.1.2-rc.1 <0.2.0'
-        version: 0.1.2-rc.1
+        specifier: '>=0.1.5-rc.1 <0.2.0'
+        version: 0.1.5-rc.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -126,11 +126,11 @@ packages:
   '@deepseek-ai/cosmokit@1.8.3':
     resolution: {integrity: sha512-qBo+ronVM6Eu2WNVJXi8JcMiqZ19T9BRIpV+5qJUFPXjGH/Z0QKcQMC/IZJ7L394YTOtJgcovbk9qP0w2GsBXQ==}
 
-  '@deepseek-ai/dsh-storage-sqlite@0.1.2-rc.1':
-    resolution: {integrity: sha512-9V9VYBZQHR57L8XAW3KLlaISoazkJJNYnPHoIMKSGGTL8w3wEmLzXcy9c5YLOu9fQ+RSEdq8M4zqSy2XBE9RJA==}
+  '@deepseek-ai/dsh-storage-sqlite@0.1.5-rc.1':
+    resolution: {integrity: sha512-nJ169kG5ZPGy/d5+gwqhdXekooqRqGargf33P+9clzj9Apqd4nAFP/7YcsHwCk0h1ry83ZECN5jc75aeD0fhyw==}
     peerDependencies:
       '@deepseek-ai/cordis': ^4.0.2
-      '@deepseek-ai/dsh-storage': ^0.1.2-rc.1
+      '@deepseek-ai/dsh-storage': ^0.1.5-rc.1
 
   '@deepseek-ai/schemastery@3.18.2':
     resolution: {integrity: sha512-njDtZsznjYxok7KLLlHOPyuv2efdWVbSflAHgztSfbMsg+CVraEoRe2DjOCgClYv3ZCSm7WXoaUkbB/+RY7tWQ==}
@@ -1016,7 +1016,7 @@ snapshots:
 
   '@deepseek-ai/cosmokit@1.8.3': {}
 
-  '@deepseek-ai/dsh-storage-sqlite@0.1.2-rc.1':
+  '@deepseek-ai/dsh-storage-sqlite@0.1.5-rc.1':
     dependencies:
       '@deepseek-ai/schemastery': 3.18.2
 

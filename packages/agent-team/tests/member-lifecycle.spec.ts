@@ -1682,8 +1682,11 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     const newSessionId = renewedStatus.member.sessionId
 
     // Fresh generation: nothing inherited from the old log, and the lineage
-    // parent points at the previous active Session.
-    expect(ctx.agents.get(previousSessionId)).toBeUndefined()
+    // parent points at the previous active Session. The swap's commit order is
+    // binding flip → retire (dispose + archive) → activate, and only the flip
+    // is published first, so the previous Agent's disappearance still races
+    // this probe; wait for it instead of sampling straight after the flip.
+    await waitFor(() => ctx.agents.get(previousSessionId) === undefined ? true : undefined)
     // The ledger binding flips before the new Session activates; wait for
     // the published handle AND the delivered handoff — the swap commits the
     // binding first, activates and steers the handoff afterwards.
@@ -1951,6 +1954,18 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 60_000): Promi
   }
 }
 
+/**
+ * Wait until every given Session id has been archived. Archiving rides
+ * retirement, which a rollover publishes only after its durable binding flip,
+ * so observing the flip (or a later generation's registration) can still
+ * sample the archive list too early. The assertion stays exactly as strong —
+ * an id that is never archived still fails — but stops depending on the order
+ * inside the commit sequence.
+ */
+async function waitForArchived(archived: readonly SessionId[], ...sessionIds: readonly SessionId[]): Promise<void> {
+  await waitFor(() => sessionIds.every(sessionId => archived.includes(sessionId)) ? true : undefined)
+}
+
   it('carries later direct input across a rollover and rederives Team notices from the ledger', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
@@ -2048,11 +2063,12 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 60_000): Promi
     })
 
     // Distinct generations, both archives preserved, and the ledger holds
-    // exactly two rollover operations with distinct ids.
+    // exactly two rollover operations with distinct ids. Archiving rides
+    // retirement, which follows the durable flip, so wait for both archives
+    // rather than sampling the list straight after the flip.
     expect(second.member.sessionId).not.toBe(firstSessionId)
     expect(second.member.sessionId).not.toBe(secondSessionId)
-    expect(archived).toContain(firstSessionId)
-    expect(archived).toContain(secondSessionId)
+    await waitForArchived(archived, firstSessionId, secondSessionId)
     expect(archived).not.toContain(second.member.sessionId)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
@@ -2431,7 +2447,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(state.pending).toBeNull()
     expect(state.continuations).toHaveLength(0)
     // The old generation archived; the ledger records the seed fields.
-    expect(archived).toContain(firstSessionId)
+    await waitForArchived(archived, firstSessionId)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 })
@@ -2494,8 +2510,7 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     // archived — the ledger keeps them distinct.
     expect(gen3.session.header.parentSession).toBe(firstSessionId)
     expect(gen3.session.inheritedEventCount).toBeGreaterThan(0)
-    expect(archived).toContain(firstSessionId)
-    expect(archived).toContain(secondSessionId)
+    await waitForArchived(archived, firstSessionId, secondSessionId)
     expect(archived).not.toContain(thirdSessionId)
     // The inherited prefix is exactly the ancestor's anchor cut.
     const gen1Fold = foldContextProjection(gen1.session.ownEvents(), undefined, firstSessionId)
