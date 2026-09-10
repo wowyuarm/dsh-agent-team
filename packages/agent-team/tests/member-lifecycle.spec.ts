@@ -3353,15 +3353,15 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     // The retired previous Session now reads as corrupt. The current
     // generation already ran, so activation must skip the previous-Session
     // inspect entirely instead of failing closed on every restart.
-    const realInspect = ctx.sessionPersistence.inspect.bind(ctx.sessionPersistence)
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
     let inspectedPrevious = 0
     const info = vi.spyOn(ctx.logger, 'info')
-    ctx.sessionPersistence.inspect = async (id) => {
+    ctx.sessionPersistence.open = async (id, access, options) => {
       if (id === previousSessionId) {
         inspectedPrevious += 1
         throw new Error('corrupt session log: seq gap in committed region at line 2 (expected 3, got 2)')
       }
-      return realInspect(id)
+      return realOpen(id, access, options)
     }
     // Retire the Session cleanly before the restart, as a Host restart would
     // find it: a raw fiber dispose races the JSONL retirement drain and can
@@ -3426,11 +3426,11 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     // The retired previous Session is corrupt; the fresh current Session has
     // no own turn activity, so the replay's inspect hits the corruption and
     // must fail open with a warning instead of blocking activation.
-    const realInspect = ctx.sessionPersistence.inspect.bind(ctx.sessionPersistence)
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
     const warn = vi.spyOn(ctx.logger, 'warn')
-    ctx.sessionPersistence.inspect = async (id) => {
+    ctx.sessionPersistence.open = async (id, access, options) => {
       if (id === previousSessionId) throw new Error('corrupt session log: seq gap in committed region at line 2 (expected 3, got 2)')
-      return realInspect(id)
+      return realOpen(id, access, options)
     }
     presets.failingMount = false
     adapter.enqueue(textResponse('carrying on after the P2 crash.'))
@@ -3478,10 +3478,10 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
         && current.diagnostic?.includes('failed to load') ? current : undefined
     })
 
-    const realInspect = ctx.sessionPersistence.inspect.bind(ctx.sessionPersistence)
-    ctx.sessionPersistence.inspect = async (id) => {
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    ctx.sessionPersistence.open = async (id, access, options) => {
       if (id === previousSessionId) throw Object.assign(new Error(`ENOENT: no such file or directory, scandir 'sessions/${previousSessionId}' (test seam)`), { code: 'ENOENT' })
-      return realInspect(id)
+      return realOpen(id, access, options)
     }
     presets.failingMount = false
     adapter.enqueue(textResponse('this turn must never run.'))
