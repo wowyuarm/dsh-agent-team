@@ -3300,6 +3300,227 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
+  it('skips the carried-input replay once the current generation already ran, even when the previous Session log is corrupt', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('p1-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('p1-add'), workspaceId, handle: 'p1member', description: 'P1 replay skip', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    // Crash the rollover after its commit with racing direct input in the old
+    // generation's inbox (durable splice -> carried candidate).
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-p1-nc', 'context_rollover', { handoff: 'the P1 crash handoff' }))
+    adapter.enqueue(textResponse('rolling into the P1 crash.'))
+    const live = ctx.agents.get(previousSessionId)!
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== previousSessionId || event.type !== 'turn/end' || injected) return
+      injected = true
+      queueMicrotask(() => {
+        live.followup(createUserMessage({ content: [{ type: 'text', text: 'P1 carried input.' }], source: { kind: 'user' } }))
+      })
+    })
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over into the P1 crash' }], source: { kind: 'user' } }))
+    await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+    disposeObserver()
+    expect(injected).toBe(true)
+    const currentSessionId = ctx.agentTeam.members().find(status => status.member.memberId === memberId)!.member.sessionId
+
+    // First restart: the current generation heals, runs the handoff turn, and
+    // receives the carried input exactly once — it now has own turn activity.
+    presets.failingMount = false
+    adapter.enqueue(textResponse('carrying on after the P1 crash.'))
+    adapter.enqueue(textResponse('handled the P1 carried input.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    const secondFiber = await ctx.plugin(AgentTeam)
+    const firstRestart = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    expect(firstRestart.member.sessionId).toBe(currentSessionId)
+    const firstRestartAgent = await waitFor(() => ctx.agents.get(currentSessionId)!)
+    await waitFor(() => firstRestartAgent.session.ownEvents().some(event => event.type === 'turn/start') ? true : undefined)
+    await firstRestartAgent.whenIdle()
+
+    // The retired previous Session now reads as corrupt. The current
+    // generation already ran, so activation must skip the previous-Session
+    // inspect entirely instead of failing closed on every restart.
+    const realInspect = ctx.sessionPersistence.inspect.bind(ctx.sessionPersistence)
+    let inspectedPrevious = 0
+    const info = vi.spyOn(ctx.logger, 'info')
+    ctx.sessionPersistence.inspect = async (id) => {
+      if (id === previousSessionId) {
+        inspectedPrevious += 1
+        throw new Error('corrupt session log: seq gap in committed region at line 2 (expected 3, got 2)')
+      }
+      return realInspect(id)
+    }
+    // Retire the Session cleanly before the restart, as a Host restart would
+    // find it: a raw fiber dispose races the JSONL retirement drain and can
+    // recreate the Session blank, which would mask the P1 skip behind the
+    // create path.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('p1-suspend'), memberId })
+    await secondFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    adapter.enqueue(textResponse('p1 resumed after the corrupt previous Session.'))
+    await ctx.agentTeam.resumeMember({ requestId: requestId('p1-resume'), memberId })
+    const restarted = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    expect(restarted.member.sessionId).toBe(currentSessionId)
+    expect(restarted.diagnostic).toBeUndefined()
+    expect(inspectedPrevious).toBe(0)
+    expect(info.mock.calls.some(args => String(args[0]).includes('skipping carried-input replay'))).toBe(true)
+    info.mockRestore()
+
+    // No redelivery: the carried input stays at exactly one occurrence.
+    const resumed = await waitFor(() => ctx.agents.get(currentSessionId)!)
+    await resumed.whenIdle()
+    const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
+      .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+    expect(bodies.filter(body => body.includes('P1 carried input.'))).toHaveLength(1)
+  })
+
+  it('fails open with a warning when the previous Session log is corrupt and the new generation never ran', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('p2-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('p2-add'), workspaceId, handle: 'p2member', description: 'P2 fail-open', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    // Crash the rollover after its commit with racing direct input in the old
+    // generation's inbox: the new Session never runs before the restart.
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-p2-nc', 'context_rollover', { handoff: 'the P2 crash handoff' }))
+    adapter.enqueue(textResponse('rolling into the P2 crash.'))
+    const live = ctx.agents.get(previousSessionId)!
+    let injected = false
+    const disposeObserver = ctx.on('session/event', (session, event) => {
+      if (session.id !== previousSessionId || event.type !== 'turn/end' || injected) return
+      injected = true
+      queueMicrotask(() => {
+        live.followup(createUserMessage({ content: [{ type: 'text', text: 'P2 carried input that must be skipped.' }], source: { kind: 'user' } }))
+      })
+    })
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over into the P2 crash' }], source: { kind: 'user' } }))
+    await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+    disposeObserver()
+    expect(injected).toBe(true)
+
+    // The retired previous Session is corrupt; the fresh current Session has
+    // no own turn activity, so the replay's inspect hits the corruption and
+    // must fail open with a warning instead of blocking activation.
+    const realInspect = ctx.sessionPersistence.inspect.bind(ctx.sessionPersistence)
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    ctx.sessionPersistence.inspect = async (id) => {
+      if (id === previousSessionId) throw new Error('corrupt session log: seq gap in committed region at line 2 (expected 3, got 2)')
+      return realInspect(id)
+    }
+    presets.failingMount = false
+    adapter.enqueue(textResponse('carrying on after the P2 crash.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const restarted = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    expect(restarted.diagnostic).toBeUndefined()
+    const resumed = await waitFor(() => ctx.agents.get(restarted.member.sessionId)!)
+    const replayWarnings = warn.mock.calls.map(args => String(args[0])).filter(text => text.includes('skipping the replay'))
+    expect(replayWarnings.length).toBeGreaterThan(0)
+    expect(replayWarnings.some(text => text.includes(previousSessionId) && text.includes('p2member'))).toBe(true)
+    // The corrupt Session's carried input is deliberately skipped: the direct
+    // input that would have ridden behind the handoff never surfaces.
+    await resumed.whenIdle()
+    const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
+      .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+    expect(bodies.some(body => body.includes('P2 carried input that must be skipped.'))).toBe(false)
+    warn.mockRestore()
+  })
+
+  it('keeps the carried-input replay fail-closed for a non-corruption unreadable previous Session', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('p2f-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('p2f-add'), workspaceId, handle: 'p2fmember', description: 'P2 fail-closed boundary', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    // Same crash shape as the fail-open case, but the unreadable cause is a
+    // missing file (ENOENT), not log corruption: the bounded fail-open must
+    // NOT apply, and activation stays blocked with a diagnostic.
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-p2f-nc', 'context_rollover', { handoff: 'the fail-closed handoff' }))
+    adapter.enqueue(textResponse('rolling into the fail-closed crash.'))
+    const live = ctx.agents.get(previousSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over into the fail-closed crash' }], source: { kind: 'user' } }))
+    await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+
+    const realInspect = ctx.sessionPersistence.inspect.bind(ctx.sessionPersistence)
+    ctx.sessionPersistence.inspect = async (id) => {
+      if (id === previousSessionId) throw Object.assign(new Error(`ENOENT: no such file or directory, scandir 'sessions/${previousSessionId}' (test seam)`), { code: 'ENOENT' })
+      return realInspect(id)
+    }
+    presets.failingMount = false
+    adapter.enqueue(textResponse('this turn must never run.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const failed = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'unavailable' && status.diagnostic?.includes('unreadable') ? status : undefined
+    })
+    expect(failed.member.sessionId).not.toBe(previousSessionId)
+    expect(ctx.agents.get(failed.member.sessionId)).toBeUndefined()
+  })
+
+  it('logs a warning with the member handle when activation fails', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('p3-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('p3-add'), workspaceId, handle: 'p3member', description: 'P3 failure visibility', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+
+    // A restart against a broken preset fails the activation; the operator
+    // must see the member handle in a warning line, not only in the status
+    // diagnostic.
+    presets.failingMount = true
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'unavailable' && status.diagnostic?.includes('failed to load') ? status : undefined
+    })
+    const failures = warn.mock.calls.map(args => String(args[0])).filter(text => text.includes('activation failed'))
+    expect(failures.length).toBeGreaterThan(0)
+    expect(failures.some(text => text.includes('p3member'))).toBe(true)
+    warn.mockRestore()
+  })
+
   it('offers a delivered single-Thread Team boundary as a default checkpoint and rejects multi-Thread boundaries', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId, archived } = await realHarness(adapter)

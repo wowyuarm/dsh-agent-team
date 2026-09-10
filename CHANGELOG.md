@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+- Members whose retired previous Session log is corrupt no longer get stuck `unavailable` after a restart: carried-input replay is skipped once the current generation has already started its own turns, and a `corrupt session log` error during the replay fails open with a warning (missing/IO unreadable causes stay fail-closed). Activation failures now log the member handle for the operator.
+
 - Fixed Channel archival and Channel member removal writing an incomplete inbox cleanup when the Channel held a taskless Thread: the commit path collected Threads from the Task projection only, while replay validation expects every Thread of the Channel, so archiving such a Channel (or removing a Member from it) made the next start fail with `invalid Channel archival inbox cleanup`. The commit scope now matches validation, and records written by 0.1.7–0.1.9 with exactly that legacy cleanup are repaired in memory on load (the stored ledger is untouched); any other mismatch still fails validation.
 
 - Members gain `web_fetch`: the `team-member` preset's `tool-web` row now registers fetch (`fetch: true`), resolving the Host's anonymous HTTP fetch provider, and the `web_search` guidance automatically recommends fetching a specific result. This was disabled only while the preset carried its own web service rows (which had no fetch provider); since the preset moved to the host-service architecture the disabled flag was stale.

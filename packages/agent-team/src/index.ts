@@ -1589,17 +1589,39 @@ export default class AgentTeam extends TypertRemoteService {
    * CURRENTLY present: delivered `user/message` ids plus the live inbox's
    * pending next-step/next-turn ids — a historical insert that was already
    * claimed (and removed) but never surfaced is NOT known and must replay.
-   * Fail-closed: an unreadable previous Session rejects the activation
-   * rather than silently dropping the Member's input.
+   * Fail-closed for genuinely unreadable previous Sessions (missing/IO) so
+   * the Member's input is never dropped silently, with two bounded
+   * exceptions: a generation that already started its own turns needs no
+   * replay (its carried input was delivered or superseded while it ran), and
+   * a log-corruption class error skips with a warning (the Host repairs torn
+   * tails; a retired generation's corrupt log must not permanently block the
+   * Member's activation).
    */
-  private async replayCarriedInput(member: AgentTeamAgentMember, agent: Agent): Promise<number> {
+  private async replayCarriedInput(member: AgentTeamAgentMember, agent: Agent, generationStarted: boolean): Promise<number> {
     const transition = this.requireLedger().lastTransitionForMember(member.memberId)
     if (transition === undefined || transition.targetSessionId !== agent.session.id) return 0
+    // A generation that already started its own turns needs no previous-Session
+    // replay: its carried input was delivered with the handoff (or superseded)
+    // before any own turn could run. Skipping the inspect also keeps a later
+    // corruption or loss of the retired Session from re-blocking this Member
+    // on every restart of the current generation.
+    if (generationStarted) {
+      this.ctx.logger.info(`agent-team: skipping carried-input replay for member '${this.memberLabel(member.memberId)}': the current Session '${agent.session.id}' already started a generation`)
+      return 0
+    }
     let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
     try {
       inspection = await this.ctx.sessionPersistence.inspect(transition.previousSessionId)
     } catch (error) {
-      throw new Error(`the previous Session '${transition.previousSessionId}' holding the Member's carried input is unreadable: ${error instanceof Error ? error.message : String(error)}`)
+      const detail = error instanceof Error ? error.message : String(error)
+      // Log-corruption class: bounded fail-open. The current Session's own
+      // fold is intact and the Host repairs the retired log's torn tail; a
+      // corrupted retired generation must not permanently block activation.
+      if (/corrupt session log/.test(detail)) {
+        this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is corrupt: ${detail}; skipping the replay`)
+        return 0
+      }
+      throw new Error(`the previous Session '${transition.previousSessionId}' holding the Member's carried input is unreadable: ${detail}`)
     }
     const state = foldContextProjection(inspection.events, inspection.inheritedEventCount, transition.previousSessionId)
     const carried = carriedInputOf(state)
@@ -2184,6 +2206,11 @@ export default class AgentTeam extends TypertRemoteService {
       // The one-shot pressure notice needs no explicit re-arm here: it latches
       // on durable Session evidence, and a fresh generation's own event span
       // starts empty — a new Session is itself the re-arm.
+      // Snapshot whether this generation had already started its own turns
+      // BEFORE any recovery delivery below: the handoff steer and the Inbox
+      // wake legitimately append `turn/start` to this Session, and those must
+      // never be mistaken for the generation having run on its own.
+      const generationStarted = created.agent.session.ownEvents().some(event => event.type === 'turn/start')
       // A restart between a durable rollover intent and its swap replays the
       // old Session; the projection still carries the intent, so finish the
       // transition (or keep waiting for the containing turn) from here.
@@ -2205,7 +2232,7 @@ export default class AgentTeam extends TypertRemoteService {
         // Carried input redelivery binds to the committed transition target —
         // this Session — never to the handoff's presence: a crash after the
         // handoff landed but before the carried enqueue still replays here.
-        recoveryCarried = await this.replayCarriedInput(member, created.agent)
+        recoveryCarried = await this.replayCarriedInput(member, created.agent, generationStarted)
       } else if (forkedFrom === undefined && lineageParent !== undefined) {
         // A restart recreated a Session that never materialized before the
         // crash (the rollover committed, its activation failed, and this
@@ -2218,7 +2245,7 @@ export default class AgentTeam extends TypertRemoteService {
         // handoff right after — that delivery is the plan, never this
         // recovery.
         await this.reconstructMissingHandoff(member, created.agent)
-        recoveryCarried = await this.replayCarriedInput(member, created.agent)
+        recoveryCarried = await this.replayCarriedInput(member, created.agent, generationStarted)
       }
       // The ordinary Inbox wake runs LAST, after any recovery delivery above:
       // the handoff must stay the first model-facing context of a recovered
@@ -2233,7 +2260,9 @@ export default class AgentTeam extends TypertRemoteService {
       await created?.dispose()
       this.modelSelections.delete(member.memberId)
       this.memberRuntime.forgetMember(member.memberId)
-      this.setMemberFailure(member.memberId, 'activation', error instanceof Error ? error.message : String(error))
+      const message = error instanceof Error ? error.message : String(error)
+      this.ctx.logger.warn(`agent-team: activation failed for member '${this.memberLabel(member.memberId)}': ${message}`)
+      this.setMemberFailure(member.memberId, 'activation', message)
     } finally {
       // Activation only changes this Workspace's presence projection.
       this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
