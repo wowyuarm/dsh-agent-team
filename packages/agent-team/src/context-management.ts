@@ -23,7 +23,7 @@ import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionId as SessionIdBrand } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { createHash } from 'node:crypto'
-import { createCheckpointContinuationMessage, createHandoffMessage } from './context-source.ts'
+import { AGENT_TEAM_PLUGIN_ID, createCheckpointContinuationMessage, createHandoffMessage, isAgentTeamContextSource } from './context-source.ts'
 import {
   CONTEXT_CHECKPOINT_TOOL_NAME,
   CONTEXT_ROLLOVER_TOOL_NAME,
@@ -32,9 +32,6 @@ import {
   type AgentTeamContextProjectionState,
 } from './context-projection.ts'
 import type { AgentTeamAgentMember, AgentTeamMemberId, AgentTeamRolloverSessionRequest } from './types.ts'
-
-/** Plugin identity of the Agent Team Host, for recognizing own notices. */
-const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
 
 /** Stable summary of the one-shot rollover pressure notice (ticket 03 wires delivery). */
 export const CONTEXT_PRESSURE_NOTICE_SUMMARY = 'Context pressure: prepare a handoff'
@@ -196,10 +193,15 @@ export class ContextManagementCoordinator {
     return captured
   }
 
-  /** Whether one queued message is a Team-owned notice the rederived Inbox replaces. */
+  /**
+   * Whether one queued message is a Team-owned notice the rederived Inbox
+   * replaces. Handoff and continuation envelopes carry the same plugin
+   * attribution but are ordinary delivered context the new generation keeps, so
+   * they are excluded rather than dropped.
+   */
   private isTeamNotice(message: UserMessage): boolean {
     const source = message.source
-    return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+    return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID && !isAgentTeamContextSource(message)
   }
 
   /** Drop one Member's bookkeeping; the Host calls this on dispose/removal. */

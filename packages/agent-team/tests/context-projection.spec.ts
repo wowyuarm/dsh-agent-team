@@ -16,7 +16,7 @@ import {
   withScheduledContinuation,
   type AgentTeamContextProjectionState,
 } from '../src/context-projection.ts'
-import { createCheckpointContinuationMessage, createHandoffMessage } from '../src/context-source.ts'
+import { AGENT_TEAM_PLUGIN_ID, continuationCheckpointRefOf, createCheckpointContinuationMessage, createHandoffMessage, handoffOf } from '../src/context-source.ts'
 
 let eventSeq = 0
 function nextSeq(): SessionSeq {
@@ -386,26 +386,26 @@ describe('AgentTeam context sources', () => {
       handoffEventSeq: 42,
       relatedFiles: [{ path: 'src/parser.ts', reason: 'rewritten' }],
     })
-    expect(message.source).toMatchObject({
-      kind: 'agent-team-context-handoff',
-      form: 'snapshot',
-      version: 1,
+    // The envelope rides the admitted `plugin` + `snapshot` slots only: the
+    // released format refuses any bespoke source member, so a passing
+    // migration and a readable envelope are the same assertion.
+    expect(message.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(handoffOf(message)).toMatchObject({
       previousSessionId: 'agent-team-old',
       newSessionId: 'agent-team-new',
       trigger: 'model',
       handoffEventSeq: 42,
+      relatedFiles: ['src/parser.ts'],
     })
-    const source = message.source as unknown as { sections: Array<{ name: string; text: string }>; relatedFiles?: string[] }
-    expect(source.sections[0]).toMatchObject({ name: 'HANDOFF', text: 'objective: finish the parser\nnext step: run tests' })
-    expect(source.relatedFiles).toEqual(['src/parser.ts'])
+    expect(handoffOf(message)?.sections[0]).toEqual({ name: 'HANDOFF', text: 'objective: finish the parser\nnext step: run tests' })
     expect(message.content[0]).toMatchObject({ type: 'text' })
   })
 
   it('checkpoint continuation notices recognize themselves regardless of body text', () => {
     const checkpointRef = checkpointRefFor(SID, 'call-cp')
     const message = createCheckpointContinuationMessage(checkpointRef as never)
-    expect(message.source).toMatchObject({ kind: 'agent-team-context-continuation', form: 'notice', checkpointRef })
-    expect((message.source as unknown as { summary: string }).summary).toBeTruthy()
+    expect(message.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(continuationCheckpointRefOf(message)).toBe(checkpointRef)
   })
 })
 

@@ -25,8 +25,7 @@
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { AgentTeamMemberId, AgentTeamProgressNudgeTargets, AgentTeamThreadRef } from './types.ts'
-
-const PROGRESS_NUDGE_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+import { AGENT_TEAM_PLUGIN_ID, isCheckpointContinuationMessage } from './context-source.ts'
 
 /** Notice summary for every nudge this Coordinator injects. */
 export const PROGRESS_NUDGE_NOTICE_SUMMARY = 'Progress visibility reminder'
@@ -120,7 +119,7 @@ export function isPublicCommunicationOperationKind(kind: string): boolean {
 /** Whether one message is a nudge notice this module injected. */
 export function isProgressNudgeNotice(message: UserMessage): boolean {
   const source = message.source
-  return source.kind === 'plugin' && source.plugin === PROGRESS_NUDGE_PLUGIN_ID
+  return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
     && source.form === 'notice' && source.summary === PROGRESS_NUDGE_NOTICE_SUMMARY
 }
 
@@ -293,7 +292,7 @@ export class ProgressNudgeCoordinator {
     const claimTargets = claimDue ? freshClaimTargets : []
     const notice = createUserMessage({
       content: [{ type: 'text', text: nudgeNoticeText(state.silentToolCalls, progressTargets, claimTargets) }],
-      source: { kind: 'plugin', plugin: PROGRESS_NUDGE_PLUGIN_ID, form: 'notice', summary: PROGRESS_NUDGE_NOTICE_SUMMARY },
+      source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: PROGRESS_NUDGE_NOTICE_SUMMARY },
     })
     const pending: PendingNotice = {
       messageId: notice.id,
@@ -340,7 +339,13 @@ export class ProgressNudgeCoordinator {
   private hasBlockingNotice(agent: ProgressNudgeAgent): boolean {
     for (const message of [...agent.inbox.nextStep, ...agent.inbox.nextTurn]) {
       const source = message.source
-      if (source.kind !== 'plugin' || source.plugin !== PROGRESS_NUDGE_PLUGIN_ID || source.form !== 'notice') continue
+      if (source.kind !== 'plugin' || source.plugin !== AGENT_TEAM_PLUGIN_ID) continue
+      // A queued checkpoint continuation is a pending wake that outranks a
+      // nudge exactly as the notice families above do. It rides the snapshot
+      // form (it must carry its checkpoint ref in a section), so it cannot be
+      // recognized by the notice summary check below.
+      if (isCheckpointContinuationMessage(message)) return true
+      if (source.form !== 'notice') continue
       if (source.summary !== PROGRESS_NUDGE_NOTICE_SUMMARY) return true
     }
     return false

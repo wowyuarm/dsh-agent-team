@@ -1,32 +1,48 @@
 /**
- * Merge-extended message sources for Agent Team context management.
+ * Plugin-attributed message sources for Agent Team context management.
  *
- * The sources ride ordinary `UserMessage`s and never add a Harness
- * `ContextForm`: the handoff snapshot reuses the shipped `snapshot` form, the
- * quieter notices reuse `notice`. Predicates here are the single place that
- * recognizes these notices, so callers never match on localized body text.
+ * Both sources ride ordinary `UserMessage`s under the shipped `plugin` kind
+ * with the `snapshot` context form — the same shape the Harness's own
+ * system-prompt producer writes. This module declares no `MessageSourceMap`
+ * member of its own, and carries no bespoke source members: Session format
+ * migration validates a `plugin` source against a closed member list
+ * (`kind`, `plugin`, `form`, `sections`, `summary`), and refuses every logged
+ * Session that carries anything else. A plugin-declared kind is type-legal yet
+ * refused the same way. See `docs/dsh-release-compatibility.md`
+ * § "Session message sources".
+ *
+ * Everything the Host needs to read back therefore rides the admitted payload
+ * slots: the handoff envelope and the checkpoint correlation both travel as
+ * named {@link ContextSnapshotSection} contributions, distinguished by their
+ * stable section names. Sections are the format's designed slot for structured
+ * producer payload, and they render as named contributions on any
+ * snapshot-aware surface.
+ *
+ * The validators below are the single place that recognizes these messages, so
+ * callers never match on localized body text.
  * @module @wowyuarm/dsh-agent-team/context-source
  */
 
 import type { ContextSnapshotSection, UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-declare module '@deepseek-ai/dsh-llm' {
-  interface MessageSourceMap {
-    /** First model-facing context of one rollover generation: the model-authored handoff plus a verifiable Host envelope. */
-    'agent-team-context-handoff': AgentTeamContextHandoffSource
-    /** Host-generated quiet continuation after an explicit checkpoint concluded a turn. */
-    'agent-team-context-continuation': AgentTeamContextContinuationSource
-  }
-}
+/** Plugin identity attributing every Agent Team message source. */
+export const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
 
-/** Envelope anchor fields the Host adds around the model's own handoff prose. */
-export interface AgentTeamContextHandoffSource {
-  readonly kind: 'agent-team-context-handoff'
-  /** Existing semantic form: named contributions rendered by any snapshot-aware surface. */
-  readonly form: 'snapshot'
-  /** Envelope version; bumps when the envelope fields change meaning. */
-  readonly version: 1
+/** Handoff snapshot section name carrying the model-authored prose. */
+export const HANDOFF_SECTION_NAME = 'HANDOFF'
+
+/** Stable section name marking a checkpoint continuation and carrying its ref. */
+export const CHECKPOINT_SECTION_NAME = 'Checkpoint'
+
+/** Fixed text of the quiet checkpoint continuation delivered on the next turn. */
+export const CHECKPOINT_CONTINUATION_TEXT = 'A context checkpoint was recorded at the end of the previous turn. Continue the work you were doing.'
+
+/**
+ * The rollover handoff envelope: the model-authored prose plus the verifiable
+ * Host facts, all as named snapshot contributions.
+ */
+export interface AgentTeamContextHandoff {
   /** The Member's Session before this rollover. */
   readonly previousSessionId: string
   /** The rollover generation this handoff opened. */
@@ -43,27 +59,13 @@ export interface AgentTeamContextHandoffSource {
   readonly sections: readonly ContextSnapshotSection[]
 }
 
-/** Quiet wake that continues work in the turn after an explicit checkpoint. */
-export interface AgentTeamContextContinuationSource {
-  readonly kind: 'agent-team-context-continuation'
-  readonly form: 'notice'
-  /** Stable summary identifying this notice family. */
-  readonly summary: string
-  /** The checkpoint this continuation follows; ties the wake to its anchor. */
-  readonly checkpointRef: string
-  /** Envelope version. */
-  readonly version: 1
-}
-
-/** Stable one-line account for checkpoint continuation notices. */
-export const CONTEXT_CONTINUATION_NOTICE_SUMMARY = 'Context checkpoint recorded; work continues in the next turn'
-
-/** Handoff snapshot section name carrying the model-authored prose. */
-export const HANDOFF_SECTION_NAME = 'HANDOFF'
-
 /**
  * Build the first model-facing context of one rollover generation. The Host
  * owns only the verifiable envelope; the prose is the Member's own handoff.
+ *
+ * The envelope sections are additive structure, not the only carrier of these
+ * facts: {@link handoffBody} already states them in the model-facing text, so a
+ * surface that renders only the body loses nothing.
  */
 export function createHandoffMessage(input: {
   readonly handoff: string
@@ -77,16 +79,10 @@ export function createHandoffMessage(input: {
   return createUserMessage({
     content: [{ type: 'text', text: handoffBody(input) }],
     source: {
-      kind: 'agent-team-context-handoff',
+      kind: 'plugin',
+      plugin: AGENT_TEAM_PLUGIN_ID,
       form: 'snapshot',
-      version: 1,
-      previousSessionId: input.previousSessionId,
-      newSessionId: input.newSessionId,
-      trigger: input.trigger,
-      handoffEventSeq: input.handoffEventSeq,
-      ...(input.checkpointRef === undefined ? {} : { checkpointRef: input.checkpointRef }),
-      ...(input.relatedFiles === undefined || input.relatedFiles.length === 0 ? {} : { relatedFiles: input.relatedFiles.map(file => file.path) }),
-      sections: [{ name: HANDOFF_SECTION_NAME, text: input.handoff }],
+      sections: handoffSections(input),
     },
   })
 }
@@ -96,24 +92,133 @@ export function createHandoffMessage(input: {
  * concluded its turn. Delivery is scheduled only after the checkpoint's
  * successful tool result is durable, so a result-render failure can never
  * leave a ghost continuation behind.
+ *
+ * This is a `snapshot` rather than a `notice` for one reason: the projection
+ * must read the checkpoint ref back out of the durable log to record delivery,
+ * and `sections` is the only admitted payload slot that carries structure. A
+ * notice would have forced the ref into its human-readable one-line summary.
  */
 export function createCheckpointContinuationMessage(checkpointRef: string): UserMessage {
   return createUserMessage({
-    content: [{ type: 'text', text: 'A context checkpoint was recorded at the end of the previous turn. Continue the work you were doing.' }],
-    source: { kind: 'agent-team-context-continuation', form: 'notice', summary: CONTEXT_CONTINUATION_NOTICE_SUMMARY, checkpointRef, version: 1 },
+    content: [{ type: 'text', text: CHECKPOINT_CONTINUATION_TEXT }],
+    source: {
+      kind: 'plugin',
+      plugin: AGENT_TEAM_PLUGIN_ID,
+      form: 'snapshot',
+      sections: [{ name: CHECKPOINT_SECTION_NAME, text: checkpointRef }],
+    },
   })
+}
+
+/**
+ * Read one message's snapshot sections when it is this plugin's own snapshot.
+ * @param message - candidate user message.
+ * @returns the sections, or `undefined` when another producer owns the message.
+ */
+function ownSections(message: UserMessage): readonly ContextSnapshotSection[] | undefined {
+  const source = message.source
+  if (source.kind !== 'plugin' || source.plugin !== AGENT_TEAM_PLUGIN_ID) return undefined
+  if (source.form !== 'snapshot') return undefined
+  return source.sections
+}
+
+/** The text of one named section, or undefined when it is absent. */
+function sectionText(sections: readonly ContextSnapshotSection[], name: string): string | undefined {
+  return sections.find(section => section.name === name)?.text
+}
+
+/**
+ * The rollover handoff one message carries, when it is one.
+ * @param message - candidate user message.
+ * @returns the envelope, or `undefined` when the message is not a handoff.
+ */
+export function handoffOf(message: UserMessage): AgentTeamContextHandoff | undefined {
+  const sections = ownSections(message)
+  if (sections === undefined) return undefined
+  const handoff = sectionText(sections, HANDOFF_SECTION_NAME)
+  if (handoff === undefined) return undefined
+  const previousSessionId = sectionText(sections, HANDOFF_PREVIOUS_SESSION)
+  const newSessionId = sectionText(sections, HANDOFF_NEW_SESSION)
+  const trigger = sectionText(sections, HANDOFF_TRIGGER)
+  const handoffEventSeq = sectionText(sections, HANDOFF_EVENT_SEQ)
+  if (previousSessionId === undefined || newSessionId === undefined) return undefined
+  if (trigger !== 'model' && trigger !== 'pressure') return undefined
+  const seq = Number(handoffEventSeq)
+  if (handoffEventSeq === undefined || !Number.isSafeInteger(seq)) return undefined
+  const checkpointRef = sectionText(sections, HANDOFF_CHECKPOINT)
+  const relatedFiles = sectionText(sections, HANDOFF_RELATED_FILES)
+  return {
+    previousSessionId,
+    newSessionId,
+    trigger,
+    handoffEventSeq: seq,
+    ...(checkpointRef === undefined ? {} : { checkpointRef }),
+    ...(relatedFiles === undefined ? {} : { relatedFiles: relatedFiles.split(', ') }),
+    sections,
+  }
+}
+
+/**
+ * The checkpoint ref one continuation notice carries, when the message is one.
+ * @param message - candidate user message.
+ * @returns the checkpoint ref, or `undefined` when the message is not a continuation.
+ */
+export function continuationCheckpointRefOf(message: UserMessage): string | undefined {
+  const sections = ownSections(message)
+  if (sections === undefined || sections.length !== 1) return undefined
+  const ref = sectionText(sections, CHECKPOINT_SECTION_NAME)
+  return ref === undefined || ref.length === 0 ? undefined : ref
 }
 
 /** Whether one user message is a rollover handoff snapshot. */
 export function isHandoffMessage(message: UserMessage): boolean {
-  return message.source.kind === 'agent-team-context-handoff'
+  return handoffOf(message) !== undefined
 }
 
-/** Whether one user message is a checkpoint continuation notice, optionally for one checkpoint. */
+/** Whether one user message is a checkpoint continuation, optionally for one checkpoint. */
 export function isCheckpointContinuationMessage(message: UserMessage, checkpointRef?: string): boolean {
-  const source = message.source
-  return source.kind === 'agent-team-context-continuation'
-    && (checkpointRef === undefined || source.checkpointRef === checkpointRef)
+  const ref = continuationCheckpointRefOf(message)
+  return ref !== undefined && (checkpointRef === undefined || ref === checkpointRef)
+}
+
+/**
+ * Whether one message carries a rollover-handoff or checkpoint-continuation
+ * envelope. Ordinary Team notices share this plugin's attribution, so callers
+ * that replace rederived notices must exclude these two families explicitly.
+ */
+export function isAgentTeamContextSource(message: UserMessage): boolean {
+  return isHandoffMessage(message) || isCheckpointContinuationMessage(message)
+}
+
+/** Envelope section names; stable, because they are read back from the log. */
+const HANDOFF_PREVIOUS_SESSION = 'Previous session'
+const HANDOFF_NEW_SESSION = 'New session'
+const HANDOFF_TRIGGER = 'Trigger'
+const HANDOFF_EVENT_SEQ = 'Handoff event seq'
+const HANDOFF_CHECKPOINT = 'Continued from checkpoint'
+const HANDOFF_RELATED_FILES = 'Related files'
+
+/** The envelope contributions of one handoff, prose first. */
+function handoffSections(input: {
+  readonly handoff: string
+  readonly previousSessionId: string
+  readonly newSessionId: string
+  readonly trigger: 'model' | 'pressure'
+  readonly handoffEventSeq: number
+  readonly checkpointRef?: string
+  readonly relatedFiles?: readonly { readonly path: string; readonly reason?: string }[]
+}): readonly ContextSnapshotSection[] {
+  return [
+    { name: HANDOFF_SECTION_NAME, text: input.handoff },
+    { name: HANDOFF_PREVIOUS_SESSION, text: input.previousSessionId },
+    { name: HANDOFF_NEW_SESSION, text: input.newSessionId },
+    { name: HANDOFF_TRIGGER, text: input.trigger },
+    { name: HANDOFF_EVENT_SEQ, text: String(input.handoffEventSeq) },
+    ...(input.checkpointRef === undefined ? [] : [{ name: HANDOFF_CHECKPOINT, text: input.checkpointRef }]),
+    ...(input.relatedFiles === undefined || input.relatedFiles.length === 0
+      ? []
+      : [{ name: HANDOFF_RELATED_FILES, text: input.relatedFiles.map(file => file.path).join(', ') }]),
+  ]
 }
 
 function handoffBody(input: {

@@ -24,7 +24,7 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { PressurePolicyCoordinator } from './pressure-policy.ts'
 import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
-import { createHandoffMessage } from './context-source.ts'
+import { AGENT_TEAM_PLUGIN_ID, createHandoffMessage } from './context-source.ts'
 import { carriedInputOf, checkpointByRef, checkpointRefFor, foldContextProjection, isReminderNoticeSummary, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
@@ -121,7 +121,6 @@ export { AGENT_TEAM_TOOL_NAMES } from './member-runtime.ts'
 /** Process-stable marker carried by the final Team message tool definition. */
 export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.preset')
 
-const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
 
 const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'

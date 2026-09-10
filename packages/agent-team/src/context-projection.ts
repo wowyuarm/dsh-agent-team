@@ -25,10 +25,7 @@ import type { ToolResultMessage, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionHeader, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type { AgentTeamContextCheckpointRef } from './types.ts'
-import { isCheckpointContinuationMessage } from './context-source.ts'
-
-/** Plugin identity of the Agent Team Host, for recognizing own notices. */
-const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+import { AGENT_TEAM_PLUGIN_ID, continuationCheckpointRefOf, handoffOf, isAgentTeamContextSource, isCheckpointContinuationMessage } from './context-source.ts'
 
 /** Summary marker of the pre-compaction memory hint. */
 const PRE_COMPACTION_NOTICE_SUMMARY = 'Compaction is imminent; consider persisting key conclusions.'
@@ -388,7 +385,7 @@ interface FirstArrivalBoundary extends TimelineBoundary {
  */
 function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMessage, seenThreads: readonly string[]): TimelineBoundary | FirstArrivalBoundary | { readonly reminder: true } | undefined {
   const source = message.source
-  if (source.kind === 'agent-team-context-handoff') {
+  if (handoffOf(message) !== undefined) {
     return { key: `handoff:${seq}`, source: 'handoff', label: 'context handoff', seq, turn: -1, turnEndSeq: -1 }
   }
   if (source.kind !== 'plugin' || source.plugin !== AGENT_TEAM_PLUGIN_ID) return undefined
@@ -585,8 +582,9 @@ function applyUserMessage(state: AgentTeamContextProjectionState, seq: number, m
   }
   // The quiet continuation notice delivered for one checkpoint completes its
   // delivery state; replay repair reads this to avoid re-scheduling it.
-  if (message.source.kind !== 'agent-team-context-continuation') return next
-  const checkpointRef = message.source.checkpointRef as AgentTeamContextCheckpointRef
+  const continuation = continuationCheckpointRefOf(message)
+  if (continuation === undefined) return next
+  const checkpointRef = continuation as AgentTeamContextCheckpointRef
   const existing = next.continuations.find(entry => entry.checkpointRef === checkpointRef)
   if (existing !== undefined) {
     if (existing.deliveredSeq !== -1) return next
@@ -612,10 +610,15 @@ export function carriedInputOf(state: AgentTeamContextProjectionState): readonly
   return state.carriedCandidates.filter(candidate => !candidate.consumed).map(candidate => candidate.message)
 }
 
-/** Whether one queued message is a Team-owned notice the rederived Inbox replaces. */
+/**
+ * Whether one queued message is a Team-owned notice the rederived Inbox
+ * replaces. Handoff and continuation envelopes carry the same plugin
+ * attribution but are ordinary delivered context the new generation keeps, so
+ * they are excluded rather than dropped.
+ */
 function isTeamNotice(message: UserMessage): boolean {
   const source = message.source
-  return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+  return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID && !isAgentTeamContextSource(message)
 }
 
 /** Whether a quiet continuation for one checkpoint was already delivered in this Session. */

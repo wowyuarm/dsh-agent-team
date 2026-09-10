@@ -29,6 +29,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AGENT_TEAM_TOOL_NAMES, isTsxDevMode, markAgentTeamPreset, teamPresetScopeMismatchMessage } from '../src/index.ts'
 import { checkpointRefFor, foldContextProjection } from '../src/context-projection.ts'
+import { AGENT_TEAM_PLUGIN_ID, continuationCheckpointRefOf, handoffOf, isCheckpointContinuationMessage, isHandoffMessage } from '../src/context-source.ts'
 import { RECOVERY_DELAY_MS } from '../src/recovery.ts'
 import { PROGRESS_NUDGE_NOTICE_SUMMARY } from '../src/progress-nudge.ts'
 import type { AgentTeamChannelRef, AgentTeamClaimRef, AgentTeamMemberId, AgentTeamRequestId } from '../src/types.ts'
@@ -1709,8 +1710,8 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     const firstUserEvent = liveAfter.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstUserEvent?.type).toBe('user/message')
     if (firstUserEvent?.type !== 'user/message') throw new Error('expected handoff user message')
-    expect(firstUserEvent.data.source).toMatchObject({
-      kind: 'agent-team-context-handoff', form: 'snapshot', version: 1,
+    expect(firstUserEvent.data.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(handoffOf(firstUserEvent.data)).toMatchObject({
       previousSessionId, newSessionId, trigger: 'model',
     })
     expect(firstUserEvent.data.content[0]).toMatchObject({ type: 'text' })
@@ -2160,7 +2161,7 @@ async function waitFor<T>(probe: () => T | undefined, timeoutMs = 60_000): Promi
     const firstUser = liveAfter.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected first user message')
-    expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', form: 'snapshot' })
+    expect(firstUser.data.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
     // The rederived Inbox still arrives afterwards — unread work is not lost.
     await waitFor(() => {
       const events = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
@@ -2241,7 +2242,8 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const firstUser = afterTurn2.find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected continuation user message')
-    expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-continuation', form: 'notice' })
+    expect(firstUser.data.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(continuationCheckpointRefOf(firstUser.data)).toBeDefined()
   })
 
   it('records a checkpoint alongside sibling calls with results settling in model order', async () => {
@@ -2420,7 +2422,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const firstUser = next.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected handoff')
-    expect(firstUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: checkpointRefFor(firstSessionId, 'call-ret-cp') })
+    expect(handoffOf(firstUser.data)).toMatchObject({ checkpointRef: checkpointRefFor(firstSessionId, 'call-ret-cp') })
     expect((firstUser.data.content[0] as { text: string }).text).toContain('resume from the anchor')
     // Inherited historical intent stays inert: the inherited prefix's
     // checkpoint history is visible, but no continuation or rollover is
@@ -2505,7 +2507,7 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     const firstOwnUser = gen3.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstOwnUser?.type).toBe('user/message')
     if (firstOwnUser?.type !== 'user/message') throw new Error('expected handoff')
-    expect(firstOwnUser.data.source).toMatchObject({ kind: 'agent-team-context-handoff', checkpointRef: checkpointRefFor(firstSessionId, 'call-anc-cp') })
+    expect(handoffOf(firstOwnUser.data)).toMatchObject({ checkpointRef: checkpointRefFor(firstSessionId, 'call-anc-cp') })
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
@@ -2527,7 +2529,7 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     await live.whenIdle()
     await new Promise(resolve => setTimeout(resolve, 50))
     const deliveredBeforeRestart = live.session.ownEvents().filter(event => event.type === 'user/message'
-      && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-continuation').length
+      && isCheckpointContinuationMessage(event.data)).length
     expect(deliveredBeforeRestart).toBeLessThanOrEqual(1)
 
     // Host restart on the same harness: the plugin remounts, the persisted
@@ -2546,10 +2548,10 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
       return agent !== undefined && agent.status === 'idle' ? agent : undefined
     })
     await waitFor(() => resumed.session.ownEvents().some(event => event.type === 'user/message'
-      && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-continuation') ? true : undefined)
+      && isCheckpointContinuationMessage(event.data)) ? true : undefined)
     await resumed.whenIdle()
     const continuations = resumed.session.ownEvents().filter(event => event.type === 'user/message'
-      && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-continuation')
+      && isCheckpointContinuationMessage(event.data))
     expect(continuations).toHaveLength(1)
 
     // Restarting again does not duplicate the delivered continuation: the
@@ -2565,7 +2567,7 @@ describe('Agent Team checkpoint lineage (ticket 02 ancestors)', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 150))
     const continuations2 = resumed2.session.ownEvents().filter(event => event.type === 'user/message'
-      && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-continuation')
+      && isCheckpointContinuationMessage(event.data))
     expect(continuations2).toHaveLength(1)
   })
 })
@@ -4034,7 +4036,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
   /** Count handoff-sourced user messages in one agent's own log. */
   function archivedHandoffs(agent: ReturnType<Context['agents']['get']>): readonly unknown[] {
     return agent!.session.ownEvents().filter(event => event.type === 'user/message'
-      && (event.data as { source?: { kind?: string } }).source?.kind === 'agent-team-context-handoff')
+      && isHandoffMessage(event.data))
   }
 })
 describe('Agent Team Member private memory directory sanitization (issue #7)', () => {

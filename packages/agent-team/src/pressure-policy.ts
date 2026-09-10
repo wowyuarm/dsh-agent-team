@@ -21,9 +21,7 @@ import type { CompactionEngine, CompactionResult } from '@deepseek-ai/dsh-compac
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AgentTeamMemberId } from './types.ts'
 import { CONTEXT_PRESSURE_NOTICE_SUMMARY } from './context-management.ts'
-
-/** Plugin identity of the Agent Team Host, for the notice source. */
-const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+import { AGENT_TEAM_PLUGIN_ID } from './context-source.ts'
 
 /** One pressure-notice text; concise, structured, and inside the reserve. */
 export function contextPressureNoticeText(input: {
