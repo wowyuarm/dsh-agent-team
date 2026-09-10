@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-一个 dshHome 内唯一 Agent Team 的 Host capability。`ctx.agentTeam` 拥有 append-only operation ledger、重建当前协作 projection，并作为同一 capability 内 Member Agent 的 lifecycle owner。Thread Attention 和 Member Inbox 是 Host 的持久 projection。未读状态变化时，本包通过 Agent 的公开安全边界 API 发送一次有界、合并的 context 通知；不会中断正在执行的请求，也不运行 Session delivery worker。[Agent Team 架构 Agent Note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md)记录持久化和包拓扑决策。
+一个 dshHome 内唯一 Agent Team 的 Host capability。`ctx.agentTeam` 拥有 append-only operation ledger、重建当前协作 projection，并作为同一 capability 内 Member Agent 的 lifecycle owner。Thread Attention 和 Member Inbox 是 Host 的持久 projection。未读状态变化时，本包通过 Agent 的公开安全边界 API 发送一次有界、合并的 context 通知；不会中断正在执行的请求，也不运行 Session delivery worker。[Agent Team 架构 Agent Note](../../.scratch/archive/2026-08/m1/design/agent-notes/2026-08-15-agent-team-operation-ledger.md)记录持久化和包拓扑决策。
 
 ## Service 约定
 
@@ -65,3 +65,4 @@ Host ledger 和 Human status read 不改变模型请求或 cache reuse。
 - **单 Host writer** — 不支持多个进程并发写同一 dshHome；operation serialization 只在进程内生效。
 - **永久 ledger** — M1 不提供 snapshot 或 compaction，storage 会随已提交协作事实增长。
 - **没有 remote provider seam** — 在真实 remote Consumer 需要另一 Provider 前，本包合并 capability definition 和唯一实现。
+- **自身不提供 Session 迁移** — Member Sessions 依赖 Host 的 Session persistence 与其已发布格式迁移链；本包不提供 Team ledger 或 Member Session 迁移、兼容读取或回退。

@@ -157,11 +157,9 @@ npm run test:browser
 - **带已有历史的升级。** 取一个已经按上一条已认证版本线写入过 Member Session 的 profile——其中至少包含一个 rollover 世代——在候选版本下打开它们。每一个都必须能加载；出现拒绝就是 release blocker，而不是数据问题，因为该审计是 fail-closed 的且不改动源 artifact。记录检查过的 artifact 数量与逐个结果。
 - **已发布产物的存活面。** 判定**当前已发布**的 Team bundle 在候选 DSH 上是否仍然可用，而不只是候选 bundle 可用。在一个空目录里把已发布版本装到候选 DSH 上、启动它、并实际走一次成员创建。这一项决定发版紧迫性：当 npm `latest` 已经指向候选版本时，一个不兼容的已发布 bundle 会直接打断全新安装——这使本轮成为 release-blocking，而不是例行跟踪。
 
-第一项检查背后有一个长期陷阱：自定义 Session message source kind。`@deepseek-ai/dsh-llm` 把 `MessageSourceMap` 记为可合并扩展的 sum type，但 released-format 迁移审计只准入一份封闭且 build-static 的 source kind 列表；声明新 kind 的插件写出的日志，会被下一个格式世代整体拒绝。这个陷阱还有容易被漏掉的**后半段**：把同一份载荷改挂到已准入的 `plugin` kind 之下，**同样会被拒**——released-format 校验还会把 `plugin` source 的**成员**钉死为 `kind`、`plugin`、`form`、`sections`、`summary`。任何自造信封字段（版本号、关联 ref、session 对）都会以 unexpected member 被拒，尽管它的 kind 已经准入。两半各自都是 fail-closed，而后半段报的是另一条错误（`has unexpected member`），因此只改 kind 名的"修复"能过评审，却依然拒绝每一份已登录的 Session。
+第一项检查背后有一个长期陷阱：自定义 Session message source kind。`@deepseek-ai/dsh-llm` 把 `MessageSourceMap` 记为可合并扩展的 sum type，但 released-format 迁移审计只准入一份封闭且 build-static 的 source kind 列表；声明新 kind 的插件写出的日志，会被下一个格式世代整体拒绝。这个陷阱还有**后半段**：该审计同时把 `plugin` source 的**成员**钉死为 `kind`、`plugin`、`form`、`sections`、`summary`，因此把同一份载荷改挂到已准入的 kind 之下，仍会因任何自造信封字段而失败。两半都是 fail-closed，且报的是不同错误；因此认证证据必须跑通本包**实际产出**的 source，而不只是它们声明的 kind。
 
-正确做法是把插件语义编码进已准入的形状：`plugin` + `form`——结构化载荷用 `snapshot` 加 `{ name, text }` sections，人类可读单行用 `notice` 加 `summary`——再加上不受约束的 model-facing 正文；结构化载荷从具名 section 读回。上游 `compact` 插件同样需要一个额外字段，它的解法是让 `pluginSourceValue` 为该 plugin id 开特例；因此确实需要自造成员的插件，应当向上游提出该需求，而不是指望一个通用槽位。
-
-用测试覆盖它：驱动**真实的**迁移 stage 跑一遍本包实际写出的消息，并把已退役的旧形状作为负向对照，这样断言不会悄悄失去检验能力。宿主测试覆盖不到这一点——它们以当前格式版本原生构造 Session，从不迁移。
+正确做法是把插件语义编码进已准入的形状：结构化载荷用 `form: 'snapshot'` 下的具名 `{ name, text }` sections，人类可读单行用 `form: 'notice'` 下的 `summary`，其余散文放进不受约束的 model-facing 正文。自造成员没有通用槽位——上游 `compact` 插件是靠为其 plugin id 开特例才拿到一个——因此确实需要自造成员的插件应当向上游提出该需求。
 
 ## 4. 认证结果与发布门槛
 
@@ -204,6 +202,6 @@ npm run test:browser
 
 preset 组合没有编译期或单测守卫：成员类 spec 用的是合成 preset，因此某个行的配置与新 plugin schema 不匹配时，只有在真实 browser journey 里才会暴露。把 `npm run test:browser` 当作随包 preset 行的认证闸门。
 
-本轮还暴露了第二个更宽的盲区，现已由 §3.6 覆盖：上述所有检查的证据都来自**新建** Session，而新 Session 从不经过 released-format 迁移。两类已发布的失效正落在这个盲区里。其一，Team 曾声明两个自定义 Session message source kind（`agent-team-context-handoff`、`agent-team-context-continuation`）来承载 rollover handoff；dsh `0.1.2-rc.1` 根本没有 session-format 相关包，因此这些日志一直无害，直到 `0.1.5-rc.1` 引入迁移链，其封闭的 source kind 审计开始整体拒绝它们（`cannot safely transform unclassified message source`）。两处生产者现均改写已准入的 `plugin` + `snapshot` 形状并携带具名 section——handoff 信封与 checkpoint 关联都走 section——并由 `packages/agent-team/tests/context-source-migration.spec.ts` 驱动真实迁移 stage 跑本包实际写出的消息，同时保留已退役形状作为负向对照。该审计是 fail-closed 的，且不改动源 artifact 一个字节，因此后果是 Session 读不出来、而不是数据损坏：受影响成员显示不可用，其 durable 状态仍是 `enabled`。其二，已发布的 `0.1.9` bundle 仍在调用 `ctx.agent`、`SessionPersistence.inspect()` 与 `borrowSession()`——三者在 `0.1.5-rc.1` 都已移除——因此在全新安装上，成员创建会从 setup 路径直接抛错，而 peer 警告并不阻断安装、host 也能正常启动。当 npm `latest` 指向候选版本时，这两类都是 release-blocking；§3.6 就是在发布前把它们翻出来的检查。
+§3.6 补上了上述检查的一个盲区：它们的证据都来自**新建** Session，而新 Session 从不经过 released-format 迁移。迁移拒绝是 fail-closed 的，且不改动源 artifact 一个字节，因此后果是 Session 读不出来、而不是数据损坏——受影响成员显示不可用，其 durable 状态仍是 `enabled`。不兼容的已发布 bundle 对安装期检查同样不可见：peer 警告并不阻断安装、host 也能正常启动，因此问题只在创建成员时才显形。当 npm `latest` 指向候选版本时，这两类都是 release-blocking。
 
 两条验证事实只记录、不修补。隔离的 Harness checkout 在跑 Team 套件前需要 `pnpm build:native-system`：JSONL backend 的 flock 租约锁会加载一个被 gitignore 的 Node-API 插件（`native/system/packages/<platform>/bin/{glibc|musl}/system.node`），只有原生构建会产出它。另外 `npm run typecheck` 在 `npm run build` 之前会因 `@wowyuarm/dsh-agent-team/time-format` 与 `member-time-context` 的 import 失败——它们经由构建产物 `lib/` 的 self-link 解析，不在 sync-paths `own` map 里；先 build（潜在仓库缺口，不是兼容性缺陷）。

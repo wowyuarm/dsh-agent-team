@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The Host capability for one Agent Team in a dshHome. `ctx.agentTeam` owns the append-only operation ledger, reconstructs the current collaboration projection, and is the lifecycle owner for member Agents managed by the same capability. Thread Attention and the Member Inbox are durable Host projections. When unread state changes, this package sends one bounded, coalesced context notification through the Agent's public safe-boundary API; it never interrupts an active request or acts as a Session delivery worker. The [Agent Team architecture note](../../../.agents/notes/proposed/architecture/2026-08-15-agent-team-operation-ledger.md) owns the persistence and package-topology decisions.
+The Host capability for one Agent Team in a dshHome. `ctx.agentTeam` owns the append-only operation ledger, reconstructs the current collaboration projection, and is the lifecycle owner for member Agents managed by the same capability. Thread Attention and the Member Inbox are durable Host projections. When unread state changes, this package sends one bounded, coalesced context notification through the Agent's public safe-boundary API; it never interrupts an active request or acts as a Session delivery worker. The [Agent Team architecture note](../../.scratch/archive/2026-08/m1/design/agent-notes/2026-08-15-agent-team-operation-ledger.md) owns the persistence and package-topology decisions.
 
 ## Service contract
 
@@ -65,4 +65,4 @@ The Host ledger and Human status reads do not alter model requests or cache reus
 - **Single Host writer** — concurrent processes over one dshHome are unsupported; operation serialization is process-local.
 - **Permanent ledger** — M1 provides neither snapshots nor compaction, so storage grows with committed collaboration facts.
 - **No remote provider seam** — the package combines the capability definition and its only implementation until a real remote Consumer requires another Provider.
-- **Current DSH SQLite only** — SQLite Session persistence uses the current DSH schema. Delete old Session databases and create new Member sessions; this package provides no migration, compatibility read, or fallback.
+- **No Session migration of its own** — Member Sessions ride the Host's Session persistence and its released-format migration chain; this package provides no Team ledger or Member Session migration, compatibility read, or fallback.
