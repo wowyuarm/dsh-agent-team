@@ -150,6 +150,15 @@ npm run test:browser
 - 不出现被 Team 拉入的第二套 rc.8 或其他旧版 DSH 包；
 - 用发布布局启动的实际 profile 通过浏览器验证。
 
+### 3.6 升级可行性
+
+3.3–3.5 各节的证据都建立在**新建** Session 之上：新 Session 以候选版本的原生格式写入，**从不经过 released-format 迁移**。因此有两类失效对它们是隐形的，而两类都已经发布过：成员 preset 行的配置与其 plugin schema 不再匹配（只在运行时显形），以及旧 artifact 内容被候选版本的迁移审计拒绝。只要候选版本改动了 Session 格式、message source 词表或任何随包 preset 行，就要补上这两项检查：
+
+- **带已有历史的升级。** 取一个已经按上一条已认证版本线写入过 Member Session 的 profile——其中至少包含一个 rollover 世代——在候选版本下打开它们。每一个都必须能加载；出现拒绝就是 release blocker，而不是数据问题，因为该审计是 fail-closed 的且不改动源 artifact。记录检查过的 artifact 数量与逐个结果。
+- **已发布产物的存活面。** 判定**当前已发布**的 Team bundle 在候选 DSH 上是否仍然可用，而不只是候选 bundle 可用。在一个空目录里把已发布版本装到候选 DSH 上、启动它、并实际走一次成员创建。这一项决定发版紧迫性：当 npm `latest` 已经指向候选版本时，一个不兼容的已发布 bundle 会直接打断全新安装——这使本轮成为 release-blocking，而不是例行跟踪。
+
+第一项检查背后有一个长期陷阱：自定义 Session message source kind。`@deepseek-ai/dsh-llm` 把 `MessageSourceMap` 记为可合并扩展的 sum type，但 released-format 迁移审计只准入一份封闭且 build-static 的 source kind 列表；声明新 kind 的插件写出的日志，会被下一个格式世代整体拒绝。与其新增 kind，优先把插件语义编码进已准入的 `plugin` + `form` + `sections`/`summary` 形状。
+
 ## 4. 认证结果与发布门槛
 
 认证完成后，按以下结果处理：
@@ -185,10 +194,12 @@ npm run test:browser
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、489 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
+当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、492 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
 
 这个候选版本落在旧 `>=0.1.2-rc.1 <0.2.0` peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.5-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.2-rc.1` 线。七处上游断裂决定了这一点：`ctx.agent` 从 `AgentSetup` 移除（setup 现在以第二个参数接收活的 `Agent`）；根 `conversation` slot 变成 keyed `main` 条目（Team 以 key `conversation`、priority `-100` 注册 `main`，harness 用 `renderSlot('main', {}, { entryKey: 'conversation' })` 渲染）；`SessionPersistence.inspect()`/`borrowSession()` 被 handle API 取代（`open(id, 'read')` + `read()` + `close()`、`stat()` 返回 header 快照、以及脱离实例的 `Session.create` 工厂）；`assistant/chunk` 事件类型退出 Session 词汇表；`MessageText` 退出 `dsh-client-ui-primitives`（TeamMessage 直接渲染文本）；keyed slot 冲突诊断文案取代了测试中的单 slot 表述；`dsh-persona` 行把配置键 `text` 改名为 `prefix`。最后一条只在运行时显形：成员 preset 从磁盘组合，因此类型检查、单测、构建全绿，而所有成员都以 `preset "team-member" failed to mount: … $.prefix missing required value` 激活失败。Session persistence 现在是随附的 JSONL backend，带 released-format 迁移链（v0/v1/v2 → V3），因此之前关于 SQLite schema 丢弃的说明不再适用。
 
 preset 组合没有编译期或单测守卫：成员类 spec 用的是合成 preset，因此某个行的配置与新 plugin schema 不匹配时，只有在真实 browser journey 里才会暴露。把 `npm run test:browser` 当作随包 preset 行的认证闸门。
+
+本轮还暴露了第二个更宽的盲区，现已由 §3.6 覆盖：上述所有检查的证据都来自**新建** Session，而新 Session 从不经过 released-format 迁移。两类已发布的失效正落在这个盲区里。其一，Team 声明了两个自定义 Session message source kind（`agent-team-context-handoff`、`agent-team-context-continuation`）来承载 rollover handoff；dsh `0.1.2-rc.1` 根本没有 session-format 相关包，因此这些日志一直无害，直到 `0.1.5-rc.1` 引入迁移链，其封闭的 source kind 审计开始整体拒绝它们（`cannot safely transform unclassified message source`）。该审计是 fail-closed 的，且不改动源 artifact 一个字节，因此后果是 Session 读不出来、而不是数据损坏：受影响成员显示不可用，其 durable 状态仍是 `enabled`。其二，已发布的 `0.1.9` bundle 仍在调用 `ctx.agent`、`SessionPersistence.inspect()` 与 `borrowSession()`——三者在 `0.1.5-rc.1` 都已移除——因此在全新安装上，成员创建会从 setup 路径直接抛错，而 peer 警告并不阻断安装、host 也能正常启动。当 npm `latest` 指向候选版本时，这两类都是 release-blocking；§3.6 就是在发布前把它们翻出来的检查。
 
 两条验证事实只记录、不修补。隔离的 Harness checkout 在跑 Team 套件前需要 `pnpm build:native-system`：JSONL backend 的 flock 租约锁会加载一个被 gitignore 的 Node-API 插件（`native/system/packages/<platform>/bin/{glibc|musl}/system.node`），只有原生构建会产出它。另外 `npm run typecheck` 在 `npm run build` 之前会因 `@wowyuarm/dsh-agent-team/time-format` 与 `member-time-context` 的 import 失败——它们经由构建产物 `lib/` 的 self-link 解析，不在 sync-paths `own` map 里；先 build（潜在仓库缺口，不是兼容性缺陷）。
