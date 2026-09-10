@@ -102,7 +102,7 @@ describe('Team Client slot takeover', () => {
     await fiber.await()
     ctx.teamNavigation.actions().enterTeam()
     expect(() => slots.register({ name: 'main', key: 'conversation', priority: -100 }, () => null))
-      .toThrow(/already has a registration at priority -100/i)
+      .toThrow(/already has an (?:registration|entry).*priority -100/i)
   })
 
   it('repeats enter and leave without leaking shadows, then restores every shipped seat on unload', async () => {

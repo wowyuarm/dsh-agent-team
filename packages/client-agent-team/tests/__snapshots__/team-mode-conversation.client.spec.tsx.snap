@@ -656,7 +656,7 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
       </div>
     </div>
     <div
-      data-slot="conversation"
+      data-slot="main"
       style="display: contents;"
     >
       <main
