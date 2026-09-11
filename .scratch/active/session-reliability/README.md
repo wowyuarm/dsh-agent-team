@@ -2,7 +2,7 @@
 
 ## Status
 
-active — 工作项开启于 2026-09-10，Human 在 task:6ed30f62 Thread 中定调（10239）。01 已 complete 并通过全机存量验证（2026-09-11）；02 in-progress。
+active — 工作项开启于 2026-09-10，Human 在 task:6ed30f62 Thread 中定调（10239）。01 与 02 均已 complete，并通过全机存量验证（2026-09-11）；rc.2 认证进行中。
 
 **发布条件：01 与 02 必须同批（0.1.10）上线。** 01 单独上线会把 parent 变可读，从而触发「纯 legacy 形状当前世代被重复投递 handoff」这条引信（见 `materials/duplicate-handoff-fuse.md`）；02 的幂等守卫是同批的安全阀。
 
@@ -68,7 +68,9 @@ active — 工作项开启于 2026-09-10，Human 在 task:6ed30f62 Thread 中定
 
 ## current frontier
 
-01 complete（代码 `feat:` 提交、单测 11 + 集成 1、全机 E2E 证据在 `issues/01` 文末）。02 in-progress：replay fail-open（`SessionFormatUnsupportedError` → 警告 + 跳过，IO/未知仍 throw）已实现并有真实激活路径集成测试；legacy handoff 幂等守卫已落地。Vera 的迁移探针（私有 notes `obs-scripts/session-migration/`）是转换逻辑的现成输入；Iris 的重复投递引信证据记在 `materials/duplicate-handoff-fuse.md`。
+01 complete、02 complete（代码在 `956b85a` / `810d6a`，单测 11 + 集成 1 + 全机 E2E 证据在 `issues/01` 文末）。rc.2 认证进行中（隔离 checkout）。Vera 的迁移探针（私有 notes `obs-scripts/session-migration/`）是转换逻辑的现成输入；Iris 的重复投递引信证据记在 `materials/duplicate-handoff-fuse.md`。
+
+**发布门槛（Human 决定）**：peer `>=0.1.5-rc.1 <0.2.0` 已覆盖 rc.1/rc.2，但 npm `latest` 上的 0.1.9 仍是旧 peer range（新装 0.1.5 的用户装不上）→ 需要 0.1.10 bump + publish，且 01/02 必须同批。
 
 ## Completion conditions（第一阶段）
 

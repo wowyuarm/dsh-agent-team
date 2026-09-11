@@ -161,6 +161,12 @@ npm run test:browser
 
 正确做法是把插件语义编码进已准入的形状：结构化载荷用 `form: 'snapshot'` 下的具名 `{ name, text }` sections，人类可读单行用 `form: 'notice'` 下的 `summary`，其余散文放进不受约束的 model-facing 正文。section 的 `text` 是插件自己的字符串、会被逐字读回，因此列表要编码成 JSON，不要用分隔符拼接：路径或名字本身就可能包含那个分隔符，拆开后会还原出与写入不同的值。自造成员没有通用槽位——上游 `compact` 插件是靠为其 plugin id 开特例才拿到一个——因此确实需要自造成员的插件应当向上游提出该需求。
 
+### 3.7 并存的另一套 Team 实现
+
+Harness 随附一套 experimental Agent Teams，以独立 profile bundle 形式发布（`@deepseek-ai/dsh-experimental-agent-team-profile`、`@deepseek-ai/dsh-experimental-agent-team-web-profile`）。它是与本 bundle 竞争的另一套 Team 实现，而不是本 bundle 依赖的扩展点：它注册自己的 model-facing 工具族（`spawn_teammate`、`send_message`、`list_agents`、`wait_agent`、`interrupt_agent`、`team_task_*`），在自己的 profile patch 里禁掉随附的全局 subagent 行以腾出这些名字，并自带成员、任务、store 与 client 面板。本 bundle 的工具是 `team_view`、`team_inbox`、`team_thread`、`team_message`、`team_claim`，只在其 `team-member` preset 内注册。
+
+认证覆盖的是**未挂载**这些 experimental 包的 profile；同时挂载两者属于**不支持**的组合：会出现两套 Team authority、两个工具族、两块 UI surface，而它们之间既无共享权威也无命名规则。一个 profile 只选一套 Team profile。本条是**记录性结论、不是实测结论**——没有跑过共存验证，本 bundle 也不检查、不避让那套 experimental 实现。
+
 ## 4. 认证结果与发布门槛
 
 认证完成后，按以下结果处理：
@@ -196,7 +202,7 @@ npm run test:browser
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
+当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`，`0.1.5-rc.2` 已在同一 peer 区间上认证（见本节末段）。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
 
 这个候选版本落在旧 `>=0.1.2-rc.1 <0.2.0` peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.5-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.2-rc.1` 线。七处上游断裂决定了这一点：`ctx.agent` 从 `AgentSetup` 移除（setup 现在以第二个参数接收活的 `Agent`）；根 `conversation` slot 变成 keyed `main` 条目（Team 以 key `conversation`、priority `-100` 注册 `main`，harness 用 `renderSlot('main', {}, { entryKey: 'conversation' })` 渲染）；`SessionPersistence.inspect()`/`borrowSession()` 被 handle API 取代（`open(id, 'read')` + `read()` + `close()`、`stat()` 返回 header 快照、以及脱离实例的 `Session.create` 工厂）；`assistant/chunk` 事件类型退出 Session 词汇表；`MessageText` 退出 `dsh-client-ui-primitives`（TeamMessage 直接渲染文本）；keyed slot 冲突诊断文案取代了测试中的单 slot 表述；`dsh-persona` 行把配置键 `text` 改名为 `prefix`。最后一条只在运行时显形：成员 preset 从磁盘组合，因此类型检查、单测、构建全绿，而所有成员都以 `preset "team-member" failed to mount: … $.prefix missing required value` 激活失败。Session persistence 现在是随附的 JSONL backend，带 released-format 迁移链（v0/v1/v2 → V3），因此之前关于 SQLite schema 丢弃的说明不再适用。
 
@@ -207,3 +213,7 @@ preset 组合没有编译期或单测守卫：成员类 spec 用的是合成 pre
 存量历史的升级可行性是**实测**的，不是假定的。0.1.5 候选版的封闭 source-kind 审计会拒绝已发布线写出的每一份 Member artifact，因此 Team bundle 增加了启动期修复：只为这些 artifact 发布一份当前格式兄弟文件（机制见 [architecture.zh.md](architecture.zh.md) §「Workspace、Session 和 storage reuse」）。在本机全量 store 上——23 个 enabled 成员、215 份 artifact——该过程修复了 44 份被拒 artifact，未动 6 份（其中 3 份除旧 kind 外还带未闭合的 `turn/start`，另 3 份纯粹因该结构缺陷被拒），没有向任何既有 artifact 写入一个字节（前后 sha256 比对），第二次遍历零发布。所有残留拒绝都是 Session 的结构缺陷，而不是 source-kind 墙。因此基线的结论是精确的：**上一认证线写出的历史之所以可读，来自 Team bundle 的修复，而不是来自候选版本本身**；不带该修复的 bundle 无法在本候选版上声明升级可行，无论新建 Session 的检查多绿。
 
 一条验证事实仍只记录、不修补：`npm run typecheck` 在 `npm run build` 之前会因 `@wowyuarm/dsh-agent-team/time-format` 与 `member-time-context` 的 import 失败——它们经由构建产物 `lib/` 的 self-link 解析，不在 sync-paths `own` map 里；先 build（潜在仓库缺口，不是兼容性缺陷）。另一条——隔离的 Harness checkout 在跑 Team 套件前需要 `pnpm build:native-system`，因为 JSONL backend 的 flock 租约锁会加载一个被 gitignore 的 Node-API 插件（`native/system/packages/<platform>/bin/{glibc|musl}/system.node`），只有原生构建会产出它——现已归入 [development.zh.md](development.zh.md) 的环境契约，漏掉它表现为宿主 Team 激活失败（`Agent is not an active Team Member`），而不是缺模块报错。
+
+DSH `0.1.5-rc.2` 已在同一 peer 区间上认证，manifest 无改动。它是发布卫生型版本、而非新的一条线：334 个变更文件里 272 个只是版本号，真实源码改动全部落在 client 包内（`ui-primitives` 新增文件类型图标素材；`ui-message-feedback`、`ui-deliverables`、`ui-chat` 与 feedback 命令有改动），没有新增、重命名或删除的包路径。本 bundle 引用的 `dsh-client-ui-primitives` 符号在 rc.2 全部仍存在，Session 格式、message-source 词表与随包 preset 行均未变动，因此 §3.6 的存量历史检查不因本候选版再次触发。在该 tag 的隔离 checkout 上——类型/测试层经共享指针指向它、唯一的 npm 依赖按候选版本安装——本 bundle 构建通过、类型检查通过、513 个测试通过（1 个跳过）、打包 206 个文件，并跑通真实浏览器旅程（Team 进入、Remote mount、普通 DSH 恢复）。`>=0.1.5-rc.1 <0.2.0` 本就匹配 rc.2，因此这段是基线记录，而不是 peer 移动。
+
+发布紧迫性不因该记录而改变：npm 上已发布的 `latest` 是 `0.1.9`，其 peers 为 `>=0.1.2-rc.1 <0.2.0`。该区间**不**准入 `0.1.5-rc.2`（预发布版本只在区间自身 base tuple 上开放，已用 `semver` 核验），因此处于本候选版的用户根本无法安装已发布的 bundle；即使能装，上面列出的源码断裂也会让它跑不起来。在一个携带 `>=0.1.5-rc.1 <0.2.0` peers 的 Team 版本发布之前，本候选版"已认证但不可交付"。
