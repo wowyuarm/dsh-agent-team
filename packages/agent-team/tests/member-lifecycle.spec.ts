@@ -20,6 +20,7 @@ import LlmRuntime, { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import SessionTitle from '@deepseek-ai/dsh-session-title'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -3469,6 +3470,53 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
       .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
     expect(bodies.some(body => body.includes('P2 carried input that must be skipped.'))).toBe(false)
+    warn.mockRestore()
+  })
+
+  it('fails open with a warning when the previous Session is refused by the session-format migration', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, presets, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('p4-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('p4-add'), workspaceId, handle: 'p4member', description: 'P4 format refusal', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const previousSessionId = added.status.member.sessionId
+
+    // Same crash shape as the corruption case: the rollover committed, the new
+    // Session never ran, and direct input was racing in the old generation.
+    presets.failingMount = true
+    adapter.enqueue(toolCallResponse('call-p4-nc', 'context_rollover', { handoff: 'the P4 refusal handoff' }))
+    adapter.enqueue(textResponse('rolling into the P4 crash.'))
+    const live = ctx.agents.get(previousSessionId)!
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over into the P4 crash' }], source: { kind: 'user' } }))
+    await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== previousSessionId
+        && current.availability === 'unavailable'
+        && current.diagnostic?.includes('failed to load') ? current : undefined
+    })
+
+    // The retired Session is refused by the candidate's own migration audit:
+    // deterministic, so no retry can ever read it. Activation must fail open
+    // with a warning rather than leave the Member permanently unavailable.
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    const warn = vi.spyOn(ctx.logger, 'warn')
+    ctx.sessionPersistence.open = async (id, access, options) => {
+      if (id === previousSessionId) throw new SessionFormatUnsupportedError('cannot safely transform unclassified message source; source v0 artifact remains unchanged (test seam)')
+      return realOpen(id, access, options)
+    }
+    presets.failingMount = false
+    adapter.enqueue(textResponse('carrying on after the P4 refusal.'))
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const restarted = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'active' ? status : undefined
+    })
+    expect(restarted.diagnostic).toBeUndefined()
+    const replayWarnings = warn.mock.calls.map(args => String(args[0])).filter(text => text.includes('refused by the session-format migration'))
+    expect(replayWarnings.length).toBeGreaterThan(0)
+    expect(replayWarnings.some(text => text.includes(previousSessionId) && text.includes('p4member'))).toBe(true)
     warn.mockRestore()
   })
 

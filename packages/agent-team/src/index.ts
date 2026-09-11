@@ -17,6 +17,7 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -1608,12 +1609,14 @@ export default class AgentTeam extends TypertRemoteService {
    * pending next-step/next-turn ids — a historical insert that was already
    * claimed (and removed) but never surfaced is NOT known and must replay.
    * Fail-closed for genuinely unreadable previous Sessions (missing/IO) so
-   * the Member's input is never dropped silently, with two bounded
+   * the Member's input is never dropped silently, with three bounded
    * exceptions: a generation that already started its own turns needs no
-   * replay (its carried input was delivered or superseded while it ran), and
-   * a log-corruption class error skips with a warning (the Host repairs torn
+   * replay (its carried input was delivered or superseded while it ran), a
+   * log-corruption class error skips with a warning (the Host repairs torn
    * tails; a retired generation's corrupt log must not permanently block the
-   * Member's activation).
+   * Member's activation), and a deterministic released-format refusal skips
+   * with a warning (the candidate's own migration audit refuses that
+   * artifact, so no retry can ever read it).
    */
   private async replayCarriedInput(member: AgentTeamAgentMember, agent: Agent, generationStarted: boolean): Promise<number> {
     const transition = this.requireLedger().lastTransitionForMember(member.memberId)
@@ -1644,6 +1647,16 @@ export default class AgentTeam extends TypertRemoteService {
       // corrupted retired generation must not permanently block activation.
       if (/corrupt session log/.test(detail)) {
         this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is corrupt: ${detail}; skipping the replay`)
+        return 0
+      }
+      // Deterministic released-format refusal: the retired artifact is refused
+      // by the candidate's own migration audit, which no retry can change.
+      // Failing activation here would turn a data problem in a Session the
+      // Member no longer runs in into permanent unavailability — the exact
+      // failure class this hardening removes. Genuine IO and unknown failures
+      // stay fail-closed so carried input is never dropped silently.
+      if (error instanceof SessionFormatUnsupportedError) {
+        this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is refused by the session-format migration: ${detail}; skipping the replay`)
         return 0
       }
       throw new Error(`the previous Session '${transition.previousSessionId}' holding the Member's carried input is unreadable: ${detail}`)
@@ -2255,8 +2268,12 @@ export default class AgentTeam extends TypertRemoteService {
         // delivered activates the new Session with no handoff in its own
         // log — never treat that as an ordinary blank Member Session. The
         // operation's recorded previous Session (the lineage parent) still
-        // holds the intent; rebuild the handoff from it.
-        if (!state.boundaries.some(boundary => boundary.source === 'handoff')) {
+        // holds the intent; rebuild the handoff from it. "No handoff in its
+        // own log" is judged over both shapes: a generation rescued from the
+        // retired custom kinds carries its handoff as a source the projection
+        // does not classify, and rebuilding on top of it would inject the same
+        // handoff twice.
+        if (!handoffAlreadyInLog(state.boundaries, created.agent.session.ownEvents())) {
           await this.reconstructMissingHandoff(member, created.agent)
         }
         // Carried input redelivery binds to the committed transition target —
