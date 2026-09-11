@@ -8,7 +8,7 @@
 
 **发布条件：必须与 01 同批发布（0.1.10）。** 01 会让此前读不出的 parent 变可读，从而打开下面「重复 handoff 投递」这条引信；本 ticket 的幂等守卫是同批的安全阀。
 
-背景：`replayCarriedInput` 是 issue #13（归档 Channel 破坏重启）修复引入的崩溃恢复路径；其 fail-closed 是有意设计——绝不静默丢成员输入。本 ticket 只把「重试无意义的确定性格式拒绝」（`SessionFormatUnsupportedError` 类，含其迁移审计变体）改为警告 + 跳过，保持 #13 的不丢输入意图（这类拒绝不是可重试的 IO，重试只会永远失败）。
+背景：`replayCarriedInput` 是 `f20755a` 引入的崩溃恢复路径；其 fail-closed 是有意设计——绝不静默丢成员输入。`dabeb0b` 在 Reeve/Ferry 退役日志损坏事故后加入了第一轮 bounded fail-open。本 ticket 只把「重试无意义的确定性格式拒绝」（`SessionFormatUnsupportedError` 类，含其迁移审计变体）改为警告 + 跳过，保持不丢输入的约束（这类拒绝不是可重试的 IO，重试只会永远失败）。GitHub #13 是独立的 Channel archival ledger cleanup 问题，与该路径无因果关系。
 
 - [x] 区分错误类：上游格式拒绝（unsupported migration / closed-whitelist）→ 警告 + 跳过；`corrupt session log` 现有豁免保持；其余（IO/未知）→ 维持 throw
 - [x] 日志文案包含成员、被拒 session id、拒绝原因，供诊断（断言 warning 同时含 previous session id 与成员 handle）
