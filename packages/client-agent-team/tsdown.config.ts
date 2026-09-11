@@ -1,8 +1,12 @@
 import { resolve } from 'node:path'
-// Certification runs point the bundle helper at an isolated checkout at the
-// candidate tag (see docs/dsh-release-compatibility.md).
-const harnessDir = process.env.DSH_HARNESS_DIR ?? 'deepseek-harness'
-const { clientBundle } = await import(`../../../${harnessDir}/packages/client/tsdown.client.ts`)
+import { pathToFileURL } from 'node:url'
+// One pointer for every consumer: scripts/harness-dir.mjs owns the checkout
+// (the certification env override, the marker sync-paths wrote, then the daily
+// sibling default), so a certification run can never build the client against
+// a different checkout than the type and test layer. Both imports stay
+// dynamic: a static template-literal module path breaks tsdown's config loader.
+const { harnessDir } = await import('../../scripts/harness-dir.mjs')
+const { clientBundle } = await import(pathToFileURL(resolve(harnessDir, 'packages/client/tsdown.client.ts')).href)
 
 const bundle = clientBundle('@wowyuarm/dsh-agent-team', [
   'lib/types/index.js',
