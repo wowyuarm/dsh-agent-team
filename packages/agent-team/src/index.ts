@@ -17,7 +17,6 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -33,6 +32,7 @@ import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { SessionRemediation, handoffAlreadyInLog } from './session-remediation.ts'
+import { StoredSessionReadError, StoredSessionReader, type StoredSessionFailure } from './stored-session-reader.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
@@ -289,6 +289,12 @@ export interface AgentTeamTimelineToolResult {
   readonly hardLimit: number
   readonly handoffAt: number
   readonly items: readonly AgentTeamTimelineItem[]
+  /**
+   * The unreadable ancestor that ended the lineage walk early, when one did:
+   * history is complete through the last listed source and provably absent
+   * beyond it. Never a Member-availability fact.
+   */
+  readonly incompleteFrom?: { readonly sessionId: SessionId; readonly reason: string }
 }
 
 /** One resolved checkpoint seed: the exact balanced prefix plus its source. */
@@ -335,6 +341,13 @@ export default class AgentTeam extends TypertRemoteService {
     },
     runningAgents: this.runningAgents,
   })
+  /**
+   * The single seam for every per-Session stored read: handle lifecycle and
+   * failure normalization live here, so a DSH persistence-interface change is
+   * adapted once, and consumers choose policy by failure category instead of
+   * matching error text.
+   */
+  private readonly sessionReader = new StoredSessionReader(this.ctx)
   /**
    * Why one Member shows error presence, per failure source. Reads prefer
    * activation, then runtime, then compaction; slots clear independently, so
@@ -532,7 +545,7 @@ export default class AgentTeam extends TypertRemoteService {
    * generation over it.
    */
   private async sessionPersisted(sessionId: SessionId): Promise<boolean> {
-    return (await this.ctx.sessionPersistence.stat(sessionId)) !== undefined
+    return this.sessionReader.exists(sessionId)
   }
 
   /** Resolve one exact live Agent to its durable Team Member; forks do not inherit identity. */
@@ -1445,18 +1458,13 @@ export default class AgentTeam extends TypertRemoteService {
         parentSession = agent.session.header.parentSession
         live = false
       } else {
-        try {
-          const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
-          try {
-            events = (await handle.read()).events
-            inheritedEventCount = handle.inheritedEventCount
-            parentSession = handle.header.parentSession
-          } finally {
-            await handle.close()
-          }
-        } catch (error) {
-          throw new Error(`checkpoint '${checkpointRef}' could not be resolved: its source Session is unreadable (${error instanceof Error ? error.message : String(error)})`)
+        const read = await this.sessionReader.read(sessionId)
+        if (!read.ok) {
+          throw new StoredSessionReadError(`checkpoint '${checkpointRef}' could not be resolved: its source Session is unreadable (${read.failure.kind}: ${read.failure.detail})`, read.failure)
         }
+        events = read.inspection.events
+        inheritedEventCount = read.inspection.inheritedEventCount
+        parentSession = read.inspection.header.parentSession
       }
       // Fold the source with its inherited cut respected: inherited events
       // are resolved history in that source, never fresh intent; checkpoints
@@ -1533,18 +1541,15 @@ export default class AgentTeam extends TypertRemoteService {
     const previousSessionId = agent.session.header.parentSession
       ?? this.requireLedger().previousSessionForMember(member.memberId)
     if (previousSessionId === undefined) return
-    let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
-    try {
-      const handle = await this.ctx.sessionPersistence.open(previousSessionId, 'read')
-      try {
-        inspection = { events: (await handle.read()).events, inheritedEventCount: handle.inheritedEventCount }
-      } finally {
-        await handle.close()
-      }
-    } catch (error) {
-      this.ctx.logger.warn(`agent-team: rollover handoff reconstruction could not read the previous Session '${previousSessionId}': ${error instanceof Error ? error.message : String(error)}`)
+    const previousRead = await this.sessionReader.read(previousSessionId)
+    if (!previousRead.ok) {
+      // Best-effort recovery: the handoff intent stays lost with the
+      // unreadable previous Session, but the Member still activates.
+      const failure = previousRead.failure
+      this.ctx.logger.warn(`agent-team: rollover handoff reconstruction could not read the previous Session '${previousSessionId}' (${failure.kind}): ${failure.detail}`)
       return
     }
+    const inspection = previousRead.inspection
     const state = foldContextProjection(inspection.events, inspection.inheritedEventCount, previousSessionId)
     if (state.pending === null) return
     const pending = state.pending
@@ -1573,17 +1578,12 @@ export default class AgentTeam extends TypertRemoteService {
    * downgrade to a blank child.
    */
   private async recordedCheckpointPrefix(seed: { readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }): Promise<{ readonly prefix: readonly SessionEvent[] }> {
-    let inspection: { events: readonly SessionEvent[]; inheritedEventCount: SessionLogOffset }
-    try {
-      const handle = await this.ctx.sessionPersistence.open(seed.sourceSessionId, 'read')
-      try {
-        inspection = { events: (await handle.read()).events, inheritedEventCount: handle.inheritedEventCount }
-      } finally {
-        await handle.close()
-      }
-    } catch (error) {
-      throw new Error(`the recorded checkpoint-return seed source Session '${seed.sourceSessionId}' is unreadable: ${error instanceof Error ? error.message : String(error)}`)
+    const seedRead = await this.sessionReader.read(seed.sourceSessionId)
+    if (!seedRead.ok) {
+      const failure = seedRead.failure
+      throw new StoredSessionReadError(`the recorded checkpoint-return seed source Session '${seed.sourceSessionId}' is unreadable (${failure.kind}): ${failure.detail}`, failure)
     }
+    const inspection = seedRead.inspection
     const through = Number(seed.sourceThroughSeq)
     if (!Number.isSafeInteger(through) || through < 0 || through > inspection.events.length) {
       throw new Error(`the recorded checkpoint-return seed cut ${through} is not a valid prefix of Session '${seed.sourceSessionId}'`)
@@ -1632,21 +1632,14 @@ export default class AgentTeam extends TypertRemoteService {
     }
     let inspectionEvents: readonly SessionEvent[]
     let inspectionInherited: SessionLogOffset
-    try {
-      const handle = await this.ctx.sessionPersistence.open(transition.previousSessionId, 'read')
-      try {
-        inspectionEvents = (await handle.read()).events
-        inspectionInherited = handle.inheritedEventCount
-      } finally {
-        await handle.close()
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
+    const previousRead = await this.sessionReader.read(transition.previousSessionId)
+    if (!previousRead.ok) {
+      const failure = previousRead.failure
       // Log-corruption class: bounded fail-open. The current Session's own
       // fold is intact and the Host repairs the retired log's torn tail; a
       // corrupted retired generation must not permanently block activation.
-      if (/corrupt session log/.test(detail)) {
-        this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is corrupt: ${detail}; skipping the replay`)
+      if (failure.kind === 'corrupt') {
+        this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is corrupt: ${failure.detail}; skipping the replay`)
         return 0
       }
       // Deterministic released-format refusal: the retired artifact is refused
@@ -1655,12 +1648,14 @@ export default class AgentTeam extends TypertRemoteService {
       // Member no longer runs in into permanent unavailability — the exact
       // failure class this hardening removes. Genuine IO and unknown failures
       // stay fail-closed so carried input is never dropped silently.
-      if (error instanceof SessionFormatUnsupportedError) {
-        this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is refused by the session-format migration: ${detail}; skipping the replay`)
+      if (failure.kind === 'refused') {
+        this.ctx.logger.warn(`agent-team: previous Session '${transition.previousSessionId}' holding carried input for member '${this.memberLabel(member.memberId)}' is refused by the session-format migration: ${failure.detail}; skipping the replay`)
         return 0
       }
-      throw new Error(`the previous Session '${transition.previousSessionId}' holding the Member's carried input is unreadable: ${detail}`)
+      throw new StoredSessionReadError(`the previous Session '${transition.previousSessionId}' holding the Member's carried input is unreadable (${failure.kind}): ${failure.detail}`, failure)
     }
+    inspectionEvents = previousRead.inspection.events
+    inspectionInherited = previousRead.inspection.inheritedEventCount
     const state = foldContextProjection(inspectionEvents, inspectionInherited, transition.previousSessionId)
     const carried = carriedInputOf(state)
     if (carried.length === 0) return 0
@@ -1725,6 +1720,7 @@ export default class AgentTeam extends TypertRemoteService {
     // persisted logs; the same projection definition folds every source.
     const items: AgentTeamTimelineItem[] = []
     const seen = new Set<string>()
+    let incompleteFrom: { readonly sessionId: SessionId; readonly reason: string } | undefined
     let sessionId: SessionId | undefined = member.sessionId
     let live = true
     let guard = 0
@@ -1741,20 +1737,17 @@ export default class AgentTeam extends TypertRemoteService {
         sessionId = agent.session.header.parentSession
         live = false
       } else {
-        try {
-          const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
-          try {
-            const { events } = await handle.read()
-            state = foldContextProjection(events, handle.inheritedEventCount, sessionId)
-            sourceEvents = events
-            sourceSessionId = sessionId
-            sessionId = handle.header.parentSession
-          } finally {
-            await handle.close()
-          }
-        } catch {
-          // An unreadable ancestor ends the lineage walk here.
+        const read = await this.sessionReader.read(sessionId)
+        if (!read.ok) {
+          // An unreadable ancestor ends the lineage walk here — recorded in
+          // the result, never silent, and never a Member-availability fact.
+          incompleteFrom = { sessionId, reason: `${read.failure.kind}: ${read.failure.detail}` }
           sessionId = undefined
+        } else {
+          state = foldContextProjection(read.inspection.events, read.inspection.inheritedEventCount, sessionId)
+          sourceEvents = read.inspection.events
+          sourceSessionId = sessionId
+          sessionId = read.inspection.header.parentSession
         }
       }
       if (state === undefined) break
@@ -1772,7 +1765,7 @@ export default class AgentTeam extends TypertRemoteService {
       }
       if (items.length >= limit) break
     }
-    return { usageTokens, hardLimit, handoffAt, items }
+    return { usageTokens, hardLimit, handoffAt, items, ...(incompleteFrom === undefined ? {} : { incompleteFrom }) }
   }
 
   /**
@@ -1787,18 +1780,15 @@ export default class AgentTeam extends TypertRemoteService {
     const meter = agent.ctx.get('tokenMeter')
     if (meter === undefined) return undefined
     if (live) return meter.measure(agent.session)?.totalTokens
+    // 0.1.5 removed borrowSession: rebuild a detached Session from the
+    // stored log so the seed's retained cost is priced by the SOURCE's own
+    // replay, never the current generation's. An unreadable source or a
+    // failing meter is unmeasurable and prices as UNKNOWN.
+    const read = await this.sessionReader.read(sessionId)
+    if (!read.ok) return undefined
     try {
-      // 0.1.5 removed borrowSession: rebuild a detached Session from the
-      // stored log so the seed's retained cost is priced by the SOURCE's own
-      // replay, never the current generation's.
-      const handle = await this.ctx.sessionPersistence.open(sessionId, 'read')
-      try {
-        const { events } = await handle.read()
-        const session = Session.create(sessionId, events, handle.header, handle.inheritedEventCount)
-        return meter.measure(session)?.totalTokens
-      } finally {
-        await handle.close()
-      }
+      const session = Session.create(sessionId, read.inspection.events, read.inspection.header, read.inspection.inheritedEventCount)
+      return meter.measure(session)?.totalTokens
     } catch {
       return undefined
     }

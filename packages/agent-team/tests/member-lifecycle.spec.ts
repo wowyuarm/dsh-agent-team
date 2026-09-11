@@ -2380,6 +2380,49 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(limited.items).toHaveLength(1)
   })
 
+  it('marks the timeline incomplete at an unreadable ancestor without touching Member availability', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('tl-inc-channel'), workspaceId, name: 'engineering', description: 'Engineering Work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('tl-inc-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const firstSessionId = added.status.member.sessionId
+
+    // Generation 1 runs a turn, then a fresh rollover archives it as the
+    // new generation's lineage ancestor.
+    const live = ctx.agents.get(firstSessionId)!
+    adapter.enqueue(textResponse('gen1 work.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'gen1 work' }], source: { kind: 'user' } }))
+    await waitFor(() => live.session.ownEvents().some(event => event.type === 'assistant/message') ? true : undefined)
+    await live.whenIdle()
+    adapter.enqueue(toolCallResponse('call-tl-inc-nc', 'context_rollover', { handoff: 'gen2 handoff' }))
+    adapter.enqueue(textResponse('gen2 starting.'))
+    live.followup(createUserMessage({ content: [{ type: 'text', text: 'roll over' }], source: { kind: 'user' } }))
+    const renewed = await waitFor(() => {
+      const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
+      return current !== undefined && current.member.sessionId !== firstSessionId ? current : undefined
+    })
+    const next = await waitFor(() => ctx.agents.get(renewed.member.sessionId)!)
+    await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message') ? true : undefined)
+    await next.whenIdle()
+
+    // The archived ancestor becomes unreadable: the timeline must record
+    // where and why history stopped instead of silently ending, and the
+    // Member's availability must not change — an ancestor read is history,
+    // not a current-binding fact.
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    ctx.sessionPersistence.open = async (id, access, options) => {
+      if (id === firstSessionId) throw new SessionFormatUnsupportedError('cannot safely transform unclassified message source (test seam)')
+      return realOpen(id, access, options)
+    }
+    const timeline = await ctx.agentTeam.contextTimelineForAgent(next, { memberId, limit: 24 })
+    expect(timeline.incompleteFrom).toMatchObject({ sessionId: firstSessionId, reason: expect.stringMatching(/^refused: /) })
+    expect(timeline.items.length).toBeGreaterThan(0)
+    const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)!
+    expect(status.availability).toBe('active')
+    expect(status.presence).not.toBe('unavailable')
+  })
+
   it('returns to a checkpoint through context_rollover: exact seed prefix, handoff first, seed lineage', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId, archived } = await realHarness(adapter)
