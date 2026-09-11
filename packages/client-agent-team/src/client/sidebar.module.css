@@ -24,7 +24,10 @@
 .railButton:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-  outline: none;
+}
+.railButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
 }
 
 .workspaceList {
@@ -56,9 +59,11 @@
 .workspaceRow:focus-visible,
 .workspaceRow[aria-current='page'] {
   background: var(--dsw-alias-interactive-bg-hover);
-  outline: none;
 }
-.workspaceRow:focus-visible { box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l3); }
+.workspaceRow:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: -2px;
+}
 
 .workspaceIcon {
   align-items: center;
@@ -128,6 +133,7 @@
   align-items: center;
   background: transparent;
   border: 0;
+  border-radius: 4px;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
   display: inline-flex;
@@ -138,7 +144,10 @@
   min-width: 0;
   padding: 0 6px;
 }
-.sectionToggle:focus-visible { outline: none; }
+.sectionToggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
+}
 .sectionToggle:hover .sectionChevron,
 .sectionToggle:focus-visible .sectionChevron {
   color: var(--dsw-alias-label-primary);
@@ -182,7 +191,10 @@
 .iconButton:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-  outline: none;
+}
+.iconButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
 }
 
 .textButton {
@@ -199,7 +211,10 @@
 .textButton:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-  outline: none;
+}
+.textButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
 }
 .textButton:disabled { cursor: not-allowed; opacity: 0.4; }
 
@@ -267,6 +282,7 @@
   align-items: center;
   background: transparent;
   border: 0;
+  border-radius: 8px;
   box-sizing: border-box;
   color: inherit;
   cursor: pointer;
@@ -277,7 +293,11 @@
   padding: 3px 4px 3px 8px;
   text-align: left;
 }
-.channelSelect:focus-visible { outline: none; }
+/* Same visible keyboard ring the shipped sidebar's panel rows use. */
+.channelSelect:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: -2px;
+}
 .channelName {
   font-size: 13px;
   font-weight: 400;
@@ -299,6 +319,7 @@
   align-items: center;
   background: transparent;
   border: 0;
+  border-radius: 8px;
   box-sizing: border-box;
   color: inherit;
   cursor: pointer;
@@ -311,7 +332,10 @@
   padding: 3px 4px 3px 8px;
   text-align: left;
 }
-.agentSelect:focus-visible { outline: none; }
+.agentSelect:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: -2px;
+}
 /* The leaf-row convention: while this Member's Session is the conversation
    seat, its card carries the resident fill the workspace overview yields. */
 .agentSelect[aria-current='page'] {
@@ -426,7 +450,10 @@
 .rowMenuButton:hover,
 .rowMenuButton:focus-visible {
   color: var(--dsw-alias-label-primary);
-  outline: none;
+}
+.rowMenuButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
 }
 
 .retryError {

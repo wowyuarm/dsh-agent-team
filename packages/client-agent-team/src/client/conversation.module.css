@@ -332,7 +332,7 @@
    structured mention fallback row present on every message kind. */
 .mention {
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);
-  border-radius: 5px;
+  border-radius: 6px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   color: var(--dsw-alias-state-business-primary);
   font-weight: 500;

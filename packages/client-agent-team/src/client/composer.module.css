@@ -131,7 +131,10 @@
   align-items: center;
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  /* Same 12px control rhythm as the base composer's .trailing group
+     (figma 75:8208); the attach circle sits alone on the left via its own
+     auto margin, so this gap is what separates the as-task toggle and send. */
+  gap: 12px;
   min-height: 34px;
   padding: 2px 8px 6px;
 }
@@ -158,6 +161,7 @@
   background: var(--dsw-specific-selector);
   border: 0;
   border-radius: 999px;
+  corner-shape: round;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
   display: grid;
@@ -246,20 +250,29 @@
 .fileChipRemove:hover,
 .fileChipRemove:focus-visible {
   color: var(--dsw-alias-label-primary);
-  outline: none;
+}
+.fileChipRemove:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 1px;
 }
 
 .sendButton {
   align-items: center;
   background: var(--dsw-alias-button-info-fill, var(--dsw-alias-button-primary-fill));
   border: 0;
-  border-radius: 50%;
+  border-radius: 999px;
+  corner-shape: round;
   color: #fff;
   cursor: pointer;
   display: inline-flex;
   height: 34px;
   justify-content: center;
   padding: 0;
+  /* Opts out of the toolbar's 2px downward shift (same 2px top pad the base
+     composer's row uses): the send circle keeps its original seat while the
+     smaller controls sit lower. Transform, not margin, so flex centering
+     math is untouched. */
+  transform: translateY(-2px);
   transition: background-color 100ms ease, opacity 100ms ease;
   width: 34px;
 }
@@ -274,7 +287,7 @@
 }
 
 .sendButton:disabled {
-  cursor: not-allowed;
+  cursor: default;
   opacity: 0.4;
 }
 

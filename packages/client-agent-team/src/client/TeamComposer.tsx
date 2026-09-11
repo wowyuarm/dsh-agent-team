@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { Button, IconPlusOutline16, IconSendOutline16, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPaperclipOutline16, IconSendOutline16, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import css from './composer.module.css'
@@ -370,10 +370,12 @@ export function TeamComposer({ members, followerMemberIds, recipients, draft, pe
                 if (chosen.length > 0 && pendingFiles !== undefined) onFilesChange([...pendingFiles, ...chosen])
                 event.target.value = ''
               }} />
-            <button type="button" className={css.attachButton} aria-label={t('attachFiles')} title={t('attachFiles')}
-              disabled={pending} onClick={() => { fileInputRef.current?.click() }}>
-              <IconPlusOutline16 size={14} />
-            </button>
+            <Tooltip label={t('attachFiles')} side="top" delayMs={500}>
+              <button type="button" className={css.attachButton} aria-label={t('attachFiles')}
+                disabled={pending} onClick={() => { fileInputRef.current?.click() }}>
+                <IconPaperclipOutline16 size={14} />
+              </button>
+            </Tooltip>
           </>
         )}
         <button

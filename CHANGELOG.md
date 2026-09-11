@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [Unreleased]
+
+- Team controls speak the base UI's design language: the composer attach control uses the paperclip glyph with a tooltip instead of the command-menu "+", the attach/send circles match the shipped geometry (corner-shape, seat compensation) and the 12px control rhythm, and every Team control that suppresses the outline now carries a visible keyboard focus ring — sidebar rows, section toggles, rail/icon/row-menu buttons, footer actions, and the attachment chip's remove control. A repeatable mechanical audit, `node scripts/audit-ui-parity.mjs`, keeps the parity checkable and rejects hover feedback as a focus indicator (see `docs/development.md`).
+
 ## [0.1.10] - 2026-09-11
 
 - The certified baseline moves to DSH `0.1.5-rc.1`, and `0.1.5-rc.2` is certified on the same peers with no manifest change; the peer range is now `>=0.1.5-rc.1 <0.2.0`. Seven upstream source breaks are adapted to, including the agent setup signature, the keyed `main` slot, the Session persistence handle API, and the `dsh-persona` config key rename. Published 0.1.9 cannot install on this line, because `>=0.1.2-rc.1 <0.2.0` admits prereleases only on its own base tuple; DSH `0.1.2-rc.1`–`0.1.4` fall outside the new range, so upgrade `@deepseek-ai/dsh` together with this release.
