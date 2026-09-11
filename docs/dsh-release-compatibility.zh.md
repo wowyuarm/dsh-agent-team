@@ -159,7 +159,7 @@ npm run test:browser
 
 第一项检查背后有一个长期陷阱：自定义 Session message source kind。`@deepseek-ai/dsh-llm` 把 `MessageSourceMap` 记为可合并扩展的 sum type，但 released-format 迁移审计只准入一份封闭且 build-static 的 source kind 列表；声明新 kind 的插件写出的日志，会被下一个格式世代整体拒绝。这个陷阱还有**后半段**：该审计同时把 `plugin` source 的**成员**钉死为 `kind`、`plugin`、`form`、`sections`、`summary`，因此把同一份载荷改挂到已准入的 kind 之下，仍会因任何自造信封字段而失败。两半都是 fail-closed，且报的是不同错误；因此认证证据必须跑通本包**实际产出**的 source，而不只是它们声明的 kind。
 
-正确做法是把插件语义编码进已准入的形状：结构化载荷用 `form: 'snapshot'` 下的具名 `{ name, text }` sections，人类可读单行用 `form: 'notice'` 下的 `summary`，其余散文放进不受约束的 model-facing 正文。自造成员没有通用槽位——上游 `compact` 插件是靠为其 plugin id 开特例才拿到一个——因此确实需要自造成员的插件应当向上游提出该需求。
+正确做法是把插件语义编码进已准入的形状：结构化载荷用 `form: 'snapshot'` 下的具名 `{ name, text }` sections，人类可读单行用 `form: 'notice'` 下的 `summary`，其余散文放进不受约束的 model-facing 正文。section 的 `text` 是插件自己的字符串、会被逐字读回，因此列表要编码成 JSON，不要用分隔符拼接：路径或名字本身就可能包含那个分隔符，拆开后会还原出与写入不同的值。自造成员没有通用槽位——上游 `compact` 插件是靠为其 plugin id 开特例才拿到一个——因此确实需要自造成员的插件应当向上游提出该需求。
 
 ## 4. 认证结果与发布门槛
 

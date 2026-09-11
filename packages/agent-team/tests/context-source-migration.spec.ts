@@ -131,6 +131,36 @@ describe('Agent Team message sources read back through the admitted slots', () =
     expect(handoff?.relatedFiles).toBeUndefined()
   })
 
+  it('round-trips a related path that contains a comma', () => {
+    const message = createHandoffMessage({
+      ...handoffInput,
+      relatedFiles: [{ path: 'src/a, b.ts', reason: 'odd but legal name' }, { path: 'src/parser.ts' }],
+    })
+    expect(handoffOf(message)?.relatedFiles).toEqual(['src/a, b.ts', 'src/parser.ts'])
+    // The exact-path encoding still rides the admitted section slot.
+    expect(() => migrateUserMessage(message.source)).not.toThrow()
+  })
+
+  it('still reads the comma-joined related-files section old generations wrote', () => {
+    const legacy = createUserMessage({
+      content: [{ type: 'text', text: 'handoff' }],
+      source: {
+        kind: 'plugin',
+        plugin: AGENT_TEAM_PLUGIN_ID,
+        form: 'snapshot',
+        sections: [
+          { name: HANDOFF_SECTION_NAME, text: 'prose' },
+          { name: 'Previous session', text: 'agent-team-previous' },
+          { name: 'New session', text: 'agent-team-next' },
+          { name: 'Trigger', text: 'model' },
+          { name: 'Handoff event seq', text: '42' },
+          { name: 'Related files', text: 'src/parser.ts, src/lexer.ts' },
+        ],
+      },
+    })
+    expect(handoffOf(legacy)?.relatedFiles).toEqual(['src/parser.ts', 'src/lexer.ts'])
+  })
+
   it('recovers the checkpoint ref from a continuation, exactly and by identity', () => {
     const ref = 'context-checkpoint-0123456789abcdef'
     const message = createCheckpointContinuationMessage(ref)

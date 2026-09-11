@@ -128,6 +128,25 @@ function sectionText(sections: readonly ContextSnapshotSection[], name: string):
 }
 
 /**
+ * Decode the `Related files` section. The Host writes the exact path array as
+ * JSON, which round-trips every path a file system admits — including one
+ * containing a comma, which the `', '`-joined form this replaced could not.
+ * Sections written before that encoding are still read; the legacy split is a
+ * read-side accommodation for old generations, never a write path.
+ */
+function parseRelatedFiles(text: string): readonly string[] {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (Array.isArray(parsed) && parsed.every(path => typeof path === 'string' && path.length > 0)) {
+      return parsed as readonly string[]
+    }
+  } catch {
+    // Not JSON: the section predates the JSON encoding.
+  }
+  return text.split(', ').filter(path => path.length > 0)
+}
+
+/**
  * The rollover handoff one message carries, when it is one.
  * @param message - candidate user message.
  * @returns the envelope, or `undefined` when the message is not a handoff.
@@ -153,7 +172,7 @@ export function handoffOf(message: UserMessage): AgentTeamContextHandoff | undef
     trigger,
     handoffEventSeq: seq,
     ...(checkpointRef === undefined ? {} : { checkpointRef }),
-    ...(relatedFiles === undefined ? {} : { relatedFiles: relatedFiles.split(', ') }),
+    ...(relatedFiles === undefined ? {} : { relatedFiles: parseRelatedFiles(relatedFiles) }),
     sections,
   }
 }
@@ -217,7 +236,7 @@ function handoffSections(input: {
     ...(input.checkpointRef === undefined ? [] : [{ name: HANDOFF_CHECKPOINT, text: input.checkpointRef }]),
     ...(input.relatedFiles === undefined || input.relatedFiles.length === 0
       ? []
-      : [{ name: HANDOFF_RELATED_FILES, text: input.relatedFiles.map(file => file.path).join(', ') }]),
+      : [{ name: HANDOFF_RELATED_FILES, text: JSON.stringify(input.relatedFiles.map(file => file.path)) }]),
   ]
 }
 
