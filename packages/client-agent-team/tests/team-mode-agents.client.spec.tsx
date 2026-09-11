@@ -285,7 +285,7 @@ describe('Team agent surfaces', () => {
     // unavailable does not redirect — the new Session does not exist for the
     // client yet.
     b.members.mockImplementation(async () => ({ ok: true, value: [
-      { ...b.status('member:builder', 'w1', 'builder', 'unavailable', 'context rollover in progress'), member: { ...b.status('member:builder', 'w1', 'builder', 'unavailable').member, sessionId: 'session:builder-next-2' } },
+      { ...b.status('member:builder', 'w1', 'builder', 'unavailable', { class: 'rollover', detail: 'context rollover in progress' }), member: { ...b.status('member:builder', 'w1', 'builder', 'unavailable').member, sessionId: 'session:builder-next-2' } },
     ] }))
     b.publishChannelUpdate()
     await new Promise(resolve => setTimeout(resolve, 50))
