@@ -90,6 +90,10 @@ A possible future private Place with its own participants, visibility, Messages,
 
 An in-process availability projection, not a ledger fact: available (live idle), working (loop running), error (current loop/tool failure), and unavailable (no usable handle or lifecycle/setup/resume block, including the brief context-rollover window where the ledger binding has moved but the new Session is not live yet). It is separate from Claim state.
 
+## Member Diagnostic
+
+The structured reason behind a non-normal presence or availability row, never persisted: `session-refused` (a deterministic format refusal of a Session the activation needed; may carry the refused artifact's location and whether a repair attempt proved anything remediable), `session-unreadable` (missing, corrupt, io, or unknown Session read failure), `preset-composition` (preset mount/validation failure, typically an install/runtime split), `rollover` (the transient commit window), `runtime` (live loop or compaction failure), or `activation` (unclassified activation failure). The `class` routes which recovery action actually helps: a non-remediable refusal or a rollover window offers no restart, while everything else may recover through restart.
+
 ## Context Generation
 
 One Member Session's working context between two context boundaries. A fresh generation starts empty except for the handoff delivery; a checkpoint-returned generation seeds the exact completed-turn prefix of its source. The ledger records the current binding (one per Member at all times) and the previous Session of the latest renewal/rollover; the Session logs themselves hold the context history. Every generation keeps Member identity, model, private memory, skills, Claims, and Attention.
