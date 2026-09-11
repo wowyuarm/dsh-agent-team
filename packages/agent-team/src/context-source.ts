@@ -209,13 +209,15 @@ export function isAgentTeamContextSource(message: UserMessage): boolean {
   return isHandoffMessage(message) || isCheckpointContinuationMessage(message)
 }
 
-/** Envelope section names; stable, because they are read back from the log. */
-const HANDOFF_PREVIOUS_SESSION = 'Previous session'
-const HANDOFF_NEW_SESSION = 'New session'
-const HANDOFF_TRIGGER = 'Trigger'
-const HANDOFF_EVENT_SEQ = 'Handoff event seq'
-const HANDOFF_CHECKPOINT = 'Continued from checkpoint'
-const HANDOFF_RELATED_FILES = 'Related files'
+/** Envelope section names; stable, because they are read back from the log.
+ * Exported for the legacy-artifact remediation, which rewrites pre-0.1.10
+ * envelopes into exactly these names — one shared vocabulary, no drift. */
+export const HANDOFF_PREVIOUS_SESSION = 'Previous session'
+export const HANDOFF_NEW_SESSION = 'New session'
+export const HANDOFF_TRIGGER = 'Trigger'
+export const HANDOFF_EVENT_SEQ = 'Handoff event seq'
+export const HANDOFF_CHECKPOINT = 'Continued from checkpoint'
+export const HANDOFF_RELATED_FILES = 'Related files'
 
 /** The envelope contributions of one handoff, prose first. */
 function handoffSections(input: {

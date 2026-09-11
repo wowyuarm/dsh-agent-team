@@ -31,6 +31,7 @@ import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName,
 import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
+import { SessionRemediation, handoffAlreadyInLog } from './session-remediation.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
@@ -502,6 +503,16 @@ export default class AgentTeam extends TypertRemoteService {
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
     this.startAttachmentGc(ledger)
+    // Legacy-artifact remediation runs before any Member activation: no write
+    // lease exists yet, so publishing sibling generations for refused Session
+    // logs cannot race a live writer. Remediation failure never blocks
+    // startup — the next start retries exactly what the cache does not cover.
+    try {
+      const remediation = new SessionRemediation(this.ctx, this.ctx.sessionPersistence, await SessionRemediation.open(this.ctx))
+      await remediation.remediateEnabledMembers(ledger.listMembers())
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: legacy Session remediation did not run to completion (it will retry on the next start): ${error instanceof Error ? error.message : String(error)}`)
+    }
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
     const persistedSessions = new Set((await this.persistedSessionHeaders()).map(snapshot => snapshot.header.id))
