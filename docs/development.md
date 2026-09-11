@@ -53,6 +53,14 @@ Changes affecting browser bundles, Client modules, slots, Remote activation, bun
 npm run test:browser
 ```
 
+Visible UI changes touching Team controls or surfaces additionally run the mechanical design-language audit (shipped-reference tripwires included):
+
+```sh
+node scripts/audit-ui-parity.mjs
+```
+
+The audit compares Team Client CSS/TSX against the DSH 0.1.5 language contract in `docs/frontend-design.md`: focus visibility, control rhythm, icon semantics, hardcoded colors, and shipped-reference presence. Run it after any visible-UI change and after every DSH upgrade.
+
 This builds first, copies built packages into a temporary profile, starts the official Harness Web scaffold, and runs the real journey with `/usr/bin/google-chrome` (override with `CHROME_PATH`). The sandbox setup provisions Playwright's own chromium at that path when the base image ships no browser. It cleans the temporary profile and Harness test files afterward.
 
 There are three explicit preview/verification paths:

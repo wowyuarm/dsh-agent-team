@@ -6,12 +6,28 @@
 
 ## 设计原则
 
-1. **优先复用 Harness 公共原语**（`@deepseek-ai/dsh-client-ui-primitives`）：`MarkdownText`、`MessageText`、`Button`、`Pill`、`Modal`、`Tooltip`、`Input`、`StateDot`、图标，以及 `useDismissOnOutsidePointer`、`useAnchoredMaxHeight` 等 hook。Team 不重写这些能力；composer textarea 是唯一例外（`Input` 原语明确只做单行）。
+1. **优先复用 Harness 公共原语**（`@deepseek-ai/dsh-client-ui-primitives`）：`MarkdownText`、`Button`、`Pill`、`Modal`、`Tooltip`、`Input`、`StateDot`、图标，以及 `useDismissOnOutsidePointer`、`useAnchoredMaxHeight` 等 hook。Team 不重写这些能力；composer textarea 是唯一例外（`Input` 原语明确只做单行）。`MessageText` 已不在集合内——该原语在 0.1.5 被移除，`TeamMessage` 自行渲染纯文本正文、Markdown 委托给 `MarkdownText`。
 2. **只用 DSH alias token 取色**，且只允许主题实际定义的名字（`@deepseek-ai/dsh-client-ui-theme` 的 `design-platform.css` 与 `gradient-shadow-text.css` 是唯一定义处）：文字 `--dsw-alias-label-*`、边框 `--dsw-alias-border-l1..l4`（+`l2-darkmode-thin`/`inverted*`）、背景 `--dsw-alias-bg-*` 与 `--dsw-alias-interactive-bg-*`、状态 `--dsw-alias-state-*`、阴影 `--dsw-shadow-lv1..lv3`、具体值 `--dsw-specific-*`。禁止凭印象引用主题不存在的 token——`var()` 对未定义变量会静默回退 initial，边框/背景直接隐形（2026-08 教训：`border-subtle`/`border-default`/`text-*`/`fill-tertiary`/`surface-primary` 曾整批不存在，时间线全部发丝线与 loading 点从未渲染过）。Team 自有变量只允许派生值（见头像色相）。
 3. **聊天密度优先于 assistant 排版密度**：正文统一 14px 档；markdown 原语自带的标题/列表间距在本包内收紧。
 4. **渐进披露**：默认状态安静（细边框、无底色），hover/focus 才提升反馈；次要信息用 tertiary 文字色。
 5. **durable mutation 不做乐观更新**：提交失败保留输入并以 Host 报错为准；成功后从 Host 投影刷新（`mergeChannelView` 合并而非整体替换）。
 6. **键盘与读屏基线不妥协**：所有自定义复合控件都有 role、aria 状态和完整键盘路径。
+
+## 设计语言对齐（DSH 0.1.5）
+
+Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语言。本节是**耐久合同**；可重复执行的机械审计是 `node scripts/audit-ui-parity.mjs`（任何可见 UI 改动后、每次 DSH 升级后都跑一次——其中的 shipped 参考 tripwire 会在 harness checkout 不再定义本对齐所依赖的原语时报警，提示重新核对基线）。
+
+| 维度 | 规则 | shipped 参考 |
+| --- | --- | --- |
+| 纯图标控件 | 28×28 圆形，`border-radius: 999px`，`corner-shape: round`，透明底色，hover 用 `--dsw-alias-interactive-bg-hover-solid`（composer）/ `--dsw-alias-interactive-bg-hover`（侧栏） | `InputBar.module.css .add`、`SidebarRoot.module.css .iconButton` |
+| 主圆形动作（发送/停止） | 34×34 圆形，`--dsw-alias-button-info-fill`，静态 `#fff` 图形，hover info-hover，disabled `opacity .4` + `cursor: default`，`translateY(-2px)` 座位补偿 | `InputBar.module.css .primary` |
+| 列表行 | 8px 圆角；`aria-current="page"` 叶子行底色；hover `--dsw-alias-interactive-bg-hover` | `SidebarRoot.module.css .panelRow` |
+| 小胶囊 | 6px 圆角，`--dsw-alias-interactive-bg-hover` 底色 | `ReferenceChip.module.css .chip` |
+| 控件间距 | composer/侧栏工具组内兄弟控件间距 12px | `InputBar.module.css .tools/.trailing` |
+| 键盘焦点 | 可见焦点环：`outline: 2px solid var(--dsw-alias-label-primary)`；列表行 `outline-offset: -2px`，图标级控件 `1px`。`outline: none` 仅当同一条规则内有**环级替代**时才允许——outline、`box-shadow` 扩散、有边框控件的 `border-color`、文本控件的 `text-decoration`；只有底色/颜色属于 hover 反馈，不构成焦点指示（shipped 对小控件干脆保留 UA 默认环）。环色随控件含义：行与图标控件用 `label-primary`，composer/Thread 等输入邻接控件用 `business-primary`（shipped 把 business 锚定在输入、链接与表格滚动上）。豁免：`aria-activedescendant` listbox 行（mention 弹层）——焦点留在文本输入框，选中态由 `[aria-selected]` 呈现 | `SidebarRoot.module.css .panelRow:focus-visible`；`InputBar.module.css .add`（保留 UA 环，不写 `outline: none`） |
+| 图标语义 | 图形沿用基础 UI 的含义：`+` = 命令菜单、回形针 = 附件、铅笔 = 编辑。**禁止**把 shipped 图形挪作他用 | `InputBar.tsx` |
+
+一致性裁决按面记录在本文档（见下文各组件合同）：裁决为「接受偏差」时必须在对应小节写明原因——审计脚本报告机械偏差，文档拥有判断。
 
 ## 布局骨架
 
@@ -34,7 +50,7 @@
 | 页头 h1 | 20px/28px, weight 600 |
 | 发送者名 | 13px/20px, weight 600, primary；右侧同行跟随时间元信息 |
 | 消息时间 | 11px/20px, tertiary；当天 HH:mm，同年 MM-DD HH:mm，跨年完整日期（`formatMessageTime`，本地时区） |
-| Human 正文 | 14px/22px（`.messageText` 容器统一 pre-wrap/break-word；无 mention 时直接渲染 `MessageText` 原语） |
+| Human 正文 | 14px/22px（`.messageText` 容器统一 pre-wrap/break-word，正文由 `TeamMessage` 自行渲染） |
 | Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）。标题用聊天刻度（h1 17px、h2 16px、h3–h6 15px，margin 12px 0 4px），页面 h1 保持最高层级；段落/列表 margin 6px、`li + li` 间距 2px、strong 600；pre 8px 外边距 + 10px 12px 内边距、13px；表格 cell 纵向 padding 5px |
 | 任务/活动行 | 11–12px, tertiary, 活动行居中 |
 | 空/加载态 | 13px tertiary；加载点 8px 脉冲动画（reduced-motion 下关闭） |
@@ -82,7 +98,7 @@
 
 ### Composer 与 @mention
 
-- textarea 自增高（上限 180px），Channel / Thread composer 出现时自动聚焦且不滚动时间线；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。发送期间输入框保持聚焦但只读，避免重复提交；发送按钮点击不抢走焦点，发送完成后可直接继续输入。未关注成员的首次发送返回确认提醒时，保留草稿与收件人，输入框自动恢复焦点，第二次 Enter 可直接确认发送。composer 卡片沿用 DSH 默认静态边框，不因 `focus-within` 改色。
+- textarea 自增高（上限 336px），Channel / Thread composer 出现时自动聚焦且不滚动时间线；Enter 发送、Shift+Enter 换行；IME composition 期间 Enter 不触发发送。发送期间输入框保持聚焦但只读，避免重复提交；发送按钮点击不抢走焦点，发送完成后可直接继续输入。未关注成员的首次发送返回确认提醒时，保留草稿与收件人，输入框自动恢复焦点，第二次 Enter 可直接确认发送。composer 卡片沿用 DSH 默认静态边框，不因 `focus-within` 改色。
 - mention 弹层向上展开，`role="listbox"`，textarea 以 `aria-controls/aria-activedescendant/aria-expanded` 关联；↑↓ 循环、Tab/Enter 接受候选、Escape 关闭；外点关闭复用 `useDismissOnOutsidePointer`；高度钳制复用 `useAnchoredMaxHeight`（cap 320px）。高亮行始终通过 `scrollIntoView`（`block: 'nearest'`）保持在弹层可视区内，成员多时键盘选中的候选不会被折叠隐藏。Thread 面通过 Human-only 的 `threadObservations` 读取（首屏并行一轮 + 每次 thread 域 wake）获取当前关注者集合，候选排序时关注者排在其余 roster 顺序之前——关注者收到直达投递，非关注者需要两次发送的邀请流程；Channel 面保持 roster 顺序。
 - 接受候选后光标落点精确到插入文本之后；删除提及文本会同步收缩 recipients。
 - Member Session 输入面即 shipped composer 本身，不做任何修改：Team 不注册任何成员会话的 composer 表面——无接管、无 trigger sources、无 dock 提示条。键盘合同、命令与引用菜单、附件与普通会话完全一致。

@@ -6,12 +6,36 @@ This document records the long-lived UI system for `packages/client-agent-team/s
 
 ## Design principles
 
-1. Reuse Harness public primitives from `@deepseek-ai/dsh-client-ui-primitives`: `MarkdownText`, `MessageText`, `Button`, `Pill`, `Modal`, `Tooltip`, `Input`, `StateDot`, icons, and the dismissal/max-height hooks. Team does not reimplement them; the composer textarea is the single-line `Input` exception.
+1. Reuse Harness public primitives from `@deepseek-ai/dsh-client-ui-primitives`: `MarkdownText`, `Button`, `Pill`, `Modal`, `Tooltip`, `Input`, `StateDot`, icons, and the dismissal/max-height hooks. Team does not reimplement them; the composer textarea is the single-line `Input` exception, and `MessageText` is no longer part of the set — the shipped primitive was removed in 0.1.5, so `TeamMessage` renders plain bodies itself and delegates Markdown to `MarkdownText`.
 2. Use only aliases actually defined by `@deepseek-ai/dsh-client-ui-theme`: `--dsw-alias-label-*`, border, background, interactive, state, shadow, and specific tokens. Team variables may only be derived values such as avatar hue. Undefined `var()` values silently fall back to `initial`, so never guess token names.
 3. Prefer chat density over assistant-document density: body text is the 14px scale and Markdown spacing is tightened locally.
 4. Use progressive disclosure: quiet borders and no fill by default; hover/focus elevate feedback; secondary information uses tertiary color.
 5. Durable mutations are not optimistic. Preserve input on failure and render the next Host projection, using `mergeChannelView` rather than replacing the whole view.
 6. Every custom composite control has roles, ARIA state, and a complete keyboard path.
+
+## Design language alignment (DSH 0.1.5)
+
+The Team Client renders inside the shipped DSH shell, so it must speak the
+base UI's design language. This section is the durable contract; the
+repeatable mechanical audit is `node scripts/audit-ui-parity.mjs` (run it
+after any visible-UI change and after every DSH upgrade — the shipped
+reference tripwires fail when the harness checkout no longer defines the
+primitives this parity relies on).
+
+| Dimension | Rule | Shipped reference |
+| --- | --- | --- |
+| Icon-only control | 28×28 circle, `border-radius: 999px`, `corner-shape: round`, transparent fill, hover `--dsw-alias-interactive-bg-hover-solid` (composer) / `--dsw-alias-interactive-bg-hover` (sidebar) | `InputBar.module.css .add`, `SidebarRoot.module.css .iconButton` |
+| Primary round action (send/stop) | 34×34 circle, `--dsw-alias-button-info-fill`, static `#fff` glyph, hover info-hover, disabled `opacity .4` + `cursor: default`, `translateY(-2px)` seat compensation | `InputBar.module.css .primary` |
+| List rows | 8px radius; `aria-current="page"` leaf fill; hover `--dsw-alias-interactive-bg-hover` | `SidebarRoot.module.css .panelRow` |
+| Chips | 6px radius, `--dsw-alias-interactive-bg-hover` fill | `ReferenceChip.module.css .chip` |
+| Control gap | 12px between sibling controls inside a composer/sidebar toolbar group | `InputBar.module.css .tools/.trailing` |
+| Keyboard focus | Visible ring: `outline: 2px solid var(--dsw-alias-label-primary)`, rows `outline-offset: -2px`, icon-size controls `1px`. `outline: none` is allowed only with a ring-grade replacement in the same rule — outline, `box-shadow` spread, `border-color` on a bordered control, or `text-decoration` on a text control; background/color alone is hover feedback, not a focus indicator (shipped leaves the UA ring on small controls instead). Ring color follows the control accent: `label-primary` for rows and icon controls, `business-primary` for input-adjacent composer/Thread controls (shipped anchors business to inputs, links, and table scroll). Exemption: `aria-activedescendant` listbox rows (mention popup) — focus stays on the text input, selection shows via `[aria-selected]`. | `SidebarRoot.module.css .panelRow:focus-visible`; `InputBar.module.css .add` (keeps the UA ring, no `outline: none`) |
+| Icon semantics | Glyphs carry meaning from the base UI: `+` = command menu, paperclip = attach, pencil = edit. Never repurpose a shipped glyph for a different action. | `InputBar.tsx` |
+
+Consistency verdicts are recorded per surface in this document (see
+Component contracts below); when a verdict is "accept the drift", say why
+there — the audit script reports mechanical drift, the document owns the
+judgment.
 
 ## Layout skeleton
 
@@ -61,7 +85,7 @@ When the reader is within 48px of the bottom, follow new content; away from the 
 
 ## Composer and mentions
 
-The textarea grows to 180px, autofocuses without moving the timeline, sends on Enter, and inserts a newline on Shift+Enter. IME composition suppresses send. During submit it stays focused and read-only; buttons do not steal focus. Confirmation for an unfollowed recipient preserves draft and focus for the second Enter.
+The textarea grows to 336px, autofocuses without moving the timeline, sends on Enter, and inserts a newline on Shift+Enter. IME composition suppresses send. During submit it stays focused and read-only; buttons do not steal focus. Confirmation for an unfollowed recipient preserves draft and focus for the second Enter.
 
 The mention popup is an upward `role="listbox"` associated through `aria-controls`, `aria-activedescendant`, and `aria-expanded`; arrows cycle, Tab/Enter accept, Escape closes, and outside dismissal/max height use public hooks. The highlighted row is kept inside the scrollable popup (`scrollIntoView` with `block: 'nearest'`), so long rosters never hide the keyboard selection. On Thread surfaces the popup loads the current follower set through the Human-only `threadObservations` read (first paint round plus every thread-scope wake) and ranks followers above the remaining roster-order candidates, because a follower mention delivers directly while a non-follower needs the two-send invitation; Channel surfaces keep plain roster order. Accepted text places the caret precisely; deleting mention text shrinks recipients. A quiet recipient notice shows who will be notified. Drafts and recipients are stored per Channel/Thread in the bounded `TeamDraftStore`; successful sends clear them and failures preserve them. The 「作为任务」 intent is not persisted and resets off after success.
 
