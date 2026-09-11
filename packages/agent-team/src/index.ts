@@ -32,7 +32,7 @@ import { ProgressNudgeCoordinator } from './progress-nudge.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
 import { SessionRemediation, handoffAlreadyInLog } from './session-remediation.ts'
-import { StoredSessionReadError, StoredSessionReader, type StoredSessionFailure } from './stored-session-reader.ts'
+import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { formatTeamTimestamp } from './time-format.ts'
 import type {
@@ -106,6 +106,7 @@ import type {
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
   AgentTeamContextAdvice,
+  AgentTeamMemberDiagnostic,
   AgentTeamThreadObservations,
   AgentTeamThreadObservationsRequest,
   AgentTeamUpdateChannelRequest,
@@ -127,6 +128,18 @@ export const AGENT_TEAM_PRESET_MARKER = Symbol.for('@wowyuarm/dsh-agent-team.pre
 const INBOX_NOTICE_SUMMARY = 'Team Inbox has unread work.'
 const RECOVERY_NOTICE_SUMMARY = 'Recovery: continue your interrupted work.'
 const ORPHANED_MEMBER_DIAGNOSTIC = 'Member preset composition was lost after a reload; its tools are unavailable. Resume rebuilds the member in place.'
+
+/**
+ * A preset mount/validation failure during activation, carrying its own class
+ * so the activation diagnostic can route preset-composition failures (the
+ * install/runtime split failure mode) without matching message text.
+ */
+class PresetCompositionError extends Error {
+  constructor(message: string, options: ErrorOptions) {
+    super(message, options)
+    this.name = 'PresetCompositionError'
+  }
+}
 
 /** Longest accepted model-supplied checkpoint display name. */
 const MAX_CHECKPOINT_NAME_CHARS = 120
@@ -357,7 +370,7 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private readonly memberFailures = new Map<AgentTeamMemberId, {
     /** Activation failed; the Member has no live Session to recover into. */
-    activation?: string
+    activation?: AgentTeamMemberDiagnostic
     /** The Member Session reported agent/error. */
     runtime?: string
     /** Last non-busy automatic-compaction failure; entered transactions retain additional Session history. */
@@ -413,6 +426,12 @@ export default class AgentTeam extends TypertRemoteService {
   private accepting = true
   private changeVersion = 0
   private readonly changeWaiters = new Set<ChangeWaiter>()
+  /**
+   * The startup-opened remediation instance, held for the restart heal: the
+   * completion-cache domain may only be opened once per plugin lifecycle, so
+   * the restart path reuses this instance instead of opening its own.
+   */
+  private remediation: SessionRemediation | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'agentTeam')
@@ -494,8 +513,9 @@ export default class AgentTeam extends TypertRemoteService {
       this.contextManagement.onSessionEvent(memberId, handle.agent, event)
     })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
-    this.ctx.effect(() => async () => {
+      this.ctx.effect(() => async () => {
       this.accepting = false
+      this.remediation = undefined
       this.recovery.dispose()
       this.progressNudge.dispose()
       this.contextManagement.dispose()
@@ -523,6 +543,7 @@ export default class AgentTeam extends TypertRemoteService {
     // startup — the next start retries exactly what the cache does not cover.
     try {
       const remediation = new SessionRemediation(this.ctx, this.ctx.sessionPersistence, await SessionRemediation.open(this.ctx))
+      this.remediation = remediation
       await remediation.remediateEnabledMembers(ledger.listMembers())
     } catch (error) {
       this.ctx.logger.warn(`agent-team: legacy Session remediation did not run to completion (it will retry on the next start): ${error instanceof Error ? error.message : String(error)}`)
@@ -742,6 +763,22 @@ export default class AgentTeam extends TypertRemoteService {
     if (handle === undefined) {
       if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can be restarted`)
       this.ctx.logger.info(`agent-team: restarting member '${member.handle}' after a failed activation`)
+      // A deterministic session refusal may be repairable in place: run the
+      // same bounded startup remediation for this one Member before retrying
+      // activation, so the restart heals instead of replaying the failure.
+      const activation = this.memberFailures.get(request.memberId)?.activation
+      if (activation !== undefined && activation.class === 'session-refused' && this.remediation !== undefined) {
+        const outcome = await this.remediation.remediateMember(member)
+        if (outcome.repaired > 0) {
+          this.ctx.logger.info(`agent-team: repaired ${outcome.repaired} refused Session artifact(s) for member '${member.handle}'; retrying activation`)
+        } else if (outcome.completed) {
+          // The walk finished and nothing was provably this plugin's to fix:
+          // a retry would fail identically. Mark the refusal non-remediable
+          // so the surface stops offering restart and says why.
+          this.markRefusalNonRemediable(request.memberId)
+          return Object.freeze({ status: this.memberStatus(member) })
+        }
+      }
       await this.reactivateMember(request.memberId)
       return Object.freeze({ status: this.memberStatus(member) })
     }
@@ -2129,9 +2166,16 @@ export default class AgentTeam extends TypertRemoteService {
       // `swap` is bound by the provider at activation (no-op until then).
       const skillSelection: MemberSkillSelectionRef = { current: member.capabilities?.skills?.allow, swap: () => {} }
       const setup = async (agentCtx: Context, agent: Agent) => {
-        await this.ctx.agentPresets.mount(agentCtx, member.presetId)
-        this.memberRuntime.applyMemberToolPolicy(agentCtx, member)
-        this.validateMemberPreset(agentCtx)
+        try {
+          await this.ctx.agentPresets.mount(agentCtx, member.presetId)
+          this.memberRuntime.applyMemberToolPolicy(agentCtx, member)
+          this.validateMemberPreset(agentCtx)
+        } catch (error) {
+          // Tag composition failures with their own class: the activation
+          // diagnostic routes preset-composition (install/runtime split)
+          // failures by type, not by matching message text.
+          throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
+        }
         installModelSelection(agentCtx, selected)
         // Admission gate for pending context rollovers: once a successful
         // context_rollover result is durable, queued input must not open another
@@ -2299,7 +2343,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.memberRuntime.forgetMember(member.memberId)
       const message = error instanceof Error ? error.message : String(error)
       this.ctx.logger.warn(`agent-team: activation failed for member '${this.memberLabel(member.memberId)}': ${message}`)
-      this.setMemberFailure(member.memberId, 'activation', message)
+      this.setActivationDiagnostic(member.memberId, this.activationDiagnosticOf(error, member.sessionId))
     } finally {
       // Activation only changes this Workspace's presence projection.
       this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
@@ -2383,12 +2427,12 @@ export default class AgentTeam extends TypertRemoteService {
     // the previous Session. The Member stays visible but must not report the
     // new binding as active — a Client following the row would otherwise open
     // a Session that does not exist yet.
-    if (handle.agent.id !== member.sessionId) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic: 'context rollover in progress' })
+    if (handle.agent.id !== member.sessionId) return Object.freeze({ member, availability: 'unavailable', presence: 'unavailable', diagnostic: { class: 'rollover' as const, detail: 'context rollover in progress' } })
     if (this.ctx.agentPresets.composedPreset(handle.agent.ctx) === undefined) {
-      return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: ORPHANED_MEMBER_DIAGNOSTIC })
+      return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: { class: 'preset-composition' as const, detail: ORPHANED_MEMBER_DIAGNOSTIC } })
     }
     const runtimeError = failures?.runtime ?? failures?.compaction
-    if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: runtimeError })
+    if (runtimeError !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', diagnostic: { class: 'runtime' as const, detail: runtimeError } })
     // Capability warnings are runtime-derived at activation (handles-scoped,
     // like failures): absent while capabilities resolve cleanly.
     const capabilityWarnings = this.memberRuntime.capabilityWarningsFor(member.memberId)
@@ -2398,10 +2442,42 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  private setMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction', message: string): void {
+  private setMemberFailure(memberId: AgentTeamMemberId, slot: 'runtime' | 'compaction', message: string): void {
     const failures = this.memberFailures.get(memberId) ?? {}
     failures[slot] = message
     this.memberFailures.set(memberId, failures)
+  }
+
+  /** Store one structured activation diagnostic; runtime/compaction slots stay plain messages. */
+  private setActivationDiagnostic(memberId: AgentTeamMemberId, diagnostic: AgentTeamMemberDiagnostic): void {
+    const failures = this.memberFailures.get(memberId) ?? {}
+    failures.activation = Object.freeze(diagnostic)
+    this.memberFailures.set(memberId, failures)
+  }
+
+  /**
+   * Route one activation failure to its diagnostic class: preset composition
+   * failures by their own error class, session failures by the seam's typed
+   * classification (our call sites carry it directly; a Harness resume
+   * failure carries it through the cause chain), everything else as an
+   * unclassified activation failure.
+   */
+  private activationDiagnosticOf(error: unknown, sessionId: SessionId): AgentTeamMemberDiagnostic {
+    if (error instanceof PresetCompositionError) return { class: 'preset-composition' as const, detail: error.message }
+    const failure = error instanceof StoredSessionReadError ? error.failure : sessionFailureOf(error, sessionId)
+    if (failure !== undefined) {
+      const shared = { detail: failure.detail, ...(failure.location === undefined ? {} : { location: failure.location }), sessionId: failure.sessionId }
+      return failure.kind === 'refused' ? { class: 'session-refused' as const, ...shared } : { class: 'session-unreadable' as const, ...shared }
+    }
+    return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
+  }
+
+  /** Mark a session-refused activation diagnostic as proven non-remediable. */
+  private markRefusalNonRemediable(memberId: AgentTeamMemberId): void {
+    const failures = this.memberFailures.get(memberId)
+    const activation = failures?.activation
+    if (activation === undefined || activation.class !== 'session-refused') return
+    failures!.activation = Object.freeze({ ...activation, remediable: false })
   }
 
   private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction'): boolean {

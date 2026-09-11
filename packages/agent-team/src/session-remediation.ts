@@ -297,6 +297,17 @@ function physicalParentSession(rows: readonly PhysicalRow[]): string | undefined
  * partial walk logs and leaves the completion cache unrecorded, so the next
  * start retries exactly the Members that need it.
  */
+export interface SessionRemediationOutcome {
+  /** How many lineage artifacts were repaired. */
+  readonly repaired: number
+  /** How many lineage artifacts were examined and deliberately left untouched. */
+  readonly untouched: number
+  /** False only when the walk itself failed; the cache stays unrecorded so a later pass retries. */
+  readonly completed: boolean
+  /** True when nothing was walked: the Member is not enabled, or its completion cache still covers it. */
+  readonly cacheHit: boolean
+}
+
 export class SessionRemediation {
   private readonly table: KvTable<string, AgentTeamSessionRemediationRecord> | undefined
 
@@ -330,25 +341,34 @@ export class SessionRemediation {
     let walked = 0
     for (const member of members) {
       if (member.state !== 'enabled') continue
-      if (this.cacheStillValid(member)) continue
+      const outcome = await this.remediateMember(member)
+      if (outcome.cacheHit) continue
       walked += 1
-      let repairedCount = 0
-      let untouchedCount = 0
-      try {
-        const summary = await this.remediateLineage(member)
-        repairedCount = summary.repaired
-        untouchedCount = summary.untouched
-      } catch (error) {
-        // Unexpected per-Member failure: log and leave the cache unrecorded.
-        this.ctx.logger.warn(`agent-team: legacy Session remediation for member '${member.handle}' did not complete: ${error instanceof Error ? error.message : String(error)}`)
-        continue
-      }
-      repaired += repairedCount
-      untouched += untouchedCount
-      await this.recordCompletion(member)
+      repaired += outcome.repaired
+      untouched += outcome.untouched
     }
     if (walked > 0) {
       this.ctx.logger.info(`agent-team: legacy Session remediation walked ${walked} member lineage(s): ${repaired} artifact(s) repaired, ${untouched} left untouched`)
+    }
+  }
+
+  /**
+   * Remediate one Member's lineage; the bounded in-place heal a restart
+   * performs after an activation refused on a session. `completed` with zero
+   * repairs is the deterministic nothing-to-do answer (a finished walk found
+   * nothing provably this plugin's, or the cache already covered the Member);
+   * `completed: false` means the walk itself failed and a later attempt
+   * should retry. Never throws.
+   */
+  async remediateMember(member: AgentTeamAgentMember): Promise<SessionRemediationOutcome> {
+    if (member.state !== 'enabled' || this.cacheStillValid(member)) return { repaired: 0, untouched: 0, completed: true, cacheHit: true }
+    try {
+      const summary = await this.remediateLineage(member)
+      await this.recordCompletion(member)
+      return { repaired: summary.repaired, untouched: summary.untouched, completed: true, cacheHit: false }
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: legacy Session remediation for member '${member.handle}' did not complete: ${error instanceof Error ? error.message : String(error)}`)
+      return { repaired: 0, untouched: 0, completed: false, cacheHit: false }
     }
   }
 

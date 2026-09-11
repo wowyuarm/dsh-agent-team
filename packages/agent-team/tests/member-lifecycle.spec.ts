@@ -21,6 +21,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
+import { SessionRemediation } from '../src/session-remediation.ts'
 import SessionTitle from '@deepseek-ai/dsh-session-title'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -448,7 +449,8 @@ describe('Agent Team Member lifecycle', () => {
     presets.orphaned.add(live.ctx)
     const orphaned = ctx.agentTeam.members().find(member => member.member.memberId === added.status.member.memberId)!
     expect(orphaned.presence).toBe('error')
-    expect(orphaned.diagnostic).toContain('preset composition was lost')
+    expect(orphaned.diagnostic).toMatchObject({ class: 'preset-composition' })
+    expect(orphaned.diagnostic?.detail).toContain('preset composition was lost')
 
     const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('recover'), workspaceId, memberId: added.status.member.memberId })
     expect(recovered.status.presence).toBe('available')
@@ -485,7 +487,8 @@ describe('Agent Team Member lifecycle', () => {
     const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', channelRefs: [] })
     expect(added.status.availability).toBe('unavailable')
     expect(added.status.presence).toBe('unavailable')
-    expect(added.status.diagnostic).toContain('failed to load')
+    expect(added.status.diagnostic).toMatchObject({ class: 'preset-composition' })
+    expect(added.status.diagnostic?.detail).toContain('failed to load')
     expect(ctx.agents.get(added.status.member.sessionId)).toBeUndefined()
 
     presets.failingMount = false
@@ -2210,7 +2213,7 @@ async function waitForArchived(archived: readonly SessionId[], ...sessionIds: re
       probed = true
       expect(status.availability).not.toBe('active')
       expect(status.presence).toBe('unavailable')
-      expect(status.diagnostic).toBe('context rollover in progress')
+      expect(status.diagnostic).toMatchObject({ class: 'rollover', detail: 'context rollover in progress' })
       windowProbe.resolve()
     })
     const renewedSessionId = await waitFor(() => {
@@ -3192,7 +3195,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== firstSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
     expect(committed.member.sessionId).not.toBe(firstSessionId)
     expect(ctx.agents.get(committed.member.sessionId)).toBeUndefined()
@@ -3257,7 +3260,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== firstSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
 
     // Host restart: the never-materialized Session is recreated from the
@@ -3320,7 +3323,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== firstSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
     disposeObserver()
     expect(injected).toBe(true)
@@ -3388,7 +3391,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== previousSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
     disposeObserver()
     expect(injected).toBe(true)
@@ -3479,7 +3482,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== previousSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
     disposeObserver()
     expect(injected).toBe(true)
@@ -3535,7 +3538,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== previousSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
 
     // The retired Session is refused by the candidate's own migration audit:
@@ -3583,7 +3586,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== previousSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
 
     const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
@@ -3598,10 +3601,80 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     await ctx.plugin(AgentTeam)
     const failed = await waitFor(() => {
       const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
-      return status !== undefined && status.availability === 'unavailable' && status.diagnostic?.includes('unreadable') ? status : undefined
+      return status !== undefined && status.availability === 'unavailable' && status.diagnostic?.class === 'session-unreadable' ? status : undefined
     })
     expect(failed.member.sessionId).not.toBe(previousSessionId)
     expect(ctx.agents.get(failed.member.sessionId)).toBeUndefined()
+  })
+
+  it('blocks activation with a session-refused diagnostic when the current binding is refused, and marks the refusal non-remediable after a heal attempt', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('ref-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('ref-add'), workspaceId, handle: 'refused', description: 'Refused binding', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    expect(added.status.availability).toBe('active')
+
+    // The Member's own current Session becomes deterministically refused.
+    // A Host restart re-activates from the persisted binding and must block
+    // with the structured refusal diagnostic — not a raw error string.
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    ctx.sessionPersistence.open = async (id, access, options) => {
+      if (id === sessionId) throw new SessionFormatUnsupportedError('cannot safely transform unclassified message source (test seam)')
+      return realOpen(id, access, options)
+    }
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    const blocked = await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'unavailable' ? status : undefined
+    })
+    expect(blocked.diagnostic).toMatchObject({ class: 'session-refused', sessionId, detail: 'cannot safely transform unclassified message source (test seam)' })
+
+    // The restart heal runs the bounded remediation for this Member; nothing
+    // is provably this plugin's to fix (the refusal reports no artifact
+    // location), so the diagnostic is marked non-remediable and activation
+    // is NOT retried — restart stops being offered as a fix.
+    const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('ref-recover'), workspaceId, memberId })
+    expect(recovered.status.availability).toBe('unavailable')
+    expect(recovered.status.diagnostic).toMatchObject({ class: 'session-refused', remediable: false })
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+  })
+
+  it('retries activation after the restart heal repairs a refused artifact', async () => {
+    const adapter = new ScriptedAdapter()
+    const { ctx, workspaceId, teamFiber: initialFiber } = await realHarness(adapter)
+    const channel = await ctx.agentTeam.createChannel({ requestId: requestId('heal-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('heal-add'), workspaceId, handle: 'healing', description: 'Heal retry', presetId: 'team-member', channelRefs: [channel.channel.channelRef] })
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+
+    const realOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    ctx.sessionPersistence.open = async (id, access, options) => {
+      if (id === sessionId) throw new SessionFormatUnsupportedError('cannot safely transform unclassified message source (test seam)')
+      return realOpen(id, access, options)
+    }
+    await initialFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    await waitFor(() => {
+      const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
+      return status !== undefined && status.availability === 'unavailable' ? status : undefined
+    })
+
+    // The heal repairs one artifact; activation is retried. The refusal is
+    // still in place in this fixture, so the retried activation fails again
+    // — but through the retry path: the refreshed diagnostic carries no
+    // non-remediable verdict.
+    const heal = vi.spyOn(SessionRemediation.prototype, 'remediateMember').mockResolvedValue({ repaired: 1, untouched: 0, completed: true, cacheHit: false })
+    const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('heal-recover'), workspaceId, memberId })
+    expect(heal).toHaveBeenCalledTimes(1)
+    heal.mockRestore()
+    expect(recovered.status.availability).toBe('unavailable')
+    expect(recovered.status.diagnostic).toMatchObject({ class: 'session-refused' })
+    expect(recovered.status.diagnostic?.remediable).toBeUndefined()
   })
 
   it('logs a warning with the member handle when activation fails', async () => {
@@ -3621,7 +3694,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     await ctx.plugin(AgentTeam)
     await waitFor(() => {
       const status = ctx.agentTeam.members().find(entry => entry.member.memberId === memberId)
-      return status !== undefined && status.availability === 'unavailable' && status.diagnostic?.includes('failed to load') ? status : undefined
+      return status !== undefined && status.availability === 'unavailable' && status.diagnostic?.class === 'preset-composition' ? status : undefined
     })
     const failures = warn.mock.calls.map(args => String(args[0])).filter(text => text.includes('activation failed'))
     expect(failures.length).toBeGreaterThan(0)
@@ -3965,7 +4038,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       const current = ctx.agentTeam.members().find(status => status.member.memberId === memberId)
       return current !== undefined && current.member.sessionId !== firstSessionId
         && current.availability === 'unavailable'
-        && current.diagnostic?.includes('failed to load') ? current : undefined
+        && current.diagnostic?.class === 'preset-composition' ? current : undefined
     })
     disposeObserver()
     expect(injected).toBe(true)

@@ -17,7 +17,7 @@ import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
-import { TeamPresenceDot } from './TeamPresenceDot.tsx'
+import { diagnosticText, TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMessage } from './TeamMessage.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf, taskStatusDot } from './team-formatters.ts'
@@ -692,7 +692,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       </header>
       {risks.length > 0 && <section className={threadCss.riskSection} aria-label={t('runtimeRisk')}>
         <h2>{t('runtimeRisk')}</h2>
-        {risks.map(({ claim, status }) => <p className={threadCss.riskRow} key={claim.claimRef}><TeamPresenceDot status={status} t={t} /><span>{t('runtimeRiskDetail', { member: status.member.handle, diagnostic: status.diagnostic ?? t('statusError') })} · {claim.direction}</span></p>)}
+        {risks.map(({ claim, status }) => <p className={threadCss.riskRow} key={claim.claimRef}><TeamPresenceDot status={status} t={t} /><span>{t('runtimeRiskDetail', { member: status.member.handle, diagnostic: diagnosticText(status) || t('statusError') })} · {claim.direction}</span></p>)}
       </section>}
       {task !== undefined && thread !== undefined && (() => {
         // Recomputed here so the confirm list never shows stale rows.
