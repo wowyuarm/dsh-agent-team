@@ -2,9 +2,9 @@
 
 ## Status
 
-active — 统一工作项由原 `session-reliability` 与 `session-search-and-travel` 合并而来。0.1.10 的存量修复与 replay 硬化已经发布并完成验证；当前先完成 Session 读取与回返规则的重新设计。Session search 与搜索命中关联的历史 rollover 是同一方案的后续扩展，不与基础设计并行实施。
+active — 统一工作项由原 `session-reliability` 与 `session-search-and-travel` 合并而来。0.1.10 的存量修复与 replay 硬化已经发布并完成验证（issues 01/02 complete）。读取 seam 与回返规则的重新设计已于 2026-09-11 讨论收敛，决策快照在 [`spec.md`](spec.md)，实施 ticket 为 03→04→05，frontier 是 03。Session search 与搜索命中关联的历史 rollover 是同一方案的后续扩展，不与基础设计并行实施。
 
-last-checked: 2026-09-14（合并两个工作项并锁定新方案范围）。
+last-checked: 2026-09-11（spec 写入，tickets 03–05 建立）。
 
 ## Goal
 
@@ -79,14 +79,13 @@ Detailed evidence is retained in `materials/`.
 
 ## Current frontier
 
-Design before implementation:
+设计已收敛（见 [`spec.md`](spec.md)），实施完成（2026-09-11）：
 
-1. Specify the smallest stored-Session inspection result and typed failure categories using Harness public error classes.
-2. Inventory the current consumers (`activateMember`, timeline, checkpoint seed resolution, handoff reconstruction, carried-input replay, token measurement) and assign each the policy in the table above.
-3. Define one anchor-evaluation result shared by timeline observation and rollover revalidation without moving Agent lifecycle into the reader.
-4. Prove the seam with existing fixtures before changing any Client status or implementing search.
+1. 03 — stored Session 读取 seam 与五类 typed failure（complete，提交 `19cf3e8`）。
+2. 04 — 调用方接入 seam；timeline 截断显式标记（complete，提交 `cc7b35f`）。
+3. 05 — 成员重启修复可修的拒绝；diagnostic 结构化与 Client 动作分流（in-progress：代码与单测完成；浏览器验收待 operator 环境执行——本沙箱于 base 提交即无法运行 test:browser，首轮导航 `net::ERR_ABORTED`，三态对照已排除本改动回归）。
 
-After these are confirmed, write narrow implementation tickets. The later search work reuses the same read/anchor contracts and adds Member-owned-history authorization, inherited-prefix deduplication and the two recall tools.
+Search 扩展（`context_search`/`context_read`、owned-history 授权、inherited 去重）在 seam 与锚点契约已落地的基础上，待另立 ticket 启动；不与本轮并行。
 
 ## Completion conditions
 

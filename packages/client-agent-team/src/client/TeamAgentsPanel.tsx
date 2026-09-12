@@ -12,6 +12,7 @@ import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
 import { moveSidebarItem, useSidebarOrder } from './sidebar-order.ts'
 import { useSidebarSectionOpen, setSidebarSectionOpen } from './sidebar-sections.ts'
 import { mintRequestId } from './requests.ts'
+import { diagnosticText, restartOffered } from './TeamPresenceDot.tsx'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { AgentEditorDialog, ModelPickerField, sameModel } from './TeamMemberEditor.tsx'
@@ -161,7 +162,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         setModel(undefined)
         setFormOpen(false)
         if (result.value.status.presence === 'unavailable') {
-          setError(result.value.status.diagnostic ?? t('statusUnavailable'))
+          setError(diagnosticText(result.value.status) || t('statusUnavailable'))
         } else {
           setRetryRequest(undefined)
         }
@@ -291,7 +292,12 @@ function AgentRow({ status, current, updateMember, recoverMember, archiveMember,
         return
       }
       if (result.value.status.availability === 'unavailable') {
-        setRowAlert(t('restartStillUnavailable', { diagnostic: result.value.status.diagnostic ?? t('statusUnavailable') }))
+        const diagnostic = result.value.status.diagnostic
+        if (diagnostic?.class === 'session-refused' && diagnostic.remediable === false) {
+          setRowAlert(t('restartRefusedNoRestart', { detail: diagnosticText(result.value.status) }))
+          return
+        }
+        setRowAlert(t('restartStillUnavailable', { diagnostic: diagnosticText(result.value.status) || t('statusUnavailable') }))
         return
       }
       setRowAlert(undefined)
@@ -332,7 +338,7 @@ function AgentRow({ status, current, updateMember, recoverMember, archiveMember,
             items={[
               { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
               ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
-              ...(status.availability === 'unavailable' ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
+              ...(status.availability === 'unavailable' && restartOffered(status) ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
               { id: 'archive', label: t('archiveAgent'), icon: <IconArchiveOutline20 size={16} />, danger: true },
             ]}
             onSelect={(id) => {

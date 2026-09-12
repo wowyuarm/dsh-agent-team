@@ -1,7 +1,7 @@
 import { vi } from 'vitest'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
+import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
 import { SlotTestRuntime, stubSettingsScope } from '@deepseek-ai/dsh-client-test-runtime'
@@ -68,7 +68,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     loadOlder: vi.fn(async () => {}),
     send: vi.fn(async () => {}),
   } as never)
-  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: string) => ({
+  const status = (memberId: string, workspaceId: string, handle: string, presence: 'available' | 'working' | 'error' | 'unavailable', diagnostic?: AgentTeamMemberDiagnostic) => ({
     member: {
       memberId, workspaceId, handle, description: `${handle} description`,
       presetId: 'team-member', state: 'enabled', sessionId: `session:${memberId}`,
@@ -80,8 +80,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   let memberRows = [
     status('member:builder', 'w1', 'builder', 'available'),
     status('member:worker', 'w1', 'worker', 'working'),
-    status('member:failed', 'w1', 'failed', 'error', 'model failed'),
-    status('member:offline', 'w1', 'offline', 'unavailable', 'preset missing'),
+    status('member:failed', 'w1', 'failed', 'error', { class: 'runtime', detail: 'model failed' }),
+    status('member:offline', 'w1', 'offline', 'unavailable', { class: 'preset-composition', detail: 'preset missing' }),
     status('member:builder-beta', 'w2', 'builder', 'available'),
   ]
   const members = vi.fn(async ({ workspaceId }: { workspaceId: string }) => ({ ok: true, value: memberRows.filter(entry => entry.member.workspaceId === workspaceId) }))

@@ -94,6 +94,10 @@ Agent Team ledger 中一次不可变的原子业务提交。每个 Operation 有
 
 Agent Member 的进程内可用性投影，不是 ledger 事实。M2 UI 使用 available（live idle）、working（Agent loop running）、error（当前 loop/tool failure，保留到下一次 loop 启动）与 unavailable（无可用 AgentHandle 或 lifecycle/setup/resume 阻止调用，也包括 context rollover 的短暂窗口——ledger 绑定已迁移、新 Session 尚未就绪）；列表以状态点呈现，和 Claim 状态分离。
 
+## Member Diagnostic（成员诊断）
+
+非正常 presence/availability 行背后的结构化原因，绝不持久化：`session-refused`（激活所需 Session 的确定性格式拒绝；可携带被拒 artifact 路径，以及一次修复尝试是否证明存在可修内容）、`session-unreadable`（missing、corrupt、io 或 unknown 的 Session 读取失败）、`preset-composition`（preset 装载/校验失败，通常是安装与运行时分裂）、`rollover`（换窗的短暂提交窗口）、`runtime`（运行中的 loop 或 compaction 失败）、`activation`（未分类的激活失败）。`class` 决定哪种恢复动作真正有效：不可修复的拒绝与换窗窗口不提供重启，其余均可通过重启尝试恢复。
+
 ## Context Generation（上下文代际）
 
 一个 Member Session 的两个上下文边界之间的工作上下文。全新代际除 handoff 投递外从零开始；checkpoint 回返的代际以其来源的精确 completed-turn 前缀作 seed。ledger 记录当前绑定（任一时刻每个 Member 恰好一个）以及最近一次 renewal/rollover 的上一 Session；上下文历史本身保存在各 Session 日志中。所有代际都保留 Member 身份、模型、私有记忆、skills、Claims 和 Attention。

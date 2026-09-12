@@ -35,7 +35,9 @@ async function installLocalBundle(): Promise<void> {
     recursive: true,
     filter: source => {
       const normalized = source.replaceAll('\\', '/')
-      return !normalized.includes('/node_modules') && !normalized.includes('/src') && !normalized.includes('/artifacts')
+      // .hoplite is agent-workspace state (runtime FIFOs kill fs.cp), never
+      // part of the bundle layout being staged.
+      return !normalized.includes('/node_modules') && !normalized.includes('/src') && !normalized.includes('/artifacts') && !normalized.includes('/.hoplite')
     },
   })
   // The routed ledger backend in its installed position. A real `dsh plugin

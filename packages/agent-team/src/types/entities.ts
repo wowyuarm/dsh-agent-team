@@ -129,17 +129,48 @@ export interface AgentTeamCapabilityWarning {
   readonly knownNames: readonly string[]
 }
 
-/** Host projection combining durable intent with process-local availability. */
+/**
+ * Host projection combining durable intent with process-local availability.
+ * The optional diagnostic is structured: `class` routes which action actually
+ * helps (restart heals, restart is useless, transient), `detail` is the
+ * human-readable reason, and a refused session carries its artifact location
+ * plus whether a repair attempt proved anything remediable.
+ */
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
   readonly availability: 'active' | 'suspended' | 'inactive' | 'archived' | 'unavailable'
   readonly presence: 'available' | 'working' | 'error' | 'unavailable'
-  readonly diagnostic?: string
+  readonly diagnostic?: AgentTeamMemberDiagnostic
   /**
    * Runtime-derived, activation-scoped capability warnings (see
    * AgentTeamCapabilityWarning); empty while capabilities resolve cleanly.
    */
   readonly capabilityWarnings?: readonly AgentTeamCapabilityWarning[] | undefined
+}
+
+/** Which action actually helps an unavailable or erroring Member; the diagnostic's policy axis. */
+export type AgentTeamMemberDiagnosticClass =
+  | 'session-refused' // deterministic format refusal of a Session the activation needed
+  | 'session-unreadable' // missing, corrupt, io, or unknown Session read failure
+  | 'preset-composition' // preset mount/validation failure (often an install/runtime split)
+  | 'rollover' // transient context-rollover window
+  | 'runtime' // live runtime or compaction failure
+  | 'activation' // unclassified activation failure
+
+/** One Member failure's structured reason; rendered, never persisted. */
+export interface AgentTeamMemberDiagnostic {
+  readonly class: AgentTeamMemberDiagnosticClass
+  readonly detail: string
+  /** The refused artifact's location, when a format refusal reported one. */
+  readonly location?: { readonly kind: string; readonly path: string }
+  /** The Session the failure is about, when it is about one. */
+  readonly sessionId?: SessionId
+  /**
+   * `session-refused` only: `false` once a repair attempt ran to completion
+   * and proved nothing remediable — restarting cannot help and the surface
+   * must stop offering it.
+   */
+  readonly remediable?: boolean
 }
 
 /** Browser-safe Member identity with Host-only paths removed. */

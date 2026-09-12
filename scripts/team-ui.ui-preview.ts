@@ -14,7 +14,7 @@ beforeAll(async () => {
   await mkdir(scope, { recursive: true })
   await cp(TEAM_ROOT, `${scope}/dsh-agent-team`, {
     recursive: true,
-    filter: source => !source.includes('/node_modules') && !source.includes('/src') && !source.includes('/artifacts'),
+    filter: source => !source.includes('/node_modules') && !source.includes('/src') && !source.includes('/artifacts') && !source.includes('/.hoplite'),
   })
   scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME })
   const workspacePath = join(scaffold.workspaceCwd, 'team-ui-preview')

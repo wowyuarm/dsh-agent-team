@@ -138,13 +138,19 @@ const contextTimeline = defineTool({
         reason: { type: 'string' },
         sourceSessionId: { type: 'string' },
       } } },
+      incompleteFrom: { type: 'object', additionalProperties: false, properties: {
+        sessionId: { type: 'string', required: true },
+        reason: { type: 'string', required: true },
+      } },
     } },
     // The item list is the whole decision surface: without each anchor's
     // ref, label, source, size estimates, affected Threads, and
     // restorable/reason verdict, the model cannot pick a `checkpointRef` for
     // `context_rollover` — the summary line alone left the tool unusable for
     // seeded returns. The Host bounds items (default 12, at most 24), so this
-    // list cannot grow unbounded.
+    // list cannot grow unbounded. `incompleteFrom` states where and why the
+    // lineage walk stopped early, so history read up to that ancestor is
+    // known to be a truncation, not everything that exists.
     render: (_args, value) => {
       const lines = [`Context timeline: ${value.usageTokens} tokens used (handoff at ${value.handoffAt}, hard limit ${value.hardLimit}). ${value.items.length} item(s):`]
       for (const item of value.items) {
@@ -154,6 +160,9 @@ const contextTimeline = defineTool({
           ? `restorable — ref: ${item.checkpointRef}`
           : `not restorable — ${item.reason ?? 'no reason given'}`
         lines.push(`- ${item.name} [source: ${item.source}] (${size}; ${threads}) — ${restorable}`)
+      }
+      if (value.incompleteFrom !== undefined) {
+        lines.push(`History incomplete: the lineage walk stopped at Session ${value.incompleteFrom.sessionId} (${value.incompleteFrom.reason}); ancestors before it could not be read and are not reflected above.`)
       }
       return [{ type: 'text', text: lines.join('\n') }]
     },
@@ -167,7 +176,13 @@ const contextTimeline = defineTool({
     const result = await host.contextTimelineForAgent(agent, { memberId: current.memberId, ...(limit === undefined ? {} : { limit }) })
     // The Host result is deeply immutable; the tool output contract carries
     // plain arrays, so re-shape without any semantic change.
-    return { usageTokens: result.usageTokens, hardLimit: result.hardLimit, handoffAt: result.handoffAt, items: result.items.map(item => ({ ...item, affectedThreads: [...item.affectedThreads] })) }
+    return {
+      usageTokens: result.usageTokens,
+      hardLimit: result.hardLimit,
+      handoffAt: result.handoffAt,
+      items: result.items.map(item => ({ ...item, affectedThreads: [...item.affectedThreads] })),
+      ...(result.incompleteFrom === undefined ? {} : { incompleteFrom: result.incompleteFrom }),
+    }
   },
 })
 

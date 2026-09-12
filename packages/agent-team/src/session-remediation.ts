@@ -96,11 +96,18 @@ export interface AgentTeamSessionRemediationRecord {
   readonly verifiedAt: number
 }
 
-/** Per-Session outcome of one remediation attempt, with the lineage edge to walk next. */
+/**
+ * Per-Session outcome of one remediation attempt, with the lineage edge to walk
+ * next. `left-untouched` is the settled answer — nothing in this Session is
+ * this plugin's to repair. `repair-failed` records a repair this plugin
+ * identified as its own and did not complete, so the walk is not evidence that
+ * a later attempt — or the operator's restart — would fail identically.
+ */
 type SessionOutcome =
   | { readonly status: 'repaired'; readonly parentSession: string | undefined }
   | { readonly status: 'already-readable'; readonly parentSession: string | undefined }
   | { readonly status: 'left-untouched'; readonly parentSession: string | undefined; readonly reason: string }
+  | { readonly status: 'repair-failed'; readonly parentSession: string | undefined; readonly reason: string }
 
 /** JSON object discipline for physical row handling; rows are never typed by the domain. */
 interface PhysicalRow {
@@ -297,6 +304,21 @@ function physicalParentSession(rows: readonly PhysicalRow[]): string | undefined
  * partial walk logs and leaves the completion cache unrecorded, so the next
  * start retries exactly the Members that need it.
  */
+export interface SessionRemediationOutcome {
+  /** How many lineage artifacts were repaired. */
+  readonly repaired: number
+  /** How many lineage artifacts were examined and deliberately left untouched. */
+  readonly untouched: number
+  /**
+   * False when the walk failed outright or did not complete a repair it
+   * identified as its own; the cache stays unrecorded so a later pass retries
+   * exactly this Member.
+   */
+  readonly completed: boolean
+  /** True when nothing was walked: the Member is not enabled, or its completion cache still covers it. */
+  readonly cacheHit: boolean
+}
+
 export class SessionRemediation {
   private readonly table: KvTable<string, AgentTeamSessionRemediationRecord> | undefined
 
@@ -330,25 +352,38 @@ export class SessionRemediation {
     let walked = 0
     for (const member of members) {
       if (member.state !== 'enabled') continue
-      if (this.cacheStillValid(member)) continue
+      const outcome = await this.remediateMember(member)
+      if (outcome.cacheHit) continue
       walked += 1
-      let repairedCount = 0
-      let untouchedCount = 0
-      try {
-        const summary = await this.remediateLineage(member)
-        repairedCount = summary.repaired
-        untouchedCount = summary.untouched
-      } catch (error) {
-        // Unexpected per-Member failure: log and leave the cache unrecorded.
-        this.ctx.logger.warn(`agent-team: legacy Session remediation for member '${member.handle}' did not complete: ${error instanceof Error ? error.message : String(error)}`)
-        continue
-      }
-      repaired += repairedCount
-      untouched += untouchedCount
-      await this.recordCompletion(member)
+      repaired += outcome.repaired
+      untouched += outcome.untouched
     }
     if (walked > 0) {
       this.ctx.logger.info(`agent-team: legacy Session remediation walked ${walked} member lineage(s): ${repaired} artifact(s) repaired, ${untouched} left untouched`)
+    }
+  }
+
+  /**
+   * Remediate one Member's lineage; the bounded in-place heal a restart
+   * performs after an activation refused on a session. `completed` with zero
+   * repairs is the deterministic nothing-to-do answer (a finished walk found
+   * nothing provably this plugin's, or the cache already covered the Member);
+   * `completed: false` means the walk itself failed and a later attempt
+   * should retry. Never throws.
+   */
+  async remediateMember(member: AgentTeamAgentMember): Promise<SessionRemediationOutcome> {
+    if (member.state !== 'enabled' || this.cacheStillValid(member)) return { repaired: 0, untouched: 0, completed: true, cacheHit: true }
+    try {
+      const summary = await this.remediateLineage(member)
+      // A walk that failed a repair is not evidence of a clean lineage: it is
+      // left uncached so the next start retries exactly this Member, and it
+      // reports `completed: false` so no caller reads it as the deterministic
+      // nothing-to-do answer.
+      if (summary.failed === 0) await this.recordCompletion(member)
+      return { repaired: summary.repaired, untouched: summary.untouched, completed: summary.failed === 0, cacheHit: false }
+    } catch (error) {
+      this.ctx.logger.warn(`agent-team: legacy Session remediation for member '${member.handle}' did not complete: ${error instanceof Error ? error.message : String(error)}`)
+      return { repaired: 0, untouched: 0, completed: false, cacheHit: false }
     }
   }
 
@@ -383,9 +418,10 @@ export class SessionRemediation {
    * the storage layer may still append to is a write-path risk this pass
    * does not take.
    */
-  private async remediateLineage(member: AgentTeamAgentMember): Promise<{ readonly repaired: number; readonly untouched: number }> {
+  private async remediateLineage(member: AgentTeamAgentMember): Promise<{ readonly repaired: number; readonly untouched: number; readonly failed: number }> {
     let repaired = 0
     let untouched = 0
+    let failed = 0
     const seen = new Set<string>()
     let sessionId: SessionId | undefined = member.sessionId
     for (let depth = 0; sessionId !== undefined && !seen.has(sessionId) && depth < MAX_LINEAGE_DEPTH; depth += 1) {
@@ -393,9 +429,10 @@ export class SessionRemediation {
       const outcome = await this.remediateOne(sessionId, member)
       if (outcome.status === 'repaired') repaired += 1
       else if (outcome.status === 'left-untouched') untouched += 1
+      else if (outcome.status === 'repair-failed') failed += 1
       sessionId = outcome.parentSession === undefined ? undefined : (outcome.parentSession as SessionId)
     }
-    return { repaired, untouched }
+    return { repaired, untouched, failed }
   }
 
   /** Remediate one lineage Session: verify readability, and repair when the refusal is this plugin's legacy source shape. */
@@ -432,7 +469,7 @@ export class SessionRemediation {
       rows = readPhysicalRows(await readFile(path))
     } catch (readError) {
       this.ctx.logger.warn(`agent-team: could not decode the stored artifact of Session '${sessionId}' (${basename(path)}): ${readError instanceof Error ? readError.message : String(readError)}`)
-      return { status: 'left-untouched', parentSession: undefined, reason: 'artifact undecodable' }
+      return { status: 'repair-failed', parentSession: undefined, reason: 'artifact undecodable' }
     }
     const parentSession = physicalParentSession(rows)
     if (!rows.some(row => containsLegacySource(row))) {
@@ -445,7 +482,7 @@ export class SessionRemediation {
       artifact = migrateForProof(admitted.map(row => structuredClone(row) as PhysicalRow))
     } catch (proofError) {
       this.ctx.logger.warn(`agent-team: Session '${sessionId}' of member '${member.handle}' still refuses after the legacy source rewrite (${proofError instanceof Error ? proofError.message : String(proofError)}); leaving it untouched`)
-      return { status: 'left-untouched', parentSession, reason: 'residual refusal after rewrite' }
+      return { status: 'repair-failed', parentSession, reason: 'residual refusal after rewrite' }
     }
     try {
       const published = await this.publishSibling(path, encodeCurrentArtifact(artifact))
@@ -455,7 +492,7 @@ export class SessionRemediation {
       }
     } catch (publishError) {
       this.ctx.logger.warn(`agent-team: could not publish the remediated sibling for Session '${sessionId}' (${basename(path)}): ${publishError instanceof Error ? publishError.message : String(publishError)}`)
-      return { status: 'left-untouched', parentSession, reason: 'publish failed' }
+      return { status: 'repair-failed', parentSession, reason: 'publish failed' }
     }
     // Success is proven by the storage layer itself, not by our own writer.
     try {
@@ -467,7 +504,7 @@ export class SessionRemediation {
       }
     } catch (verifyError) {
       this.ctx.logger.warn(`agent-team: the remediated sibling for Session '${sessionId}' was published but still refuses: ${verifyError instanceof Error ? verifyError.message : String(verifyError)}`)
-      return { status: 'left-untouched', parentSession, reason: 'sibling refused after publish' }
+      return { status: 'repair-failed', parentSession, reason: 'sibling refused after publish' }
     }
     this.ctx.logger.info(`agent-team: repaired legacy source kinds in Session '${sessionId}' of member '${member.handle}' by publishing a current-format sibling; the original artifact is untouched`)
     return { status: 'repaired', parentSession }

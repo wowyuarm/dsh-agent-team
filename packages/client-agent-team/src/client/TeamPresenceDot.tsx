@@ -9,7 +9,26 @@ export function presenceLabel(status: AgentTeamClientMemberStatus, t: TeamSideba
   const label = status.presence === 'available' ? t('statusAvailable')
     : status.presence === 'working' ? t('statusWorking')
       : status.presence === 'error' ? t('statusError') : t('statusUnavailable')
-  return status.diagnostic === undefined ? label : `${label}: ${status.diagnostic}`
+  return status.diagnostic === undefined ? label : `${label}: ${diagnosticText(status)}`
+}
+
+/** One line of human-readable diagnostic text: the reason, plus the refused artifact path when one was reported. */
+export function diagnosticText(status: AgentTeamClientMemberStatus): string {
+  const diagnostic = status.diagnostic
+  if (diagnostic === undefined) return ''
+  return diagnostic.location === undefined ? diagnostic.detail : `${diagnostic.detail} (${diagnostic.location.path})`
+}
+
+/**
+ * Whether the restart action can help an unavailable Member: it heals
+ * transient and repairable failures, but not a transient rollover window
+ * (which resolves on its own) or a refusal already proven non-remediable.
+ */
+export function restartOffered(status: AgentTeamClientMemberStatus): boolean {
+  const diagnostic = status.diagnostic
+  if (diagnostic === undefined) return true
+  if (diagnostic.class === 'rollover') return false
+  return !(diagnostic.class === 'session-refused' && diagnostic.remediable === false)
 }
 
 /** Shared presence → indicator mapping for dots and avatar badges. */
