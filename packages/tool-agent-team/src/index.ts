@@ -607,7 +607,7 @@ const teamView = defineTool({
         threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, revision: { type: 'number', required: true }, messageCount: { type: 'number', required: true }, subject: { type: 'string', required: true },
         taskRef: { type: 'string' }, status: { type: 'string' }, taskNumber: { type: 'number' }, lastActivityAt: { type: 'string' },
       } } },
-      tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number', required: true } } } },
+      tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, channelRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number' } } } },
       cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true }, page: { type: 'string' },
     } },
     // Address book, newest Thread first: labelled sections, one bounded
@@ -659,8 +659,14 @@ const teamView = defineTool({
           subject: boundedSubject(item.message.body), lastActivityAt: item.lastActivityAt,
           ...(task === undefined ? {} : { taskRef: task.taskRef, status: task.status, ...(item.taskNumber === undefined ? {} : { taskNumber: item.taskNumber }) }) }
       }),
-      tasks: view.tasks.map(task => ({ taskRef: task.taskRef, threadRef: task.threadRef, channelRef: task.channelRef,
-        status: task.status, revision: view.threads.find(thread => thread.threadRef === task.threadRef)?.revision ?? 0 })),
+      // A Task's revision is its Thread's; it is omitted rather than reported as
+      // `0` when the Task's Thread is outside this directory page's scope. A
+      // fabricated revision would read as "this Thread has never been written".
+      tasks: view.tasks.map(task => {
+        const revision = view.threads.find(thread => thread.threadRef === task.threadRef)?.revision
+        return { taskRef: task.taskRef, threadRef: task.threadRef, channelRef: task.channelRef, status: task.status,
+          ...(revision === undefined ? {} : { revision }) }
+      }),
       cursor: view.cursor, hasMore: view.hasMore,
       ...(args.cursor === undefined ? {} : { page: 'threads' as const }),
     }
