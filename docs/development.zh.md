@@ -185,6 +185,20 @@ dsh web
 
 本 bundle 的最低兼容版本是 DSH `0.1.5-rc.1`。DSH 的 JSONL Session persistence 会自行迁移已发布的旧格式（v0/v1/v2 → V3）；旧格式 Session 数据无需手动处置。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
+### 重写与推送历史
+
+本地 ref 可能是 `master` 上不存在的内容的唯一副本：`backup-pre-*` 分支与钉住它们的本地-only tag 就是这样一族，删除不可逆。反方向同样不可逆——本仓库是公开的，push 出去的历史收不回来。
+
+重写历史之前——对已提交内容 `reset --hard`、`rebase`，或会丢弃独占内容的 amend——先把当前 tip 存成 `backup-pre-<说明>-<YYYYMMDD>` 分支；若这一族 ref 本身要被删除，则先 `git bundle` 成单个文件。没有备份时，被弃 commit 的唯一锚点只剩 `git reflog`，而 `git gc` 会清掉不可达对象；2026-09-12 那次 0.1.11 打磨轮的重写没有建 backup ref，被替换的 commit 只在 reflog 里。
+
+push 之前对确切 refspec 跑一次 dry-run，并要求输出里只有你打算发布的 ref：
+
+```sh
+git push --dry-run origin master    # 发布版再加版本 tag
+```
+
+出现第三个 ref，就说明有本地-only ref 会进公开仓库——停下先处理。`git push --all` 与 `git push --tags` 会绕过这道闸门，永远不是发布命令。
+
 ## Team ledger 存储路由
 
 `agent_team` 域经根 `cordis.patch.yml` 的公开组合路由到 SQLite 后端：插入一行 `@deepseek-ai/dsh-storage-sqlite`（介质为 `$DSH_HOME/storages/agent_team.sqlite`），并以顶层覆写行把 `storage-domain` 配置为 `backend: json` 加 `routes: { agent_team: sqlite }`。其余域保持 JSON 默认路由。

@@ -179,6 +179,20 @@ Stable and development profiles share `$DSH_HOME/storages/`. If a stable old ver
 
 The minimum compatible DSH version is `0.1.5-rc.1`. DSH's JSONL Session persistence migrates released historical formats itself (v0/v1/v2 → V3); old-format Session data needs no manual disposal. Do not add Team ledger or Member Session migration, old-format reads, or silent fallbacks.
 
+### Rewriting and pushing history
+
+Local refs can be the only copy of what `master` does not contain: the `backup-pre-*` branches and the local-only tags that pin abandoned pre-rewrite commits are one such family, and deleting them is irreversible. Pushing them is irreversible in the other direction — this repository is public, and a published commit cannot be withdrawn.
+
+Before rewriting history — `reset --hard` over committed work, `rebase`, or an amend that abandons commits with unique content — park the current tip in a `backup-pre-<what>-<YYYYMMDD>` branch, or in a `git bundle` file when the refs themselves are about to be deleted. Without one, `git reflog` is the only anchor for the abandoned commits and `git gc` prunes unreachable objects; the 2026-09-12 rewrite of the 0.1.11 round created no backup ref, so only the reflog held the replaced commits.
+
+Before pushing, dry-run the exact refspec and require the output to name only the refs you intend to publish:
+
+```sh
+git push --dry-run origin master    # add the version tag when the push is a release
+```
+
+A third ref means a local-only ref would go public — stop and resolve it first. `git push --all` and `git push --tags` bypass this gate and are never the release command.
+
 ## Team ledger storage routing
 
 The `agent_team` domain is routed to SQLite through the public composition in `cordis.patch.yml`, using `$DSH_HOME/storages/agent_team.sqlite`; other domains retain the JSON default. The override must be a top-level row, not an insert item, and the SQLite package is a regular dependency. Routing creates a new empty SQLite medium; an old `agent_team.json` is not read or migrated. `preview` and `preview:ui` use a minimal JSON overlay.
