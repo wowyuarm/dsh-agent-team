@@ -1563,6 +1563,29 @@ export class AgentTeamLedger {
     return this.state.byOperation.get(operationId)
   }
 
+  /**
+   * Claim releases are thread-visible facts: an open Channel page and every
+   * affected Thread page must refetch alongside the workspace-wide change. Each
+   * released activity contributes its own Thread scope plus the Channel that
+   * owns its Task, deduplicated against the caller's initial scopes — which is
+   * why the caller passes them in rather than the helper inventing them.
+   */
+  private withReleasedActivityScopes(
+    scopes: AgentTeamChangeScope[],
+    tasks: readonly AgentTeamTask[],
+    activities: readonly AgentTeamClaimsReleasedActivity[],
+  ): AgentTeamChangeScope[] {
+    const channelByTask = new Map(tasks.map(task => [task.taskRef, task.channelRef]))
+    for (const activity of activities) {
+      scopes.push({ kind: 'thread', threadRef: activity.threadRef })
+      const channelRef = channelByTask.get(activity.taskRef)
+      if (channelRef !== undefined && !scopes.some(scope => scope.kind === 'channel' && scope.channelRef === channelRef)) {
+        scopes.push({ kind: 'channel', channelRef })
+      }
+    }
+    return scopes
+  }
+
   /** Scopes whose projections one committed operation invalidates; undefined wakes every waiter. */
   changeScopesOf(operation: AgentTeamOperation): readonly AgentTeamChangeScope[] | undefined {
     switch (operation.kind) {
@@ -1583,37 +1606,23 @@ export class AgentTeamLedger {
       case 'team/member-updated':
       case 'team/member-removed':
         return [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
-      case 'team/member-archived': {
-        // Claim releases are thread-visible facts: open Channel and Thread
-        // pages refetch alongside the workspace-wide roster change.
-        const channelByTask = new Map(operation.data.tasks.map(task => [task.taskRef, task.channelRef]))
-        const scopes: AgentTeamChangeScope[] = [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }]
-        for (const activity of operation.data.activities) {
-          scopes.push({ kind: 'thread', threadRef: activity.threadRef })
-          const channelRef = channelByTask.get(activity.taskRef)
-          if (channelRef !== undefined && !scopes.some(scope => scope.kind === 'channel' && scope.channelRef === channelRef)) {
-            scopes.push({ kind: 'channel', channelRef })
-          }
-        }
-        return scopes
-      }
+      case 'team/member-archived':
+        return this.withReleasedActivityScopes(
+          [{ kind: 'workspace', workspaceId: operation.data.member.workspaceId }],
+          operation.data.tasks,
+          operation.data.activities,
+        )
       case 'team/channel-member-added':
         return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'channel', channelRef: operation.data.channelRef }]
-      case 'team/channel-member-removed': {
-        const channelByTask = new Map(operation.data.tasks.map(task => [task.taskRef, task.channelRef]))
-        const scopes: AgentTeamChangeScope[] = [
-          { kind: 'workspace', workspaceId: operation.data.workspaceId },
-          { kind: 'channel', channelRef: operation.data.channelRef },
-        ]
-        for (const activity of operation.data.activities) {
-          scopes.push({ kind: 'thread', threadRef: activity.threadRef })
-          const channelRef = channelByTask.get(activity.taskRef)
-          if (channelRef !== undefined && !scopes.some(scope => scope.kind === 'channel' && scope.channelRef === channelRef)) {
-            scopes.push({ kind: 'channel', channelRef })
-          }
-        }
-        return scopes
-      }
+      case 'team/channel-member-removed':
+        return this.withReleasedActivityScopes(
+          [
+            { kind: 'workspace', workspaceId: operation.data.workspaceId },
+            { kind: 'channel', channelRef: operation.data.channelRef },
+          ],
+          operation.data.tasks,
+          operation.data.activities,
+        )
       case 'team/channel-archived': {
         const scopes: AgentTeamChangeScope[] = [
           { kind: 'workspace', workspaceId: operation.data.workspaceId },
@@ -1877,7 +1886,7 @@ export class AgentTeamLedger {
         || operation.data.channel.name !== prior.name || operation.data.channel.description !== prior.description
         || operation.data.channel.createdAtSequence !== prior.createdAtSequence) throw new Error('invalid Channel archival')
       const threadRefs = new Set([...projection.threads.keys()].filter(threadRef => this.channelRefForThreadFrom(projection, threadRef) === prior.channelRef))
-      this.validateChannelArchivalCleanup(operation.data, projection, threadRefs, operation.sequence, refs)
+      this.validateReleaseCleanup(operation.data, projection, undefined, threadRefs, operation.sequence, refs)
       return
     }
     if (operation.kind === 'team/member-removed') {
@@ -2154,83 +2163,39 @@ export class AgentTeamLedger {
     }
   }
 
+  /**
+   * Replay validation of one departure's release snapshot against the
+   * projection it was derived from. `memberId` scopes everything to a single
+   * departing Member; `undefined` validates every owner, which is what
+   * archiving a whole Channel releases. The two scopes differ in exactly four
+   * ways, all of them visible here rather than spread over two copies:
+   *
+   * 1. released Claims are owner-filtered for a Member, unfiltered for a Channel;
+   * 2. Activities group per (owner, Thread) with owners sorted, which for a
+   *    single departing Member collapses to one Activity per Thread — the shape
+   *    the commit path writes;
+   * 3. the inbox cleanup covers the departing Member's Attention and markers, or
+   *    every Member's on the archived Channel's Threads;
+   * 4. the failure message names which of the two paths lost its cleanup.
+   */
   private validateReleaseCleanup(
-    data: AgentTeamChannelMemberRemovedOperation['data'] | AgentTeamMemberRemovedOperation['data'] | AgentTeamMemberArchivedOperation['data'],
+    data: AgentTeamChannelMemberRemovedOperation['data'] | AgentTeamMemberRemovedOperation['data']
+      | AgentTeamMemberArchivedOperation['data'] | AgentTeamChannelArchivedOperation['data'],
     projection: Projection,
-    memberId: AgentTeamMemberId,
+    memberId: AgentTeamMemberId | undefined,
     threadRefs: ReadonlySet<AgentTeamThreadRef>,
     sequence: number,
     refs: Set<string>,
   ): void {
     const releasedClaims = [...projection.claims.values()]
-      .filter(claim => claim.owner === memberId && claim.state === 'active' && threadRefs.has(claim.threadRef))
+      .filter(claim => (memberId === undefined || claim.owner === memberId) && claim.state === 'active' && threadRefs.has(claim.threadRef))
       .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
     if (data.claims.length !== releasedClaims.length || data.claims.some((claim, index) => {
       const expected = releasedClaims[index]
       return expected === undefined || !this.sameClaim(expected, claim)
     })) throw new Error('invalid released Claim projection')
 
-    const byThread = new Map<AgentTeamThreadRef, AgentTeamClaim[]>()
-    for (const claim of releasedClaims) byThread.set(claim.threadRef, [...(byThread.get(claim.threadRef) ?? []), claim])
-    const expectedActivities = [...byThread.entries()].map(([threadRef, claims]) => ({
-      kind: 'claims_released' as const, taskRef: claims[0]!.taskRef, threadRef, actor: memberId, sequence,
-      claimRefs: claims.map(claim => claim.claimRef).sort(),
-    }))
-    if (data.activities.length !== expectedActivities.length || data.activities.some((activity, index) => {
-      const expected = expectedActivities[index]
-      return expected === undefined || activity.kind !== expected.kind || activity.taskRef !== expected.taskRef
-        || activity.threadRef !== expected.threadRef || activity.actor !== expected.actor || activity.sequence !== expected.sequence
-        || !this.sameList(activity.claimRefs, expected.claimRefs)
-    })) throw new Error('invalid released Claim activities')
-    for (const claim of data.claims) {
-      const prior = projection.claims.get(claim.claimRef)
-      if (prior === undefined) throw new Error('invalid released Claim reference')
-    }
-    for (const activity of data.activities) this.addRef(refs, activity.activityRef)
-
-    const projectedClaims = new Map(projection.claims)
-    for (const claim of releasedClaims) projectedClaims.set(claim.claimRef, claim)
-    const expectedTasks = [...new Set(releasedClaims.map(claim => claim.taskRef))].map(taskRef => {
-      const task = projection.tasks.get(taskRef)!
-      return Object.freeze({ ...task, status: this.deriveResolvedTaskStatus(task, projectedClaims.values()) })
-    })
-    const expectedThreads = expectedActivities.map(activity => {
-      const thread = projection.threads.get(activity.threadRef)!
-      return Object.freeze({ ...thread, revision: sequence })
-    })
-    if (!isDeepStrictEqual(data.tasks, expectedTasks) || !isDeepStrictEqual(data.threads, expectedThreads)) {
-      throw new Error('invalid released Claim Task or Thread projection')
-    }
-
-    const expectedAttention = [...projection.attention.values()]
-      .filter(attention => attention.memberId === memberId && threadRefs.has(attention.threadRef))
-      .map(attention => ({ memberId: attention.memberId, threadRef: attention.threadRef }))
-    const expectedMarkers = [...projection.directMarkers.values()]
-      .filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
-    const expectedActivityMarkers = [...projection.activityMarkers.values()]
-      .filter(marker => marker.memberId === memberId && threadRefs.has(marker.threadRef))
-    const expectedInbox = this.inboxDelta([], expectedAttention, [], expectedMarkers, [], expectedActivityMarkers)
-    if (!isDeepStrictEqual(data.inbox, expectedInbox)) throw new Error('invalid Member inbox cleanup')
-    this.validateInboxDelta(data.inbox, projection, refs)
-  }
-
-  /** Replay validation of one Channel archival's release snapshot across every owner. */
-  private validateChannelArchivalCleanup(
-    data: AgentTeamChannelArchivedOperation['data'],
-    projection: Projection,
-    threadRefs: ReadonlySet<AgentTeamThreadRef>,
-    sequence: number,
-    refs: Set<string>,
-  ): void {
-    const releasedClaims = [...projection.claims.values()]
-      .filter(claim => claim.state === 'active' && threadRefs.has(claim.threadRef))
-      .map(claim => Object.freeze({ ...claim, state: 'released' as const }))
-    if (data.claims.length !== releasedClaims.length || data.claims.some((claim, index) => {
-      const expected = releasedClaims[index]
-      return expected === undefined || !this.sameClaim(expected, claim)
-    })) throw new Error('invalid released Claim projection')
-
-    // One activity per (owner, Thread), owners sorted like the commit path.
+    // One Activity per (owner, Thread), owners sorted like the commit path.
     const byOwner = new Map<AgentTeamMemberId, Map<AgentTeamThreadRef, AgentTeamClaim[]>>()
     for (const claim of releasedClaims) {
       const byThread = byOwner.get(claim.owner) ?? new Map<AgentTeamThreadRef, AgentTeamClaim[]>()
@@ -2268,16 +2233,17 @@ export class AgentTeamLedger {
       throw new Error('invalid released Claim Task or Thread projection')
     }
 
-    // Attention and marker cleanup covers EVERY Member on the archived Threads.
     const expectedAttention = [...projection.attention.values()]
-      .filter(attention => threadRefs.has(attention.threadRef))
+      .filter(attention => (memberId === undefined || attention.memberId === memberId) && threadRefs.has(attention.threadRef))
       .map(attention => ({ memberId: attention.memberId, threadRef: attention.threadRef }))
     const expectedMarkers = [...projection.directMarkers.values()]
-      .filter(marker => threadRefs.has(marker.threadRef))
+      .filter(marker => (memberId === undefined || marker.memberId === memberId) && threadRefs.has(marker.threadRef))
     const expectedActivityMarkers = [...projection.activityMarkers.values()]
-      .filter(marker => threadRefs.has(marker.threadRef))
+      .filter(marker => (memberId === undefined || marker.memberId === memberId) && threadRefs.has(marker.threadRef))
     const expectedInbox = this.inboxDelta([], expectedAttention, [], expectedMarkers, [], expectedActivityMarkers)
-    if (!isDeepStrictEqual(data.inbox, expectedInbox)) throw new Error('invalid Channel archival inbox cleanup')
+    if (!isDeepStrictEqual(data.inbox, expectedInbox)) {
+      throw new Error(memberId === undefined ? 'invalid Channel archival inbox cleanup' : 'invalid Member inbox cleanup')
+    }
     this.validateInboxDelta(data.inbox, projection, refs)
   }
 
@@ -2387,11 +2353,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/channel-member-removed') {
       target.memberships.get(operation.data.channelRef)?.delete(operation.data.memberId)
-      for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
-      for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
-      for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
-      this.applyInboxDelta(target, operation.data.inbox)
+      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/channel-archived') {
@@ -2399,21 +2361,13 @@ export class AgentTeamLedger {
       // restore returns every Member to the Channel. Visibility filters by
       // channel state instead.
       target.channels.set(operation.data.channel.channelRef, operation.data.channel)
-      for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
-      for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
-      for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
-      this.applyInboxDelta(target, operation.data.inbox)
+      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/member-removed') {
       target.members.set(operation.data.member.memberId, operation.data.member)
       for (const membership of target.memberships.values()) membership.delete(operation.data.member.memberId)
-      for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
-      for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
-      for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
-      this.applyInboxDelta(target, operation.data.inbox)
+      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/member-archived') {
@@ -2421,11 +2375,7 @@ export class AgentTeamLedger {
       // restore returns the Member to its Channels. Visibility filters by
       // member state instead.
       target.members.set(operation.data.member.memberId, operation.data.member)
-      for (const claim of operation.data.claims) target.claims.set(claim.claimRef, claim)
-      for (const activity of operation.data.activities) this.appendActivityFact(target, activity, operation.occurredAt)
-      for (const task of operation.data.tasks) target.tasks.set(task.taskRef, task)
-      for (const thread of operation.data.threads) target.threads.set(thread.threadRef, thread)
-      this.applyInboxDelta(target, operation.data.inbox)
+      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/thread-promoted') {
@@ -2472,6 +2422,31 @@ export class AgentTeamLedger {
       return
     }
     assertUnhandledKind(operation)
+  }
+
+  /**
+   * Replay the departure snapshot a releasing operation carries. The order is
+   * replay semantics, not style: Claims land before the Activities that
+   * reference them, and Tasks/Threads before the inbox delta that reads them.
+   * Each caller still applies its own identifying writes (member, membership,
+   * channel) around this call.
+   */
+  private applyReleaseSnapshot(
+    target: Projection,
+    data: {
+      readonly claims: readonly AgentTeamClaim[]
+      readonly activities: readonly AgentTeamClaimsReleasedActivity[]
+      readonly tasks: readonly AgentTeamTask[]
+      readonly threads: readonly AgentTeamThread[]
+      readonly inbox: AgentTeamInboxDelta
+    },
+    occurredAt: string,
+  ): void {
+    for (const claim of data.claims) target.claims.set(claim.claimRef, claim)
+    for (const activity of data.activities) this.appendActivityFact(target, activity, occurredAt)
+    for (const task of data.tasks) target.tasks.set(task.taskRef, task)
+    for (const thread of data.threads) target.threads.set(thread.threadRef, thread)
+    this.applyInboxDelta(target, data.inbox)
   }
 
   /** Facts arrive in ledger sequence order, so global and per-thread lists stay sorted by append only. */

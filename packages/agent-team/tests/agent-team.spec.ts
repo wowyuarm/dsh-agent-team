@@ -1132,6 +1132,32 @@ describe('AgentTeam Member archival ledger', () => {
     const replayed = await harness(storedPool(records))
     expect(() => replayLedger(replayed).validate()).not.toThrow()
   })
+
+  it('rejects a forged Member departure inbox during replay', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('forge-member-inbox-channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const started = withTask(committed(await test.ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('forge-member-inbox-task'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Task' })))
+    const ledger = replayLedger(test)
+    const plain = committed((await ledger.sendMessage({ requestId: requestId('forge-member-inbox-plain'), workspaceId: alpha,
+      channelRef: channel.channel.channelRef, body: 'Plain conversation', asTask: false, actor: agentTeamHumanActor() })).value)
+    const { member, actor } = await addLedgerMember(ledger, channel.channel.channelRef)
+    committed((await ledger.changeClaim({ requestId: requestId('forge-member-inbox-claim'), workspaceId: alpha, taskRef: started.task.taskRef,
+      action: 'claim', direction: 'review', baseRevision: started.thread.revision, actor })).value)
+    await ledger.changeAttention({ requestId: requestId('forge-member-inbox-follow'), workspaceId: alpha,
+      threadRef: plain.thread.threadRef, action: 'follow', actor })
+    await ledger.archiveMember({ requestId: requestId('forge-member-inbox-archive'), memberId: member.memberId, actor: agentTeamHumanActor() })
+    // The Channel archival path's own message is pinned by its test above; this
+    // is the only place the Member-scoped wording and filter are asserted at all.
+    const records = [...test.facility.get('agent_team')!.table('operations').entries()].map(([id, operation]) => {
+      const typed = operation as AgentTeamOperation
+      if (typed.kind !== 'team/member-archived') return [id, typed] as [string, unknown]
+      const removed = typed.data.inbox.attention.removed.filter(entry => entry.threadRef !== plain.thread.threadRef)
+      // Fail closed: a forge that removed nothing would vacuously "pass".
+      expect(removed).toHaveLength(typed.data.inbox.attention.removed.length - 1)
+      return [id, { ...typed, data: { ...typed.data, inbox: { ...typed.data.inbox, attention: { ...typed.data.inbox.attention, removed } } } }] as [string, unknown]
+    })
+    await expect(harness(storedPool(records))).rejects.toThrow(/invalid Member inbox cleanup/)
+  })
 })
 
 describe('AgentTeam Channel archival ledger', () => {

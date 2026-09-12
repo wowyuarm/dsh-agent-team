@@ -264,6 +264,20 @@ const claimOperation = (kind: 'team/claim-created' | 'team/claim-done' | 'team/c
   }).strict(),
 }).strict()
 
+/**
+ * The five departure-fact collections a releasing operation persists. All four
+ * release kinds carry this snapshot under their own `kind` literal and their own
+ * identifying fields; the durable half that must stay identical lives here once,
+ * so a new release kind cannot silently drop or invent a field.
+ */
+const releaseSnapshotFields = {
+  claims: z.array(claimSchema),
+  activities: z.array(claimsReleasedActivitySchema),
+  tasks: z.array(taskSchema),
+  threads: z.array(threadSchema),
+  inbox: inboxDeltaSchema,
+}
+
 /** Closed Agent Team operation union before occurrence stamping. */
 const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -306,11 +320,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('team/member-archived'),
     data: z.object({
       member: memberSchema,
-      claims: z.array(claimSchema),
-      activities: z.array(claimsReleasedActivitySchema),
-      tasks: z.array(taskSchema),
-      threads: z.array(threadSchema),
-      inbox: inboxDeltaSchema,
+      ...releaseSnapshotFields,
     }).strict(),
   }).strict(),
   z.object({
@@ -372,11 +382,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
       workspaceId: workspaceIdSchema,
       channelRef: channelRefSchema,
       memberId: memberIdSchema,
-      claims: z.array(claimSchema),
-      activities: z.array(claimsReleasedActivitySchema),
-      tasks: z.array(taskSchema),
-      threads: z.array(threadSchema),
-      inbox: inboxDeltaSchema,
+      ...releaseSnapshotFields,
     }).strict(),
   }).strict(),
   z.object({
@@ -386,11 +392,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     data: z.object({
       workspaceId: workspaceIdSchema,
       channel: channelSchema,
-      claims: z.array(claimSchema),
-      activities: z.array(claimsReleasedActivitySchema),
-      tasks: z.array(taskSchema),
-      threads: z.array(threadSchema),
-      inbox: inboxDeltaSchema,
+      ...releaseSnapshotFields,
     }).strict(),
   }).strict(),
   z.object({
@@ -488,11 +490,7 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('team/member-removed'),
     data: z.object({
       member: memberSchema,
-      claims: z.array(claimSchema),
-      activities: z.array(claimsReleasedActivitySchema),
-      tasks: z.array(taskSchema),
-      threads: z.array(threadSchema),
-      inbox: inboxDeltaSchema,
+      ...releaseSnapshotFields,
     }).strict(),
   }).strict(),
   z.object({
