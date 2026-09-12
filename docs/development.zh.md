@@ -31,6 +31,7 @@ corepack pnpm install
 ```sh
 npm run generate:typert
 npm run typecheck
+npm run check:docs
 npm test
 npm run build
 npm run lint
@@ -41,7 +42,8 @@ npm pack --dry-run
 
 - `npm run generate:typert`：从 `packages/agent-team/src/` 的 Host face 生成 Typert Host/Remote artifacts。
 - `npm run typecheck`：先生成 Typert，再检查 Host、tools 和 Client 三个源码目录。
-- `npm test`：先生成 Typert，再运行 Vitest。Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一个一次性的 `DSH_HOME`，隔离 Member activation 创建或复用的 `$DSH_HOME/agent-team/members/member:*` 私有 memory。需要特定 home 的测试自行设置并保存/恢复该变量（见 `member-lifecycle.spec.ts`）。启动不会自动清理账本不认识的 Member 目录；显式 Member remove 才删除该 Member 的私有 memory，因此介质重置后如需清理旧目录，由操作者手动删除对应 `member:` 目录。
+- `npm run check:docs`：把 [`AGENTS.md`](AGENTS.md) 的规则变成机械检查——每份维护文档都有双语配对且切换器双向指对、所有相对链接可解析、两个索引与现存文档集完全一致。只改文档时单独跑它即可。
+- `npm test`：先生成 Typert、跑 `check:docs`，再运行 Vitest。Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一个一次性的 `DSH_HOME`，隔离 Member activation 创建或复用的 `$DSH_HOME/agent-team/members/member:*` 私有 memory。需要特定 home 的测试自行设置并保存/恢复该变量（见 `member-lifecycle.spec.ts`）。启动不会自动清理账本不认识的 Member 目录；显式 Member remove 才删除该 Member 的私有 memory，因此介质重置后如需清理旧目录，由操作者手动删除对应 `member:` 目录。
 - `npm run build`：先由受限 Node cleaner 清空 Host、tools 与 Client 三个 package 的 `lib/`，再生成 Typert、构建三个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle；这样删除源码后遗留的旧产物不会进入 pack。最终发布物仍是一个根 npm 包。
 - `npm run lint`：运行 oxlint。
 - `npm pack --dry-run`：检查根 bundle 的发布内容。

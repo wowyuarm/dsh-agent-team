@@ -26,7 +26,8 @@ The full index and Where to start paths are in [`README.md`](README.md).
 - Maintained docs ship as bilingual pairs: change `foo.zh.md` in the same change as `foo.md`, translating prose while keeping technical terms (Agent, Workspace, Channel, Thread, Task, Claim, preset, Remote) in English.
 - A new maintained document gets an index row and a Where to start path in both `README.md` and `README.zh.md` in the same change.
 - Write uncertain facts as `> TODO:` instead of guessing.
-- Commit doc changes as one Conventional Commits subject line (`docs: ...`) over only your own staged paths — never `git add -A` in the shared worktree — and run `git diff --check` plus a relative-link check over the changed surface before committing.
+- Run `npm run check:docs` after changing a document here or adding a maintained one; it decides the pairing, switcher, relative-link, and index rules above. The command itself is described in [`development.md`](development.md).
+- Commit doc changes as one Conventional Commits subject line (`docs: ...`) over only your own staged paths — never `git add -A` in the shared worktree — and run `git diff --check` before committing.
 - `.scratch/` is work history, not an authority; move conclusions into these documents only when durable, and never rewrite archives to match new code.
 
 AGENTS.md files are single-language: this file and the root `AGENTS.md` are English, while maintained docs keep their `.zh.md` pairs.

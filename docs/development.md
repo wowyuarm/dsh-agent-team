@@ -31,6 +31,7 @@ Run the smallest sufficient checks for the change:
 ```sh
 npm run generate:typert
 npm run typecheck
+npm run check:docs
 npm test
 npm run build
 npm run lint
@@ -42,7 +43,8 @@ Their responsibilities are:
 
 - `generate:typert` emits Typert Host/Remote artifacts from the Host face in `packages/agent-team/src/`.
 - `typecheck` regenerates Typert and checks Host, tools, and Client sources.
-- `test` regenerates Typert and runs Vitest. `scripts/isolate-dsh-home.setup.ts` gives each test file an isolated `DSH_HOME`; tests needing a particular home must save and restore it. Startup does not prune ledger-unknown Member directories; explicit Member removal removes that Member's private memory.
+- `check:docs` mechanically enforces the rules in [`AGENTS.md`](AGENTS.md): every maintained document has a bilingual pair with a working switcher, every relative link resolves, and both indexes name exactly the documents that exist. Run it on its own for a documentation-only change.
+- `test` regenerates Typert, runs `check:docs`, then runs Vitest. `scripts/isolate-dsh-home.setup.ts` gives each test file an isolated `DSH_HOME`; tests needing a particular home must save and restore it. Startup does not prune ledger-unknown Member directories; explicit Member removal removes that Member's private memory.
 - `build` uses the restricted Node cleaner to clear package `lib/` directories, regenerates Typert, builds all three source trees, and uses Harness `tsdown` for the Client bundle. The published artifact remains one root npm package.
 - `lint` runs oxlint.
 - `pack --dry-run` checks the root bundle's published contents.

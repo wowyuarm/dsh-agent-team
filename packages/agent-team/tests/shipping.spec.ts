@@ -25,6 +25,42 @@ async function shippedHarnessName(): Promise<string> {
   }
 }
 
+// The persona is injected into every Member turn and ships to every user, so its
+// size is a reviewed budget rather than a measurement: raising this number is a
+// deliberate act in the same change that edits the text. Silent accretion is what
+// this test exists to stop.
+const PERSONA_CHARACTER_BUDGET = 8872
+
+// The YAML block-scalar bodies under `prefix:`/`suffix:`, de-indented the way YAML
+// reads them. The block ends at the first line that is not more indented than its
+// key, so a renamed config key yields an empty string — which is why the budget
+// test also asserts the extraction found the persona at all.
+function personaInstructionText(preset: string): string {
+  const lines = preset.replaceAll('\r\n', '\n').split('\n')
+  const blocks: string[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    const key = /^(\s*)(?:prefix|suffix):\s*\|-?\s*$/.exec(lines[index] ?? '')
+    if (key === null || key[1] === undefined) continue
+    const keyIndent = key[1].length
+    const body: string[] = []
+    let contentIndent = -1
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const line = lines[cursor]
+      if (line === undefined) break
+      if (line.trim() === '') {
+        body.push('')
+        continue
+      }
+      const indent = line.length - line.trimStart().length
+      if (indent <= keyIndent) break
+      if (contentIndent === -1) contentIndent = indent
+      body.push(line.slice(contentIndent))
+    }
+    blocks.push(body.join('\n').replace(/\n+$/, ''))
+  }
+  return blocks.join('')
+}
+
 describe('Agent Team shipping contract', () => {
   it('ships an opt-in Host patch and one explicit team-member preset', async () => {
     const [patch, preset, manifestText] = await Promise.all([
@@ -181,5 +217,49 @@ describe('Agent Team shipping contract', () => {
     expect(roster).toEqual([expect.objectContaining({ id: 'team-member', trust: 'system' })])
     expect(roster[0]?.broken).toBeUndefined()
     await ctx.fiber.dispose()
+  })
+})
+
+// The persona above the tool rows is the one instruction surface every Member
+// pays for on every turn, in every Workspace, on every install. These two tests
+// are the mechanical half of "workflow discipline": they cannot judge wording,
+// but they stop the text from growing silently and from losing a rule whole.
+describe('Agent Team Member persona', () => {
+  it('stays inside the reviewed prompt budget', async () => {
+    const preset = await readFile(resolve(root, 'packages/agent-team/preset/team-member/agent.cordis.yml'), 'utf8')
+    const persona = personaInstructionText(preset)
+    // Extraction guard: a renamed config key would empty the text and make the
+    // budget assertion meaningless, so prove the persona was actually found.
+    expect(persona).toContain('You are an Agent Team Member')
+    expect(
+      persona.length,
+      `The Member persona is ${persona.length} characters; the reviewed budget is ${PERSONA_CHARACTER_BUDGET}. `
+      + 'Trim it back to the budget, or raise PERSONA_CHARACTER_BUDGET in this file deliberately — every Member '
+      + 'pays this text on every turn.',
+    ).toBeLessThanOrEqual(PERSONA_CHARACTER_BUDGET)
+  })
+
+  // Token-level anchors, not sentences: rewording is Cole's issue 07 territory and
+  // must stay free, while losing a whole rule has to fail. These are the rules the
+  // persona is the only carrier of, chosen to not overlap the sentence assertions
+  // in the shipping contract above (reply channels, the token story, the two
+  // message tiers, the private space).
+  it('keeps the rules only the persona carries', async () => {
+    const preset = await readFile(resolve(root, 'packages/agent-team/preset/team-member/agent.cordis.yml'), 'utf8')
+    const persona = personaInstructionText(preset)
+    for (const rule of [
+      // The Team tool family, named in prose so a Member knows the surface exists.
+      'team_view', 'team_inbox', 'team_thread', 'team_message', 'team_claim',
+      // The context lifecycle: park, anchor, and restore a generation.
+      'context_rollover', 'context_checkpoint', 'context_timeline',
+      // Branded refs are written with exactly one colon.
+      'never a double colon',
+      // Work on a Task is announced with a Claimed direction before it starts.
+      'Claim a Direction',
+      // A decision owed to the Human states a default.
+      'Decision needed:',
+    ]) {
+      expect(persona, `the Member persona no longer carries the "${rule}" rule`).toContain(rule)
+    }
   })
 })
