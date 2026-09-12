@@ -29,7 +29,7 @@ async function shippedHarnessName(): Promise<string> {
 // size is a reviewed budget rather than a measurement: raising this number is a
 // deliberate act in the same change that edits the text. Silent accretion is what
 // this test exists to stop.
-const PERSONA_CHARACTER_BUDGET = 8872
+const PERSONA_CHARACTER_BUDGET = 8889
 
 // The YAML block-scalar bodies under `prefix:`/`suffix:`, de-indented the way YAML
 // reads them. The block ends at the first line that is not more indented than its
@@ -141,9 +141,9 @@ describe('Agent Team shipping contract', () => {
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
     // The one token story has exactly two legal surfaces: a fully drained
     // read hands off the next-write token, and a committed public mutation's
-    // returned token may basis the next deliberate mutation.
+    // returned token may serve as the basis for the next deliberate mutation.
     expect(preset).toContain('copy the next-write token that fully drained read renders')
-    expect(preset).toContain("a successful public mutation's returned token may basis the next deliberate mutation")
+    expect(preset).toContain("a successful public mutation's returned token may serve as the basis for the next deliberate mutation")
     // The persona distinguishes the two reply channels: direct session talk
     // with the Human answers in plain text; ledger-backed Team Threads are
     // what team_message.reply is for.
