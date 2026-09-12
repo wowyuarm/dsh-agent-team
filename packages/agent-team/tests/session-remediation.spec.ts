@@ -15,7 +15,7 @@
  * its bytes untouched, and a torn or foreign artifact must never produce a
  * half-migrated state.
  */
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -328,5 +328,35 @@ describe('session remediation over a real persistence service', () => {
     const second = await remediation()
     await second.remediateEnabledMembers([memberOf(sessionId)])
     expect(await stat(join(directory, V3_FILENAME)).then(() => true, () => false)).toBe(false)
+  })
+
+  it('does not record a walk whose repair attempt failed, so a restart can still heal', async () => {
+    const { root, persistence, remediation } = await fixture()
+    const sessionId = 'agent-team-transient'
+    const directory = await writeArtifact(root, sessionId, v0Rows(sessionId, [v0UserMessageRow(2, 'handoff', legacyHandoffSource())]))
+
+    // A transient write failure — here an unwritable Session directory — fails
+    // the publish leg of a repair this plugin identified as its own. The
+    // artifact stays refused, so the walk has NOT established that there is
+    // nothing here for this plugin to fix.
+    await chmod(directory, 0o500)
+    try {
+      await (await remediation()).remediateEnabledMembers([memberOf(sessionId)])
+      expect(await readable(persistence, sessionId)).toBe(false)
+    } finally {
+      await chmod(directory, 0o700)
+    }
+
+    // A failed repair must not be cached as a completed walk. The restart path
+    // reads a cache hit as "the walk finished and nothing was provably this
+    // plugin's to fix: a retry would fail identically", and on that reading it
+    // marks the refusal permanently non-remediable without retrying. Caching a
+    // failed repair therefore costs the operator the only affordance that can
+    // still heal the Member.
+    const restart = await remediation()
+    const outcome = await restart.remediateMember(memberOf(sessionId) as never)
+    expect(outcome.cacheHit).toBe(false)
+    expect(outcome.repaired).toBe(1)
+    expect(await readable(persistence, sessionId)).toBe(true)
   })
 })
