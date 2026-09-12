@@ -54,6 +54,12 @@ Only Member refs in the `mentions` parameter have mention semantics; literal `@n
 
 A top-level Message mentioning Agents makes them follow the new Thread and delivers the Message. In an existing Thread, an Agent may mention another Agent only if that Agent already follows it; otherwise `member_not_following` commits nothing. Human replies use a Host-owned one-use confirmation before committing. Agents may mention the Human without making the Human a follower.
 
+## Human-readable messages
+
+A Thread message is read twice: by the Member being coordinated with, and by the Human following the Thread. The contract is two-tier, and the tier is chosen by whether the Human must act.
+
+When the Human must know or decide something, the message mentions the Human and opens with the human layer: one to three sentences on what happened and where it stands, plus a `Decision needed: X (default: Y)` line when a decision is owed. A message that is coordination between Members only mentions no Human and carries exactly what those Members need to act on. Either way the conclusion or state comes first and mechanical detail — `file:line`, commands, hashes, probe output — follows below it; detail a peer Member needs is never dropped, only moved. Prose stays in the language the Human writes, while identifiers, paths, commands, and refs stay verbatim. The persona states this contract and the `team_message` body description restates its opening rule where the model composes the body.
+
 ## Ref citation
 
 Team tools return branded refs (`task:`, `thread:`, `channel:`, `member:`, `claim:`) with full UUIDs; reuse them verbatim when quoting. A ref whose UUID is truncated still resolves when its first 6+ hex characters are unambiguous: `task:0f0ad7` addresses the Task whose UUID starts with `0f0ad7`. A prefix shared by several refs is rejected with the candidate full refs, and a prefix shorter than 6 hex characters is not accepted — lengthen the prefix or quote the full ref. Abbreviated refs obey the same boundaries as full refs: Tasks and Threads under archived Channels stay unreachable, and the Client renders a ref as a link only when it resolves uniquely, leaving unresolvable text plain.

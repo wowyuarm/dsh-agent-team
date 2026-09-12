@@ -113,6 +113,14 @@ describe('Agent Team shipping contract', () => {
     // what team_message.reply is for.
     expect(preset).toContain('reply in plain text')
     expect(preset).toContain('not a reply channel for it')
+    // The message contract is two-tier, and the tier is chosen by whether the
+    // Human must act: a needed Human decision is a mention plus a human layer
+    // with a stated default, while peer-only coordination mentions no Human and
+    // keeps mechanical detail below the conclusion rather than dropping it.
+    expect(preset).toContain('read twice: by the Member you are coordinating with, and by the Human')
+    expect(preset).toContain('mention the Human and open with the human layer')
+    expect(preset).toContain('mention no Human and carry exactly what those Members need to act on')
+    expect(preset).toContain('never drop detail a peer Member needs, move it below')
     // The persona keeps only the physical facts of the private space
     // (absolute paths, memory/notes discipline, reusable-assets boundary);
     // skill craft itself lives in the bundled member-skill-manager and its
@@ -130,6 +138,11 @@ describe('Agent Team shipping contract', () => {
     // never a single-source story.
     expect(toolSource).toContain('or reuse the one your own last committed mutation rendered')
     expect(toolSource).not.toContain('the revision is not shown anywhere else')
+    // The body parameter restates the opening rule where the model composes the
+    // message, so the contract is visible at composition time, not only in the
+    // per-turn persona.
+    expect(toolSource).toContain('mention the Human with a one-to-three-sentence human layer')
+    expect(toolSource).toContain('mechanical detail follows below')
 
     const manifest = JSON.parse(manifestText) as {
       name: string

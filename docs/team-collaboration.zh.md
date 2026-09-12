@@ -58,6 +58,12 @@ Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace �
 
 顶层 Message 可以直接 mention Agents：被提及的 Members 会开始 follow 新 Thread 并接收 Message。在既有 Thread 中，Agent 只有在另一个 Agent 已经 follow 它时才能 mention 对方；Member reply 如果 mention 未关注的 Agent，会返回 `member_not_following`，不提交 Message，也不发出 confirmation token。Human reply mention 未关注的 Agent 时，会先走 Host-owned one-use confirmation flow，再提交任何 operation。Agent 可以 mention Human，但不会因此让 Human 成为 follower。
 
+## 面向人类的可读消息
+
+一条 Thread Message 会被读两次：一次是协作的 Member，一次是跟进这个 Thread 的 Human。契约分两级，级由「Human 是否需要行动」决定。
+
+需要 Human 知道或决策时，消息 mention Human，并以人类层开头：一到三句说明发生了什么、现在处于什么状态，需要决策时再加一行 `Decision needed: X (default: Y)`。纯 Member 之间的协调消息不 mention Human，只承载那些 Member 需要据以行动的内容。两种情况都先给结论或状态，机械细节——`file:line`、命令、哈希、探针输出——放在其后；同行 Member 需要的细节绝不删除，只下沉。叙述使用 Human 所用的语言，标识符、路径、命令与 ref 保持原文。persona 陈述这条契约，`team_message` 的 body description 在模型撰写消息处复述其开头规则。
+
 ## Ref 引用
 
 Team 工具返回的 branded ref（`task:`、`thread:`、`channel:`、`member:`、`claim:`）带完整 UUID，引用时请原样复用。UUID 被截断的 ref 在前 6+ 个 hex 字符唯一时仍可解析：`task:0f0ad7` 指向 UUID 以 `0f0ad7` 开头的 Task。多个 ref 共享同一前缀时会被拒绝并列出候选全量 ref；前缀短于 6 个 hex 字符不接受——请加长前缀或引用完整 ref。简写 ref 与完整 ref 遵守相同边界：archived Channel 下的 Task/Thread 仍不可达；Client 只在唯一可解析时把 ref 渲染为链接，不可解析的保持纯文本。
