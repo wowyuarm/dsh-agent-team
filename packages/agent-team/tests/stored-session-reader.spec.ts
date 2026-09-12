@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { Context } from '@deepseek-ai/cordis'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import {
   SessionFormatUnsupportedError,
@@ -8,6 +11,8 @@ import {
   type SessionHandle,
   type SessionPersistence,
 } from '@deepseek-ai/dsh-session-persistence'
+import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
 import { StoredSessionReader, classifyStoredSessionFailure, sessionFailureOf } from '../src/stored-session-reader.ts'
 
 const sessionId = SessionId('session:reader-fixture')
@@ -101,5 +106,81 @@ describe('StoredSessionReader failure normalization', () => {
     expect(await missing.exists(sessionId)).toBe(false)
     const failing = readerWith({ stat: async () => { throw ioError('EBUSY', 'EBUSY') } })
     await expect(failing.exists(sessionId)).rejects.toThrow(/EBUSY/)
+  })
+})
+
+/**
+ * The classification contract is only as good as the error identities the real
+ * backend produces. The plain-text family above is not hypothetical: the JSONL
+ * backend's `assertStoredIdentity` runs OUTSIDE the decode try/catch that wraps
+ * parse failures into `SessionPersistenceCorruptionError`, so an identity
+ * mismatch arrives at this seam as a bare `Error`. A synthetic fixture cannot
+ * show that, and probes that only covered the parse path once suggested the
+ * branch was unreachable. Pin the real trigger instead of restating it.
+ */
+describe('corruption identity against the real JSONL backend', () => {
+  const cleanups: Array<() => Promise<void>> = []
+
+  afterEach(async () => {
+    await Promise.all(cleanups.splice(0).map(cleanup => cleanup()))
+  })
+
+  async function realPersistence(): Promise<{ readonly root: string; readonly persistence: SessionPersistence }> {
+    const root = await mkdtemp(join(tmpdir(), 'reader-seam-'))
+    cleanups.push(async () => { await rm(root, { recursive: true, force: true }) })
+    const ctx = new Context()
+    await ctx.plugin(JsonlSessionPersistence, { root, compression: 'zstd' })
+    return { root, persistence: ctx.get('sessionPersistence') as SessionPersistence }
+  }
+
+  /** Create one stored Session and close it, so its artifact is on disk. */
+  async function store(persistence: SessionPersistence, id: SessionId): Promise<void> {
+    const handle = await persistence.create({ id, version: sessionFormatCatalog.currentVersion, createdAt: Date.now(), isSeeded: false, delegationDepth: 0, cwd: '/tmp' } as never)
+    try {
+      await handle.flush()
+    } finally {
+      await handle.close()
+    }
+  }
+
+  /** The one required directory entry under `directory`. */
+  async function entryIn(directory: string): Promise<string> {
+    const [entry] = await readdir(directory)
+    if (entry === undefined) throw new Error(`expected one entry in ${directory}`)
+    return entry
+  }
+
+  /** The one Session artifact in a session directory, without the writer's lock. */
+  async function artifactIn(directory: string): Promise<string> {
+    const [artifact] = (await readdir(directory)).filter(name => !name.endsWith('.lock'))
+    if (artifact === undefined) throw new Error(`expected one Session artifact in ${directory}`)
+    return artifact
+  }
+
+  it('classifies an identity mismatch, which the backend throws as a bare Error, as corrupt', async () => {
+    const { root, persistence } = await realPersistence()
+    const owner = SessionId('session:seam-owner')
+    const impostor = SessionId('session:seam-impostor')
+    await store(persistence, owner)
+    const bucket = join(root, await entryIn(root))
+    const ownerDirectory = await entryIn(bucket)
+    const known = new Set(await readdir(bucket))
+    await store(persistence, impostor)
+    const impostorDirectory = (await readdir(bucket)).find(name => !known.has(name))
+    expect(impostorDirectory).toBeDefined()
+
+    // Promote the owner's artifact into the impostor's directory: the header
+    // inside names the owner, so the backend refuses the impostor by identity.
+    const ownerArtifact = await artifactIn(join(bucket, ownerDirectory))
+    const impostorArtifact = (await readdir(join(bucket, impostorDirectory!))).find(name => !name.endsWith('.lock')) ?? ownerArtifact
+    await writeFile(join(bucket, impostorDirectory!, impostorArtifact), await readFile(join(bucket, ownerDirectory, ownerArtifact)))
+
+    const thrown = await persistence.open(impostor, 'read').then(() => undefined, (error: unknown) => error)
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown).not.toBeInstanceOf(SessionPersistenceCorruptionError)
+    expect((thrown as Error).message).toMatch(/^corrupt session log /)
+
+    expect(classifyStoredSessionFailure(thrown, impostor)).toMatchObject({ kind: 'corrupt', sessionId: impostor })
+    expect(await readerWith(persistence).read(impostor)).toMatchObject({ ok: false, failure: { kind: 'corrupt' } })
   })
 })
