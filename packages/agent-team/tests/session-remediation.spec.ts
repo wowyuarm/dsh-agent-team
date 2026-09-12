@@ -18,7 +18,7 @@
 import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { constants as zstdConstants, zstdCompressSync } from 'node:zlib'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -330,7 +330,10 @@ describe('session remediation over a real persistence service', () => {
     expect(await stat(join(directory, V3_FILENAME)).then(() => true, () => false)).toBe(false)
   })
 
-  it('does not record a walk whose repair attempt failed, so a restart can still heal', async () => {
+  // Windows ignores a directory's mode bits, so the unwritable-directory
+  // injection below cannot be built there; the companion probe underneath
+  // asserts the same contract on every platform.
+  it.skipIf(process.platform === 'win32')('does not record a real failed repair, so a restart can still heal', async () => {
     const { root, persistence, remediation } = await fixture()
     const sessionId = 'agent-team-transient'
     const directory = await writeArtifact(root, sessionId, v0Rows(sessionId, [v0UserMessageRow(2, 'handoff', legacyHandoffSource())]))
@@ -357,6 +360,30 @@ describe('session remediation over a real persistence service', () => {
     const outcome = await restart.remediateMember(memberOf(sessionId) as never)
     expect(outcome.cacheHit).toBe(false)
     expect(outcome.repaired).toBe(1)
+    expect(await readable(persistence, sessionId)).toBe(true)
+  })
+
+  it('does not record a walk whose repair attempt failed, on every platform', async () => {
+    const { root, persistence, remediation } = await fixture()
+    const sessionId = 'agent-team-publish-failure'
+    await writeArtifact(root, sessionId, v0Rows(sessionId, [v0UserMessageRow(2, 'handoff', legacyHandoffSource())]))
+
+    // The same failure injected at the publish boundary rather than through the
+    // filesystem, so this probe also runs where mode bits do not deny a write.
+    // Everything else in the walk — open, the refusal, the artifact read, the
+    // migration proof — stays real.
+    const publish = vi.spyOn(SessionRemediation.prototype as unknown as {
+      publishSibling: (source: string, bytes: Buffer) => Promise<unknown>
+    }, 'publishSibling').mockRejectedValue(new Error('disk full (test seam)'))
+    const failed = await (await remediation()).remediateMember(memberOf(sessionId) as never)
+    publish.mockRestore()
+    expect(failed).toMatchObject({ repaired: 0, untouched: 0, completed: false, cacheHit: false })
+    expect(await readable(persistence, sessionId)).toBe(false)
+
+    // The failed attempt left no completion record, so the next walk retries the
+    // idempotent repair for real and heals the Member.
+    expect(await (await remediation()).remediateMember(memberOf(sessionId) as never))
+      .toMatchObject({ repaired: 1, completed: true, cacheHit: false })
     expect(await readable(persistence, sessionId)).toBe(true)
   })
 })
