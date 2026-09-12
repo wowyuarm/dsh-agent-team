@@ -9,21 +9,9 @@
  * @module @wowyuarm/dsh-agent-team/context-tools
  */
 
-import AgentTeam from '@wowyuarm/dsh-agent-team/host'
 import type { AgentTeamContextCheckpointRef } from '@wowyuarm/dsh-agent-team/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-
-function service(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>): AgentTeam {
-  const host = agent.ctx.get('agentTeam') as AgentTeam | undefined
-  if (host === undefined) throw new Error('Agent Team Host is unavailable')
-  return host
-}
-
-function member(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>) {
-  const current = service(agent).memberForAgent(agent)
-  if (current === undefined) throw new Error('team tool requires an active Team Member')
-  return current
-}
+import { member, service } from './host-access.ts'
 
 const MAX_HANDOFF_CHARS = 32 * 1024
 const MAX_RELATED_FILES = 32

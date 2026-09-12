@@ -21,6 +21,7 @@ import { mintRequestId } from './requests.ts'
 import { TeamRowMenu } from './TeamRowMenu.tsx'
 import { TeamSidebarSection } from './TeamSidebarSection.tsx'
 import { useChannelMembership } from './team-membership.ts'
+import { useEditDialogSave } from './team-dialog-save.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -341,9 +342,11 @@ function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinC
 }) {
   const [name, setName] = useState(channel.name)
   const [description, setDescription] = useState(channel.description)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string>()
-  const pendingRequest = useRef<AgentTeamUpdateChannelRequest>()
+  const { saving, error, pendingRequest, save } = useEditDialogSave({
+    save: updateChannel,
+    onCommitted,
+    onClose,
+  })
 
   const membership = useChannelMembership(
     { joinChannel, removeChannelMember },
@@ -366,23 +369,7 @@ function ChannelEditorDialog({ channel, members, joinedIds, updateChannel, joinC
       name: normalizedName,
       description: normalizedDescription,
     }
-    pendingRequest.current = request
-    setSaving(true)
-    setError(undefined)
-    try {
-      const result = await updateChannel(request)
-      if (result.ok) {
-        pendingRequest.current = undefined
-        await onCommitted()
-        onClose()
-      } else {
-        setError(result.error.message)
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSaving(false)
-    }
+    await save(request)
   }
 
   return (

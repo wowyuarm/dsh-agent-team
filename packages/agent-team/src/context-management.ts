@@ -30,29 +30,51 @@ import {
   continuationDelivered,
   foldContextProjection,
   type AgentTeamContextProjectionState,
+  type ContextCheckpointEntry,
+  type PendingRolloverIntent,
 } from './context-projection.ts'
 import type { AgentTeamAgentMember, AgentTeamMemberId, AgentTeamRolloverSessionRequest } from './types.ts'
 
 /** Stable summary of the one-shot rollover pressure notice (ticket 03 wires delivery). */
 export const CONTEXT_PRESSURE_NOTICE_SUMMARY = 'Context pressure: prepare a handoff'
 
+/** Result seq and handoff envelope carried from the projection's pending intent. */
+interface MemberIntent {
+  readonly toolCallId: string
+  readonly resultSeq: number
+  readonly turn: number
+  readonly handoff: string
+  readonly checkpointRef?: string | undefined
+  readonly relatedFiles: readonly { readonly path: string; readonly reason: string }[]
+}
+
 /** One Member's in-process rollover bookkeeping; locks/promises only, never facts. */
 interface MemberTransition {
   /** The Agent generation whose successful tool result is pending. */
   readonly agent: Agent
   /** Result seq and handoff envelope from the projection at intent time. */
-  readonly intent: {
-    readonly toolCallId: string
-    readonly resultSeq: number
-    readonly turn: number
-    readonly handoff: string
-    readonly checkpointRef?: string | undefined
-    readonly relatedFiles: readonly { readonly path: string; readonly reason: string }[]
-  }
+  readonly intent: MemberIntent
   /** Set once the containing turn ended; the swap then waits for idle. */
   turnEnded: boolean
   /** The in-flight swap promise; a second intent while swapping is rejected at the tool. */
   swapping?: Promise<void>
+}
+
+/**
+ * Rebuild one Member's in-process intent from the projection's pending
+ * rollover. Three call sites consume it — the live result, crash recovery
+ * with the turn still open, and crash recovery past the turn end — and they
+ * must agree field for field; this is the single definition of that list.
+ */
+function intentFromPending(pending: PendingRolloverIntent): MemberIntent {
+  return {
+    toolCallId: pending.toolCallId,
+    resultSeq: pending.resultSeq,
+    turn: pending.turn,
+    handoff: pending.handoff,
+    ...(pending.checkpointRef === undefined ? {} : { checkpointRef: pending.checkpointRef }),
+    relatedFiles: pending.relatedFiles,
+  }
 }
 
 export interface ContextManagementCoordinatorOptions {
@@ -226,18 +248,7 @@ export class ContextManagementCoordinator {
     // React only to the intent's own result landing durably, and only once.
     if (pending.resultSeq !== event.seq) return
     if (this.members.has(memberId)) return
-    this.members.set(memberId, {
-      agent,
-      intent: {
-        toolCallId: pending.toolCallId,
-        resultSeq: pending.resultSeq,
-        turn: pending.turn,
-        handoff: pending.handoff,
-        ...(pending.checkpointRef === undefined ? {} : { checkpointRef: pending.checkpointRef }),
-        relatedFiles: pending.relatedFiles,
-      },
-      turnEnded: false,
-    })
+    this.members.set(memberId, { agent, intent: intentFromPending(pending), turnEnded: false })
   }
 
   private onUserMessage(memberId: AgentTeamMemberId, _agent: Agent, event: SessionEvent & { type: 'user/message' }): void {
@@ -275,6 +286,25 @@ export class ContextManagementCoordinator {
   }
 
   /**
+   * Claim the in-process latch for one resolved checkpoint continuation.
+   * Returns the latch key when this caller won it, or undefined when the
+   * checkpoint never concluded a turn, was already delivered durably, or is
+   * latched already. The caller releases the latch on its own failure path.
+   */
+  private claimContinuationLatch(
+    memberId: AgentTeamMemberId,
+    state: AgentTeamContextProjectionState,
+    checkpoint: ContextCheckpointEntry,
+  ): string | undefined {
+    if (checkpoint.turnEndSeq === -1) return undefined
+    if (continuationDelivered(state, checkpoint.checkpointRef)) return undefined
+    const latch = `${memberId}:${checkpoint.checkpointRef}`
+    if (this.scheduledContinuations.has(latch)) return undefined
+    this.scheduledContinuations.add(latch)
+    return latch
+  }
+
+  /**
    * Quiet follow-ups for checkpoints resolved by the turn that just ended.
    * A successful `context_checkpoint` result concludes its turn; the Host
    * continues work in the next turn with one host-generated notice. The
@@ -289,11 +319,8 @@ export class ContextManagementCoordinator {
     const state = this.options.projectionForMember(memberId, member.sessionId)
     if (state === undefined) return
     for (const checkpoint of state.checkpoints) {
-      if (checkpoint.turnEndSeq === -1) continue
-      if (continuationDelivered(state, checkpoint.checkpointRef)) continue
-      const latch = `${memberId}:${checkpoint.checkpointRef}`
-      if (this.scheduledContinuations.has(latch)) continue
-      this.scheduledContinuations.add(latch)
+      const latch = this.claimContinuationLatch(memberId, state, checkpoint)
+      if (latch === undefined) continue
       // The turn/end observer fires inside the session append publication
       // (a synchronous followup would reenter the publishing append), and a
       // next-turn message queued while the driver is still converging never
@@ -360,36 +387,14 @@ export class ContextManagementCoordinator {
     if (pending.turnEndSeq === -1) {
       // The containing turn never ended durably; treat the intent as still
       // waiting and observe the live events from here.
-      this.members.set(memberId, {
-        agent,
-        intent: {
-          toolCallId: pending.toolCallId,
-          resultSeq: pending.resultSeq,
-          turn: pending.turn,
-          handoff: pending.handoff,
-          ...(pending.checkpointRef === undefined ? {} : { checkpointRef: pending.checkpointRef }),
-          relatedFiles: pending.relatedFiles,
-        },
-        turnEnded: false,
-      })
+      this.members.set(memberId, { agent, intent: intentFromPending(pending), turnEnded: false })
       return
     }
     // The turn already ended before the crash; the Agent is idle at
     // activation, so the swap can proceed directly.
     const member = this.options.memberForAgent(agent)
     if (member === undefined) return
-    const transition: MemberTransition = {
-      agent,
-      intent: {
-        toolCallId: pending.toolCallId,
-        resultSeq: pending.resultSeq,
-        turn: pending.turn,
-        handoff: pending.handoff,
-        ...(pending.checkpointRef === undefined ? {} : { checkpointRef: pending.checkpointRef }),
-        relatedFiles: pending.relatedFiles,
-      },
-      turnEnded: true,
-    }
+    const transition: MemberTransition = { agent, intent: intentFromPending(pending), turnEnded: true }
     this.members.set(memberId, transition)
     void this.performTransition(memberId, member, transition)
   }
@@ -406,11 +411,8 @@ export class ContextManagementCoordinator {
     const memberId = this.options.memberForAgent(agent)?.memberId
     if (memberId === undefined) return
     for (const checkpoint of state.checkpoints) {
-      if (checkpoint.turnEndSeq === -1) continue
-      if (continuationDelivered(state, checkpoint.checkpointRef)) continue
-      const latch = `${memberId}:${checkpoint.checkpointRef}`
-      if (this.scheduledContinuations.has(latch)) continue
-      this.scheduledContinuations.add(latch)
+      const latch = this.claimContinuationLatch(memberId, state, checkpoint)
+      if (latch === undefined) continue
       try {
         agent.followup(createCheckpointContinuationMessage(checkpoint.checkpointRef))
       } catch (error) {

@@ -5,9 +5,7 @@ import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamMemberI
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button, IconChevronLeftOutline14, IconChevronRightOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
-import { bytesToBase64 } from './attachment-preview.ts'
-import { mintRequestId } from './requests.ts'
-import type { AgentTeamAttachmentId } from '@wowyuarm/dsh-agent-team/types'
+import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -237,22 +235,13 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     try {
       // Upload chosen files first; any failure aborts the send with the
       // existing error surface and keeps the chips for a retry.
-      const attachmentIds: AgentTeamAttachmentId[] = []
-      for (const file of pendingFiles) {
-        const uploaded = await putAttachment({
-          requestId: mintRequestId(),
-          workspaceId,
-          name: file.name,
-          mediaType: file.type === '' ? undefined : file.type,
-          bytesBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
-        })
-        if (!uploaded.ok) {
-          pendingSendId.current = undefined
-          setError(uploaded.error.message)
-          return
-        }
-        attachmentIds.push(uploaded.value.attachmentId)
+      const upload = await uploadComposerFiles(putAttachment, workspaceId, pendingFiles)
+      if (!upload.ok) {
+        pendingSendId.current = undefined
+        setError(upload.error)
+        return
       }
+      const attachmentIds = upload.attachmentIds
       const request: AgentTeamSendMessageRequest = {
         requestId, workspaceId,
         channelRef, body: draft.trim(), recipients: recipientIds,

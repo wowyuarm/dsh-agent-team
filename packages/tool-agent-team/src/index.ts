@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import AgentTeam, { AgentTeamDmDeliveryError, markAgentTeamPreset } from '@wowyuarm/dsh-agent-team/host'
 import { formatTeamTimestamp } from '@wowyuarm/dsh-agent-team/time-format'
 import { registerContextTools } from './context-tools.ts'
+import { member, service } from './host-access.ts'
 import type {
   AgentTeamClaimRef,
   AgentTeamMemberId,
@@ -142,18 +143,6 @@ function nextWriteLine(revision: number): string {
 function taskStanding(value: { taskRef?: string; status?: string; resolution?: string; taskNumber?: number }): string {
   if (value.taskRef === undefined) return ''
   return `${value.taskRef}${value.taskNumber === undefined ? '' : ` (#${value.taskNumber})`}${value.status === undefined ? '' : `, ${value.status}${value.resolution === undefined ? '' : `/${value.resolution}`}`}`
-}
-
-function service(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>): AgentTeam {
-  const host = agent.ctx.get('agentTeam') as AgentTeam | undefined
-  if (host === undefined) throw new Error('Agent Team Host is unavailable')
-  return host
-}
-
-function member(agent: NonNullable<Parameters<AgentTeam['memberForAgent']>[0]>) {
-  const current = service(agent).memberForAgent(agent)
-  if (current === undefined) throw new Error('team tool requires an active Team Member')
-  return current
 }
 
 function requestId(agentId: string, callId: string): AgentTeamRequestId {

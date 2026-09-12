@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type {
-  AgentTeamAttachmentId,
   AgentTeamClientMemberStatus,
   AgentTeamChannelRef,
   AgentTeamConfirmationToken,
@@ -22,11 +21,10 @@ import { TeamMessage } from './TeamMessage.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf, taskStatusDot } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
-import { mintRequestId } from './requests.ts'
+import { mintRequestId, uploadComposerFiles } from './requests.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { hostTaskRefLookup, jumpToTaskThread } from './task-refs.ts'
-import { bytesToBase64 } from './attachment-preview.ts'
 import css from './conversation.module.css'
 import threadCss from './thread.module.css'
 
@@ -589,21 +587,12 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     try {
       // Upload chosen files first; any failure aborts the reply with the
       // existing error surface and keeps the chips for a retry.
-      const attachmentIds: AgentTeamAttachmentId[] = []
-      for (const file of pendingFiles) {
-        const uploaded = await putAttachment({
-          requestId: mintRequestId(),
-          workspaceId,
-          name: file.name,
-          mediaType: file.type === '' ? undefined : file.type,
-          bytesBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
-        })
-        if (!uploaded.ok) {
-          setError(uploaded.error.message)
-          return
-        }
-        attachmentIds.push(uploaded.value.attachmentId)
+      const upload = await uploadComposerFiles(putAttachment, workspaceId, pendingFiles)
+      if (!upload.ok) {
+        setError(upload.error)
+        return
       }
+      const attachmentIds = upload.attachmentIds
       const result = await reply({ requestId: id, workspaceId, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }), body: draft.trim(), baseRevision: thread.revision, recipients: [...recipients].sort(), ...(attachmentIds.length === 0 ? {} : { attachments: attachmentIds }), ...(confirmation === undefined ? {} : { confirmationToken: confirmation }) })
       if (!result.ok) {
         setError(result.error.message)

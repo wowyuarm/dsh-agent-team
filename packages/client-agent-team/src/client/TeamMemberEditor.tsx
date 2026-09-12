@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
 import { Button, IconChevronDownOutline14, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { mintRequestId } from './requests.ts'
+import { useEditDialogSave } from './team-dialog-save.ts'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
 
@@ -149,9 +150,11 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
   const [handle, setHandle] = useState(status.member.handle)
   const [description, setDescription] = useState(status.member.description)
   const [model, setModel] = useState<AgentTeamModelSelection | undefined>(status.member.model)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string>()
-  const pendingRequest = useRef<AgentTeamUpdateMemberRequest>()
+  const { saving, error, pendingRequest, save } = useEditDialogSave({
+    save: updateMember,
+    onCommitted,
+    onClose,
+  })
   const dirty = handle.trim() !== status.member.handle || description.trim() !== status.member.description
     || !sameModel(model, status.member.model)
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -175,23 +178,7 @@ export function AgentEditorDialog({ status, updateMember, loadModels, onCommitte
       requestId: mintRequestId(),
       ...payload,
     }
-    pendingRequest.current = request
-    setSaving(true)
-    setError(undefined)
-    try {
-      const result = await updateMember(request)
-      if (result.ok) {
-        pendingRequest.current = undefined
-        await onCommitted()
-        onClose()
-      } else {
-        setError(result.error.message)
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSaving(false)
-    }
+    await save(request)
   }
 
   return (
