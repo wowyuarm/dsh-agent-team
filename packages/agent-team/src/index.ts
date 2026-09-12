@@ -513,7 +513,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.contextManagement.onSessionEvent(memberId, handle.agent, event)
     })
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
-      this.ctx.effect(() => async () => {
+    this.ctx.effect(() => async () => {
       this.accepting = false
       this.remediation = undefined
       this.recovery.dispose()
