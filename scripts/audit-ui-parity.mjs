@@ -179,6 +179,7 @@ const shippedSidebarCss = join(shippedDir, 'ui-sidebar/src/client/SidebarRoot.mo
 for (const [label, file, needles] of [
   ['shipped composer icons', shippedInputBar, ['IconPaperclipOutline16', 'IconPlusOutline16']],
   ['shipped sidebar focus ring', shippedSidebarCss, ['panelRow:focus-visible', 'outline: 2px solid var(--dsw-alias-label-primary)']],
+  ['shipped mode-chip label cut', join(shippedDir, 'ui-conversation/src/client/skeleton/PermissionSelect.module.css'), ['@container (max-width: 460px)']],
 ]) {
   let text
   try {
@@ -256,6 +257,7 @@ if (shippedPrimitives.size === 0) {
 
 const GEOMETRY = [
   ['composer.module.css', '.attachButton', [['height', '28px'], ['width', '28px'], ['border-radius', '999px']], 'icon-only control is 28×28, radius 999px'],
+  ['composer.module.css', '.asTaskPill', [['height', '28px'], ['border-radius', '24px']], 'mode pill keeps the shipped chip geometry'],
   ['composer.module.css', '.sendButton', [['height', '34px'], ['width', '34px'], ['border-radius', '999px'], ['transform', 'translateY(-2px)']], 'primary round action is 34×34 with the -2px seat compensation'],
   ['sidebar.module.css', '.channelRow', [['border-radius', '8px']], 'list row radius is 8px'],
   ['sidebar.module.css', '.agentRow', [['border-radius', '8px']], 'list row radius is 8px'],
@@ -335,6 +337,42 @@ if (shippedTokens.size === 0) {
       note('error', [...files].sort().join(', '), `references '${token}' which the shipped theme does not define — a typo, or a DSH upgrade renamed it`)
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Mode control language: as-task is a mode (it changes what Send means),
+//     not an action. A mode keeps a visible word label and may only drop that
+//     word behind an explicit narrow-container branch — the shipped permission
+//     chip's own cut. Reducing a mode to a bare glyph loses its state to a
+//     picture nobody agreed on, and a hover tooltip is not a label on touch.
+// ---------------------------------------------------------------------------
+
+const MODE_LABEL_CUT = 460
+const composerCss = readFileSync(join(clientDir, 'composer.module.css'), 'utf8')
+const asTaskPill = composer.match(/css\.asTaskPill[\s\S]{0,600}?<\/button>/)?.[0] ?? ''
+if (asTaskPill === '') {
+  note('error', 'TeamComposer.tsx', 'the as-task mode control is not rendered as css.asTaskPill — a mode is not an icon action')
+} else {
+  if (!/aria-pressed=\{asTask === true\}/.test(asTaskPill)) {
+    note('error', 'TeamComposer.tsx', 'the as-task mode pill declares no aria-pressed state')
+  }
+  if (!/css\.asTaskLabel/.test(asTaskPill) || !/t\('asTask'\)/.test(asTaskPill)) {
+    note('error', 'TeamComposer.tsx', "the as-task mode pill lost its visible word label (css.asTaskLabel + t('asTask'))")
+  }
+}
+
+const labelRule = collectRules(composerCss).find(rule => rule.selector.replace(/^[\s\S]*\*\//, '').trim() === '.asTaskLabel')
+if (labelRule === undefined) {
+  note('error', 'composer.module.css .asTaskLabel', 'the mode label class is gone; a mode keeps a visible word')
+} else if (/display\s*:\s*none|visibility\s*:\s*hidden/.test(labelRule.body)) {
+  note('error', 'composer.module.css .asTaskLabel', 'the mode label is hidden unconditionally; hide it only inside the narrow-container branch')
+}
+
+const labelCut = composerCss.match(/@container\s*\(max-width:\s*(\d+)px\)\s*\{[\s\S]*?\.asTaskPill\s+\.asTaskLabel\s*\{[\s\S]*?display\s*:\s*none/)
+if (labelCut === null) {
+  note('error', 'composer.module.css', 'the as-task pill has no narrow-container label cut; the word may only be dropped behind an explicit @container branch')
+} else if (Number(labelCut[1]) !== MODE_LABEL_CUT) {
+  note('warn', 'composer.module.css', `as-task label cut at ${labelCut[1]}px (shipped cut: ${MODE_LABEL_CUT}px)`)
 }
 
 // ---------------------------------------------------------------------------
