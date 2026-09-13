@@ -53,7 +53,20 @@ describe('Team mention-Inbox surfaces', () => {
     expect(row.textContent).toContain('Decision needed on the rollout')
     expect(b.view.container.querySelector('[data-team-inbox] time')?.getAttribute('dateTime')).toBe('2026-09-13T04:00:00.000Z')
     expect(b.view.queryByText('还没有人提到你')).toBeNull()
+    // The queue carries the same header band as Channel and Thread: its name
+    // plus what the queue currently holds.
+    expect(b.view.getByRole('heading', { name: '提到我' })).toBeTruthy()
+    expect(b.view.getByText('共 1 个 Thread · 1 条提及，按最新提及排序')).toBeTruthy()
     await waitFor(() => expect(card.getAttribute('aria-current')).toBe('page'))
+    await b.runtime.dispose()
+  })
+
+  it('drops the header count line while the queue is empty', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    fireEvent.click(await b.view.findByRole('button', { name: '提到我' }))
+    expect(await b.view.findByText('还没有人提到你')).toBeTruthy()
+    expect(b.view.getByRole('heading', { name: '提到我' })).toBeTruthy()
+    expect(b.view.queryByText(/条提及/)).toBeNull()
     await b.runtime.dispose()
   })
 
@@ -125,6 +138,59 @@ describe('Team mention-Inbox surfaces', () => {
     // so a dropped flag can never pass silently again.
     expect(b.inbox.mock.calls.length).toBeGreaterThan(0)
     for (const [request] of b.inbox.mock.calls) expect(request.directOnly).toBe(true)
+    await b.runtime.dispose()
+  })
+
+  it('merges the Workspace slices into one recency order, newest mention first', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    const card = await b.view.findByRole('button', { name: '提到我' })
+    // The visible Workspace (w1) holds the two oldest rows, so a Workspace-order
+    // merge would put both of them above Beta — the regression this asserts.
+    b.seedInbox([
+      inboxRow('w1', 'thread:w1-old', { previewText: 'oldest', newestSequence: 3, newestOccurredAt: '2026-09-01T02:00:00.000Z' }),
+      inboxRow('w2', 'thread:w2-new', { previewText: 'newest', newestSequence: 40, newestOccurredAt: '2026-09-13T02:00:00.000Z' }),
+      inboxRow('w1', 'thread:w1-mid', { previewText: 'middle', newestSequence: 9, newestOccurredAt: '2026-09-10T02:00:00.000Z' }),
+    ])
+    b.seedInbox([
+      inboxRow('w1', 'thread:w1-old', { previewText: 'oldest', newestSequence: 3, newestOccurredAt: '2026-09-01T02:00:00.000Z' }),
+      inboxRow('w2', 'thread:w2-new', { previewText: 'newest', newestSequence: 40, newestOccurredAt: '2026-09-13T02:00:00.000Z' }),
+      inboxRow('w1', 'thread:w1-mid', { previewText: 'middle', newestSequence: 9, newestOccurredAt: '2026-09-10T02:00:00.000Z' }),
+    ])
+    await waitFor(() => expect(within(card).getByText('3')).toBeTruthy())
+    fireEvent.click(card)
+    await waitFor(() => expect(b.view.container.querySelectorAll('[data-team-inbox] button[class*="row"]').length).toBe(3))
+    const previews = [...b.view.container.querySelectorAll('[data-team-inbox] button[class*="row"] [class*="rowPreview"]')].map(node => node.textContent)
+    expect(previews).toEqual(['newest', 'middle', 'oldest'])
+    await b.runtime.dispose()
+  })
+
+  it('names today and yesterday on a row and dates older mentions', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    const card = await b.view.findByRole('button', { name: '提到我' })
+    const today = new Date()
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1, 14, 5)
+    const older = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6, 9, 30)
+    b.seedInbox([
+      inboxRow('w1', 'thread:w1-today', { previewText: 'today row', newestSequence: 3, newestOccurredAt: today.toISOString() }),
+      inboxRow('w1', 'thread:w1-yesterday', { previewText: 'yesterday row', newestSequence: 4, newestOccurredAt: yesterday.toISOString() }),
+      inboxRow('w1', 'thread:w1-older', { previewText: 'older row', newestSequence: 5, newestOccurredAt: older.toISOString() }),
+    ])
+    b.seedInbox([
+      inboxRow('w1', 'thread:w1-today', { previewText: 'today row', newestSequence: 3, newestOccurredAt: today.toISOString() }),
+      inboxRow('w1', 'thread:w1-yesterday', { previewText: 'yesterday row', newestSequence: 4, newestOccurredAt: yesterday.toISOString() }),
+      inboxRow('w1', 'thread:w1-older', { previewText: 'older row', newestSequence: 5, newestOccurredAt: older.toISOString() }),
+    ])
+    await waitFor(() => expect(within(card).getByText('3')).toBeTruthy())
+    fireEvent.click(card)
+    const rowFor = async (preview: string): Promise<HTMLElement> => await b.view.findByRole('button', { name: new RegExp(preview) })
+    const clock = (date: Date): string => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    expect((await rowFor('today row')).querySelector('time')?.textContent).toBe(`今天 ${clock(today)}`)
+    expect((await rowFor('yesterday row')).querySelector('time')?.textContent).toBe(`昨天 ${clock(yesterday)}`)
+    const olderTime = (await rowFor('older row')).querySelector('time')
+    expect(olderTime?.textContent).toMatch(/^\d{2}-\d{2} 09:30$/)
+    // The precise instant stays on the element behind the relative label.
+    expect(olderTime?.getAttribute('title')).toMatch(/^\d{4}-\d{2}-\d{2} 09:30$/)
+    expect(olderTime?.getAttribute('dateTime')).toBe(older.toISOString())
     await b.runtime.dispose()
   })
 })

@@ -264,6 +264,8 @@ const GEOMETRY = [
   ['sidebar.module.css', '.workspaceRow', [['border-radius', '8px']], 'list row radius is 8px'],
   ['sidebar.module.css', '.inboxCard', [['border-radius', '8px'], ['height', '34px']], 'the Inbox entry is a sidebar row: 8px radius, 34px height'],
   ['sidebar.module.css', '.inboxBadge', [['height', '18px'], ['border-radius', '999px'], ['box-sizing', 'border-box']], 'the count badge is an 18px capsule; border-box keeps one digit a circle instead of a padded oval'],
+  ['inbox.module.css', '.row', [['border-radius', '8px']], 'the mention queue row shares the shipped 8px list-row radius'],
+  ['inbox.module.css', '.rowTask', [['border-radius', '6px']], 'the Task marker on a queue row is a 6px chip'],
   ['composer.module.css', '.fileChip', [['border-radius', '6px']], 'chip radius is 6px'],
   ['conversation.module.css', '.attachmentChip', [['border-radius', '6px']], 'chip radius is 6px'],
   ['conversation.module.css', '.mention', [['border-radius', '6px']], 'inline mention chip radius is 6px'],

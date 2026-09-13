@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
-import { formatActivity, formatClaimState, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
+import { formatAbsoluteTime, formatActivity, formatClaimState, formatInboxTime, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
 
 const t = ((key: keyof typeof zh, params?: Record<string, string | number>) => {
   let value: string = zh[key]
@@ -53,6 +53,21 @@ describe('Team presentation formatters', () => {
     expect(formatMessageTime('2026-02-01T08:30:00', now)).toBe('02-01 08:30')
     expect(formatMessageTime('2025-12-31T23:59:00', now)).toBe('2025-12-31 23:59')
     expect(formatMessageTime('not-a-date', now)).toBe('')
+  })
+
+  it('names today and yesterday on a queue row and dates everything older', () => {
+    const now = new Date('2026-08-21T12:00:00')
+    expect(formatInboxTime('2026-08-21T03:05:00', t, now)).toBe('今天 03:05')
+    expect(formatInboxTime('2026-08-20T23:40:00', t, now)).toBe('昨天 23:40')
+    // Two days back is a date again, and the label agrees with the Message form.
+    expect(formatInboxTime('2026-08-19T08:30:00', t, now)).toBe('08-19 08:30')
+    expect(formatInboxTime('2025-12-31T23:59:00', t, now)).toBe('2025-12-31 23:59')
+    expect(formatInboxTime('not-a-date', t, now)).toBe('')
+    // Calendar days, not 24-hour spans: 00:10 today is still today.
+    expect(formatInboxTime(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 10).toISOString(), t, now)).toBe('今天 00:10')
+    // The precise instant stays available behind every relative label.
+    expect(formatAbsoluteTime('2026-08-21T03:05:00')).toBe('2026-08-21 03:05')
+    expect(formatAbsoluteTime('not-a-date')).toBe('')
   })
 
   it('splits only structured mention names, case-insensitively with an optional @', () => {

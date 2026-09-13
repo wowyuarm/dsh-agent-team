@@ -166,6 +166,13 @@ export function isPlainTextBody(text: string): boolean {
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 
+/** Absolute local `YYYY-MM-DD HH:mm` label: the precise instant behind every shorter form. */
+export function formatAbsoluteTime(occurredAt: string): string {
+  const at = new Date(occurredAt)
+  if (Number.isNaN(at.getTime())) return ''
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`
+}
+
 /**
  * Wall-clock label for one Message instant: time within the current day,
  * month-day time within the year, full date otherwise.
@@ -173,12 +180,35 @@ const pad = (value: number): string => String(value).padStart(2, '0')
 export function formatMessageTime(occurredAt: string, now = new Date()): string {
   const at = new Date(occurredAt)
   if (Number.isNaN(at.getTime())) return ''
-  const time = `${pad(at.getHours())}:${pad(at.getMinutes())}`
   const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate()
-  if (sameDay) return time
-  const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
-  if (at.getFullYear() === now.getFullYear()) return `${date.slice(5)} ${time}`
-  return `${date} ${time}`
+  if (sameDay) return `${pad(at.getHours())}:${pad(at.getMinutes())}`
+  const absolute = formatAbsoluteTime(occurredAt)
+  return at.getFullYear() === now.getFullYear() ? absolute.slice(5) : absolute
+}
+
+/**
+ * Calendar days between two instants in the viewer's own zone, so "yesterday"
+ * means yesterday locally rather than 24 hours earlier.
+ */
+function calendarDayDelta(at: Date, now: Date): number {
+  const midnight = (date: Date): number => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  return Math.round((midnight(now) - midnight(at)) / 86_400_000)
+}
+
+/**
+ * Queue label for one Inbox row's newest mention. The mention queue scans by
+ * recency, so the two days a reader reasons about by name are named ("今天" /
+ * "昨天") while everything older keeps the Message date form, so the row and
+ * the Thread it opens agree about the same instant.
+ */
+export function formatInboxTime(occurredAt: string, t: TeamConversationProps['t'], now = new Date()): string {
+  const at = new Date(occurredAt)
+  if (Number.isNaN(at.getTime())) return ''
+  const days = calendarDayDelta(at, now)
+  if (days === 0 || days === 1) {
+    return `${t(days === 0 ? 'inboxTimeToday' : 'inboxTimeYesterday')} ${pad(at.getHours())}:${pad(at.getMinutes())}`
+  }
+  return formatMessageTime(occurredAt, now)
 }
 
 export function formatActivity(activity: AgentTeamActivity, options: {

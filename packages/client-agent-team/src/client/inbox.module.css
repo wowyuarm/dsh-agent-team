@@ -1,29 +1,40 @@
-/* The Human mention-Inbox page: the shared timeline container carries the
- * column, gutters, and scrollbar; this sheet styles only the rows. Every
- * color rides the shipped DSW aliases so the page follows the active theme. */
-.surface {
-  /* `.timeline` is a `1fr` grid row on Channel and Thread, so it owns no
-     height itself; the Inbox face is the conversation seat and fills it. */
-  height: 100%;
-}
-
+/* The Human mention-Inbox page: the shared conversation seat carries the
+ * header band, column, gutters, and scrollbar; this sheet styles only the
+ * queue rows. Every color rides the shipped DSW aliases so the page follows
+ * the active theme. */
 .list {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
+/* The queue's count line is one line wherever it fits: a squeezed conversation
+   seat must not turn the header into three wrapped rows. */
+.headerMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A queue row reads like the shipped two-line result row: the top-level
+   Message is the row's subject, the Workspace/Channel/Task breadcrumb above it
+   is the provenance, and the row is one full-width hit target with the shared
+   hover fill and an inset focus ring. */
 .row {
   align-items: baseline;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
   color: inherit;
   cursor: pointer;
   display: grid;
   font: inherit;
   gap: 2px 12px;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding: 10px 8px;
+  /* 8px is the shipped sidebar-row inset. It also nearly cancels the reserved
+     scrollbar gutter that shifts this column half a scrollbar left of the
+     header band, leaving the row text within a few pixels of the header's. */
+  padding: 9px 8px;
   text-align: left;
   width: 100%;
 }
@@ -50,17 +61,24 @@
   color: var(--dsw-alias-label-secondary);
   font-weight: 600;
 }
+/* The Task marker is the row's only chip: a hairline keeps it legible on the
+   row's own hover fill instead of dissolving into a second gray block. */
 .rowTask {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
   color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
   font-weight: 600;
+  line-height: 15px;
   margin-left: 8px;
+  padding: 0 5px;
   white-space: nowrap;
 }
 .rowPreview {
   color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  grid-column: 1;
-  line-height: 20px;
+  font-size: 14px;
+  grid-column: 1 / -1;
+  line-height: 22px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -69,6 +87,7 @@
 .rowTime {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   grid-column: 2;
   grid-row: 1;
   line-height: 18px;

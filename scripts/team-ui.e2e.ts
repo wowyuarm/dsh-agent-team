@@ -1209,9 +1209,18 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.locator('button[class*="inboxCard"]').count()).toBe(1)
   await expect.poll(async () => await inboxRow.count()).toBe(1)
   await expect.poll(async () => await inboxRow.textContent()).toContain('#delivery')
+  // The queue carries the shared header band plus its own count line.
+  const inboxPage = page.locator('[data-team-inbox]')
+  await expect.poll(async () => await inboxPage.getByRole('heading', { name: '提到我' }).count()).toBe(1)
+  await expect.poll(async () => await inboxPage.getByText(/共 1 个 Thread · \d+ 条提及/).count()).toBe(1)
   // The row time is the newest unread fact's instant (the Human follows their
   // own opener, so the ordinary inter-chat reply advances it past the mention).
   await expect.poll(async () => await inboxRow.locator('time').count()).toBe(1)
+  // A mention raised today is named by day, and the precise instant stays on
+  // the element behind that label.
+  const inboxRowTime = inboxRow.locator('time').first()
+  await expect.poll(async () => await inboxRowTime.textContent()).toMatch(/^今天 \d{2}:\d{2}$/)
+  expect(await inboxRowTime.getAttribute('title')).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
   await settleAnimations(page)
   await page.screenshot({ path: join(UI07_SHOTS, 'inbox-page-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
