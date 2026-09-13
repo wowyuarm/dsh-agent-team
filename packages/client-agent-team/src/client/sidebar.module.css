@@ -134,11 +134,17 @@
   white-space: nowrap;
 }
 
+/* A count badge is a capsule: border-box keeps one digit an 18px circle
+   instead of padding it out to an oval, 999px pairs with the platform's
+   corner-shape opt-out the way every shipped capsule does, and the radius no
+   longer depends on the digit count. */
 .inboxBadge {
   align-items: center;
   background: var(--dsw-alias-state-business-primary);
-  border-radius: 9px;
+  border-radius: 999px;
+  box-sizing: border-box;
   color: var(--dsw-alias-label-primary-foreground);
+  corner-shape: round;
   display: inline-flex;
   flex: 0 0 auto;
   font-size: 11px;
@@ -150,14 +156,13 @@
   min-width: 18px;
   padding: 0 5px;
 }
-.railButton {
-  position: relative;
-}
+/* The rail badge sits inside the 36px control box: the rail region clips its
+   own overflow, so a badge hung past the button edge loses its right corner. */
 .railButton .inboxBadge {
   margin-left: 0;
   position: absolute;
-  right: -4px;
-  top: -2px;
+  right: 0;
+  top: 0;
 }
 .railWorkspace {
   align-items: center;
@@ -168,7 +173,9 @@
 }
 .railButton {
   border-radius: 50%;
+  corner-shape: round;
   height: 36px;
+  position: relative;
   width: 36px;
 }
 .railButton[data-active] {
@@ -246,6 +253,7 @@
   background: transparent;
   border: 0;
   border-radius: 50%;
+  corner-shape: round;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   display: inline-flex;
@@ -420,6 +428,7 @@
   align-items: center;
   background: hsl(var(--team-avatar-hue, 212) 42% 46%);
   border-radius: 50%;
+  corner-shape: round;
   color: #fff;
   cursor: default;
   display: inline-flex;
@@ -437,6 +446,7 @@
   align-items: center;
   background: var(--dsw-specific-sidebar-fill);
   border-radius: 50%;
+  corner-shape: round;
   bottom: -3px;
   box-shadow: 0 0 0 1px var(--dsw-specific-sidebar-fill);
   display: inline-flex;
@@ -469,6 +479,7 @@
 .unavailableDot {
   background: var(--dsw-alias-label-tertiary);
   border-radius: 50%;
+  corner-shape: round;
   display: inline-block;
   height: 7px;
   width: 7px;

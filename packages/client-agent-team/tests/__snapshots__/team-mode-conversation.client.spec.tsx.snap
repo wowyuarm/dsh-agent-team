@@ -112,6 +112,7 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
               class="workspaceBrowser"
             >
               <button
+                aria-label="提到我"
                 class="inboxCard"
                 type="button"
               >

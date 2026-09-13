@@ -4,6 +4,7 @@
    component's inline style. */
 .quiet {
   border-radius: 50%;
+  corner-shape: round;
   display: inline-block;
   flex: none;
   position: relative;
@@ -17,6 +18,7 @@
 .quiet[data-variant='quiet']::before {
   background: currentColor;
   border-radius: 50%;
+  corner-shape: round;
   content: '';
   inset: 0;
   opacity: 0.1;
@@ -26,6 +28,7 @@
 .quiet[data-variant='quiet']::after {
   background: currentColor;
   border-radius: 50%;
+  corner-shape: round;
   content: '';
   inset: 20%;
   position: absolute;

@@ -118,6 +118,7 @@
 .unavailableDot {
   background: var(--dsw-alias-label-tertiary);
   border-radius: 50%;
+  corner-shape: round;
   display: inline-block;
   height: 7px;
   justify-self: center;

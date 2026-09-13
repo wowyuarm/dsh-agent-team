@@ -66,15 +66,18 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, sele
     selectThread(row.item.thread.threadRef, row.item.channelRef, row.item.task?.taskRef, row.item.taskNumber)
   }
 
-  return <main className={css.welcomeSurface} data-team-inbox>
-    <div className={inboxCss.page}>
+  // The page rides the shared timeline container: same 880px reading column,
+  // same responsive gutters and scrollbar gutter as Channel and Thread, so
+  // switching surfaces does not shift the content column.
+  return <main className={`${css.timeline} ${inboxCss.surface}`} aria-label={t('mentionsOfMe')} data-team-inbox>
+    <div className={css.timelineContent}>
       {loading && rows === undefined && error === undefined && <div className={css.emptySurface}><p className={css.loadingState}><span className={css.loadingMark} aria-hidden="true" />{t('loadingInbox')}</p></div>}
       {!loading && rows === undefined && error !== undefined && <div className={css.errorState} role="alert"><span>{error}</span><Button size="sm" variant="outline" onClick={() => { void refresh() }}>{t('retry')}</Button></div>}
       {rows !== undefined && (rows.length === 0
         ? <div className={css.emptySurface}>
-            <div className={inboxCss.empty}>
-              <h2>{t('inboxEmptyTitle')}</h2>
-              <p>{t('inboxEmptyHint')}</p>
+            <div className={css.emptyState}>
+              <strong>{t('inboxEmptyTitle')}</strong>
+              <span>{t('inboxEmptyHint')}</span>
             </div>
           </div>
         : <div className={inboxCss.list}>
@@ -91,7 +94,7 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, sele
               </button>
             ))}
           </div>)}
-      {rows !== undefined && error !== undefined && <p className={inboxCss.refreshError} role="alert">{error}</p>}
+      {rows !== undefined && error !== undefined && <p className={css.error} role="alert">{error}</p>}
     </div>
   </main>
 }

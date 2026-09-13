@@ -94,7 +94,7 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
   }
 
   return <section className={css.workspaceBrowser} aria-label={t('workspaces')}>
-    <button type="button" className={css.inboxCard} aria-current={inboxIsCurrent ? 'page' : undefined} onClick={selectInbox}>
+    <button type="button" className={css.inboxCard} aria-label={inboxTotal > 0 ? t('mentionsOfMeWithCount', { count: inboxTotal }) : t('mentionsOfMe')} aria-current={inboxIsCurrent ? 'page' : undefined} onClick={selectInbox}>
       <IconQueueOutline14 size={16} />
       <span className={css.inboxCardLabel}>{t('mentionsOfMe')}</span>
       {inboxTotal > 0 && <span className={css.inboxBadge} aria-hidden="true">{inboxTotal > 99 ? '99+' : inboxTotal}</span>}

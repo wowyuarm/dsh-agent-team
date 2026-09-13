@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { chromium, type Browser } from 'playwright'
+import { chromium, type Browser, type Page } from 'playwright'
 import { launchWebScaffold, watchConsole, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspaceZh } from './support.ts'
 
@@ -24,6 +24,20 @@ afterEach(async () => {
   await browser?.close(); browser = undefined
   await scaffold?.close(); scaffold = undefined
 })
+
+/**
+ * Wait until no finite animation is still running. The sidebar collapse and
+ * its rail-in crossfade are 150ms each, and the AppFrame track slides between
+ * 56px and 280px: a screenshot taken mid-flight captures the frozen expanded
+ * column clipped to the rail instead of the settled rail itself. Infinite
+ * animations (presence and loading pulses) are not waits.
+ */
+async function settleAnimations(page: Page): Promise<void> {
+  await page.waitForFunction(() => document.getAnimations().every(animation => {
+    const timing = animation.effect?.getTiming()
+    return timing === undefined || timing.iterations === Infinity || animation.playState !== 'running'
+  }))
+}
 
 async function installLocalBundle(): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
@@ -1187,6 +1201,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   const railLabels = await inboxRail.locator('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))
   expect(railLabels).toEqual([`提到我，${baseDirect + 1} 条未读提及`, '频道', 'Agents'])
   await expect.poll(async () => await badgeText()).toBe(String(baseDirect + 1))
+  // The rail settles after the collapse crossfade; screenshot the settled rail.
+  await settleAnimations(page)
   await page.screenshot({ path: join(UI07_SHOTS, 'inbox-narrow-rail.png'), fullPage: true })
   await railInboxButton.click()
   await page.locator('[data-team-inbox]').waitFor()
@@ -1196,6 +1212,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   // The row time is the newest unread fact's instant (the Human follows their
   // own opener, so the ordinary inter-chat reply advances it past the mention).
   await expect.poll(async () => await inboxRow.locator('time').count()).toBe(1)
+  await settleAnimations(page)
   await page.screenshot({ path: join(UI07_SHOTS, 'inbox-page-narrow.png'), fullPage: true })
   await page.setViewportSize({ width: 1440, height: 960 })
 
@@ -1209,6 +1226,9 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('heading', { name: '# delivery' }).waitFor()
   await page.locator('button[class*="inboxCard"]').click()
   await page.locator('[data-team-inbox]').waitFor()
+  // The empty face is the settled list, not the entry frame: the rows are
+  // absent while the page loads too, so wait for the empty copy itself.
+  await page.locator('[data-team-inbox]').getByText('还没有人提到你').waitFor()
   await expect.poll(async () => await inboxRow.count()).toBe(0)
   await page.screenshot({ path: join(UI07_SHOTS, 'inbox-page-empty.png'), fullPage: true })
   await expect.poll(async () => await page.locator('button[class*="inboxCard"]').getAttribute('aria-current')).toBe('page')

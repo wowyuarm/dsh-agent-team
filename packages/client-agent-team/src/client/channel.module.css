@@ -19,6 +19,7 @@
   background: transparent;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
+  corner-shape: round;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   display: inline-flex;

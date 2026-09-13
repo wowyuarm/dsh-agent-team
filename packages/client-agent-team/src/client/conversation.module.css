@@ -90,6 +90,7 @@
   align-items: center;
   background: hsl(var(--team-avatar-hue, 212) 42% 46%);
   border-radius: 50%;
+  corner-shape: round;
   color: #fff;
   display: flex;
   flex: 0 0 28px;
@@ -204,6 +205,7 @@
   animation: pulse 1.2s ease-in-out infinite;
   background: var(--dsw-alias-bg-skeleton);
   border-radius: 50%;
+  corner-shape: round;
   height: 8px;
   width: 8px;
 }

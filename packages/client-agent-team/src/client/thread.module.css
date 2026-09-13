@@ -112,6 +112,7 @@
 .activityMark {
   background: var(--dsw-alias-border-l3);
   border-radius: 50%;
+  corner-shape: round;
   flex: 0 0 5px;
   height: 5px;
   width: 5px;
@@ -193,6 +194,7 @@
   background: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1));
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 999px;
+  corner-shape: round;
   box-shadow: var(--dsw-shadow-lv2);
   display: flex;
   font-size: 12px;

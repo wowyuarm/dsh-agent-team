@@ -49,6 +49,7 @@
 .footerAction.rail,
 .settingsAction.rail {
   border-radius: 50%;
+  corner-shape: round;
   height: 36px;
   justify-content: center;
   padding: 0;
