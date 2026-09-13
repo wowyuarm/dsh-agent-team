@@ -1,13 +1,20 @@
 import { useSyncExternalStore } from 'react'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamChannelPage } from './TeamChannelPage.tsx'
+import { TeamInboxPage } from './TeamInboxPage.tsx'
 import { TeamThreadPage } from './TeamThreadPage.tsx'
 import css from './conversation.module.css'
 
-export function TeamConversation({ t, useWorkspaces, navigation, drafts, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, subscribeChanges, loadMembers, sendMessage, joinChannel, removeChannelMember, reply, changeTask, promoteThread, selectThread, selectChannel, backToWorkspace, backToChannels, resolveTaskRefs }: TeamConversationProps) {
+export function TeamConversation({ t, useWorkspaces, navigation, drafts, putAttachment, getAttachment, loadChannels, readThread, loadThreadHistory, threadObservations, subscribeChanges, loadMembers, loadInbox, sendMessage, joinChannel, removeChannelMember, reply, changeTask, promoteThread, selectThread, selectChannel, selectWorkspace, backToWorkspace, backToChannels, resolveTaskRefs }: TeamConversationProps) {
   const navigationState = useSyncExternalStore(navigation.subscribe, navigation.getSnapshot, navigation.getSnapshot)
   const workspaces = useWorkspaces(state => state.items)
   const current = workspaces.find(workspace => workspace.workspaceId === navigationState.workspaceId)
+  if (navigationState.inbox === true) {
+    // The Inbox page is global: it merges every visible Workspace and needs no
+    // selected Workspace. Selecting Inbox clears the Channel/Thread faces, so
+    // this face owns the seat while the flag stands.
+    return <TeamInboxPage key="inbox" useWorkspaces={useWorkspaces} loadInbox={loadInbox} subscribeChanges={subscribeChanges} selectWorkspace={selectWorkspace} selectThread={selectThread} t={t} />
+  }
   if (current !== undefined && navigationState.threadRef !== undefined) {
     return <TeamThreadPage key={navigationState.threadRef} workspaceId={current.workspaceId} putAttachment={putAttachment} threadRef={navigationState.threadRef} backToWorkspace={backToWorkspace} selectChannel={selectChannel} selectThread={selectThread} resolveTaskRefs={resolveTaskRefs} {...(navigationState.channelRef === undefined ? {} : { channelRef: navigationState.channelRef })} {...(navigationState.taskRef === undefined ? {} : { taskRef: navigationState.taskRef })} {...(navigationState.taskNumber === undefined ? {} : { taskNumber: navigationState.taskNumber })} drafts={drafts} getAttachment={getAttachment} readThread={readThread} loadChannels={loadChannels} loadThreadHistory={loadThreadHistory} threadObservations={threadObservations} subscribeChanges={subscribeChanges} loadMembers={loadMembers} reply={reply} changeTask={changeTask} promoteThread={promoteThread} t={t} />
   }

@@ -46,7 +46,7 @@ While active, other Members' Messages—and taskful Claim and Task resolution Ac
 
 The first read returns the anchor, optional Task/Claim snapshot, limited recent background, and bounded unread batch. Background is orientation and already read. `history` is the only older-facts pager.
 
-Human navigation is Workspace → Channel → Thread; a Task is an overlay, not a navigation level. The Client has no Human Inbox UI. Opening a Thread performs durable Human read and scrolls to the latest fact; a bounded result with remaining unread drains automatically through continued reads, so no explicit continuation exists. History does not acknowledge new work. Arrivals while the Thread is open are acknowledged durably regardless of scroll position; a reader away from the bottom sees only a pure jump hint with no read semantics.
+Human navigation is Workspace → Channel → Thread; a Task is an overlay, not a navigation level. The 「提到我」 Inbox is a global Team page: it opens from the sidebar card/narrow-rail icon and merges every visible Workspace's direct-only Inbox calls; opening it performs no Thread read, and only opening a Thread clears the mention marker. Opening a Thread performs durable Human read and scrolls to the latest fact; a bounded result with remaining unread drains automatically through continued reads, so no explicit continuation exists. History does not acknowledge new work. Arrivals while the Thread is open are acknowledged durably regardless of scroll position; a reader away from the bottom sees only a pure jump hint with no read semantics.
 
 ## Structured mentions
 
@@ -56,9 +56,11 @@ A top-level Message mentioning Agents makes them follow the new Thread and deliv
 
 ## Human-readable messages
 
-A Thread message is read twice: by the Member being coordinated with, and by the Human following the Thread. The contract is two-tier, and the tier is chosen by whether the Human must act.
+Every message leads with the conclusion or state; mechanical detail — `file:line`, commands, hashes, probe output — follows below it, and detail a peer Member needs is never dropped, only moved. Prose stays in the language the Human writes, while identifiers, paths, commands, and refs stay verbatim.
 
-When the Human must know or decide something, the message mentions the Human and opens with the human layer: one to three sentences on what happened and where it stands, plus a `Decision needed: X (default: Y)` line when a decision is owed. A message that is coordination between Members only mentions no Human and carries exactly what those Members need to act on. Either way the conclusion or state comes first and mechanical detail — `file:line`, commands, hashes, probe output — follows below it; detail a peer Member needs is never dropped, only moved. Prose stays in the language the Human writes, while identifiers, paths, commands, and refs stay verbatim. The persona states this contract and the `team_message` body description restates its opening rule where the model composes the body.
+Mentioning the Human is how the Human is notified — the mention creates the durable direct marker the Human Inbox surfaces, and nothing else does. The minimum set that mentions the Human: a Human decision is owed; a Claim is finished and waits for acceptance; a blocker or risk the Human must know about; progress the Human explicitly asked for. Mid-thread progress chatter between Agents stays Agent-to-Agent and mentions no Human. The persona states this contract and the `team_message` body description restates its opening rule where the model composes the body.
+
+A mention opens with one to three readable sentences and adds a `Decision needed: X (default: Y)` line when a decision is owed. The line exists for scanning; it is a message convention, never an Inbox key — the Inbox counts mentions, not decision lines.
 
 ## Ref citation
 
@@ -74,7 +76,7 @@ Human close releases active Claims and ends Attention. Reopen restores an open T
 
 ## Human Remote boundary
 
-The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`; it does not use a Human Inbox projection. `threadObservations` feeds the Thread composer's mention ranking (current followers first); the observation history itself stays unrendered. Browser storage keeps only navigation mode and Workspace selection; unread, Attention, revisions, and observations remain Host-owned.
+The Human Client uses `readThread`, `threadHistory`, `threadObservations`, `changeAttention`, and `changes`, and it consumes the Host's direct-only Human Inbox slice as the 「提到我」 queue: one `directOnly` Inbox call per visible Workspace, merged into the badge and the Inbox page. Opening the Inbox page acknowledges nothing — only a durable Thread read consumes a mention marker, so rows and the badge drop through the same auto-ack path that open Threads already run. `threadObservations` feeds the Thread composer's mention ranking (current followers first); the observation history itself stays unrendered. Browser storage keeps navigation mode, Workspace selection, and the Inbox page position (a navigation fact, not an unread fact); unread, Attention, revisions, and observations remain Host-owned. The Client merges the per-Workspace Inbox calls in the Client; there is no home-level Inbox ledger or Remote.
 
 ## Team Member context boundary
 

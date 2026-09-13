@@ -111,6 +111,24 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
               aria-label="工作区"
               class="workspaceBrowser"
             >
+              <button
+                class="inboxCard"
+                type="button"
+              >
+                <svg
+                  data-content="2ee99417"
+                  fill="none"
+                  height="16"
+                  viewBox="0 0 14 14"
+                  width="16"
+                  xmlns="http://www.w3.org/2000/svg"
+                />
+                <span
+                  class="inboxCardLabel"
+                >
+                  提到我
+                </span>
+              </button>
               <section
                 class="section"
               >

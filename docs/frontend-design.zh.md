@@ -35,7 +35,7 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 - 内容列 `max-width: 880px` 居中；时间线左右 padding `clamp(18px, 3vw, 36px)`。
 - 断点 `@media (max-width: 600px)` 收紧 padding、header 纵排；验收必须覆盖 390×844 无横向溢出。
 - 侧栏由宿主 `sidebar` slot 决定宽窄（wide/rail 二态）；rail 模式下 Team 只渲染图标按钮列。
-- Team 的 mode、Workspace 以及最后选中的 Channel/Thread 写入浏览器缓存；切回 Team 或刷新后恢复最后位置。未读和 Attention 不写入浏览器缓存。
+- Team 的 mode、Workspace、最后选中的 Channel/Thread 以及 Inbox 页位置（navigation 事实，不是未读事实）写入浏览器缓存；切回 Team 或刷新后恢复最后位置。未读和 Attention 不写入浏览器缓存。
 - 欢迎态是独立居中 surface（eyebrow + h1 + 引导文案），不进入三段骨架。
 - Thread 是导航终点；Task 只在存在时叠加为 header/card。taskful Thread 的头部将 `Task #N` 与状态 Pill 放在同一行（`.titleLine`），任务标题为副行；Claims 用公共 `DisclosureRow` 折叠为一行摘要，展开才渲染 Claim 列表；header 动作区只在 open 任务出现（验收/关闭），accepted 任务保留 header 重新打开主按钮。taskless Thread 显示 Thread 标题与唯一的「转为任务」动作，不显示状态、Claims 或 Task resolution controls。
 - 关闭任务是终态：composer 槽位换成解释性提示条（`.closedBar/.closedNotice`，文案 + 唯一的重新打开动作），不再渲染禁用的输入框。taskless Thread 保持普通 reply composer。
@@ -126,7 +126,11 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 - 频道编辑器（`编辑频道`）：名称/说明输入框 + 成员增删字段集。保存钮无改动即禁用（dirty 门），提交走 `updateChannel` Remote（幂等 request 同载荷复用），成功后由投影刷新回填行文案——不做乐观行内改名；成员增删仍走既有 join/remove Remote（request 按 方向+成员+频道 键复用）。
 - Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员原地更新 live model selection，保持 Agent 与 Session 身份不变，后续请求使用新选择；纯展示编辑不重启。Agent 创建流程没有频道选择页，Agent 编辑器没有成员区块——频道成员只在频道侧管理（创建对话框初始成员、频道编辑器成员行、成员管理对话框）；未入频道的 Member 仍可经 DM 触达。
 - Agent 卡片会话视图：Agent 行的头像与文案整体是选择按钮（`打开 {name} 的会话`），点击不再退出 Team 模式——导航快照保留当前 Channel/Thread，并叠加运行时字段 `memberSessionId`（附 `returnToSessionId`，均不持久化），再调用 `sessions.open(memberSessionId)`；`conversation` 影子此时让位，由 shipped 会话根在 Team 侧栏之间渲染该成员会话。任何显式 Team 导航（选工作区/频道/Thread）都会关闭成员视图并恢复该 Team 位置；页脚「对话」关闭成员视图、还原 `returnToSessionId` 后离开 Team，普通外壳不会停在成员会话里。Member 经 `context_rollover` 换新上下文时，Agents 面板观察该 Member 的旧→新 Session 绑定，仅在嵌入页正是被观察的旧 live Session id 时恰好跟随一次，归档视图不跳转。
-- 窄屏 rail 保留两个图标按钮，点击请求展开侧栏并聚焦对应分区头部。
+- 窄屏 rail 三个图标按钮自上而下：提到我（`IconQueueOutline14`，16px）→ 频道（`IconListPenOutline16`）→ Agents（`IconAgentPresetOutline16`）；不复用 checklist（任务）或 user（成员）图标。提到我图标是目的地：点击打开 Inbox 页并请求展开侧栏；频道/Agents 图标点击请求展开侧栏并聚焦对应分区头部。
+- 「提到我」入口：宽栏是 Workspaces 节之上的一张卡片，窄轨是 rail 第一枚图标；两者挂同一枚跨 Workspace direct 徽标（各可见 Workspace directOnly Inbox 合计），为 0 隐藏，超过 99 显示 `99+`。Inbox 页打开时卡片/图标携带 `aria-current='page'`。
+- `TeamConversation` 第四个面：Thread | Channel | Inbox | welcome。选 Inbox 清掉 Channel/Thread 面；选 Workspace、Channel 或 Thread 清掉 Inbox。从 Inbox 行进入 Thread 后，Back 落在该行 Thread 的频道——Inbox 不进返回栈；再进 Inbox 走左侧卡片或窄轨图标。
+- Inbox 页：对每个可见 Workspace 发一次 directOnly Inbox 调用并按 Workspace 顺序合并（各 Workspace 内保持 Host 行序），打开页不确认任何内容——打开页不是 read，只有点开行的 durable Thread read 清 marker 与徽标。行是单个按钮：(1) 一行面包屑 `workspace / #channel`，taskful 加 `Task #N`；(2) Thread 开头行，直接渲染 Host `previewText`（120 字帽）；(3) 最新 mention 时刻，走消息同一 `formatMessageTime`。点击行选择该行 Workspace 并打开 Thread。空态「还没有人提到你」+ 提示「需要你知道或做决定时，成员会提到你」；loading/error/retry 密度对齐频道页，后台刷新失败保留行并以 `role='alert'` 报告。
+- 刷新语义：Inbox 页打开时订一次无 scope 的 changes，唤醒重拉列表，离开即停；徽标同法订阅，唤醒只重拉合计（`limit: 1`），绝不拉列表。徽标还会在每次 durable Thread read 完成后直接刷新——Host 的 changes 对 read 刻意不唤醒（read 不改变任何共享 projection），但该 read 消费了读者自己的 mention marker。
 
 ## 数据刷新语义
 

@@ -469,6 +469,87 @@ describe('AgentTeam durable Thread Attention ledger', () => {
     expect(replayLedger(test).inbox(actor, { workspaceId: alpha })).toMatchObject({ totalUnreadCount: 1, totalDirectCount: 1 })
   })
 
+  it('serves the Human direct-only Inbox slice with row previews and direct-only totals', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    // One ledger instance commits and projects every step below: a second
+    // instance's state is its construction-time replay, so mixing instances
+    // would resolve refs against a stale snapshot.
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
+
+    // A followed Thread carrying BOTH an unread mention and ordinary follow
+    // unread: the direct-only slice keeps the Thread but its badge total may
+    // only count the mention, never the follow unread.
+    const followed = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('followed'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Followed thread anchor', actor: agentTeamHumanActor() })).value))
+    const mentioned = committed((await ledger.reply({ requestId: requestId('mention'), workspaceId: alpha, taskRef: followed.task.taskRef, body: 'Decision needed on the rollout', baseRevision: followed.thread.revision, recipients: [AGENT_TEAM_HUMAN_MEMBER_ID], actor })).value)
+    committed((await ledger.reply({ requestId: requestId('ordinary'), workspaceId: alpha, taskRef: followed.task.taskRef, body: 'Ordinary progress reply', baseRevision: mentioned.thread.revision, actor })).value)
+
+    // An unfollowed Thread whose fresh mention must still surface: direct
+    // markers never depended on Human follow. Its anchor's first line exceeds
+    // the 120-character preview bound the Thread page applies to Task titles.
+    const unfollowed = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('unfollowed'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: `${'x'.repeat(130)}\nsecond line`, actor: agentTeamHumanActor() })).value))
+    await ledger.changeAttention({ requestId: requestId('unfollow'), workspaceId: alpha, taskRef: unfollowed.task.taskRef, action: 'unfollow', actor: agentTeamHumanActor() })
+    committed((await ledger.reply({ requestId: requestId('ping'), workspaceId: alpha, taskRef: unfollowed.task.taskRef, body: 'Blocking on your call', baseRevision: unfollowed.thread.revision, recipients: [AGENT_TEAM_HUMAN_MEMBER_ID], actor })).value)
+
+    const direct = ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha, directOnly: true })
+    // Rows: same directCount, so newest unread first — the ping (seq 8) over
+    // the followed Thread's ordinary reply (seq 5).
+    expect(direct.items.map(item => item.thread.threadRef)).toEqual([unfollowed.task.threadRef, followed.task.threadRef])
+    expect(direct.totalUnreadCount).toBe(2)
+    expect(direct.totalUnreadCount).toBe(direct.totalDirectCount)
+    expect(direct.items[1]).toMatchObject({
+      channelRef: channel.channel.channelRef, channelName: 'engineering', taskNumber: 1,
+      directCount: 1, unreadCount: 2, previewText: 'Followed thread anchor',
+    })
+    expect(direct.items[0]).toMatchObject({
+      channelName: 'engineering', taskNumber: 2, directCount: 1, unreadCount: 1,
+      previewText: `${'x'.repeat(119)}…`,
+    })
+    expect(direct.items[0]?.newestOccurredAt).not.toBe('')
+
+    // A pure follow unread never enters the slice, and the ordinary
+    // projection stays preview-free while still counting follow unread.
+    const ordinary = ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha })
+    expect(ordinary.totalUnreadCount).toBe(3)
+    expect(ordinary.items.every(item => item.channelName === undefined && item.taskNumber === undefined && item.previewText === undefined)).toBe(true)
+    expect(ordinary.items.map(item => item.thread.threadRef)).toEqual([unfollowed.task.threadRef, followed.task.threadRef])
+    const cold = replayLedger(test)
+    expect(cold.inbox(agentTeamHumanActor(), { workspaceId: alpha, directOnly: true }).totalUnreadCount).toBe(2)
+
+    // The durable Thread read consumes the mention marker, so the next
+    // direct-only call no longer offers the Thread.
+    await ledger.readThread({ requestId: requestId('read'), workspaceId: alpha, taskRef: unfollowed.task.taskRef, actor: agentTeamHumanActor() })
+    const after = ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha, directOnly: true })
+    expect(after.items.map(item => item.thread.threadRef)).toEqual([followed.task.threadRef])
+    expect(after.totalUnreadCount).toBe(1)
+  })
+
+  it('keeps pure follow unread out of the direct-only slice on the same data', async () => {
+    const test = await harness()
+    const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })
+    const ledger = replayLedger(test)
+    const { actor } = await addLedgerMember(ledger, channel.channel.channelRef, 'member:builder')
+    // The Human creates the Thread and therefore follows it; the Agent's reply
+    // carries NO mentions parameter, so the only unread it produces is the
+    // ordinary follow unread — nothing a direct-only slice may surface.
+    const started = withTask(committed((await ledger.sendMessage({ asTask: true, requestId: requestId('start'), workspaceId: alpha, channelRef: channel.channel.channelRef, body: 'Pure follow thread anchor', actor: agentTeamHumanActor() })).value))
+    committed((await ledger.reply({ requestId: requestId('progress'), workspaceId: alpha, taskRef: started.task.taskRef, body: 'Ordinary progress, nobody mentioned', baseRevision: started.thread.revision, actor })).value)
+
+    // Same snapshot, flag decides: the direct-only slice excludes the Thread
+    // entirely (the filter under test — remove the directCount gate and this
+    // fails), while the ordinary projection still sees the follow unread, so
+    // the empty slice is a filtered exclusion, not a projection miss.
+    expect(ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha, directOnly: true }))
+      .toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+    const ordinary = ledger.inbox(agentTeamHumanActor(), { workspaceId: alpha })
+    expect(ordinary.totalUnreadCount).toBeGreaterThanOrEqual(1)
+    expect(ordinary.items).toHaveLength(1)
+    expect(ordinary.items[0]).toMatchObject({ thread: { threadRef: started.task.threadRef }, unreadCount: 1, directCount: 0 })
+    expect(replayLedger(test).inbox(agentTeamHumanActor(), { workspaceId: alpha, directOnly: true }))
+      .toEqual({ items: [], totalUnreadCount: 0, totalDirectCount: 0 })
+  })
+
   it('keeps the later follow watermark when an older direct marker is consumed', async () => {
     const test = await harness()
     const channel = await test.ctx.agentTeam.createChannel({ requestId: requestId('channel'), workspaceId: alpha, name: 'engineering', description: 'Engineering work' })

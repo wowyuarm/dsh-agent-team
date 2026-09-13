@@ -11,6 +11,12 @@ export interface TeamNavigationSnapshot {
   taskRef?: AgentTeamTaskRef
   threadRef?: AgentTeamThreadRef
   taskNumber?: number
+  /**
+   * Durable position of the Human mention-Inbox page (a navigation fact, not
+   * an unread fact): selecting Inbox clears the Channel/Thread faces, and a
+   * reload reopens the page. Read markers only move through Thread reads.
+   */
+  inbox?: boolean
   /** Runtime-only Member Session embedded in the conversation seat; never persisted. */
   memberSessionId?: SessionId
   /** Runtime-only session to restore when the Member view closes; never persisted. */
@@ -28,6 +34,7 @@ function readSnapshot(): TeamNavigationSnapshot {
       mode: parsed.mode === 'team' ? 'team' : 'conversation',
       ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId as WorkspaceId } : {}),
       ...(typeof parsed.channelRef === 'string' ? { channelRef: parsed.channelRef as AgentTeamChannelRef } : {}),
+      ...(parsed.inbox === true ? { inbox: true } : {}),
       ...(hasThread ? {
         threadRef: parsed.threadRef as AgentTeamThreadRef,
         ...(typeof parsed.taskRef === 'string' ? { taskRef: parsed.taskRef as AgentTeamTaskRef } : {}),
@@ -42,11 +49,12 @@ function readSnapshot(): TeamNavigationSnapshot {
 function persistSnapshot(snapshot: TeamNavigationSnapshot): void {
   if (typeof localStorage === 'undefined') return
   try {
-    const { mode, workspaceId, channelRef, taskRef, threadRef, taskNumber } = snapshot
+    const { mode, workspaceId, channelRef, taskRef, threadRef, taskNumber, inbox } = snapshot
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       mode,
       ...(workspaceId === undefined ? {} : { workspaceId }),
       ...(channelRef === undefined ? {} : { channelRef }),
+      ...(inbox === true ? { inbox: true } : {}),
       ...(taskRef === undefined ? {} : { taskRef }),
       ...(threadRef === undefined ? {} : { threadRef }),
       ...(taskNumber === undefined ? {} : { taskNumber }),
@@ -62,6 +70,8 @@ export interface TeamNavigationActions {
   selectWorkspace: (workspaceId: WorkspaceId) => void
   selectChannel: (channelRef: AgentTeamChannelRef) => void
   selectThread: (threadRef: AgentTeamThreadRef, channelRef?: AgentTeamChannelRef, taskRef?: AgentTeamTaskRef, taskNumber?: number) => void
+  /** Open the Human mention-Inbox page; clears the Channel/Thread faces. */
+  selectInbox: () => void
   backToWorkspace: () => void
   /** Leave the selected Channel for the workspace Channel list; keeps mode and Workspace. */
   backToChannels: () => void
@@ -94,6 +104,7 @@ export class TeamNavigation {
       selectWorkspace: workspaceId => { this.clearMemberSession(); this.setWorkspace(workspaceId) },
       selectChannel: channelRef => { this.clearMemberSession(); this.setChannel(channelRef) },
       selectThread: (threadRef, channelRef, taskRef, taskNumber) => { this.clearMemberSession(); this.setThread(threadRef, channelRef, taskRef, taskNumber) },
+      selectInbox: () => { this.clearMemberSession(); this.setInbox() },
       backToWorkspace: () => { this.clearMemberSession(); this.setThread(undefined) },
       backToChannels: () => { this.clearMemberSession(); this.clearChannel() },
       enterMemberSession: (sessionId, returnToSessionId) => { this.setMemberSession(sessionId, returnToSessionId) },
@@ -133,16 +144,24 @@ export class TeamNavigation {
   }
 
   private setWorkspace(workspaceId: WorkspaceId): void {
-    if (this.snapshot.workspaceId === workspaceId) return
-    const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+    if (this.snapshot.workspaceId === workspaceId && this.snapshot.inbox !== true) return
+    const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, inbox: _inbox, ...base } = this.snapshot
     this.snapshot = { ...base, workspaceId }
     this.commit()
   }
 
   private setChannel(channelRef: AgentTeamChannelRef): void {
-    if (this.snapshot.channelRef === channelRef && this.snapshot.threadRef === undefined) return
-    const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+    if (this.snapshot.channelRef === channelRef && this.snapshot.threadRef === undefined && this.snapshot.inbox !== true) return
+    const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, inbox: _inbox, ...base } = this.snapshot
     this.snapshot = { ...base, channelRef }
+    this.commit()
+  }
+
+  /** The Inbox is a face, not workspace content: selecting a Workspace leaves it. */
+  private setInbox(): void {
+    if (this.snapshot.inbox === true && this.snapshot.channelRef === undefined && this.snapshot.threadRef === undefined) return
+    const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+    this.snapshot = { ...base, inbox: true }
     this.commit()
   }
 
@@ -154,12 +173,12 @@ export class TeamNavigation {
   }
 
   private setThread(threadRef: AgentTeamThreadRef | undefined, channelRef?: AgentTeamChannelRef, taskRef?: AgentTeamTaskRef, taskNumber?: number): void {
-    if (this.snapshot.threadRef === threadRef && this.snapshot.taskRef === taskRef && this.snapshot.channelRef === channelRef && this.snapshot.taskNumber === taskNumber) return
+    if (this.snapshot.threadRef === threadRef && this.snapshot.taskRef === taskRef && this.snapshot.channelRef === channelRef && this.snapshot.taskNumber === taskNumber && this.snapshot.inbox !== true) return
     if (threadRef === undefined) {
       const { taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
       this.snapshot = base
     } else {
-      const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, ...base } = this.snapshot
+      const { channelRef: _channelRef, taskRef: _taskRef, threadRef: _threadRef, taskNumber: _taskNumber, inbox: _inbox, ...base } = this.snapshot
       this.snapshot = {
         ...base,
         threadRef,
