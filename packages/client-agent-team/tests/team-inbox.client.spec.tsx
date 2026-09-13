@@ -111,4 +111,20 @@ describe('Team mention-Inbox surfaces', () => {
     await waitFor(() => expect(b.view.container.querySelector('[data-team-inbox]')).toBeTruthy())
     await b.runtime.dispose()
   })
+
+  it('requests only the direct-only slice for the badge and the Inbox page', async () => {
+    const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
+    const card = await b.view.findByRole('button', { name: '提到我' })
+    b.seedInbox([inboxRow('w1', 'thread:w1')])
+    b.seedInbox([inboxRow('w1', 'thread:w1')])
+    await waitFor(() => expect(within(card).getByText('1')).toBeTruthy())
+    fireEvent.click(card)
+    await waitFor(() => expect(b.view.getByRole('button', { name: /Alpha \/ #engineering/ })).toBeTruthy())
+    // The double returns rows only for directOnly calls, so the visible badge
+    // and row already prove the flag rode the requests; assert it explicitly
+    // so a dropped flag can never pass silently again.
+    expect(b.inbox.mock.calls.length).toBeGreaterThan(0)
+    for (const [request] of b.inbox.mock.calls) expect(request.directOnly).toBe(true)
+    await b.runtime.dispose()
+  })
 })

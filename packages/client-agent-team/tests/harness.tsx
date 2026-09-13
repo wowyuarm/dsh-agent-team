@@ -301,10 +301,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   })
   // The Human direct-only Inbox double: rows are tagged per Workspace and
   // totals collapse to the direct sum, matching the Host's direct-only slice.
-  // The badge and the Inbox page both read through this one remote.
+  // The badge and the Inbox page both read through this one remote, and only
+  // the direct-only slice returns rows — a Client request without the flag
+  // would bypass the mention queue silently, so these tests redden on it.
   let inboxRows: Array<{ readonly workspaceId: string; readonly item: Record<string, unknown> }> = []
-  const inbox = vi.fn(async ({ workspaceId }: { workspaceId: string }) => {
-    const items = inboxRows.filter(row => row.workspaceId === workspaceId).map(row => row.item)
+  const inbox = vi.fn(async ({ workspaceId, directOnly }: { workspaceId: string; directOnly?: boolean }) => {
+    const items = directOnly === true
+      ? inboxRows.filter(row => row.workspaceId === workspaceId).map(row => row.item)
+      : []
     const direct = items.reduce((sum, item) => sum + ((item as { directCount?: number }).directCount ?? 0), 0)
     return { ok: true as const, value: { items, totalUnreadCount: direct, totalDirectCount: direct } }
   })
