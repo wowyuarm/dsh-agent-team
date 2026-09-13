@@ -202,7 +202,7 @@ Harness 随附一套 experimental Agent Teams，以独立 profile bundle 形式�
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`，`0.1.5-rc.2` 已在同一 peer 区间上认证（见本节末段）。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
+当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`，`0.1.5-rc.2` 已在同一 peer 区间上认证（见本节末段）。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。DSH peers 现在正好声明这一条已认证线：`>=0.1.5-rc.1 <0.1.6`，由 `>=0.1.5-rc.1 <0.2.0` 收紧而来——旧上界还会准入此后每一个从未认证过的 `0.1.x` 稳定版；因此更新的线现在落在声明区间之外，而不是在本仓库尚未验证的兼容声明下被装上。经路由的 `dsh-storage-sqlite` 依赖有意保留更宽的区间：它是普通 dependency 而非 peer，因此随框架线解析，而不是钉住某一次认证切点。
 
 这个候选版本落在旧 `>=0.1.2-rc.1 <0.2.0` peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.5-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.2-rc.1` 线。七处上游断裂决定了这一点：`ctx.agent` 从 `AgentSetup` 移除（setup 现在以第二个参数接收活的 `Agent`）；根 `conversation` slot 变成 keyed `main` 条目（Team 以 key `conversation`、priority `-100` 注册 `main`，harness 用 `renderSlot('main', {}, { entryKey: 'conversation' })` 渲染）；`SessionPersistence.inspect()`/`borrowSession()` 被 handle API 取代（`open(id, 'read')` + `read()` + `close()`、`stat()` 返回 header 快照、以及脱离实例的 `Session.create` 工厂）；`assistant/chunk` 事件类型退出 Session 词汇表；`MessageText` 退出 `dsh-client-ui-primitives`（TeamMessage 直接渲染文本）；keyed slot 冲突诊断文案取代了测试中的单 slot 表述；`dsh-persona` 行把配置键 `text` 改名为 `prefix`。最后一条只在运行时显形：成员 preset 从磁盘组合，因此类型检查、单测、构建全绿，而所有成员都以 `preset "team-member" failed to mount: … $.prefix missing required value` 激活失败。Session persistence 现在是随附的 JSONL backend，带 released-format 迁移链（v0/v1/v2 → V3），因此之前关于 SQLite schema 丢弃的说明不再适用。
 

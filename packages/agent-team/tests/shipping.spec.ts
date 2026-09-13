@@ -127,15 +127,17 @@ describe('Agent Team shipping contract', () => {
       exports: Record<string, { default?: string }>
       dsh: { client: { platform: string; inject: string[] } }
     }
-    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.5-rc.1 <0.2.0')
-    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-command-compact']).toBe('>=0.1.5-rc.1 <0.2.0')
-    // The certified baseline moves as one cut: every DSH peer and the routed
-    // storage dependency carry the same range, or an install resolves two DSH
-    // generations at once.
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-tool-web']).toBe('>=0.1.5-rc.1 <0.1.6')
+    expect(bundleManifest.peerDependencies['@deepseek-ai/dsh-command-compact']).toBe('>=0.1.5-rc.1 <0.1.6')
+    // The certified baseline moves as one cut: every DSH peer carries the same
+    // range, or an install resolves two DSH generations at once. The routed
+    // storage dependency stays deliberately wider: it is an ordinary
+    // dependency, so it is resolved with the framework line rather than
+    // pinning one certified cut.
     const dshPeerRanges = new Set(Object.entries(bundleManifest.peerDependencies)
       .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
       .map(([, range]) => range))
-    expect([...dshPeerRanges]).toEqual(['>=0.1.5-rc.1 <0.2.0'])
+    expect([...dshPeerRanges]).toEqual(['>=0.1.5-rc.1 <0.1.6'])
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')
