@@ -450,6 +450,26 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await asTaskToggle.hover()
   expect(await asTaskToggle.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(pressedFill)
   await page.screenshot({ path: join(UI04_SHOTS, 'as-task-pressed.png'), fullPage: true })
+  // The mode keeps its word on a wide card and drops only the word on a narrow
+  // one. The 390 check runs in the settled collapsed layout, never mid-reflow.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.locator('[data-sidebar-collapsed="true"]').waitFor()
+  await expect.poll(async () => (await page.locator('[data-team-channel]').boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(330)
+  expect(await asTaskToggle.getAttribute('aria-label')).toBe('作为任务')
+  expect(await asTaskToggle.getAttribute('title')).toBe('作为任务')
+  expect(await asTaskToggle.getAttribute('aria-pressed')).toBe('true')
+  const labelDisplay = await asTaskToggle.evaluate(element => {
+    const label = element.querySelector('[class*="asTaskLabel"]')
+    return label === null ? 'missing' : getComputedStyle(label).display
+  })
+  expect(labelDisplay).toBe('none')
+  await page.setViewportSize({ width: 1440, height: 960 })
+  const wideDisplay = await asTaskToggle.evaluate(element => {
+    const label = element.querySelector('[class*="asTaskLabel"]')
+    return label === null ? 'missing' : getComputedStyle(label).display
+  })
+  expect(wideDisplay).not.toBe('none')
+  expect(wideDisplay).not.toBe('missing')
   await page.getByRole('button', { name: '发送' }).click()
   const committedMessage = page.locator('[data-team-channel] article').filter({ hasText: '请协作完成验收' })
   await committedMessage.waitFor()

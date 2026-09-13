@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { Button, IconPaperclipOutline16, IconSendOutline16, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChecklistOutline14, IconPaperclipOutline16, IconSendOutline16, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import css from './composer.module.css'
@@ -352,16 +352,6 @@ export function TeamComposer({ members, followerMemberIds, recipients, draft, pe
         </ul>
       )}
       <div className={css.toolbar}>
-        {onAsTaskChange !== undefined && (
-          <Button
-            size="sm"
-            variant="outline"
-            className={asTask === true ? css.asTaskOn : undefined}
-            aria-pressed={asTask === true}
-            disabled={pending}
-            onClick={() => { onAsTaskChange(asTask !== true) }}
-          >{t('asTask')}</Button>
-        )}
         {onFilesChange !== undefined && (
           <>
             <input ref={fileInputRef} type="file" multiple className={css.fileInput} aria-hidden="true" tabIndex={-1}
@@ -377,6 +367,20 @@ export function TeamComposer({ members, followerMemberIds, recipients, draft, pe
               </button>
             </Tooltip>
           </>
+        )}
+        {onAsTaskChange !== undefined && (
+          <button
+            type="button"
+            className={asTask === true ? `${css.asTaskPill} ${css.asTaskPillOn}` : css.asTaskPill}
+            aria-label={t('asTask')}
+            aria-pressed={asTask === true}
+            title={t('asTask')}
+            disabled={pending}
+            onClick={() => { onAsTaskChange(asTask !== true) }}
+          >
+            <IconChecklistOutline14 size={14} />
+            <span className={css.asTaskLabel}>{t('asTask')}</span>
+          </button>
         )}
         <button
           type="submit"

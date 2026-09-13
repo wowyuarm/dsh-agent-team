@@ -131,28 +131,67 @@
   align-items: center;
   display: flex;
   justify-content: flex-end;
-  /* Same 12px control rhythm as the base composer's .trailing group
-     (figma 75:8208); the attach circle sits alone on the left via its own
-     auto margin, so this gap is what separates the as-task toggle and send. */
+  /* Same 12px control rhythm as the base composer's .row (figma 75:8208). The
+     send circle's own auto margin seats it alone at the right edge, so this gap
+     is what separates the attach circle and the as-task mode pill beside it. */
   gap: 12px;
   min-height: 34px;
   padding: 2px 8px 6px;
+  /* Size container so the as-task pill can drop its label once the card runs
+     out of row width — the same pattern and 460px cut the shipped permission
+     chip uses. Anonymous on purpose: CSS modules hash container names per
+     module sheet, so a name declared here could never match another sheet. */
+  container-type: inline-size;
 }
 
-/* The Harness Button atom renders no pressed visual for aria-pressed, so the
-   as-task toggle owns its on-state with primary fill. The hover rule needs to
-   out-specify the outline variant's `.outline:hover:not(:disabled)` (0,3,0),
-   or hovering a pressed toggle would swap the fill back to the hover wash. */
-.asTaskOn[aria-pressed='true'] {
+/* as-task is a mode, not an action: it changes what Send means, so it keeps a
+   word label and sits in the shipped composer's modes seat beside the attach
+   control. The Harness Button atom renders no pressed visual for aria-pressed,
+   so the pill owns its on-state with primary fill; the hover rule has to
+   out-specify `.asTaskPill:hover:not(:disabled)` (0,3,0), or hovering a pressed
+   pill would swap the fill back to the hover wash. */
+.asTaskPill {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 24px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 4px;
+  height: 28px;
+  line-height: 20px;
+  padding: 0 10px 0 8px;
+}
+.asTaskPill:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.asTaskPill:focus-visible {
+  box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);
+}
+.asTaskPill:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+.asTaskPillOn,
+.asTaskPillOn:hover:not(:disabled) {
   background: var(--dsw-alias-button-primary-fill);
-  border-color: var(--dsw-alias-button-primary-fill);
   color: var(--dsw-alias-label-primary-foreground);
 }
+.asTaskLabel {
+  white-space: nowrap;
+}
 
-.asTaskOn[aria-pressed='true']:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-fill);
-  border-color: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
+/* Narrow card: the mode keeps its glyph and drops only the word — the shipped
+   permission chip's own cut. `aria-label`, `title` and `aria-pressed` stay on
+   the button, so assistive tech and the keyboard path see no difference. */
+@container (max-width: 460px) {
+  .asTaskPill .asTaskLabel {
+    display: none;
+  }
 }
 
 /* Attach circle — mirrors the base composer's 28px "+" control so both
@@ -167,7 +206,6 @@
   display: grid;
   flex: none;
   height: 28px;
-  margin-right: auto;
   place-items: center;
   width: 28px;
 }
@@ -267,6 +305,9 @@
   display: inline-flex;
   height: 34px;
   justify-content: center;
+  /* The attach circle and the as-task mode pill share the left group, so the
+     primary action takes the right edge for itself. */
+  margin-left: auto;
   padding: 0;
   /* Opts out of the toolbar's 2px downward shift (same 2px top pad the base
      composer's row uses): the send circle keeps its original seat while the
