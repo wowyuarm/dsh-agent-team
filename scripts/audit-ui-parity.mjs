@@ -262,6 +262,8 @@ const GEOMETRY = [
   ['sidebar.module.css', '.channelRow', [['border-radius', '8px']], 'list row radius is 8px'],
   ['sidebar.module.css', '.agentRow', [['border-radius', '8px']], 'list row radius is 8px'],
   ['sidebar.module.css', '.workspaceRow', [['border-radius', '8px']], 'list row radius is 8px'],
+  ['sidebar.module.css', '.inboxCard', [['border-radius', '8px'], ['height', '34px']], 'the Inbox entry is a sidebar row: 8px radius, 34px height'],
+  ['sidebar.module.css', '.inboxBadge', [['height', '18px'], ['border-radius', '999px'], ['box-sizing', 'border-box']], 'the count badge is an 18px capsule; border-box keeps one digit a circle instead of a padded oval'],
   ['composer.module.css', '.fileChip', [['border-radius', '6px']], 'chip radius is 6px'],
   ['conversation.module.css', '.attachmentChip', [['border-radius', '6px']], 'chip radius is 6px'],
   ['conversation.module.css', '.mention', [['border-radius', '6px']], 'inline mention chip radius is 6px'],
@@ -373,6 +375,31 @@ if (labelCut === null) {
   note('error', 'composer.module.css', 'the as-task pill has no narrow-container label cut; the word may only be dropped behind an explicit @container branch')
 } else if (Number(labelCut[1]) !== MODE_LABEL_CUT) {
   note('warn', 'composer.module.css', `as-task label cut at ${labelCut[1]}px (shipped cut: ${MODE_LABEL_CUT}px)`)
+}
+
+// ---------------------------------------------------------------------------
+// 11. Corner-shape pairing: the shipped platform curves every rounded surface
+//     along superellipse(1.5) (ui-theme/src/styles/corner-shape.css), which
+//     deforms a circle into a squircle and squares off capsule ends. Every
+//     effectively uncapped radius — 50%, 100%, 999px, a pill radius — must
+//     therefore pair `corner-shape: round` in the same block. Shipped keeps
+//     100% coverage of this pairing; a new full-round control that forgets it is
+//     the drift this rule catches. The scan is textual: it reads the three
+//     uncapped radius forms, but a pill radius that only exceeds its box at one
+//     rendered size (say `border-radius: 12px` on a 24px row) is invisible here
+//     and belongs in GEOMETRY instead.
+// ---------------------------------------------------------------------------
+
+const FULL_ROUND = /border-radius:\s*(?:50%|100%|999px)\s*;/
+for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.css'))) {
+  const css = readFileSync(join(clientDir, file), 'utf8')
+  for (const rule of collectRules(css)) {
+    if (!FULL_ROUND.test(rule.body)) continue
+    if (!/corner-shape:\s*round/.test(rule.body)) {
+      const bare = rule.selector.replace(/^[\s\S]*\*\//, '').replace(/\s+/g, ' ').trim().slice(0, 60)
+      note('error', `${file} ${bare}`, 'full-round radius without `corner-shape: round`; the platform superellipse squares capsule ends off')
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
