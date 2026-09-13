@@ -5,6 +5,7 @@ import type {
   AgentTeamArchiveChannelRequest,
   AgentTeamArchiveMemberRequest,
   AgentTeamClientMemberStatus,
+  AgentTeamInboxRequest,
   AgentTeamSendMessageRequest,
   AgentTeamThreadHistoryRequest,
   AgentTeamThreadObservationsRequest,
@@ -35,7 +36,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings-general/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { TeamNavigation } from './navigation.ts'
-import { TeamChangeStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
+import { TeamChangeStream, TeamReadStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
 import { TeamDraftStore } from './drafts.ts'
 import { TeamFooterAction } from './TeamFooterAction.tsx'
 import { TeamSettings } from './TeamSettings.tsx'
@@ -70,6 +71,7 @@ function registerModeShadow<T extends object>(
   ctx: ClientContext,
   navigation: TeamNavigation,
   changes: TeamChangeStream,
+  reads: TeamReadStream,
   drafts: TeamDraftStore,
   name: 'sidebar.workspaces' | 'main' | 'sidebar.settings',
   component: T,
@@ -95,6 +97,8 @@ function registerModeShadow<T extends object>(
   // Remote bindings shared by every Team slot; surface-specific entries extend it below.
   const sharedRemotes = {
     loadChannels: (request: AgentTeamViewRequest) => ctx.remote.agentTeam.view(request),
+    loadInbox: (request: AgentTeamInboxRequest) => ctx.remote.agentTeam.inbox(request),
+    subscribeReads: (listener: () => void) => reads.subscribe(listener),
     subscribeChanges: (scope: TeamChangeScope, listener: TeamChangeListener) => changes.subscribe(scope, listener),
     drafts,
     loadMembers: (request: AgentTeamMembersRequest) => ctx.remote.agentTeam.members(request),
@@ -130,7 +134,14 @@ function registerModeShadow<T extends object>(
             ...navigation.actions(),
             ...sharedRemotes,
             ...(name === 'main' ? {
-              readThread: (request: AgentTeamThreadReadRequest) => ctx.remote.agentTeam.readThread(request),
+              // A committed durable read consumes this reader's mention
+              // markers; the Host's changes stream never wakes on reads, so
+              // the Human's badge refreshes from the completed read itself.
+              readThread: async (request: AgentTeamThreadReadRequest) => {
+                const result = await ctx.remote.agentTeam.readThread(request)
+                if (result.ok) reads.bump()
+                return result
+              },
               loadThreadHistory: (request: AgentTeamThreadHistoryRequest) => ctx.remote.agentTeam.threadHistory(request),
               threadObservations: (request: AgentTeamThreadObservationsRequest) => ctx.remote.agentTeam.threadObservations(request),
               sendMessage: (request: AgentTeamSendMessageRequest) => ctx.remote.agentTeam.sendMessage(request),
@@ -204,6 +215,7 @@ function applyUi(ctx: ClientContext): void {
   }, 'agent-team: member session restore')
 
   const changes = new TeamChangeStream((request, signal) => ctx.remote.agentTeam.changes(request, signal))
+  const reads = new TeamReadStream()
 
   const loadMemberGroups = async () => {
     const workspaces = ctx.workspaces.list.getSnapshot().items
@@ -238,9 +250,9 @@ function applyUi(ctx: ClientContext): void {
     }),
   }, TeamFooterAction as never))
 
-  registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
-  registerModeShadow(ctx, navigation, changes, drafts, 'main', TeamConversation as never, undefined, 'conversation')
-  registerModeShadow(ctx, navigation, changes, drafts, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
+  registerModeShadow(ctx, navigation, changes, reads, drafts, 'sidebar.workspaces', TeamWorkspaceBrowser as never)
+  registerModeShadow(ctx, navigation, changes, reads, drafts, 'main', TeamConversation as never, undefined, 'conversation')
+  registerModeShadow(ctx, navigation, changes, reads, drafts, 'sidebar.settings', TeamSettings as never, () => ({ loadMemberGroups }))
 }
 
 export async function apply(ctx: ClientContext): Promise<void> {

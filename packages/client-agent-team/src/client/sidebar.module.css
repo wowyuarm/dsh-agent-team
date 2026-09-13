@@ -92,6 +92,73 @@
   line-height: 18px;
   margin: 8px;
 }
+
+/* The Human mention-Inbox entry: a card above the Workspaces section on the
+   wide rail, a queue icon on the narrow rail. Both carry the same
+   cross-Workspace direct badge, hidden while it reads zero. */
+.inboxCard {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  height: 34px;
+  margin: 4px 0 2px;
+  padding: 0 8px;
+  text-align: left;
+  width: 100%;
+}
+.inboxCard:hover,
+.inboxCard:focus-visible,
+.inboxCard[aria-current='page'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.inboxCard:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: -2px;
+}
+.inboxCard > svg {
+  color: var(--dsw-alias-label-tertiary);
+  flex: 0 0 16px;
+}
+.inboxCardLabel {
+  font-size: 14px;
+  line-height: 20px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inboxBadge {
+  align-items: center;
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 9px;
+  color: var(--dsw-alias-label-primary-foreground);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  height: 18px;
+  justify-content: center;
+  line-height: 18px;
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 5px;
+}
+.railButton {
+  position: relative;
+}
+.railButton .inboxBadge {
+  margin-left: 0;
+  position: absolute;
+  right: -4px;
+  top: -2px;
+}
 .railWorkspace {
   align-items: center;
   display: flex;

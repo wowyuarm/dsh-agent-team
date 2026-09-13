@@ -151,14 +151,15 @@ describe('Agent Team shipping contract', () => {
     // what team_message.reply is for.
     expect(preset).toContain('reply in plain text')
     expect(preset).toContain('not a reply channel for it')
-    // The message contract is two-tier, and the tier is chosen by whether the
-    // Human must act: a needed Human decision is a mention plus a human layer
-    // with a stated default, while peer-only coordination mentions no Human and
-    // keeps mechanical detail below the conclusion rather than dropping it.
-    expect(preset).toContain('read twice: by the Member you are coordinating with, and by the Human')
-    expect(preset).toContain('mention the Human and open with the human layer')
-    expect(preset).toContain('mention no Human and carry exactly what those Members need to act on')
+    // The message contract is conclusion-first with one mention rule: the
+    // Human is mentioned exactly when they must know or decide (that mention
+    // is the Human's notification), the opening stays one to three readable
+    // sentences with a stated default, and mechanical detail moves below the
+    // conclusion rather than being dropped.
+    expect(preset).toContain('Lead with the conclusion or state; put mechanical detail')
     expect(preset).toContain('never drop detail a peer Member needs, move it below')
+    expect(preset).toContain('mention the Human — that is how they are notified')
+    expect(preset).toContain('keep the opening to one to three readable sentences')
     // The persona keeps only the physical facts of the private space
     // (absolute paths, memory/notes discipline, reusable-assets boundary);
     // skill craft itself lives in the bundled member-skill-manager and its
@@ -179,7 +180,7 @@ describe('Agent Team shipping contract', () => {
     // The body parameter restates the opening rule where the model composes the
     // message, so the contract is visible at composition time, not only in the
     // per-turn persona.
-    expect(toolSource).toContain('mention the Human with a one-to-three-sentence human layer')
+    expect(toolSource).toContain('Mention the Human only when they must know or decide')
     expect(toolSource).toContain('mechanical detail follows below')
 
     const manifest = JSON.parse(manifestText) as {

@@ -11,6 +11,8 @@ import type {
   AgentTeamClearMemberContextResult,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamInbox,
+  AgentTeamInboxRequest,
   AgentTeamJoinChannelRequest,
   AgentTeamJoinChannelResult,
   AgentTeamGetAttachmentRequest,
@@ -94,6 +96,10 @@ export type TeamSidebarProps = PropsRuntime<'sidebar.workspaces'>
   & {
     navigation: TeamNavigationSource
     loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+    /** Human direct-only Inbox slice; the badge sums each visible Workspace's total. */
+    loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
+    /** Fired after every committed durable Thread read; the badge refreshes without waiting for a changes wake. */
+    subscribeReads: (listener: () => void) => () => void
     subscribeChanges: SubscribeTeamChanges
     addMember: (request: AgentTeamAddMemberRequest) => Promise<RemoteResult<AgentTeamMemberResult>>
     loadChannels: (request: AgentTeamViewRequest) => Promise<RemoteResult<AgentTeamView>>
@@ -136,6 +142,8 @@ export type TeamConversationProps = PropsRuntime<'main'> & PropsLocale<'team'> &
   promoteThread: (request: AgentTeamPromoteThreadRequest) => Promise<RemoteResult<AgentTeamPromoteThreadResult>>
   resolveTaskRefs: (request: AgentTeamResolveTaskRefsRequest) => Promise<RemoteResult<AgentTeamResolveTaskRefsResult>>
   loadMembers: (request: AgentTeamMembersRequest) => Promise<RemoteResult<readonly AgentTeamClientMemberStatus[]>>
+  /** Human direct-only Inbox slice; the Inbox page merges one call per visible Workspace. */
+  loadInbox: (request: AgentTeamInboxRequest) => Promise<RemoteResult<AgentTeamInbox>>
   /** Human-only Thread Attention observations; the Thread composer ranks the returned followers first. */
   threadObservations: (request: AgentTeamThreadObservationsRequest) => Promise<RemoteResult<AgentTeamThreadObservations>>
 }

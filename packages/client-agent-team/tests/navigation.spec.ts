@@ -166,6 +166,35 @@ describe('TeamNavigation', () => {
     }
   })
 
+  it('opens the Inbox page as a durable location that Channel and Thread faces replace', () => {
+    const navigation = new TeamNavigation()
+    navigation.actions().selectWorkspace('workspace:one' as never)
+    navigation.actions().enterTeam()
+    navigation.actions().selectInbox()
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', inbox: true })
+    // The Inbox position is a navigation fact, not an unread fact: a reload reopens the page.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '')).toEqual({ mode: 'team', workspaceId: 'workspace:one', inbox: true })
+    expect(new TeamNavigation().getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', inbox: true })
+    // Re-selecting the open page spams nobody.
+    navigation.actions().selectInbox()
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', inbox: true })
+
+    // Selecting a Thread from a row clears the Inbox face; Back then lands on
+    // that Thread's Channel — the Inbox is never pushed onto the back path.
+    navigation.actions().selectThread('thread:1' as never, 'channel:1' as never)
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1', threadRef: 'thread:1' })
+    navigation.actions().backToWorkspace()
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:one', channelRef: 'channel:1' })
+
+    // A Channel or Workspace selection leaves the Inbox face as well.
+    navigation.actions().selectInbox()
+    navigation.actions().selectChannel('channel:2' as never)
+    expect(navigation.getSnapshot().inbox).toBeUndefined()
+    navigation.actions().selectInbox()
+    navigation.actions().selectWorkspace('workspace:two' as never)
+    expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:two' })
+  })
+
   it('exposes Member view actions on every actions() instance', () => {
     const navigation = new TeamNavigation()
     const actions = navigation.actions()

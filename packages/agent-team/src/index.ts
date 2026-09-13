@@ -1200,7 +1200,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Host-only Human Inbox projection; the Web Client does not consume it. */
+  /** Human Inbox projection; the Web Client consumes the direct-only slice as its mention queue. */
   @Remote('inbox')
   inbox(request: AgentTeamInboxRequest): AgentTeamInbox {
     this.requireWorkspace(request.workspaceId)

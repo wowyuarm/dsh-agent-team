@@ -209,6 +209,10 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     viewItems = [{ message, mentions: [], ...(task === undefined ? {} : { task, taskNumber: 1 }), thread, messageCount: 1 }]
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, ...(task === undefined ? {} : { task }), thread, attention: [], directMarkers: [] } }
   })
+  // The double parks a subscriber's silent first probe while caught up
+  // (version <= afterVersion), so the first publish after mount is consumed
+  // by that probe and only the second one wakes subscribers — seed/publish
+  // twice when a change-driven refresh must be observed.
   let changeVersion = 0
   const changeWaiters: Array<(value: { ok: true; value: { version: number } }) => void> = []
   const reply = vi.fn(async (request: AgentTeamReplyRequest) => {
@@ -246,6 +250,10 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
       || (taskRef !== undefined && (item.task as { taskRef?: string } | undefined)?.taskRef === taskRef)) ?? viewItems[0]
     if (top === undefined) return { ok: false as const, error: { message: 'thread missing' } }
     const remainingUnreadCount = remainingUnreadCounts.length > 0 ? remainingUnreadCounts.shift()! : 0
+    // A durable read consumes this reader's mention markers: the direct-only
+    // Inbox double drops the read Thread's rows, like the Host's projection.
+    const readThreadRef = (top.thread as { threadRef?: string }).threadRef
+    inboxRows = inboxRows.filter(row => ((row.item as { thread?: { threadRef?: string } }).thread?.threadRef) !== readThreadRef)
     return { ok: true as const, value: {
       receipt: {}, task: top.task, thread: top.thread, claims: viewClaims,
       anchor: top.message, anchorMentions: [], facts: [...viewItems.map(item => ({ fact: { kind: 'message' as const, sequence: (item.message as { sequence: number }).sequence, message: item.message, mentions: (item as { mentions?: string[] }).mentions ?? [] }, unread: false, direct: false })), ...viewActivities.map(activity => ({ fact: { kind: 'activity' as const, sequence: activity.sequence as number, activity }, unread: false, direct: false }))],
@@ -291,6 +299,20 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     })
     return { ok: true as const, value: { resolved } }
   })
+  // The Human direct-only Inbox double: rows are tagged per Workspace and
+  // totals collapse to the direct sum, matching the Host's direct-only slice.
+  // The badge and the Inbox page both read through this one remote.
+  let inboxRows: Array<{ readonly workspaceId: string; readonly item: Record<string, unknown> }> = []
+  const inbox = vi.fn(async ({ workspaceId }: { workspaceId: string }) => {
+    const items = inboxRows.filter(row => row.workspaceId === workspaceId).map(row => row.item)
+    const direct = items.reduce((sum, item) => sum + ((item as { directCount?: number }).directCount ?? 0), 0)
+    return { ok: true as const, value: { items, totalUnreadCount: direct, totalDirectCount: direct } }
+  })
+  const seedInbox = (rows: ReadonlyArray<{ readonly workspaceId: string } & Record<string, unknown>>): void => {
+    inboxRows = rows.map(row => ({ workspaceId: row.workspaceId, item: row as Record<string, unknown> }))
+    changeVersion += 1
+    for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
+  }
   const changes = vi.fn((request: { afterVersion: number; scope?: unknown }, _signal?: AbortSignal) => changeVersion > request.afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
     : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
@@ -310,7 +332,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   }
   // rc.1: the client injects the model-catalog sub-namespace explicitly.
   runtime.ctx.provide('remote.session', { modelCatalog })
-  runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
   runtime.ctx.provide('remote.agentTeam', {})
   runtime.ctx.provide('connection', { isLoopback: true, generation: { getSnapshot: () => ({}) }, state: { getSnapshot: () => ({}) }, rpc: {}, reconnect: vi.fn(), registerGenerationSource: vi.fn(), start: vi.fn(), stop: vi.fn() })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
@@ -334,5 +356,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, threadObservations, changes }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox }
 }

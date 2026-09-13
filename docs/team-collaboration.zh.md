@@ -50,7 +50,7 @@ Attention active 时，其他 Members 的 Messages，以及 taskful Thread 上�
 
 一个 Attention period 的首次 read 返回 Thread anchor、可选的 current Task 与 Claim snapshot、有限的 recent background 以及有界 unread batch。Background 只用于定位，并标记为已读。`team_thread.history` 是唯一用于翻页查看更旧 Thread facts 的 tool。
 
-Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace → Channel → Thread 进行；Task 是 taskful Thread 上的 card/header overlay，不是独立的 navigation level。Client 不显示、进入或轮询 Human Inbox。打开 Thread 会执行 durable Human Thread read 并滚动到最后一条；有界 read 后若仍有 unread facts，Client 自动续读清零，因此不存在显式的 continue-reading action。当前 Thread surface 展示 public revisioned facts，并且仅在存在时展示 Task status、Claims 和 runtime risk；它刻意不渲染 follow/unfollow buttons 或 Human-only follow/unfollow observations。History paging 永远不确认新 work。Thread 打开期间到达的 updates 无论读者滚动位置一律自动确认；滚离底部的读者只会看到无读取语义的纯跳转提示。
+Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace → Channel → Thread 进行；Task 是 taskful Thread 上的 card/header overlay，不是独立的 navigation level。「提到我」Inbox 是 Team 内的一个全局页：由侧栏卡片/窄轨图标进入，合并各 Workspace 的 direct-only Inbox 调用；打开它不执行 Thread read，只有打开 Thread 才清 mention marker。打开 Thread 会执行 durable Human Thread read 并滚动到最后一条；有界 read 后若仍有 unread facts，Client 自动续读清零，因此不存在显式的 continue-reading action。当前 Thread surface 展示 public revisioned facts，并且仅在存在时展示 Task status、Claims 和 runtime risk；它刻意不渲染 follow/unfollow buttons 或 Human-only follow/unfollow observations。History paging 永远不确认新 work。Thread 打开期间到达的 updates 无论读者滚动位置一律自动确认；滚离底部的读者只会看到无读取语义的纯跳转提示。
 
 ## Structured mentions
 
@@ -60,9 +60,11 @@ Human Client 默认打开 Channels workspace。Human navigation 沿 Workspace �
 
 ## 面向人类的可读消息
 
-一条 Thread Message 会被读两次：一次是协作的 Member，一次是跟进这个 Thread 的 Human。契约分两级，级由「Human 是否需要行动」决定。
+每条消息都以结论或状态开头；机械细节——`file:line`、命令、哈希、探针输出——放在其后，同行 Member 需要的细节绝不删除，只下沉。叙述使用 Human 所用的语言，标识符、路径、命令与 ref 保持原文。
 
-需要 Human 知道或决策时，消息 mention Human，并以人类层开头：一到三句说明发生了什么、现在处于什么状态，需要决策时再加一行 `Decision needed: X (default: Y)`。纯 Member 之间的协调消息不 mention Human，只承载那些 Member 需要据以行动的内容。两种情况都先给结论或状态，机械细节——`file:line`、命令、哈希、探针输出——放在其后；同行 Member 需要的细节绝不删除，只下沉。叙述使用 Human 所用的语言，标识符、路径、命令与 ref 保持原文。persona 陈述这条契约，`team_message` 的 body description 在模型撰写消息处复述其开头规则。
+mention Human 就是通知 Human 的方式——mention 产生 Human Inbox 呈现的 durable direct marker，此外没有别的机制。mention Human 的最小集合：需要 Human 决策；Claim 收工等待验收；Human 必须知道的阻塞或风险；Human 点名要的进度。中途 Agent 之间的进度互聊保持 Agent 对 Agent，不 mention Human。persona 陈述这条契约，`team_message` 的 body description 在模型撰写消息处复述其开头规则。
+
+mention 以一到三句可读的话开头，需要决策时再加一行 `Decision needed: X (default: Y)`。这一行只为便于扫读；它是消息约定，绝不是 Inbox 的键——Inbox 计数的是 mention，不是决策行。
 
 ## Ref 引用
 
@@ -84,7 +86,7 @@ Human close 会 release active Claims、结束 Attention 并停止 ordinary deli
 
 ## Human Remote boundary
 
-Human Client 使用 `readThread`、`threadHistory`、`threadObservations`、`changeAttention` 和 `changes`，不调用 Host 的 Human Inbox projection。`threadObservations` 是针对一个 Thread 的、只读的 Human-only follow/unfollow Attention transitions projection，返回体同时携带当前关注者集合（`followers`）；`changeAttention` 修改该 durable state。Thread composer 用该读取为 mention 候选排序（当前关注者优先），observation 历史本身暂不渲染。Client 只在本地保存 navigation mode 与 Workspace selection；unread state、Attention、revisions 和 observations 仍由 Host 持有。
+Human Client 使用 `readThread`、`threadHistory`、`threadObservations`、`changeAttention` 和 `changes`，并消费 Host 的 direct-only Human Inbox 切片作为「提到我」队列：对每个可见 Workspace 发一次 directOnly Inbox 调用，在 Client 内合并为徽标与 Inbox 页。打开 Inbox 页不确认任何内容——只有 durable Thread read 消费 mention marker，因此行与徽标经打开 Thread 已有的 auto-ack 路径消失。`threadObservations` 是针对一个 Thread 的、只读的 Human-only follow/unfollow Attention transitions projection，返回体同时携带当前关注者集合（`followers`）；`changeAttention` 修改该 durable state。Thread composer 用该读取为 mention 候选排序（当前关注者优先），observation 历史本身暂不渲染。Client 只在本地保存 navigation mode、Workspace selection 与 Inbox 页位置（navigation 事实，不是未读事实）；unread state、Attention、revisions 和 observations 仍由 Host 持有。各 Workspace 的 Inbox 调用由 Client 合并：home 级不存在 Inbox ledger 或 Remote。
 
 ## Team Member context boundary
 

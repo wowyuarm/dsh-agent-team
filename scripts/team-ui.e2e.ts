@@ -16,6 +16,7 @@ const UI03_SHOTS = join(BROWSER_ARTIFACTS, 'ui-03')
 const UI04_SHOTS = join(BROWSER_ARTIFACTS, 'ui-04')
 const UI05_SHOTS = join(BROWSER_ARTIFACTS, 'ui-05')
 const UI06_SHOTS = join(BROWSER_ARTIFACTS, 'ui-06')
+const UI07_SHOTS = join(BROWSER_ARTIFACTS, 'ui-07')
 let scaffold: WebScaffold | undefined
 let browser: Browser | undefined
 
@@ -53,6 +54,7 @@ async function installLocalBundle(): Promise<void> {
   await mkdir(UI04_SHOTS, { recursive: true })
   await mkdir(UI05_SHOTS, { recursive: true })
   await mkdir(UI06_SHOTS, { recursive: true })
+  await mkdir(UI07_SHOTS, { recursive: true })
 }
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
@@ -1090,6 +1092,114 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.keyboard.press('Escape')
   await expect.poll(() => narrowMembersKeyboard.evaluate(element => element === document.activeElement)).toBe(true)
   await page.setViewportSize({ width: 1440, height: 960 })
+
+  // ── Human 「提到我」 Inbox ────────────────────────────────────────────────
+  // mention Human → badge; open Inbox → row; open Thread → badge/row clear;
+  // pure Agent inter-chat never enters the queue. Deltas ride a fresh
+  // taskless Thread so the assertions stay independent of earlier segments.
+  const inboxWorkspace = scaffold.ctx.workspaceRegistry.list()[0]!
+  const inboxBadge = page.locator('button[class*="inboxCard"]')
+  const railInboxButton = page.locator('nav[class*="railWorkspace"] button[aria-label*="提到我"]')
+  const badgeText = async (): Promise<string | null> => {
+    const scope = await inboxBadge.count() > 0 ? inboxBadge : railInboxButton
+    const mark = scope.locator('span[aria-hidden="true"]')
+    return await mark.count() > 0 ? await mark.textContent() : null
+  }
+  await inboxBadge.waitFor()
+  const baseDirect = scaffold.ctx.agentTeam.inbox({ workspaceId: inboxWorkspace.id, directOnly: true }).totalUnreadCount
+  await expect.poll(async () => await badgeText(), { timeout: 10_000 }).toBe(baseDirect === 0 ? null : String(baseDirect))
+
+  await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByRole('heading', { name: '# delivery' }).waitFor()
+  const inboxComposer = page.getByRole('textbox', { name: '消息内容' })
+  await inboxComposer.fill('请 Human 决策的讨论')
+  await page.getByRole('button', { name: '发送' }).click()
+  await page.locator('[data-team-channel] article').filter({ hasText: '请 Human 决策的讨论' }).waitFor()
+  const inboxChannels = scaffold.ctx.agentTeam.view({ workspaceId: inboxWorkspace.id }).channels
+  const deliveryChannel = inboxChannels.find((channel: { name: string }) => channel.name === 'delivery')!
+  // 'after' is the oldest window; the fresh opener is the newest top-level fact.
+  const inboxView = scaffold.ctx.agentTeam.view({ workspaceId: inboxWorkspace.id, channelRef: deliveryChannel.channelRef, topLevelOnly: true, includeActivities: false, direction: 'before', limit: 50 })
+  const inboxThreadItem = inboxView.items.find((item: { message: { body: string } }) => item.message.body === '请 Human 决策的讨论')!
+  const inboxThreadRef = (inboxThreadItem.thread as { threadRef: string }).threadRef
+  // builder is archived earlier in the journey; reviewer stays an active
+  // delivery Member and drives the mention on the Human's behalf.
+  const inboxReviewer = scaffold.ctx.agentTeam.members({ workspaceId: inboxWorkspace.id }).find((entry: { member: { handle: string } }) => entry.member.handle === 'reviewer')!
+  const inboxAgent = scaffold.ctx.agents.get(inboxReviewer.member.sessionId)!
+  const inboxRead = await scaffold.ctx.agentTeam.readThreadForAgent(inboxAgent, {
+    requestId: 'm2-09-builder-read' as never, workspaceId: inboxWorkspace.id, threadRef: inboxThreadRef as never,
+  })
+  const inboxMention = await scaffold.ctx.agentTeam.replyForAgent(inboxAgent, {
+    requestId: 'm2-09-builder-mention' as never,
+    workspaceId: inboxWorkspace.id,
+    threadRef: inboxThreadRef as never,
+    body: '需要 Human 拍板：默认走 A 方案',
+    baseRevision: inboxRead.thread.revision,
+    recipients: [scaffold.ctx.agentTeam.status().humanMemberId],
+  })
+  expect(inboxMention.kind).toBe('committed')
+  const mentionedDirect = scaffold.ctx.agentTeam.inbox({ workspaceId: inboxWorkspace.id, directOnly: true })
+  expect(mentionedDirect.totalUnreadCount).toBe(baseDirect + 1)
+  // The row preview is the Thread anchor's first line — the Human's own opener.
+  expect(mentionedDirect.items.find((item: { thread: { threadRef: string } }) => item.thread.threadRef === inboxThreadRef)).toMatchObject({
+    channelName: 'delivery', previewText: '请 Human 决策的讨论',
+  })
+  const inboxRow = page.locator('[data-team-inbox] button').filter({ hasText: '请 Human 决策的讨论' })
+  await expect.poll(async () => await badgeText(), { timeout: 10_000 }).toBe(String(baseDirect + 1))
+  await page.screenshot({ path: join(UI07_SHOTS, 'inbox-badge-desktop.png'), fullPage: true })
+
+  // Pure Agent inter-chat (no mentions parameter) never moves the direct badge.
+  const inboxOrdinary = await scaffold.ctx.agentTeam.replyForAgent(inboxAgent, {
+    requestId: 'm2-09-builder-ordinary' as never,
+    workspaceId: inboxWorkspace.id,
+    threadRef: inboxThreadRef as never,
+    body: '继续推进实现细节，无需 Human 介入',
+    baseRevision: inboxMention.thread.revision,
+  })
+  expect(inboxOrdinary.kind).toBe('committed')
+  expect(scaffold.ctx.agentTeam.inbox({ workspaceId: inboxWorkspace.id, directOnly: true }).totalUnreadCount).toBe(baseDirect + 1)
+  await expect.poll(async () => await badgeText()).toBe(String(baseDirect + 1))
+
+  // Narrow rail: 提到我 → Channels → Agents, badge on the first icon, and the
+  // icon is a destination that opens the Inbox page and expands the sidebar.
+  await page.setViewportSize({ width: 390, height: 844 })
+  const inboxRail = page.locator('nav[class*="railWorkspace"]')
+  await inboxRail.waitFor()
+  const railLabels = await inboxRail.locator('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label')))
+  expect(railLabels).toEqual([`提到我，${baseDirect + 1} 条未读提及`, '频道', 'Agents'])
+  await expect.poll(async () => await badgeText()).toBe(String(baseDirect + 1))
+  await page.screenshot({ path: join(UI07_SHOTS, 'inbox-narrow-rail.png'), fullPage: true })
+  await railInboxButton.click()
+  await page.locator('[data-team-inbox]').waitFor()
+  await expect.poll(() => page.locator('button[class*="inboxCard"]').count()).toBe(1)
+  await expect.poll(async () => await inboxRow.count()).toBe(1)
+  await expect.poll(async () => await inboxRow.textContent()).toContain('#delivery')
+  // The row time is the newest unread fact's instant (the Human follows their
+  // own opener, so the ordinary inter-chat reply advances it past the mention).
+  await expect.poll(async () => await inboxRow.locator('time').count()).toBe(1)
+  await page.screenshot({ path: join(UI07_SHOTS, 'inbox-page-narrow.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 960 })
+
+  // Opening the row's Thread acknowledges the mention durably: the badge and
+  // the row drop through the existing auto-ack read, and Back lands on the
+  // row's Channel — the Inbox is never on the back path.
+  await inboxRow.click()
+  await page.locator('[data-team-thread]').waitFor()
+  await expect.poll(async () => await badgeText(), { timeout: 10_000 }).toBe(baseDirect === 0 ? null : String(baseDirect))
+  await page.getByRole('button', { name: '返回频道' }).click()
+  await page.getByRole('heading', { name: '# delivery' }).waitFor()
+  await page.locator('button[class*="inboxCard"]').click()
+  await page.locator('[data-team-inbox]').waitFor()
+  await expect.poll(async () => await inboxRow.count()).toBe(0)
+  await page.screenshot({ path: join(UI07_SHOTS, 'inbox-page-empty.png'), fullPage: true })
+  await expect.poll(async () => await page.locator('button[class*="inboxCard"]').getAttribute('aria-current')).toBe('page')
+
+  // Keyboard path: the card is focusable and opens the page from the keyboard.
+  await page.getByRole('button', { name: '# delivery' }).click()
+  await page.getByRole('heading', { name: '# delivery' }).waitFor()
+  await page.locator('button[class*="inboxCard"]').focus()
+  await page.keyboard.press('Space')
+  await page.locator('[data-team-inbox]').waitFor()
+  await expect.poll(async () => await page.locator('button[class*="inboxCard"]').getAttribute('aria-current')).toBe('page')
 
   const channelKeyboard = page.getByRole('button', { name: '# delivery' })
   await channelKeyboard.focus()

@@ -514,15 +514,34 @@ export interface AgentTeamClaimList {
 export interface AgentTeamInboxRequest {
   readonly workspaceId: WorkspaceId
   readonly limit?: number
+  /**
+   * Human direct-only slice: only Threads with at least one unread direct
+   * (mention) fact, and this call's `totalUnreadCount` counts direct facts
+   * only, so a badge built on it can never bypass follow unread. Rows on
+   * this slice carry their rendering preview (`channelName`, `taskNumber`,
+   * `previewText`); the ordinary projection stays body-free.
+   */
+  readonly directOnly?: boolean
 }
 
 /** One Thread summary containing no Message bodies. */
 export interface AgentTeamInboxItem {
   readonly channelRef: AgentTeamChannelRef
+  /** Direct-only slice: the owning Channel's display name, so a row renders without a per-row Channel view. */
+  readonly channelName?: string
   readonly task?: AgentTeamTask
+  /** Direct-only slice: the Task's ordinal inside its home Channel; absent on taskless Threads. */
+  readonly taskNumber?: number
   readonly thread: AgentTeamThread
   readonly unreadCount: number
   readonly directCount: number
+  /**
+   * Direct-only slice: the Thread's opening line, trimmed and capped at 120
+   * characters — the same bound the Thread page applies to its Task title.
+   * The newest unread fact's instant is `newestOccurredAt`, which on this
+   * slice reads as the row's latest-mention time.
+   */
+  readonly previewText?: string
   readonly newestSequence: number
   /** Instant of the newest unread fact, from the same snapshot as newestSequence. */
   readonly newestOccurredAt: string

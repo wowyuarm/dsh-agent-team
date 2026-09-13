@@ -350,6 +350,17 @@ function assertUnhandledKind(operation: never): never {
   throw new Error(`agent-team ledger does not handle operation kind '${(operation as AgentTeamOperation).kind}'`)
 }
 
+/**
+ * Opening-line preview for a direct-only Human Inbox row: the Thread anchor's
+ * first line, trimmed, then capped at 120 characters with an explicit mark —
+ * the same bound the Thread page applies to its Task title, so the row and
+ * the page it opens never disagree about what a Thread is about.
+ */
+function boundedInboxPreview(body: string): string {
+  const firstLine = body.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine
+}
+
 /** Deep-freeze a Member capability overlay; absent stays absent. */
 function freezeCapabilities(capabilities: AgentTeamMemberCapabilities | undefined): { capabilities?: AgentTeamMemberCapabilities } {
   if (capabilities === undefined) return {}
@@ -1314,6 +1325,14 @@ export class AgentTeamLedger {
     const authorized = this.assertActorForWorkspace(actor, request.workspaceId)
     const limit = request.limit ?? 50
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('inbox limit must be an integer between 1 and 100')
+    // The Human direct-only slice serves the Client's mention queue: rows show
+    // only Threads with an unread mention, `totalUnreadCount` collapses to the
+    // direct total so a badge on this call cannot bypass follow unread, and
+    // each row carries its Channel display name plus the Thread's opening line
+    // so the Client renders without a Channel view per row. The ordinary
+    // (agent-facing) projection stays body-free.
+    const directOnly = request.directOnly === true
+    const taskNumbers = directOnly ? this.taskNumbers(request.workspaceId) : undefined
     const items: AgentTeamInboxItem[] = []
     for (const thread of this.state.threads.values()) {
       const channelRef = this.channelRefForThread(thread.threadRef)
@@ -1324,18 +1343,26 @@ export class AgentTeamLedger {
       if (unread.length === 0) continue
       const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
       const directCount = unread.filter(item => item.direct).length
+      if (directOnly && directCount === 0) continue
       const attention = this.attentionFor(authorized.memberId, thread.threadRef)
       // Same snapshot, same source as newestSequence: the instant hangs off
       // the newest unread fact itself, never a second lookup that could
       // observe a different commit between the two reads.
       const newest = unread.at(-1)!.fact
-      items.push(Object.freeze({ channelRef, ...(task === undefined ? {} : { task }), thread, unreadCount: unread.length, directCount,
+      const taskNumber = directOnly && task !== undefined ? taskNumbers?.get(task.taskRef) : undefined
+      items.push(Object.freeze({ channelRef,
+        ...(directOnly ? { channelName: this.state.channels.get(channelRef)?.name ?? '' } : {}),
+        ...(task === undefined ? {} : { task }), ...(taskNumber === undefined ? {} : { taskNumber }), thread,
+        unreadCount: unread.length, directCount,
+        ...(directOnly ? { previewText: boundedInboxPreview(this.threadAnchor(thread.threadRef).body) } : {}),
         newestSequence: newest.sequence, newestOccurredAt: newest.occurredAt, ...(attention === undefined ? {} : { attention }) }))
     }
     items.sort((left, right) => right.directCount - left.directCount || right.newestSequence - left.newestSequence || left.thread.threadRef.localeCompare(right.thread.threadRef))
     const selected = items.slice(0, limit)
     return Object.freeze({ items: Object.freeze(selected),
-      totalUnreadCount: items.reduce((sum, item) => sum + item.unreadCount, 0),
+      totalUnreadCount: directOnly
+        ? items.reduce((sum, item) => sum + item.directCount, 0)
+        : items.reduce((sum, item) => sum + item.unreadCount, 0),
       totalDirectCount: items.reduce((sum, item) => sum + item.directCount, 0) })
   }
 

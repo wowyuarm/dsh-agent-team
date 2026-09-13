@@ -1,7 +1,8 @@
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { AgentTeamChangeScope, AgentTeamChangesRequest, AgentTeamChangesResult } from '@wowyuarm/dsh-agent-team/types'
 
-export type TeamChangeScope = AgentTeamChangeScope
+/** One poll observes one scope, or every Team change when the scope is omitted. */
+export type TeamChangeScope = AgentTeamChangeScope | undefined
 
 /** One invalidation delivered to every surface subscribed to one scope. */
 export type TeamChangeUpdate =
@@ -13,7 +14,8 @@ export type TeamChangeListener = (update: TeamChangeUpdate) => void
 type ChangesFn = (request: AgentTeamChangesRequest, signal?: AbortSignal) => Promise<RemoteResult<AgentTeamChangesResult>>
 
 function scopeKey(scope: TeamChangeScope): string {
-  return scope.kind === 'workspace' ? `workspace:${scope.workspaceId}`
+  return scope === undefined ? 'all'
+    : scope.kind === 'workspace' ? `workspace:${scope.workspaceId}`
     : scope.kind === 'channel' ? `channel:${scope.channelRef}`
     : `thread:${scope.threadRef}`
 }
@@ -54,9 +56,10 @@ export class TeamChangeStream {
 
   private async run(key: string, scope: TeamChangeScope, poll: ScopePoll): Promise<void> {
     const { signal } = poll.controller
+    const request = (afterVersion: number): AgentTeamChangesRequest => ({ afterVersion, ...(scope === undefined ? {} : { scope }) })
     // Sample the current version silently first: subscribers just fetched
     // their initial projection, and an immediate wake would double-fetch.
-    const probe = await this.changes({ afterVersion: 0, scope }, signal)
+    const probe = await this.changes(request(0), signal)
     if (signal.aborted) return
     if (!probe.ok) {
       this.fail(key, poll, probe.error.message)
@@ -64,7 +67,7 @@ export class TeamChangeStream {
     }
     let version = probe.value.version
     while (!signal.aborted) {
-      const result = await this.changes({ afterVersion: version, scope }, signal)
+      const result = await this.changes(request(version), signal)
       if (signal.aborted) return
       if (!result.ok) {
         this.fail(key, poll, result.error.message)
@@ -81,5 +84,27 @@ export class TeamChangeStream {
     // A dead poll must not stay registered: the next subscriber restarts it.
     if (this.polls.get(key) === poll) this.polls.delete(key)
     for (const listener of poll.listeners) listener({ type: 'failed', message })
+  }
+}
+
+/**
+ * The Host's `changes` stream never wakes on a Thread read — a read advances
+ * only the reader's private watermark, so no shared projection changes. A
+ * durable read does consume the reader's own mention markers, so the Human's
+ * badge and Inbox page refresh from the completed read itself instead of
+ * waiting for the next unrelated commit.
+ */
+export class TeamReadStream {
+  private version = 0
+  private readonly listeners = new Set<() => void>()
+
+  bump(): void {
+    this.version += 1
+    for (const listener of this.listeners) listener()
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
   }
 }
