@@ -75,6 +75,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const manageTriggerRef = useRef<HTMLSpanElement>(null)
   const memberListRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(false)
+  // Flips after the first successful timeline load; later change wakes
+  // refresh in place instead of showing the loading surface again.
+  const loadedRef = useRef(false)
   const refreshSequenceRef = useRef(0)
   const channelLastItem = view?.items[view.items.length - 1]
   // Branded-ref navigation for message bodies: channel refs hop directly,
@@ -130,7 +133,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     if (!mountedRef.current) return false
     const sequence = refreshSequenceRef.current + 1
     refreshSequenceRef.current = sequence
-    setLoading(true)
+    // Only the first refresh owns the loading surface; change wakes refresh
+    // the rendered timeline in place instead of flashing it back to skeleton.
+    if (!loadedRef.current) setLoading(true)
     if (clearError) {
       setError(undefined)
       setStatusMessage(undefined)
@@ -141,7 +146,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         loadMembers({ workspaceId }),
       ])
       if (!mountedRef.current || sequence !== refreshSequenceRef.current) return false
-      if (loaded.ok) setView(current => current === undefined ? loaded.value : mergeChannelView(current, loaded.value)); else setError(loaded.error.message)
+      if (loaded.ok) { setView(current => current === undefined ? loaded.value : mergeChannelView(current, loaded.value)); loadedRef.current = true } else setError(loaded.error.message)
       if (loadedMembers.ok) setMembers(loadedMembers.value); else setError(loadedMembers.error.message)
       return loaded.ok && loadedMembers.ok
     } catch (cause) {
@@ -167,6 +172,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
 
   useEffect(() => {
     mountedRef.current = true
+    loadedRef.current = false
     setView(undefined)
     setError(undefined)
     setLoading(true)
@@ -179,6 +185,13 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         void refresh()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
+        if (!mountedRef.current) return
+        if (update.type === 'failed') { setError(update.message); return }
+        void refreshMembers()
+      }),
+      // Presence transitions commit nothing: only the member rows move, so
+      // the header presence counts refresh without a timeline refetch.
+      subscribeChanges({ kind: 'presence', workspaceId }, update => {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setError(update.message); return }
         void refreshMembers()

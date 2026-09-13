@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AgentTeamInboxItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -50,9 +50,12 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, sele
   const [rows, setRows] = useState<readonly TeamInboxRow[]>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  // Only the first refresh owns the loading surface; later wakes refresh the
+  // rendered rows in place instead of flashing them back to skeleton.
+  const loadedRef = useRef(false)
 
   const refresh = useCallback(async () => {
-    setLoading(true)
+    if (!loadedRef.current) setLoading(true)
     const results = await Promise.all(workspaces.map(async workspace => {
       const result = await loadInbox({ workspaceId: workspace.workspaceId, directOnly: true, limit: 100 })
       return result.ok
@@ -64,6 +67,7 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, sele
       ? result.items.map(item => ({ workspaceId: result.workspaceId, workspaceTitle: result.workspaceTitle, item }))
       : []).sort(compareInboxRows))
     setError(failure?.ok === false ? failure.message : undefined)
+    loadedRef.current = true
     setLoading(false)
   }, [loadInbox, workspaces])
 

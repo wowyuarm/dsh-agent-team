@@ -4366,3 +4366,60 @@ describe('Agent Team Member private memory directory sanitization (issue #7)', (
     }
   })
 })
+
+describe('Agent Team presence-scope invalidation (issue #21)', () => {
+  /** Resolve only after a macrotask so a premature wake-up cannot hide behind microtasks. */
+  async function staysPending(promise: Promise<unknown>, ms = 15): Promise<boolean> {
+    let settled = false
+    void promise.then(() => { settled = true }, () => { settled = true })
+    await new Promise(resolve => setTimeout(resolve, ms))
+    return !settled
+  }
+
+  it('wakes only presence waiters on Agent running/idle and leaves workspace and scope-less waiters parked', async () => {
+    const { ctx, workspaceId } = await realHarness(new EmptyAdapter())
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('presence-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
+    const presenceWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'presence', workspaceId } })
+    const workspaceWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'workspace', workspaceId } })
+    const unscopedWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version })
+    expect(await staysPending(presenceWaiter)).toBe(true)
+
+    // A turn start (running) and its end (idle) change no durable projection:
+    // only the presence waiter wakes, in both directions.
+    ctx.emit('agent/status', { agent, status: 'running' })
+    const runningWake = await presenceWaiter
+    expect(runningWake.version).toBeGreaterThan(baseline.version)
+    expect(await staysPending(workspaceWaiter)).toBe(true)
+    expect(await staysPending(unscopedWaiter)).toBe(true)
+
+    const idleWaiter = ctx.agentTeam.changes({ afterVersion: runningWake.version, scope: { kind: 'presence', workspaceId } })
+    ctx.emit('agent/status', { agent, status: 'idle' })
+    expect(await idleWaiter).toMatchObject({ version: expect.any(Number) })
+
+    // A ledger commit still reaches the workspace and scope-less waiters, and
+    // a fresh presence waiter stays parked through it — channel creation must
+    // refresh the sidebar catalog, never the presence rows.
+    const settled = await ctx.agentTeam.changes({ afterVersion: 0 })
+    const committedWaiter = ctx.agentTeam.changes({ afterVersion: settled.version, scope: { kind: 'presence', workspaceId } })
+    const committedWorkspaceWaiter = ctx.agentTeam.changes({ afterVersion: settled.version, scope: { kind: 'workspace', workspaceId } })
+    await ctx.agentTeam.createChannel({ requestId: requestId('presence-channel'), workspaceId, name: 'presence-check', description: 'Presence work' })
+    expect(await committedWorkspaceWaiter).toMatchObject({ version: expect.any(Number) })
+    expect(await staysPending(committedWaiter)).toBe(true)
+  })
+
+  it('reports Agent runtime failures through the presence scope only', async () => {
+    const { ctx, workspaceId } = await realHarness(new EmptyAdapter())
+    const builder = await ctx.agentTeam.addMember({ requestId: requestId('presence-error-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [] })
+    const agent = ctx.agents.get(builder.status.member.sessionId)!
+    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
+    const presenceWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'presence', workspaceId } })
+    const unscopedWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version })
+    expect(await staysPending(presenceWaiter)).toBe(true)
+
+    ctx.emit('agent/error', { agent, turn: 1, step: 1, error: new Error('fetch failed') })
+    expect(await presenceWaiter).toMatchObject({ version: expect.any(Number) })
+    expect(await staysPending(unscopedWaiter)).toBe(true)
+  })
+})

@@ -690,6 +690,13 @@ export type AgentTeamChangeScope =
   | { readonly kind: 'workspace'; readonly workspaceId: WorkspaceId }
   | { readonly kind: 'channel'; readonly channelRef: AgentTeamChannelRef }
   | { readonly kind: 'thread'; readonly threadRef: AgentTeamThreadRef }
+  /**
+   * Presence-only lifecycle wake (Agent running/idle/failure) with no ledger
+   * commit behind it: members/presence subscribers refresh their rows, while
+   * workspace catalog and scope-less Inbox subscribers stay parked because no
+   * durable projection changed.
+   */
+  | { readonly kind: 'presence'; readonly workspaceId: WorkspaceId }
 
 /** Cursor for the lightweight Client invalidation stream. */
 export interface AgentTeamChangesRequest {

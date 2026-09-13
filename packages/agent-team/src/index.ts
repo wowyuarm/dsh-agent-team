@@ -21,6 +21,7 @@ import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
+import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { PressurePolicyCoordinator } from './pressure-policy.ts'
 import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
@@ -170,6 +171,7 @@ function sameChangeScope(left: AgentTeamChangeScope, right: AgentTeamChangeScope
   if (left.kind === 'workspace' && right.kind === 'workspace') return left.workspaceId === right.workspaceId
   if (left.kind === 'channel' && right.kind === 'channel') return left.channelRef === right.channelRef
   if (left.kind === 'thread' && right.kind === 'thread') return left.threadRef === right.threadRef
+  if (left.kind === 'presence' && right.kind === 'presence') return left.workspaceId === right.workspaceId
   return false
 }
 
@@ -463,7 +465,7 @@ export default class AgentTeam extends TypertRemoteService {
       const kind = classifyRecoverableError(message)
       if (kind !== undefined) this.ctx.logger.warn(`agent-team: member '${member.handle}' hit a recoverable ${kind} error; recording a consecutive error occurrence`)
       this.recovery.onError(member.memberId, message)
-      this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
+      this.emitPresenceChanged(member.workspaceId)
     })
     this.ctx.on('agent/status', ({ agent, status }) => {
       const member = this.memberForAgent(agent)
@@ -472,7 +474,7 @@ export default class AgentTeam extends TypertRemoteService {
       if (status === 'running' && member !== undefined) {
         const recovered = this.clearMemberFailure(member.memberId, 'runtime')
         if (recovered) this.notifiedInbox.delete(member.memberId)
-        this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
+        this.emitPresenceChanged(member.workspaceId)
         // A rollover/recovery in flight delivers its own sequenced
         // rederived Inbox after the handoff and carried input; a status-driven
         // steer here would claim the handoff turn's next step and leapfrog
@@ -481,14 +483,14 @@ export default class AgentTeam extends TypertRemoteService {
       }
       // A turn that ends without an error closes any automatic recovery episode.
       // The idle transition is itself presence-affecting (working → available),
-      // so it must wake workspace watchers exactly like the running transition
+      // so it must wake presence watchers exactly like the running transition
       // above; without this wake, cached Client member rows keep showing the
       // Member as working after every turn until an unrelated change arrives.
       if (status === 'idle' && member !== undefined) {
         if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
           this.recovery.onCleanTurnEnd(member.memberId)
         }
-        this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
+        this.emitPresenceChanged(member.workspaceId)
       }
     })
     // Progress nudges count every `tool/call` of each Member Session. The
@@ -2346,7 +2348,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.setActivationDiagnostic(member.memberId, this.activationDiagnosticOf(error, member.sessionId))
     } finally {
       // Activation only changes this Workspace's presence projection.
-      this.emitChanged([{ kind: 'workspace', workspaceId: member.workspaceId }])
+      this.emitPresenceChanged(member.workspaceId)
     }
   }
 
@@ -2550,7 +2552,17 @@ export default class AgentTeam extends TypertRemoteService {
 
   private emitAutoCompactionChanged(memberId: AgentTeamMemberId): void {
     const workspaceId = this.ledger?.getMember(memberId)?.workspaceId
-    this.emitChanged(workspaceId === undefined ? undefined : [{ kind: 'workspace', workspaceId }])
+    if (workspaceId === undefined) return
+    this.emitPresenceChanged(workspaceId)
+  }
+
+  /**
+   * Presence-only invalidation: Agent running/idle/activation/failure changes
+   * alter no durable projection, so only members/presence subscribers wake —
+   * the workspace catalog and the scope-less Inbox subscriptions stay parked.
+   */
+  private emitPresenceChanged(workspaceId: WorkspaceId): void {
+    this.emitChanged([{ kind: 'presence', workspaceId }])
   }
 
   /** Wake from durable unread state with bounded facts for direct and state-changing work. */
@@ -2734,12 +2746,16 @@ export default class AgentTeam extends TypertRemoteService {
    * Wake waiters for one committed or lifecycle change. Undefined broadcasts
    * to everyone; an empty scope list invalidates nobody because no shared
    * projection changed; otherwise global and matching scoped waiters wake.
+   * Presence-only scopes sit outside that: they change no durable projection,
+   * so only matching presence waiters wake and the scope-less Inbox
+   * subscriptions stay parked.
    */
   private emitChanged(scopes?: readonly AgentTeamChangeScope[]): void {
     this.changeVersion += 1
+    const touchesProjection = scopes === undefined || scopes.some(scope => scope.kind !== 'presence')
     for (const waiter of this.changeWaiters) {
       const waiterScope = waiter.scope
-      if (scopes !== undefined && (waiterScope === undefined ? scopes.length === 0 : !scopes.some(scope => sameChangeScope(scope, waiterScope)))) continue
+      if (scopes !== undefined && (waiterScope === undefined ? !touchesProjection : !scopes.some(scope => sameChangeScope(scope, waiterScope)))) continue
       this.changeWaiters.delete(waiter)
       waiter.wake(this.changeVersion)
     }
@@ -2747,7 +2763,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   private validateChangeScope(scope: AgentTeamChangeScope | undefined): AgentTeamChangeScope | undefined {
     if (scope === undefined) return undefined
-    const ref = scope.kind === 'workspace' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
+    const ref = scope.kind === 'workspace' || scope.kind === 'presence' ? scope.workspaceId : scope.kind === 'channel' ? scope.channelRef : scope.threadRef
     if (typeof ref !== 'string' || ref.length === 0) throw new Error(`change scope of kind '${scope.kind}' requires a non-empty ref`)
     return scope
   }

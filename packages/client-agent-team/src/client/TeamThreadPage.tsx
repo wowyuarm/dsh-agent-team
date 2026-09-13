@@ -320,6 +320,14 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         if (update.type === 'failed') { setError(update.message); return }
         void refreshSupplemental()
       }),
+      // Presence transitions commit nothing: only the member rows move, so
+      // the roster refresh rides the same supplemental fetch as workspace
+      // membership changes, leaving the timeline untouched.
+      subscribeChanges({ kind: 'presence', workspaceId }, update => {
+        if (!mountedRef.current) return
+        if (update.type === 'failed') { setError(update.message); return }
+        void refreshSupplemental()
+      }),
     ]
     return () => {
       mountedRef.current = false

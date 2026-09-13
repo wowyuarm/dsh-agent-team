@@ -110,8 +110,11 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     }
   }, [])
 
+  // Only the first refresh owns the loading surface; presence wakes (Agent
+  // running/idle) ride the dedicated scope and refresh rows in place.
+  const loadedRef = useRef(false)
   const refresh = useCallback(async () => {
-    setLoading(true)
+    if (!loadedRef.current) setLoading(true)
     const result = await loadMembers({ workspaceId })
     if (result.ok) {
       // Archived Members are hidden from every surface; the row disappears
@@ -120,6 +123,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
       setMembers(next)
       followRollover(next)
       setError(undefined)
+      loadedRef.current = true
     } else {
       setError(result.error.message)
     }
@@ -134,6 +138,15 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
     }
     // The section stays mounted across Channel creation, so the Member roster
     // rides every workspace invalidation.
+    void refresh()
+  }), [subscribeChanges, refresh, workspaceId])
+  // Presence transitions commit nothing: the Host wakes only this scope, so
+  // the green dots stay live without any catalog refetch.
+  useEffect(() => subscribeChanges({ kind: 'presence', workspaceId }, update => {
+    if (update.type === 'failed') {
+      setError(update.message)
+      return
+    }
     void refresh()
   }), [subscribeChanges, refresh, workspaceId])
 

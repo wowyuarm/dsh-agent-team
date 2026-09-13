@@ -17,6 +17,7 @@ function scopeKey(scope: TeamChangeScope): string {
   return scope === undefined ? 'all'
     : scope.kind === 'workspace' ? `workspace:${scope.workspaceId}`
     : scope.kind === 'channel' ? `channel:${scope.channelRef}`
+    : scope.kind === 'presence' ? `presence:${scope.workspaceId}`
     : `thread:${scope.threadRef}`
 }
 

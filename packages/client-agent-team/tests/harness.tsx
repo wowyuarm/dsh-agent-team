@@ -214,7 +214,24 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   // by that probe and only the second one wakes subscribers — seed/publish
   // twice when a change-driven refresh must be observed.
   let changeVersion = 0
-  const changeWaiters: Array<(value: { ok: true; value: { version: number } }) => void> = []
+  // Waiters carry their request so publishers can mirror the Host's scope
+  // filtering: a presence wake invalidates only presence subscribers.
+  const changeWaiters: Array<{ request: { afterVersion: number; scope?: { kind?: string } }; resolve: (value: { ok: true; value: { version: number } }) => void }> = []
+  const wakeAll = (): void => {
+    changeVersion += 1
+    for (const waiter of changeWaiters.splice(0)) waiter.resolve({ ok: true, value: { version: changeVersion } })
+  }
+  /** Presence-only wake: workspace and scope-less waiters stay parked. */
+  const publishPresence = (): void => {
+    changeVersion += 1
+    for (const waiter of changeWaiters.splice(0)) {
+      if (waiter.request.scope?.kind !== 'presence') {
+        changeWaiters.push(waiter)
+        continue
+      }
+      waiter.resolve({ ok: true, value: { version: changeVersion } })
+    }
+  }
   const reply = vi.fn(async (request: AgentTeamReplyRequest) => {
     const top = viewItems[0]!
     const message = { ...(top.message as object), messageRef: 'message:human-reply', sender: 'member:human', body: request.body, topLevel: false, sequence: request.baseRevision + 1 }
@@ -314,26 +331,21 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   })
   const seedInbox = (rows: ReadonlyArray<{ readonly workspaceId: string } & Record<string, unknown>>): void => {
     inboxRows = rows.map(row => ({ workspaceId: row.workspaceId, item: row as Record<string, unknown> }))
-    changeVersion += 1
-    for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
+    wakeAll()
   }
   const changes = vi.fn((request: { afterVersion: number; scope?: unknown }, _signal?: AbortSignal) => changeVersion > request.afterVersion
     ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
-    : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push(resolve) }))
+    : new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push({ request: request as { afterVersion: number; scope?: { kind?: string } }, resolve }) }))
   const publishAgentReply = () => {
     const top = viewItems[0]!
     viewItems = [{ ...top, messageCount: 2 }, { ...top, message: { ...(top.message as object), messageRef: 'message:reply', sender: 'member:builder', body: 'agent reply', topLevel: false, sequence: 3 }, messageCount: 2 }]
     viewClaims = [{ claimRef: 'claim:1', taskRef: 'task:1', threadRef: 'thread:1', owner: 'member:builder', direction: 'Implement API', normalizedDirection: 'implement api', state: 'active' }]
     viewActivities = [{ activityRef: 'activity:claim', taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:builder', kind: 'claim', claimRef: 'claim:1', sequence: 4 }]
-    changeVersion += 1
-    for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
+    wakeAll()
   }
   /** Simulates an externally driven channel/membership commit reaching every workspace waiter. */
   const seedChannel = (channel: Record<string, unknown>) => { channels = [...channels, channel] }
-  const publishChannelUpdate = () => {
-    changeVersion += 1
-    for (const resolve of changeWaiters.splice(0)) resolve({ ok: true, value: { version: changeVersion } })
-  }
+  const publishChannelUpdate = () => { wakeAll() }
   // rc.1: the client injects the model-catalog sub-namespace explicitly.
   runtime.ctx.provide('remote.session', { modelCatalog })
   runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
@@ -360,5 +372,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, members, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, seedChannel, publishChannelUpdate, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox }
 }

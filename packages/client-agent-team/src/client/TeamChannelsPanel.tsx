@@ -70,8 +70,11 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
   const drag = useSidebarRowDrag({ refs: orderedChannelRefs, onCommit: applyMove })
   const sectionOpen = useSidebarSectionOpen(workspaceId, 'channels')
 
+  // Only the first refresh owns the loading surface; later wakes (workspace
+  // catalog changes, member creation) refresh the rendered rows in place.
+  const loadedRef = useRef(false)
   const refresh = useCallback(async () => {
-    setLoading(true)
+    if (!loadedRef.current) setLoading(true)
     const [channelResult, memberResult] = await Promise.all([
       loadChannels({ workspaceId, limit: 1 }),
       loadMembers({ workspaceId }),
@@ -84,6 +87,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
         .map(status => status.member.memberId))
       setSelected(current => new Set([...current].filter(memberId => selectable.has(memberId))))
       setError(undefined)
+      loadedRef.current = true
     } else if (!channelResult.ok) {
       setError(channelResult.error.message)
     } else if (!memberResult.ok) {

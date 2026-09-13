@@ -101,7 +101,6 @@ import type {
   AgentTeamThreadReadOperation,
   AgentTeamThreadReadRequest,
   AgentTeamThreadReadResult,
-  AgentTeamThreadAttentionObservation,
   AgentTeamThreadObservations,
   AgentTeamThreadObservationsRequest,
   AgentTeamThreadRef,
@@ -331,13 +330,35 @@ interface Projection {
   readonly previousSessions: Map<AgentTeamMemberId, SessionId>
   /** Latest rollover seed envelope per Member, keyed to its target Session; absent on fresh rollovers and renewals. */
   readonly rolloverSeeds: Map<AgentTeamMemberId, { readonly targetSessionId: SessionId; readonly sourceSessionId: SessionId; readonly sourceThroughSeq: SessionLogOffset; readonly checkpointRef: AgentTeamContextCheckpointRef }>
+  /** Top-level anchor Message per Thread; the first topLevel Message wins, like the linear scan it replaces. */
+  readonly anchorByThread: Map<AgentTeamThreadRef, AgentTeamMessage>
+  /** Display ordinal per Task, in per-Channel creation order; workspace filtering happens at read time. */
+  readonly taskNumberByTask: Map<AgentTeamTaskRef, number>
+  readonly taskCountByChannel: Map<AgentTeamChannelRef, number>
+  /** Threads each Member follows — the reverse of attentionByThread, for per-reader Inbox candidates. */
+  readonly attentionThreadsByMember: Map<AgentTeamMemberId, Set<AgentTeamThreadRef>>
+  /** Direct markers bucketed per recipient Member and Thread, kept sorted by sequence. */
+  readonly directMarkersByMember: Map<AgentTeamMemberId, Map<AgentTeamThreadRef, AgentTeamDirectMarker[]>>
+  /** Activity markers bucketed per recipient Member and Thread, kept sorted by sequence. */
+  readonly activityMarkersByMember: Map<AgentTeamMemberId, Map<AgentTeamThreadRef, AgentTeamActivityMarker[]>>
+  /** Replay-order Attention observations per Thread, appended by committed Inbox deltas only. */
+  readonly observationsByThread: Map<AgentTeamThreadRef, AgentTeamAttentionObservation[]>
+}
+
+/** Minimal replay-time Attention observation; the read projection adds the current Task ref. */
+interface AgentTeamAttentionObservation {
+  readonly sequence: number
+  readonly memberId: AgentTeamMemberId
+  readonly action: 'follow' | 'unfollow'
 }
 
 function emptyProjection(): Projection {
   return { byRequest: new Map(), byOperation: new Map(), ordered: [], channels: new Map(), members: new Map(), memberships: new Map(),
     claims: new Map(), messages: [], tasks: new Map(), threads: new Map(), attention: new Map(), directMarkers: new Map(), activityMarkers: new Map(),
     orderedFacts: [], factsByThread: new Map(), channelRefByThread: new Map(), mentionsByMessage: new Map(), messageCountByThread: new Map(),
-    attentionByThread: new Map(), previousSessions: new Map(), rolloverSeeds: new Map() }
+    attentionByThread: new Map(), previousSessions: new Map(), rolloverSeeds: new Map(),
+    anchorByThread: new Map(), taskNumberByTask: new Map(), taskCountByChannel: new Map(), attentionThreadsByMember: new Map(),
+    directMarkersByMember: new Map(), activityMarkersByMember: new Map(), observationsByThread: new Map() }
 }
 
 const EMPTY_PROGRESS_NUDGE_TARGETS: AgentTeamProgressNudgeTargets = Object.freeze({
@@ -1334,7 +1355,9 @@ export class AgentTeamLedger {
     const directOnly = request.directOnly === true
     const taskNumbers = directOnly ? this.taskNumbers(request.workspaceId) : undefined
     const items: AgentTeamInboxItem[] = []
-    for (const thread of this.state.threads.values()) {
+    for (const threadRef of this.inboxCandidateThreads(authorized.memberId, directOnly)) {
+      const thread = this.state.threads.get(threadRef)
+      if (thread === undefined) continue
       const channelRef = this.channelRefForThread(thread.threadRef)
       if (channelRef === undefined) continue
       if (this.state.channels.get(channelRef)?.workspaceId !== request.workspaceId) continue
@@ -1364,6 +1387,23 @@ export class AgentTeamLedger {
         ? items.reduce((sum, item) => sum + item.directCount, 0)
         : items.reduce((sum, item) => sum + item.unreadCount, 0),
       totalDirectCount: items.reduce((sum, item) => sum + item.directCount, 0) })
+  }
+
+  /**
+   * Threads that can hold unread facts for one reader, from the per-reader
+   * derived indexes: Attention follows plus direct and activity markers.
+   * Every unread source is covered — ordinary unread requires Attention, and
+   * marker unread requires a marker — so no full Thread scan is needed. The
+   * direct-only slice needs only the direct-marker threads, since a row
+   * requires at least one direct unread.
+   */
+  private inboxCandidateThreads(memberId: AgentTeamMemberId, directOnly: boolean): Iterable<AgentTeamThreadRef> {
+    if (directOnly) return this.state.directMarkersByMember.get(memberId)?.keys() ?? []
+    const refs = new Set<AgentTeamThreadRef>()
+    for (const source of [this.state.attentionThreadsByMember.get(memberId), this.state.directMarkersByMember.get(memberId), this.state.activityMarkersByMember.get(memberId)]) {
+      for (const threadRef of source?.keys() ?? []) refs.add(threadRef)
+    }
+    return refs
   }
 
   /** Model-visible notification material derived from the recipient's current durable unread state. */
@@ -1408,28 +1448,13 @@ export class AgentTeamLedger {
     const limit = request.limit ?? 50
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('observation limit must be an integer between 1 and 100')
     const threadRef = thread.threadRef
-    const current = new Map<AgentTeamMemberId, AgentTeamThreadAttention>()
-    const observations: AgentTeamThreadAttentionObservation[] = []
-    for (const operation of this.state.ordered) {
-      const delta = this.attentionDelta(operation)
-      if (delta === undefined) continue
-      for (const removed of delta.attention.removed) {
-        if (removed.threadRef !== threadRef) continue
-        if (!current.delete(removed.memberId)) continue
-        observations.push(Object.freeze({ sequence: operation.sequence, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }),
-          memberId: removed.memberId, action: 'unfollow' }))
-      }
-      for (const next of delta.attention.set) {
-        if (next.threadRef !== threadRef) continue
-        const prior = current.get(next.memberId)
-        current.set(next.memberId, next)
-        // Task creation establishes initial Attention; reads only advance its watermark.
-        if (operation.kind === 'team/message-sent' || (prior !== undefined && prior.startSequence === next.startSequence)) continue
-        observations.push(Object.freeze({ sequence: operation.sequence, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }),
-          memberId: next.memberId, action: 'follow' }))
-      }
-    }
-    return Object.freeze({ items: Object.freeze(observations.slice(-limit)), followers: Object.freeze([...current.keys()]) })
+    // Both slices are replay-derived: the observation log is appended by
+    // committed Inbox deltas in ledger order, and the live follower set is
+    // the same Attention index the follow history converges to.
+    const observations = (this.state.observationsByThread.get(threadRef) ?? []).slice(-limit)
+      .map(event => Object.freeze({ sequence: event.sequence, threadRef, ...(task === undefined ? {} : { taskRef: task.taskRef }),
+        memberId: event.memberId, action: event.action }))
+    return Object.freeze({ items: Object.freeze(observations), followers: Object.freeze([...this.state.attentionByThread.get(threadRef) ?? []]) })
   }
 
   /** Every operation carrying an inbox delta drives the Inbox projection; the payload shape decides, not a per-kind list. */
@@ -1521,7 +1546,8 @@ export class AgentTeamLedger {
       && channel.state !== 'archived'
       && (memberId === undefined || this.isChannelMember(channel.channelRef, memberId)))
     const channelRefs = new Set(channels.map(channel => channel.channelRef))
-    const allFacts = this.state.orderedFacts.filter(fact => {
+    const before = request.cursor ?? this.state.ordered.length + 1
+    const matches = (fact: AgentTeamThreadFact): boolean => {
       const threadRef = fact.kind === 'message' ? fact.message.threadRef : fact.activity.threadRef
       const channelRef = this.channelRefForThread(threadRef)
       if (channelRef === undefined || !channelRefs.has(channelRef)) return false
@@ -1529,9 +1555,29 @@ export class AgentTeamLedger {
       if (request.threadRef !== undefined && threadRef !== request.threadRef) return false
       if (request.topLevelOnly && (fact.kind !== 'message' || !fact.message.topLevel)) return false
       if (request.includeActivities === false && fact.kind === 'activity') return false
-      return direction === 'before' ? fact.sequence < (request.cursor ?? this.state.ordered.length + 1) : fact.sequence > cursor
-    })
-    const selected = direction === 'before' ? allFacts.slice(-limit) : allFacts.slice(0, limit)
+      return direction === 'before' ? fact.sequence < before : fact.sequence > cursor
+    }
+    // Walk from the end the direction starts at and stop once `limit` matches
+    // are collected plus one more proves `hasMore` — `limit` bounds only the
+    // returned items, never the scan below a single extra match. A sidebar
+    // asking for one item no longer sweeps the whole fact ledger.
+    const selected: AgentTeamThreadFact[] = []
+    let hasMore = false
+    if (direction === 'before') {
+      for (let index = this.state.orderedFacts.length - 1; index >= 0; index -= 1) {
+        const fact = this.state.orderedFacts[index]!
+        if (!matches(fact)) continue
+        if (selected.length < limit) selected.push(fact)
+        else { hasMore = true; break }
+      }
+      selected.reverse()
+    } else {
+      for (const fact of this.state.orderedFacts) {
+        if (!matches(fact)) continue
+        if (selected.length < limit) selected.push(fact)
+        else { hasMore = true; break }
+      }
+    }
     const visibleTasks = [...this.state.tasks.values()].filter(task => channelRefs.has(task.channelRef)
       && (request.channelRef === undefined || task.channelRef === request.channelRef)
       && (request.threadRef === undefined || task.threadRef === request.threadRef))
@@ -1567,7 +1613,7 @@ export class AgentTeamLedger {
       claims: this.claimsForVisibleTasks(visibleTasks),
       activities: Object.freeze(selected.filter((fact): fact is Extract<AgentTeamThreadFact, { kind: 'activity' }> => fact.kind === 'activity').map(fact => fact.activity)),
       cursor: nextCursor,
-      hasMore: allFacts.length > selected.length,
+      hasMore,
     })
   }
 
@@ -2380,7 +2426,7 @@ export class AgentTeamLedger {
     }
     if (operation.kind === 'team/channel-member-removed') {
       target.memberships.get(operation.data.channelRef)?.delete(operation.data.memberId)
-      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
+      this.applyReleaseSnapshot(target, operation, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/channel-archived') {
@@ -2388,13 +2434,13 @@ export class AgentTeamLedger {
       // restore returns every Member to the Channel. Visibility filters by
       // channel state instead.
       target.channels.set(operation.data.channel.channelRef, operation.data.channel)
-      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
+      this.applyReleaseSnapshot(target, operation, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/member-removed') {
       target.members.set(operation.data.member.memberId, operation.data.member)
       for (const membership of target.memberships.values()) membership.delete(operation.data.member.memberId)
-      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
+      this.applyReleaseSnapshot(target, operation, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/member-archived') {
@@ -2402,13 +2448,15 @@ export class AgentTeamLedger {
       // restore returns the Member to its Channels. Visibility filters by
       // member state instead.
       target.members.set(operation.data.member.memberId, operation.data.member)
-      this.applyReleaseSnapshot(target, operation.data, operation.occurredAt)
+      this.applyReleaseSnapshot(target, operation, operation.data, operation.occurredAt)
       return
     }
     if (operation.kind === 'team/thread-promoted') {
       this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      this.recordTaskNumber(target, operation.data.task)
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
@@ -2419,7 +2467,16 @@ export class AgentTeamLedger {
       this.appendMessageFact(target, message, mentions, message.occurredAt ?? operation.occurredAt)
       if (operation.data.task !== undefined) target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
-      if (message.topLevel) target.channelRefByThread.set(message.threadRef, message.channelRef)
+      if (message.topLevel) {
+        target.channelRefByThread.set(message.threadRef, message.channelRef)
+        // The anchor is the Thread's first topLevel Message; a later topLevel
+        // Message (none today) must not displace it, matching the linear scan.
+        if (!target.anchorByThread.has(message.threadRef)) target.anchorByThread.set(message.threadRef, message)
+      }
+      // Only message-sent mints a Task ordinal; thread-replied may echo the
+      // Task without renumbering it, like the operation scan it replaces.
+      if (operation.kind === 'team/message-sent' && operation.data.task !== undefined) this.recordTaskNumber(target, operation.data.task)
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
@@ -2428,6 +2485,7 @@ export class AgentTeamLedger {
       this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
@@ -2436,10 +2494,12 @@ export class AgentTeamLedger {
       this.appendActivityFact(target, operation.data.activity, operation.occurredAt)
       target.tasks.set(operation.data.task.taskRef, operation.data.task)
       target.threads.set(operation.data.thread.threadRef, operation.data.thread)
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
     if (operation.kind === 'team/thread-attention-changed' || operation.kind === 'team/thread-read') {
+      this.recordAttentionObservations(target, operation, operation.data.inbox)
       this.applyInboxDelta(target, operation.data.inbox)
       return
     }
@@ -2460,6 +2520,7 @@ export class AgentTeamLedger {
    */
   private applyReleaseSnapshot(
     target: Projection,
+    operation: AgentTeamOperation,
     data: {
       readonly claims: readonly AgentTeamClaim[]
       readonly activities: readonly AgentTeamClaimsReleasedActivity[]
@@ -2473,6 +2534,7 @@ export class AgentTeamLedger {
     for (const activity of data.activities) this.appendActivityFact(target, activity, occurredAt)
     for (const task of data.tasks) target.tasks.set(task.taskRef, task)
     for (const thread of data.threads) target.threads.set(thread.threadRef, thread)
+    this.recordAttentionObservations(target, operation, data.inbox)
     this.applyInboxDelta(target, data.inbox)
   }
 
@@ -2499,6 +2561,44 @@ export class AgentTeamLedger {
     target.factsByThread.set(activity.threadRef, facts)
   }
 
+  /** Display ordinals are a per-Channel creation counter; the workspace filter happens at read time. */
+  private recordTaskNumber(target: Projection, task: AgentTeamTask): void {
+    const ordinal = (target.taskCountByChannel.get(task.channelRef) ?? 0) + 1
+    target.taskCountByChannel.set(task.channelRef, ordinal)
+    target.taskNumberByTask.set(task.taskRef, ordinal)
+  }
+
+  /**
+   * Replay-order Attention observations, appended from committed Inbox deltas
+   * only (the hypothetical read projection applies its delta directly). The
+   * follow/unfollow decision mirrors the full replay scan it replaces: a
+   * removal records only when Attention existed, and a set records unless it
+   * is the Thread-creating Message (initial Attention) or merely advances the
+   * same follow's watermark. Removals are evaluated before sets, exactly like
+   * the scan's loop order.
+   */
+  private recordAttentionObservations(target: Projection, operation: AgentTeamOperation, delta: AgentTeamInboxDelta): void {
+    if (delta.attention.removed.length === 0 && delta.attention.set.length === 0) return
+    const retired = new Set<string>()
+    for (const key of delta.attention.removed) {
+      retired.add(this.attentionKey(key.memberId, key.threadRef))
+      if (!target.attention.has(this.attentionKey(key.memberId, key.threadRef))) continue
+      this.appendObservation(target, key.threadRef, { sequence: operation.sequence, memberId: key.memberId, action: 'unfollow' })
+    }
+    for (const next of delta.attention.set) {
+      const key = this.attentionKey(next.memberId, next.threadRef)
+      const prior = retired.has(key) ? undefined : target.attention.get(key)
+      if (operation.kind === 'team/message-sent' || (prior !== undefined && prior.startSequence === next.startSequence)) continue
+      this.appendObservation(target, next.threadRef, { sequence: operation.sequence, memberId: next.memberId, action: 'follow' })
+    }
+  }
+
+  private appendObservation(target: Projection, threadRef: AgentTeamThreadRef, observation: AgentTeamAttentionObservation): void {
+    const observations = target.observationsByThread.get(threadRef) ?? []
+    observations.push(Object.freeze(observation))
+    target.observationsByThread.set(threadRef, observations)
+  }
+
   private applyInboxDelta(target: Projection, delta: AgentTeamInboxDelta): void {
     for (const key of delta.attention.removed) {
       target.attention.delete(this.attentionKey(key.memberId, key.threadRef))
@@ -2507,17 +2607,71 @@ export class AgentTeamLedger {
         followers.delete(key.memberId)
         if (followers.size === 0) target.attentionByThread.delete(key.threadRef)
       }
+      const threads = target.attentionThreadsByMember.get(key.memberId)
+      if (threads !== undefined) {
+        threads.delete(key.threadRef)
+        if (threads.size === 0) target.attentionThreadsByMember.delete(key.memberId)
+      }
     }
     for (const attention of delta.attention.set) {
       target.attention.set(this.attentionKey(attention.memberId, attention.threadRef), attention)
       const followers = target.attentionByThread.get(attention.threadRef) ?? new Set<AgentTeamMemberId>()
       followers.add(attention.memberId)
       target.attentionByThread.set(attention.threadRef, followers)
+      const threads = target.attentionThreadsByMember.get(attention.memberId) ?? new Set<AgentTeamThreadRef>()
+      threads.add(attention.threadRef)
+      target.attentionThreadsByMember.set(attention.memberId, threads)
     }
-    for (const marker of delta.directMarkers.removed) target.directMarkers.delete(this.directMarkerKey(marker))
-    for (const marker of delta.directMarkers.added) target.directMarkers.set(this.directMarkerKey(marker), marker)
-    for (const marker of delta.activityMarkers.removed) target.activityMarkers.delete(this.activityMarkerKey(marker))
-    for (const marker of delta.activityMarkers.added) target.activityMarkers.set(this.activityMarkerKey(marker), marker)
+    for (const marker of delta.directMarkers.removed) {
+      target.directMarkers.delete(this.directMarkerKey(marker))
+      this.removeBucketedMarker(target.directMarkersByMember, marker.memberId, marker.threadRef, this.directMarkerKey(marker), candidate => this.directMarkerKey(candidate))
+    }
+    for (const marker of delta.directMarkers.added) {
+      target.directMarkers.set(this.directMarkerKey(marker), marker)
+      this.insertBucketedMarker(target.directMarkersByMember, marker.memberId, marker.threadRef, marker)
+    }
+    for (const marker of delta.activityMarkers.removed) {
+      target.activityMarkers.delete(this.activityMarkerKey(marker))
+      this.removeBucketedMarker(target.activityMarkersByMember, marker.memberId, marker.threadRef, this.activityMarkerKey(marker), candidate => this.activityMarkerKey(candidate))
+    }
+    for (const marker of delta.activityMarkers.added) {
+      target.activityMarkers.set(this.activityMarkerKey(marker), marker)
+      this.insertBucketedMarker(target.activityMarkersByMember, marker.memberId, marker.threadRef, marker)
+    }
+  }
+
+  /** Insert into the Member's Thread bucket keeping the sequence order the read path must see. */
+  private insertBucketedMarker<M extends { readonly sequence: number }>(
+    index: Map<AgentTeamMemberId, Map<AgentTeamThreadRef, M[]>>,
+    memberId: AgentTeamMemberId,
+    threadRef: AgentTeamThreadRef,
+    marker: M,
+  ): void {
+    const threads = index.get(memberId) ?? new Map<AgentTeamThreadRef, M[]>()
+    index.set(memberId, threads)
+    const bucket = threads.get(threadRef) ?? []
+    threads.set(threadRef, bucket)
+    let position = bucket.length
+    while (position > 0 && bucket[position - 1]!.sequence > marker.sequence) position -= 1
+    bucket.splice(position, 0, marker)
+  }
+
+  private removeBucketedMarker<M>(
+    index: Map<AgentTeamMemberId, Map<AgentTeamThreadRef, M[]>>,
+    memberId: AgentTeamMemberId,
+    threadRef: AgentTeamThreadRef,
+    key: string,
+    identityOf: (marker: M) => string,
+  ): void {
+    const threads = index.get(memberId)
+    const bucket = threads?.get(threadRef)
+    if (bucket === undefined) return
+    const position = bucket.findIndex(item => identityOf(item) === key)
+    if (position >= 0) bucket.splice(position, 1)
+    if (bucket.length === 0) {
+      threads!.delete(threadRef)
+      if (threads!.size === 0) index.delete(memberId)
+    }
   }
 
   private prepareRead(memberId: AgentTeamMemberId, workspaceId: WorkspaceId, request: { threadRef?: AgentTeamThreadRef | undefined; taskRef?: AgentTeamTaskRef | undefined }): PreparedRead {
@@ -2564,14 +2718,20 @@ export class AgentTeamLedger {
       .filter(marker => unreadFacts.some(item => item.fact.kind === 'activity' && item.fact.activity.activityRef === marker.activityRef))
     const inbox = this.inboxDelta(nextAttention, [], [], consumed, [], activityMarkers)
     // The hypothetical projection copies every map that its inbox delta can
-    // mutate, including the follower sets inside attentionByThread; the fact
-    // indexes are read-only here and stay shared.
+    // mutate, including the follower sets inside attentionByThread and the
+    // per-reader marker indexes; the fact indexes and the observation log are
+    // read-only here and stay shared.
     const nextProjection: Projection = {
       ...projection,
       attention: new Map(projection.attention),
       directMarkers: new Map(projection.directMarkers),
       activityMarkers: new Map(projection.activityMarkers),
       attentionByThread: new Map([...projection.attentionByThread].map(([threadRef, followers]) => [threadRef, new Set(followers)])),
+      attentionThreadsByMember: new Map([...projection.attentionThreadsByMember].map(([memberId, threads]) => [memberId, new Set(threads)])),
+      directMarkersByMember: new Map([...projection.directMarkersByMember].map(([memberId, threads]) =>
+        [memberId, new Map([...threads].map(([threadRef, markers]) => [threadRef, [...markers]]))])),
+      activityMarkersByMember: new Map([...projection.activityMarkersByMember].map(([memberId, threads]) =>
+        [memberId, new Map([...threads].map(([threadRef, markers]) => [threadRef, [...markers]]))])),
     }
     this.applyInboxDelta(nextProjection, inbox)
     const remainingUnreadCount = this.unreadForFrom(nextProjection, memberId, thread.threadRef).length
@@ -2792,13 +2952,15 @@ export class AgentTeamLedger {
   }
 
   private directMarkersForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamDirectMarker[] {
-    return Object.freeze([...projection.directMarkers.values()].filter(marker => marker.memberId === memberId && marker.threadRef === threadRef)
-      .sort((left, right) => left.sequence - right.sequence))
+    // A frozen copy, not the live bucket: callers may hand the array to an
+    // Inbox delta that freezes it, which must not freeze the derived index.
+    const markers = projection.directMarkersByMember.get(memberId)?.get(threadRef)
+    return markers === undefined ? [] : Object.freeze([...markers])
   }
 
   private activityMarkersForFrom(projection: Projection, memberId: AgentTeamMemberId, threadRef: AgentTeamThreadRef): readonly AgentTeamActivityMarker[] {
-    return Object.freeze([...projection.activityMarkers.values()].filter(marker => marker.memberId === memberId && marker.threadRef === threadRef)
-      .sort((left, right) => left.sequence - right.sequence))
+    const markers = projection.activityMarkersByMember.get(memberId)?.get(threadRef)
+    return markers === undefined ? [] : Object.freeze([...markers])
   }
 
   private issueConfirmation(
@@ -2946,7 +3108,7 @@ export class AgentTeamLedger {
   }
 
   private threadAnchorFrom(projection: Projection, threadRef: AgentTeamThreadRef): AgentTeamMessage {
-    const anchor = projection.messages.find(message => message.threadRef === threadRef && message.topLevel)
+    const anchor = projection.anchorByThread.get(threadRef)
     if (anchor === undefined) throw new Error(`Thread '${threadRef}' has no anchor Message`)
     return anchor
   }
@@ -2959,18 +3121,16 @@ export class AgentTeamLedger {
    * Display numbers for Tasks: one counter per home Channel, in creation
    * order. This is the single numbering authority — Channel cards, Thread
    * headings, cross-channel ref resolution, and inbox renders all show the
-   * ordinal the Task holds inside its own Channel.
+   * ordinal the Task holds inside its own Channel. The ordinals are derived
+   * at replay time (`taskNumberByTask`); this read only filters them to one
+   * Workspace.
    */
   private taskNumbers(workspaceId: WorkspaceId): Map<AgentTeamTaskRef, number> {
     const numbers = new Map<AgentTeamTaskRef, number>()
-    const next = new Map<AgentTeamChannelRef, number>()
-    for (const operation of this.state.ordered) {
-      const task = operation.kind === 'team/message-sent' || operation.kind === 'team/thread-promoted' ? operation.data.task : undefined
-      if (task === undefined) continue
-      if (this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
-      const ordinal = (next.get(task.channelRef) ?? 0) + 1
-      next.set(task.channelRef, ordinal)
-      numbers.set(task.taskRef, ordinal)
+    for (const [taskRef, taskNumber] of this.state.taskNumberByTask) {
+      const task = this.state.tasks.get(taskRef)
+      if (task === undefined || this.state.channels.get(task.channelRef)?.workspaceId !== workspaceId) continue
+      numbers.set(taskRef, taskNumber)
     }
     return numbers
   }

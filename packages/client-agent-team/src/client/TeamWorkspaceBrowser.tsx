@@ -32,25 +32,33 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
   const workspacesOpen = useSidebarSectionOpen(undefined, 'workspaces')
   // The cross-Workspace mention badge: one scope-less subscription while the
   // Team sidebar stands; every wake re-pulls each Workspace's direct-only
-  // total (limit 1 — totals cover every row, never the list).
+  // total (limit 1 — totals cover every row, never the list). Same-burst
+  // wakes coalesce behind a short debounce; the total is still whatever the
+  // Host's direct-only projection returns.
   const [inboxTotal, setInboxTotal] = useState(0)
   useEffect(() => {
     let disposed = false
+    let scheduled: ReturnType<typeof setTimeout> | undefined
     const refresh = async (): Promise<void> => {
       const results = await Promise.all(workspaces.map(workspace => loadInbox({ workspaceId: workspace.workspaceId, directOnly: true, limit: 1 })))
       if (disposed) return
       setInboxTotal(results.reduce((sum, result) => result.ok ? sum + result.value.totalUnreadCount : sum, 0))
     }
+    const schedule = (): void => {
+      if (scheduled !== undefined) return
+      scheduled = setTimeout(() => { scheduled = undefined; void refresh() }, 200)
+    }
     void refresh()
     const unsubscribe = subscribeChanges(undefined, update => {
-      if (update.type === 'changed') void refresh()
+      if (update.type === 'changed') schedule()
     })
     // A durable Thread read consumes this reader's mention markers without a
     // changes wake (reads change no shared projection), so the badge also
     // refreshes from every completed read.
-    const unsubscribeReads = subscribeReads(() => { void refresh() })
+    const unsubscribeReads = subscribeReads(schedule)
     return () => {
       disposed = true
+      if (scheduled !== undefined) clearTimeout(scheduled)
       unsubscribe()
       unsubscribeReads()
     }
