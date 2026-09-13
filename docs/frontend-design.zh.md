@@ -22,10 +22,14 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 | 纯图标控件 | 28×28 圆形，`border-radius: 999px`，`corner-shape: round`，透明底色，hover 用 `--dsw-alias-interactive-bg-hover-solid`（composer）/ `--dsw-alias-interactive-bg-hover`（侧栏） | `InputBar.module.css .add`、`SidebarRoot.module.css .iconButton` |
 | 主圆形动作（发送/停止） | 34×34 圆形，`--dsw-alias-button-info-fill`，静态 `#fff` 图形，hover info-hover，disabled `opacity .4` + `cursor: default`，`translateY(-2px)` 座位补偿 | `InputBar.module.css .primary` |
 | 列表行 | 8px 圆角；`aria-current="page"` 叶子行底色；hover `--dsw-alias-interactive-bg-hover` | `SidebarRoot.module.css .panelRow` |
+| 队列/结果行（双行） | 整宽按钮，8px 圆角、左右 8px 内缩，每条事实独占一行、各自省略，hover `--dsw-alias-interactive-bg-hover`，焦点环内缩。字号分级两行：主体 14px/22px primary；来源/元信息 12px/18px tertiary，其中显著片段（频道名）提到 secondary 600；行内 `Task #N` 是 6px、11px/15px 的小胶囊。哪一行承载哪条事实，由该面自己的信息顺序决定。 | `ui-workspace/src/client/rows/Rows.module.css .searchResultRow`（8px 圆角、8px 内缩、整宽按钮、hover 底色、14px 标题 + 12px 元信息） |
+| 胶囊与圆形 | 任何**实质无上限**的圆角——`border-radius: 50%`、`999px`，或等于盒子一半高度的 pill 圆角——都必须在同一条规则内配 `corner-shape: round`。平台把所有圆角面按 `superellipse(1.5)` 弯曲，会把正圆压成方圆、把胶囊两端切平；shipped 的全圆角块 100% 配对，审计对未配对者直接报错。 | `ui-theme/src/styles/corner-shape.css`；`Tag.module.css`、`StateDot.module.css`、`SidebarRoot.module.css .iconButton` |
+| 计数徽标 | 18px 胶囊：`border-radius: 999px` 配 `box-sizing: border-box`（单字符保持正圆，不被 padding 撑成椭圆），底色 `--dsw-alias-state-business-primary`、文字 `--dsw-alias-label-primary-foreground`，为 0 隐藏、超过 99 显示 `99+`，数字挂在控件的可访问名（`aria-label`）上，不能只存在于视觉徽标里。 | `Tag.module.css`（只读胶囊语言） |
 | 小胶囊 | 6px 圆角，`--dsw-alias-interactive-bg-hover` 底色 | `ReferenceChip.module.css .chip` |
 | 控件间距 | composer/侧栏工具组内兄弟控件间距 12px | `InputBar.module.css .tools/.trailing` |
 | 键盘焦点 | 可见焦点环：`outline: 2px solid var(--dsw-alias-label-primary)`；列表行 `outline-offset: -2px`，图标级控件 `1px`。`outline: none` 仅当同一条规则内有**环级替代**时才允许——outline、`box-shadow` 扩散、有边框控件的 `border-color`、文本控件的 `text-decoration`；只有底色/颜色属于 hover 反馈，不构成焦点指示（shipped 对小控件干脆保留 UA 默认环）。环色随控件含义：行与图标控件用 `label-primary`，composer/Thread 等输入邻接控件用 `business-primary`（shipped 把 business 锚定在输入、链接与表格滚动上）。豁免：`aria-activedescendant` listbox 行（mention 弹层）——焦点留在文本输入框，选中态由 `[aria-selected]` 呈现 | `SidebarRoot.module.css .panelRow:focus-visible`；`InputBar.module.css .add`（保留 UA 环，不写 `outline: none`） |
 | 图标语义 | 图形沿用基础 UI 的含义：`+` = 命令菜单、回形针 = 附件、铅笔 = 编辑。**禁止**把 shipped 图形挪作他用 | `InputBar.tsx` |
+| 模式控件（composer） | 改变主操作**语义**的控件（「作为任务」）是**模式**而不是动作：它保留可见文字标签，与附件控件同处左侧分组，形态为 28px 高的 pill（24px 圆角、13/20px 字重 500、透明底色、hover `--dsw-alias-interactive-bg-hover`、`aria-pressed` 打开时 `--dsw-alias-button-primary-fill` + `--dsw-alias-label-primary-foreground`）。文字**只允许**在窄容器分支（`@container (max-width: 460px)`）里隐藏、绝不删除——该分支下 `aria-label`、`title`、`aria-pressed` 仍保证读屏与键盘可用 | `InputBar.module.css .row`（size container）、`PermissionSelect.module.css`（带字模式 chip，同样 460px 收起标签） |
 
 一致性裁决按面记录在本文档（见下文各组件合同）：裁决为「接受偏差」时必须在对应小节写明原因——审计脚本报告机械偏差，文档拥有判断。
 
@@ -41,7 +45,7 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 - 关闭任务是终态：composer 槽位换成解释性提示条（`.closedBar/.closedNotice`，文案 + 唯一的重新打开动作），不再渲染禁用的输入框。taskless Thread 保持普通 reply composer。
 - 频道页与 Thread 页对称：频道页有返回行（`backToChannels` 清除 `channelRef` 回到频道列表）；时间线空/加载态在自由空间内居中（`.emptySurface` + `margin:auto`）。
 - 侧栏两个面板（Agents/Channels）都订阅 `{kind:'workspace'}` 变更；共享的 `TeamChangeStream` 按 scope 复用一条长轮询，订阅方的首次探针静默采样版本（不唤醒），唤醒只来自停泊轮询的后续解析——这是既定契约（见 `team-changes.client.spec.ts`）。
-- 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。Channel composer 的「作为任务」是默认关闭的原生 pressed control：Harness Button 原子不渲染按压视觉，选中态由本包 CSS 补 primary 底色，hover 不改变按压底色；新发送显式携带 taskless 意图，选中时才原子创建 Task。`committed` 与确定性拒绝（如 `member_not_following`）后换新 id；`confirmation_required` 保留同 id 续发同一操作；传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。成功发送后「作为任务」复位为关闭。
+- 发送幂等：Channel 顶层发送与 Thread reply 一致按 requestId 幂等。Channel composer 的「作为任务」是默认关闭的原生 pressed control（自绘 pill，选中态为 primary 底色，hover 不改变按压底色；形态与座位见设计语言表的「模式控件」行）；新发送显式携带 taskless 意图，选中时才原子创建 Task。`committed` 与确定性拒绝（如 `member_not_following`）后换新 id；`confirmation_required` 保留同 id 续发同一操作；传输异常保留 id 以便安全重试（Host 按 requestId 去重并返回原结果）。成功发送后「作为任务」复位为关闭。
 
 ## 排版体系
 
@@ -50,6 +54,7 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 | 页头 h1 | 20px/28px, weight 600 |
 | 发送者名 | 13px/20px, weight 600, primary；右侧同行跟随时间元信息 |
 | 消息时间 | 11px/20px, tertiary；当天 HH:mm，同年 MM-DD HH:mm，跨年完整日期（`formatMessageTime`，本地时区） |
+| Inbox 行时间 | 11px/18px, tertiary, `tabular-nums`；按读者本地日历日显示「今天 HH:mm」/「昨天 HH:mm」，更早回落消息时间形态，精确本地时刻挂在元素的 `title` 上 |
 | Human 正文 | 14px/22px（`.messageText` 容器统一 pre-wrap/break-word，正文由 `TeamMessage` 自行渲染） |
 | Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）。标题用聊天刻度（h1 17px、h2 16px、h3–h6 15px，margin 12px 0 4px），页面 h1 保持最高层级；段落/列表 margin 6px、`li + li` 间距 2px、strong 600；pre 8px 外边距 + 10px 12px 内边距、13px；表格 cell 纵向 padding 5px |
 | 任务/活动行 | 11–12px, tertiary, 活动行居中 |
@@ -127,9 +132,9 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 - Agent 编辑器（`编辑 Agent`）：名称/说明输入框 + 模型选择。模型选择复用公共 `Menu` 原语：触发钮呈 Input 形态（当前值 + 旋转 chevron），选项首行「跟随全局默认」，其后按 provider 分组标题 + 模型行、选中尾勾；目录经宿主级 `llm.models` 取得，不依赖任何活跃会话。提交走 `updateMember` Remote：缺省模型即清除覆盖（回到 Host 默认继承）；改模型对活跃成员原地更新 live model selection，保持 Agent 与 Session 身份不变，后续请求使用新选择；纯展示编辑不重启。Agent 创建流程没有频道选择页，Agent 编辑器没有成员区块——频道成员只在频道侧管理（创建对话框初始成员、频道编辑器成员行、成员管理对话框）；未入频道的 Member 仍可经 DM 触达。
 - Agent 卡片会话视图：Agent 行的头像与文案整体是选择按钮（`打开 {name} 的会话`），点击不再退出 Team 模式——导航快照保留当前 Channel/Thread，并叠加运行时字段 `memberSessionId`（附 `returnToSessionId`，均不持久化），再调用 `sessions.open(memberSessionId)`；`conversation` 影子此时让位，由 shipped 会话根在 Team 侧栏之间渲染该成员会话。任何显式 Team 导航（选工作区/频道/Thread）都会关闭成员视图并恢复该 Team 位置；页脚「对话」关闭成员视图、还原 `returnToSessionId` 后离开 Team，普通外壳不会停在成员会话里。Member 经 `context_rollover` 换新上下文时，Agents 面板观察该 Member 的旧→新 Session 绑定，仅在嵌入页正是被观察的旧 live Session id 时恰好跟随一次，归档视图不跳转。
 - 窄屏 rail 三个图标按钮自上而下：提到我（`IconQueueOutline14`，16px）→ 频道（`IconListPenOutline16`）→ Agents（`IconAgentPresetOutline16`）；不复用 checklist（任务）或 user（成员）图标。提到我图标是目的地：点击打开 Inbox 页并请求展开侧栏；频道/Agents 图标点击请求展开侧栏并聚焦对应分区头部。
-- 「提到我」入口：宽栏是 Workspaces 节之上的一张卡片，窄轨是 rail 第一枚图标；两者挂同一枚跨 Workspace direct 徽标（各可见 Workspace directOnly Inbox 合计），为 0 隐藏，超过 99 显示 `99+`。Inbox 页打开时卡片/图标携带 `aria-current='page'`。
+- 「提到我」入口：宽栏是 Workspaces 节之上的一张卡片，窄轨是 rail 第一枚图标；两者挂同一枚跨 Workspace direct 徽标（各可见 Workspace directOnly Inbox 合计），为 0 隐藏，超过 99 显示 `99+`。视觉徽标是 `aria-hidden`，数字经控件的 `aria-label` 抵达读屏（宽窄两处一致）。窄轨上徽标落在 36px 图标盒**内部**——rail 区域会裁剪自身溢出，挂在按钮外的徽标会被切掉右侧圆角。Inbox 页打开时卡片/图标携带 `aria-current='page'`。
 - `TeamConversation` 第四个面：Thread | Channel | Inbox | welcome。选 Inbox 清掉 Channel/Thread 面；选 Workspace、Channel 或 Thread 清掉 Inbox。从 Inbox 行进入 Thread 后，Back 落在该行 Thread 的频道——Inbox 不进返回栈；再进 Inbox 走左侧卡片或窄轨图标。
-- Inbox 页：对每个可见 Workspace 发一次 directOnly Inbox 调用并按 Workspace 顺序合并（各 Workspace 内保持 Host 行序），打开页不确认任何内容——打开页不是 read，只有点开行的 durable Thread read 清 marker 与徽标。行是单个按钮：(1) 一行面包屑 `workspace / #channel`，taskful 加 `Task #N`；(2) Thread 开头行，直接渲染 Host `previewText`（120 字帽）；(3) 最新 mention 时刻，走消息同一 `formatMessageTime`。点击行选择该行 Workspace 并打开 Thread。空态「还没有人提到你」+ 提示「需要你知道或做决定时，成员会提到你」；loading/error/retry 密度对齐频道页，后台刷新失败保留行并以 `role='alert'` 报告。
+- Inbox 页：页面走**共享对话座位**——与 Channel/Thread 相同的页头带、880px 居中阅读列、`clamp(18px, 3vw, 36px)` 边距与稳定 scrollbar gutter，切换面时内容列不位移。页头除 h1 外还有一行计数（单行省略：窄座位下不许把页头折成多行）。对每个可见 Workspace 发一次 directOnly Inbox 调用，合并成**单一时间降序**——跨 Workspace 最新 mention 在前，同一时刻用 ledger sequence 破平（各 Workspace 切片自带 Host 行序，那只是 Host 的截断策略，不是展示顺序）；打开页不确认任何内容——打开页不是 read，只有点开行的 durable Thread read 清 marker 与徽标。行是整宽的 8px 圆角队列行，形态取自 shipped 双行结果行（左右 8px 内缩、共享 `--dsw-alias-interactive-bg-hover` 底色、焦点环内缩），承载 Human 定死的信息顺序：(1) 一行面包屑 `workspace / #channel`，taskful 加 6px 的 `Task #N` 小胶囊；(2) Thread 开头行，直接渲染 Host `previewText`（120 字帽），独占一整行 14px/22px primary；(3) 最新 mention 时刻右对齐在面包屑行上，11px tertiary `tabular-nums`——按读者本地日历日命名队列读者真正会推理的两天「今天 HH:mm」/「昨天 HH:mm」，更早回落消息时间形态（同年 `MM-DD HH:mm`、跨年完整日期），精确本地 `YYYY-MM-DD HH:mm` 挂在元素的 `title` 上。点击行选择该行 Workspace 并打开 Thread。空态讲**共享空态语言**（与 Channel/Thread 同一套 13px `strong` 标题 + 12px 提示），文案「还没有人提到你」+「需要你知道或做决定时，成员会提到你」；loading/error/retry 复用共享对话类，后台刷新失败保留行并以 `role='alert'`、`--dsw-alias-state-error-primary` 报告。
 - 刷新语义：Inbox 页打开时订一次无 scope 的 changes，唤醒重拉列表，离开即停；徽标同法订阅，唤醒只重拉合计（`limit: 1`），绝不拉列表。徽标还会在每次 durable Thread read 完成后直接刷新——Host 的 changes 对 read 刻意不唤醒（read 不改变任何共享 projection），但该 read 消费了读者自己的 mention marker。
 
 ## 数据刷新语义
