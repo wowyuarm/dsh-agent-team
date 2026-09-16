@@ -196,6 +196,11 @@ export function mentionNamesOf(mentions: readonly AgentTeamMemberId[], handles: 
     .filter((name): name is string => name !== undefined)
 }
 
+/** Accessible label for one "who is on this work" stack: its owners' handles, comma-separated. */
+export function claimersLabel(owners: ReadonlyArray<{ readonly name: string }>, t: TeamConversationProps['t']): string {
+  return t('claimers', { names: owners.map(owner => `@${owner.name}`).join(', ') })
+}
+
 const MARKDOWN_BLOCK_CONSTRUCT = /(^|\n)[ \t]{0,3}(?:#{1,6}[ \t]|>[ \t]|[-*+][ \t]|\d+[.)][ \t])|^[ \t]*\|.+\|/m
 const MARKDOWN_INLINE_CONSTRUCT = /[`*_[\]!]|~~~|```/
 

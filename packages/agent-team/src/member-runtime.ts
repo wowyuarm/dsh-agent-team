@@ -323,17 +323,6 @@ export class MemberRuntime {
   }
 }
 
-/** What one activation-time legacy-memory migration did; only a refusal needs the caller to speak. */
-type LegacyMemoryMigration =
-  /** No recorded legacy directory exists: fresh install, or already migrated away. */
-  | 'absent'
-  /** The sanitized directory is already there: migration done, or a new install. */
-  | 'target-present'
-  /** Renamed within one parent directory. */
-  | 'migrated'
-  /** The record names a directory in another DSH home: nothing was touched. */
-  | 'refused-foreign-home'
-
 /**
  * One-time in-place migration of a pre-fix colon-named private memory
  * directory onto its sanitized path. A sanitized target that already exists
@@ -346,26 +335,27 @@ type LegacyMemoryMigration =
  * moved home) holds a sanitized target in ITS tree while the record still names
  * the real one. Renaming across trees would take a Member's whole private
  * memory out of its home — silently, since only the next session notices an
- * empty index. Such a source is left exactly where it is.
+ * empty index. Such a source is left exactly where it is, and only that
+ * refusal is reported back: every other outcome needs nothing from the caller.
  */
-async function migrateLegacyMemoryDirectory(legacyPath: string, path: string): Promise<LegacyMemoryMigration> {
+async function migrateLegacyMemoryDirectory(legacyPath: string, path: string): Promise<'refused-foreign-home' | undefined> {
   let legacy: Awaited<ReturnType<typeof stat>>
   try {
     legacy = await stat(legacyPath)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
   if (!legacy.isDirectory()) throw new Error(`legacy Member memory path '${legacyPath}' exists but is not a directory`)
   if (dirname(legacyPath) !== dirname(path)) return 'refused-foreign-home'
   try {
     await stat(path)
-    return 'target-present' // Sanitized directory already present: migration already done or a new install.
+    return undefined // Sanitized directory already present: migration already done or a new install.
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   await rename(legacyPath, path)
-  return 'migrated'
+  return undefined
 }
 
 /**

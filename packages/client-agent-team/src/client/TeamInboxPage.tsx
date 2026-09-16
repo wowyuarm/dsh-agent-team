@@ -3,7 +3,7 @@ import type { AgentTeamInboxItem } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
-import { formatAbsoluteTime, formatInboxTime } from './team-formatters.ts'
+import { claimersLabel, formatAbsoluteTime, formatInboxTime } from './team-formatters.ts'
 import { TeamAvatarStack } from './TeamAvatarStack.tsx'
 import { TeamCountBadge } from './TeamCountBadge.tsx'
 import css from './conversation.module.css'
@@ -83,7 +83,7 @@ export function TeamInboxPage({ useWorkspaces, loadInbox, subscribeChanges, sele
       items.map(item => ({ workspaceId, workspaceTitle, item }))
     setRows(results.flatMap(result => result.ok ? asRows(result.items, result.workspaceId, result.workspaceTitle) : []).sort(compareInboxRows))
     // The tail is one global bound rather than one per Workspace: the reader was
-    // promised ten Threads to step back into, and every Workspace's slice is
+    // promised five Threads to step back into, and every Workspace's slice is
     // already capped on its own, so the merged list is trimmed here.
     setRecentRows(results.flatMap(result => result.ok ? asRows(result.recent, result.workspaceId, result.workspaceTitle) : [])
       .sort(compareInboxRows).slice(0, RECENT_ROWS_LIMIT))
@@ -218,7 +218,7 @@ function InboxQueueRow({ row, t, showWorkspace, onOpen }: {
         the row's visible text is the Thread, not the queue. */}
     <span className={inboxCss.rowActor}>
       {owners.length > 0
-        ? <TeamAvatarStack owners={owners} label={t('claimers', { names: owners.map(owner => `@${owner.name}`).join(', ') })} />
+        ? <TeamAvatarStack owners={owners} label={claimersLabel(owners, t)} />
         : <TeamAvatarStack owners={[actor]} label={t('inboxRowActor', { name: `@${actor.name}` })} />}
     </span>
     <span className={inboxCss.rowLine}>

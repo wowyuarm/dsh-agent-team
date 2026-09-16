@@ -13,7 +13,7 @@ import { TeamMessage } from './TeamMessage.tsx'
 import { TeamAvatarStack, type TeamAvatarOwner } from './TeamAvatarStack.tsx'
 import { TeamCountBadge } from './TeamCountBadge.tsx'
 import { TeamRunDivider } from './TeamRunDivider.tsx'
-import { formatAbsoluteTime, formatInboxTime, formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
+import { claimersLabel, formatAbsoluteTime, formatInboxTime, formatTaskStatus, taskStatusDot, mentionNamesOf } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { useChannelMembership } from './team-membership.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
@@ -489,7 +489,7 @@ function ThreadStateCluster({ task, owners, unread, t }: {
 }) {
   if (task === undefined && unread === 0) return null
   return <span className={css.stateCluster}>
-    {task !== undefined && <TeamAvatarStack owners={owners} label={t('claimers', { names: owners.map(owner => `@${owner.name}`).join(', ') })} />}
+    {task !== undefined && <TeamAvatarStack owners={owners} label={claimersLabel(owners, t)} />}
     {task !== undefined && <TeamStateDot size={8} state={taskStatusDot(task.status)} />}
     {task !== undefined && <span className={css.statusWord}>{formatTaskStatus(task.status, t)}</span>}
     {/* The capsule is decoration inside the control whose label already carries
