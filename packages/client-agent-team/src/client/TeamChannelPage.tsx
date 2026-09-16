@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamClaim, AgentTeamInbox, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamView, AgentTeamViewItem,
+import type { AgentTeamClientMemberStatus, AgentTeamChannelRef, AgentTeamInbox, AgentTeamMemberId, AgentTeamSendMessageRequest, AgentTeamTask, AgentTeamView, AgentTeamViewItem,
   AgentTeamTaskRef, AgentTeamThreadRef,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -61,28 +61,6 @@ function mergeChannelView(current: AgentTeamView, fresh: AgentTeamView): AgentTe
     // Older retained items may precede even a saturated fresh window.
     hasMore: fresh.hasMore || current.cursor < fresh.cursor,
   }
-}
-
-/**
- * The people the Channel feed shows on one Task: owners of its live Claims, in
- * claim order, deduped. Claim state is a Host fact, not decoration — a released
- * Claim is no longer work — and only a Task still in progress or review has
- * any, because a done or closed Task keeps its Claims as history that the state
- * word already tells the reader.
- */
-function liveOwnersByTask(items: readonly AgentTeamViewItem[], claims: readonly AgentTeamClaim[]): ReadonlyMap<AgentTeamTaskRef, readonly AgentTeamMemberId[]> {
-  const live = new Set(items
-    .flatMap(item => item.task === undefined ? [] : [item.task])
-    .filter(task => task.status === 'in_progress' || task.status === 'in_review')
-    .map(task => task.taskRef))
-  const owners = new Map<AgentTeamTaskRef, AgentTeamMemberId[]>()
-  for (const claim of claims) {
-    if (!live.has(claim.taskRef) || claim.state === 'released') continue
-    const known = owners.get(claim.taskRef)
-    if (known === undefined) owners.set(claim.taskRef, [claim.owner])
-    else if (!known.includes(claim.owner)) known.push(claim.owner)
-  }
-  return owners
 }
 
 /**
@@ -173,10 +151,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const onlineCount = channelMembers.filter(status => status.presence === 'available' || status.presence === 'working').length
   const messageSender = (item: AgentTeamViewItem): AgentTeamMemberId => item.message.sender
   const handleByMember = new Map(members.map(status => [status.member.memberId, status.member.handle.replace(/^@/, '')]))
-  // Claim owners ride the same Host projection as everything else; the map is
-  // rebuilt per render because the window is small and identity must never lag
-  // a change wake.
-  const ownersByTask = liveOwnersByTask(view?.items ?? [], view?.claims ?? [])
 
   const refresh = async (clearError = false) => {
     if (!mountedRef.current) return false
@@ -418,7 +392,6 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
             // leads that line: ownership, status, and unread answer the reader
             // where they are already reading. A reply inside a Thread has none
             // of it — the Thread page owns that surface.
-            const owners = task === undefined ? [] : ownersByTask.get(task.taskRef) ?? []
             const unread = unreadByThread.get(item.thread.threadRef) ?? 0
             // A turn divider already labels the gapped entry; its row stays chrome-free.
             return <Fragment key={item.message.messageRef}>
@@ -441,7 +414,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
               >
                 {item.message.topLevel && <ThreadEntryRow
                   item={item}
-                  owners={owners.map(memberId => ({ memberId, name: handleByMember.get(memberId) ?? memberId }))}
+                  owners={item.claimOwners}
                   unread={unread}
                   t={t}
                   onOpen={() => { selectThread(item.thread.threadRef, channelRef, task?.taskRef, item.taskNumber) }}

@@ -35,25 +35,26 @@ interface TeamInboxPageProps {
 const RECENT_ROWS_LIMIT = 5
 
 /**
- * Queue order: newest unread first, one total order across Workspaces. Each
- * Workspace slice arrives in the Host's own order (that order is the Host's
- * truncation policy); the merged display order is decided here, where the
- * merge happens, and the ledger sequence breaks ties so the queue never
- * reshuffles two rows that share an instant.
+ * Queue order, one total order across Workspaces: the Host's own keys —
+ * mentions first, then the ledger sequence, then the Thread ref. Each Workspace
+ * slice already arrives in this order, and it is also the Host's truncation
+ * policy, so the merge re-applies it instead of inventing a second one: a row
+ * that survived the cut on mentions must not sink below a merely newer row
+ * after the merge. `newestSequence` is a global ledger position, so it stays
+ * comparable across Workspaces.
  */
 function compareInboxRows(left: TeamInboxRow, right: TeamInboxRow): number {
-  const leftAt = Date.parse(left.item.newestOccurredAt)
-  const rightAt = Date.parse(right.item.newestOccurredAt)
-  const byTime = (Number.isNaN(rightAt) ? 0 : rightAt) - (Number.isNaN(leftAt) ? 0 : leftAt)
-  return byTime !== 0 ? byTime : right.item.newestSequence - left.item.newestSequence
+  return right.item.directCount - left.item.directCount
+    || right.item.newestSequence - left.item.newestSequence
+    || left.item.thread.threadRef.localeCompare(right.item.thread.threadRef)
 }
 
 /**
  * The Human Inbox: one Inbox call per visible Workspace, rendering the Host's
  * two slices — the unread queue (「需要我」, mentions counted inside it rather
  * than alone) and the 「最近活跃」 tail of Threads the reader took part in.
- * Both merge across every Workspace into one recency-ordered list, newest
- * first, since a queue is read by recency rather than by Workspace.
+ * Both merge across every Workspace into one list in the Host's own order,
+ * mentions first and then newest, rather than by Workspace.
  * Opening the page never acknowledges anything — only a durable Thread read
  * advances the watermark and consumes a mention marker, so rows and the badge
  * drop after the Thread is opened through the existing auto-ack path. A Thread

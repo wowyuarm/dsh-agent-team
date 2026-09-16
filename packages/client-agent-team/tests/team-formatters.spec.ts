@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
+import { MENTION_BODY_FIXTURE } from '../../agent-team/tests/fixtures/mention-bodies.ts'
 import { zh } from '../src/client/locales.ts'
 import type { TeamConversationProps } from '../src/client/slots.ts'
 import { allMentionMembers, containsAllMention, containsMention, formatAbsoluteTime, formatActivity, formatClaimState, formatInboxTime, formatMessageTime, formatTaskStatus, isPlainTextBody, isSingleBrandedRef, mentionNamesOf, mentionedMemberIds, planMessageBody, shouldClampMessage, splitBrandedRefs, splitMentionNames, taskStatusDot } from '../src/client/team-formatters.ts'
@@ -80,12 +81,16 @@ describe('Team presentation formatters', () => {
     expect(formatAbsoluteTime('not-a-date')).toBe('')
   })
 
-  it('splits only structured mention names, case-insensitively with an optional @', () => {
-    expect(splitMentionNames('@builder please review human', ['builder', 'Human']).segments).toEqual([
+  it('splits only authored @mentions, never bare names', () => {
+    const bare = splitMentionNames('@builder please review human', ['builder', 'Human'])
+    expect(bare.segments).toEqual([
       { text: '@builder', mention: true, name: 'builder' },
-      { text: ' please review ', mention: false },
-      { text: '@Human', mention: true, name: 'Human' },
+      { text: ' please review human', mention: false },
     ])
+    // A name without its '@' is prose even when the roster carries it: the Host
+    // would not deliver there, so no chip lands there either. The undelivered
+    // name stays available for the trailing fallback row.
+    expect(bare.unmatched).toEqual(['Human'])
     // Unmentioned names stay plain even when the body spells them out.
     expect(splitMentionNames('builder and @stranger', ['lead']).segments).toEqual([
       { text: 'builder and @stranger', mention: false },
@@ -99,11 +104,30 @@ describe('Team presentation formatters', () => {
     expect(absent.segments).toEqual([{ text: 'no names here', mention: false }])
     expect(absent.unmatched).toEqual(['builder'])
     // Longer names win over their prefixes at the same position.
-    const nested = splitMentionNames('ping builder2', ['build', 'builder2'])
+    const nested = splitMentionNames('ping @builder2', ['build', 'builder2'])
     expect(nested.segments).toEqual([
       { text: 'ping ', mention: false },
       { text: '@builder2', mention: true, name: 'builder2' },
     ])
+    // Code is quoted, never called — not even with the '@' written.
+    expect(splitMentionNames('quote `@builder` then call @lead', ['builder', 'lead']).segments).toEqual([
+      { text: 'quote `@builder` then call ', mention: false },
+      { text: '@lead', mention: true, name: 'lead' },
+    ])
+  })
+
+  it('chips and previews exactly what the shared Host scan delivers', () => {
+    // The Host spec reads the same fixture through delivery resolution: every
+    // nasty body must come back with the same handle set and marker on both sides.
+    for (const { body, handles, all } of MENTION_BODY_FIXTURE.cases) {
+      const chipped = splitMentionNames(body, MENTION_BODY_FIXTURE.roster).segments
+        .filter(segment => segment.mention)
+        .map(segment => segment.name ?? '')
+    // Chips render per occurrence while delivery resolves a set: dedupe the
+    // chip side before comparing with the Host's delivered handle set.
+      expect([...new Set(chipped)].sort()).toEqual([...handles].sort())
+      expect(containsAllMention(body)).toBe(all)
+    }
   })
 
   it('splits branded refs, tolerating doubled colons and canonicalizing them', () => {
@@ -172,6 +196,12 @@ describe('Team presentation formatters', () => {
     expect(containsAllMention('通知 all 成员')).toBe(false)
     // A doubled marker is not the marker the Host expands.
     expect(containsAllMention('ping @@all')).toBe(false)
+    // The marker is case-insensitive, and code never carries it — both match
+    // the Host expansion exactly.
+    expect(containsAllMention('@ALL 大家看一下')).toBe(true)
+    expect(containsAllMention('quote `@all` here')).toBe(false)
+    expect(containsMention('`@builder` is quoted', 'builder')).toBe(false)
+    expect(containsMention('@@builder is not a call', 'builder')).toBe(false)
   })
 
   it('derives the notified members from a draft body, not from bare names', () => {

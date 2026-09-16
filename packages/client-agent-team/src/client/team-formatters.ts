@@ -1,4 +1,5 @@
 import type { AgentTeamActivity, AgentTeamClaim, AgentTeamClientMemberStatus, AgentTeamMemberId, AgentTeamTask, AgentTeamTaskRef } from '@wowyuarm/dsh-agent-team/types'
+import { hasAllMarker, resolveBodyMentions, scanBodyHandles } from '@wowyuarm/dsh-agent-team/mentions'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamStateDotState } from './TeamStateDot.tsx'
 
@@ -104,58 +105,41 @@ export interface MentionSegment {
   readonly name?: string
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 /**
- * Locate one Message's structured mention names inside its literal body. A
- * name matches case-insensitively with an optional leading '@' on Unicode word
- * boundaries, and longer names win at the same position. Mention segments
- * render the canonical `@Handle`; names absent from the body come back
- * unmatched so the consumer can append them as a fallback chip row.
+ * Locate one Message's delivered mention names inside its literal body. Matching
+ * is the shared Host delivery scan — an authored `@`, case-insensitive on Unicode
+ * word boundaries, longest handle first, code quoted rather than called — so a chip
+ * never lands where delivery would not reach. Mention segments render the canonical
+ * `@Handle`; names absent from the body come back unmatched so the consumer can
+ * append them as a fallback chip row.
  */
 export function splitMentionNames(text: string, names: readonly string[]): { segments: MentionSegment[]; unmatched: readonly string[] } {
   if (names.length === 0) return { segments: [{ text, mention: false }], unmatched: [] }
-  const ordered = [...names].sort((left, right) => right.length - left.length)
-  // The lookbehind keeps the optional '@' from consuming the separator of an
-  // email-like occurrence: the character before the name (or before its '@')
-  // must not be a letter, digit, underscore, or another '@'.
-  const pattern = new RegExp(
-    `(?<![\\p{L}\\p{N}_@])@?(?:${ordered.map(name => `(${escapeRegExp(name)})`).join('|')})(?=$|[^\\p{L}\\p{N}_])`,
-    'giu',
-  )
   const segments: MentionSegment[] = []
   const matched = new Set<string>()
   let cursor = 0
-  for (const match of text.matchAll(pattern)) {
-    const groupIndex = match.findIndex((group, index) => index >= 1 && group !== undefined)
-    if (groupIndex < 1) continue
-    if (match.index > cursor) segments.push({ text: text.slice(cursor, match.index), mention: false })
-    const name = ordered[groupIndex - 1]!
-    segments.push({ text: `@${name}`, mention: true, name })
-    matched.add(name.toLowerCase())
-    cursor = match.index + match[0].length
+  for (const match of scanBodyHandles(text, names)) {
+    if (match.start > cursor) segments.push({ text: text.slice(cursor, match.start), mention: false })
+    segments.push({ text: `@${match.handle}`, mention: true, name: match.handle })
+    matched.add(match.handle.toLowerCase())
+    cursor = match.end
   }
   if (cursor < text.length) segments.push({ text: text.slice(cursor), mention: false })
   return { segments, unmatched: names.filter(name => !matched.has(name.toLowerCase())) }
 }
 
 /**
- * Whether one draft spells a handle as an authored `@mention`: a literal `@`
- * before the handle, case-insensitively, on Unicode word boundaries. The Host
- * resolves delivery from the same text with its own scanner, so this is the
- * Client's single answer to "did the author call this name" — the composer
- * prunes picked recipients with it and previews the draft's notifications with
- * it.
+ * Whether one draft spells a handle as an authored `@mention`: the shared
+ * delivery scan, so the composer's recipient prune and will-notify preview agree
+ * with the Host on what the draft actually calls.
  */
 export function containsMention(body: string, handle: string): boolean {
-  return new RegExp(`(?:^|[^\\p{L}\\p{N}_])@${escapeRegExp(handle)}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(body)
+  return scanBodyHandles(body, [handle]).length > 0
 }
 
 /** Whether one draft carries the `@all` marker the mention menu expands. */
 export function containsAllMention(body: string): boolean {
-  return /(?<![\p{L}\p{N}_@])@all(?=$|[^\p{L}\p{N}_])/u.test(body)
+  return hasAllMarker(body)
 }
 
 /**
@@ -180,11 +164,14 @@ export function allMentionMembers(members: readonly AgentTeamClientMemberStatus[
  * rather than the prose the Host reads.
  */
 export function mentionedMemberIds(body: string, members: readonly AgentTeamClientMemberStatus[]): readonly AgentTeamMemberId[] {
-  if (containsAllMention(body)) return allMentionMembers(members).map(status => status.member.memberId)
-  return members
+  if (hasAllMarker(body)) return allMentionMembers(members).map(status => status.member.memberId)
+  const candidates = members
     .filter(status => status.member.state !== 'inactive' && status.member.state !== 'archived')
-    .filter(status => containsMention(body, status.member.handle))
-    .map(status => status.member.memberId)
+    .map(status => ({ memberId: status.member.memberId, handle: status.member.handle }))
+  // The draft's author is the Human reader, and a Message never mentions its
+  // own author: resolving with that sender drops a self-call exactly where
+  // delivery would.
+  return resolveBodyMentions(body, candidates, 'member:human' as AgentTeamMemberId).memberIds
 }
 
 /** Canonical chip handles for one Message's structured mention refs. */

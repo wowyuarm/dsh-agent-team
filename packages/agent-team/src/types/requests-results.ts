@@ -699,6 +699,14 @@ export interface AgentTeamViewItem {
   readonly task?: AgentTeamTask
   readonly thread: AgentTeamThread
   readonly taskNumber?: number
+  /**
+   * The people still on this item's Task: owners of its live Claims, in claim
+   * order, deduped — the same rule, and the same words, the Inbox row already
+   * uses for the same Task, resolved here because a feed entry draws handles
+   * and has no Member view of its own. Empty on a taskless item, and on a done
+   * or closed one, whose Claims are history that the state word already tells.
+   */
+  readonly claimOwners: readonly AgentTeamInboxActor[]
   readonly messageCount: number
   /** Instant of the latest fact on this Thread (message or activity), projected from its committing operation. */
   readonly lastActivityAt: string

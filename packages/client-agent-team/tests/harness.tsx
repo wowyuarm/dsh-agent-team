@@ -108,6 +108,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
       status: options?.seedTaskStatus ?? 'todo', resolution: 'open' },
     thread: { threadRef: seedThreadRef, taskRef: seedTaskRef, revision: 2 },
     taskNumber: 1,
+    // A seed carries no Claims, so the Host would project no owners either.
+    claimOwners: [],
     messageCount: 1,
     // A seed is the only fact on its Thread, so the newest fact instant is the
     // Message's own: the feed reads that equality as "no follow-up yet".
@@ -209,7 +211,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     const thread = { threadRef: 'thread:1', ...(asTask ? { taskRef: 'task:1' } : {}), revision: sequence }
     const attachments = request.attachments === undefined ? [] : request.attachments.map(id => ({ attachmentId: id, name: `file-${id}.png`, byteSize: 8, mediaType: 'image/png' }))
     const message = { messageRef: `message:${sequence}`, channelRef: request.channelRef, threadRef: 'thread:1', ...(asTask ? { taskRef: 'task:1' } : {}), sender: 'member:human', body: request.body, ...(attachments.length === 0 ? {} : { attachments }), topLevel: true, sequence, occurredAt: '2026-08-21T10:00:00.000Z' }
-    viewItems = [{ message, mentions: [], ...(task === undefined ? {} : { task, taskNumber: 1 }), thread, messageCount: 1, lastActivityAt: message.occurredAt }]
+    viewItems = [{ message, mentions: [], ...(task === undefined ? {} : { task, taskNumber: 1 }), thread, claimOwners: [], messageCount: 1, lastActivityAt: message.occurredAt }]
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, ...(task === undefined ? {} : { task }), thread, attention: [], directMarkers: [] } }
   })
   // The double parks a subscriber's silent first probe while caught up
@@ -251,7 +253,8 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     const task = { taskRef: 'task:1', channelRef: 'channel:engineering', threadRef: request.threadRef, status: 'todo', resolution: 'open' }
     const thread = { ...(top.thread as object), taskRef: task.taskRef, revision: request.baseRevision + 1 }
     const activity = { activityRef: 'activity:promoted', kind: 'promote' as const, taskRef: task.taskRef, threadRef: request.threadRef, actor: 'member:human', sequence: request.baseRevision + 1 }
-    viewItems = viewItems.map(item => ({ ...item, task, thread, taskNumber: 1 }))
+    // A promoted Task is brand-new with no Claims, so the Host projects no owners.
+    viewItems = viewItems.map(item => ({ ...item, task, thread, taskNumber: 1, claimOwners: [] }))
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, activity, task, thread } }
   })
   const changeTask = vi.fn(async (request: { action: 'accept' | 'close' | 'reopen' }) => {
@@ -260,7 +263,9 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
       status: request.action === 'reopen' ? 'todo' : request.action === 'accept' ? 'done' : 'closed',
       resolution: request.action === 'reopen' ? 'open' : request.action === 'accept' ? 'accepted' : 'closed' }
     const thread = { ...(top.thread as object), revision: (top.thread as { revision: number }).revision + 1 }
-    viewItems = viewItems.map(item => ({ ...item, task, thread }))
+    // Accept, close, and reopen all land outside the live statuses, so the
+    // Host projects no owners after any of them.
+    viewItems = viewItems.map(item => ({ ...item, task, thread, claimOwners: [] }))
     return { ok: true as const, value: { kind: 'committed', receipt: {}, activity: { activityRef: `activity:${request.action}`, taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:human', kind: request.action, sequence: (thread.revision as number) + 10 }, task, thread, claims: viewClaims } }
   })
   // Each read consumes the queue head as its remainingUnreadCount: the page's
@@ -367,8 +372,15 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     // the Thread's newest instant moves: that difference is what the feed's
     // "last activity" reads.
     const activityAt = '2026-08-21T10:03:00.000Z'
-    viewItems = [{ ...top, messageCount: 2, lastActivityAt: activityAt }, { ...top, messageCount: 2, lastActivityAt: activityAt, message: { ...(top.message as object), messageRef: 'message:reply', sender: 'member:builder', body: 'agent reply', topLevel: false, sequence: 3, occurredAt: activityAt } }]
     viewClaims = [{ claimRef: 'claim:1', taskRef: 'task:1', threadRef: 'thread:1', owner: 'member:builder', direction: 'Implement API', normalizedDirection: 'implement api', state: 'active' }]
+    // The feed reads owners off the item the way the Host projects them — the
+    // active Claim's owner while its Task is still live — so the fake carries
+    // the same owners instead of leaving the seeded empty set behind.
+    const taskStatus = (top.task as { status?: string } | undefined)?.status
+    const claimOwners = taskStatus === 'in_progress' || taskStatus === 'in_review'
+      ? [{ memberId: 'member:builder', name: 'builder' }]
+      : []
+    viewItems = [{ ...top, messageCount: 2, lastActivityAt: activityAt, claimOwners }, { ...top, messageCount: 2, lastActivityAt: activityAt, claimOwners, message: { ...(top.message as object), messageRef: 'message:reply', sender: 'member:builder', body: 'agent reply', topLevel: false, sequence: 3, occurredAt: activityAt } }]
     viewActivities = [{ activityRef: 'activity:claim', taskRef: 'task:1', threadRef: 'thread:1', actor: 'member:builder', kind: 'claim', claimRef: 'claim:1', sequence: 4 }]
     wakeAll()
   }

@@ -117,6 +117,10 @@
       "types": "./packages/agent-team/lib/types/time-format.d.ts",
       "default": "./packages/agent-team/lib/time-format.js"
     },
+    "./mentions": {
+      "types": "./packages/agent-team/lib/types/mentions.d.ts",
+      "default": "./packages/agent-team/lib/mentions.js"
+    },
     "./member-skills": {
       "types": "./packages/agent-team/lib/types/member-skills.d.ts",
       "default": "./packages/agent-team/lib/member-skills.js"

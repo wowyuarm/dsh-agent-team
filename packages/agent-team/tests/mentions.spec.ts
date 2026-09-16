@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { resolveBodyMentions } from '../src/mentions.ts'
+import { hasAllMarker, resolveBodyMentions, scanBodyHandles } from '../src/mentions.ts'
 import type { AgentTeamBodyMentionCandidate } from '../src/mentions.ts'
 import type { AgentTeamMemberId } from '../src/types.ts'
+import { MENTION_BODY_FIXTURE } from './fixtures/mention-bodies.ts'
 
 /**
  * A Message names its recipients in its own body. These tests lock the scan
@@ -100,5 +101,34 @@ describe('resolveBodyMentions reports the @all marker', () => {
 
   it('reports the marker even when the roster resolves no one', () => {
     expect(resolve('@all', [candidate('sender')])).toEqual({ names: [], all: true })
+  })
+})
+
+describe('shared mention-body fixture: Host delivery', () => {
+  // The Client spec reads the same fixture through its own rendering and
+  // preview: both sides must answer every nasty body identically.
+  const candidates = MENTION_BODY_FIXTURE.roster.map(handle => candidate(handle))
+  for (const { body, handles, all } of MENTION_BODY_FIXTURE.cases) {
+    it(`resolves ${JSON.stringify(body)}`, () => {
+      const resolution = resolveBodyMentions(body, candidates, SENDER)
+      const names = resolution.memberIds.map(id => (id as string).replace(/^member:/, ''))
+      expect([...names].sort()).toEqual([...handles].sort())
+      expect(resolution.all).toBe(all)
+      expect(hasAllMarker(body)).toBe(all)
+    })
+  }
+})
+
+describe('scanBodyHandles reports ranges in body order', () => {
+  it('locates each call with its canonical handle and span', () => {
+    const candidates = MENTION_BODY_FIXTURE.roster.map(handle => candidate(handle))
+    expect(scanBodyHandles('@tars then @Reeve', candidates.map(candidate => candidate.handle))).toEqual([
+      { handle: 'tars', start: 0, end: 5 },
+      { handle: 'Reeve', start: 11, end: 17 },
+    ])
+  })
+
+  it('reads nothing outside the roster and nothing inside code', () => {
+    expect(scanBodyHandles('`@tars` and @stranger', ['tars'])).toEqual([])
   })
 })

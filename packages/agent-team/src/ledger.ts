@@ -1715,6 +1715,7 @@ export class AgentTeamLedger {
       const task = thread.taskRef === undefined ? undefined : this.state.tasks.get(thread.taskRef)
       const facts = this.state.factsByThread.get(thread.threadRef) ?? []
       return Object.freeze({ message, mentions: fact.mentions, ...(task === undefined ? {} : { task, taskNumber: taskNumbers.get(task.taskRef) ?? 0 }), thread,
+        claimOwners: this.liveClaimOwners(task),
         messageCount: this.state.messageCountByThread.get(thread.threadRef) ?? 0,
         lastActivityAt: facts.at(-1)?.occurredAt ?? '' })
     })

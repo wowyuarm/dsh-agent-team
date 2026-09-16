@@ -41,6 +41,9 @@
       "@wowyuarm/dsh-agent-team/member-context": [
         "./packages/agent-team/src/member-context.ts"
       ],
+      "@wowyuarm/dsh-agent-team/mentions": [
+        "./packages/agent-team/src/mentions.ts"
+      ],
       "@wowyuarm/dsh-agent-team/member-skills": [
         "./packages/agent-team/src/member-skills.ts"
       ],

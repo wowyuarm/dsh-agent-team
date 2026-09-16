@@ -943,8 +943,11 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: /Task #1/ }).click()
   const invitationComposer = page.getByRole('textbox', { name: '消息内容' })
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
-  await invitationComposer.fill('请 reviewer 加入这个已有 Thread 并回复 Human @re')
+  // Both calls are authored with '@': a bare name is prose the Host would not
+  // deliver to, so only the chipified handle threads the invitee in.
+  await invitationComposer.fill('请 @re')
   await page.getByRole('option', { name: /@reviewer/ }).click()
+  await invitationComposer.fill(`${await invitationComposer.inputValue()}加入这个已有 Thread 并回复 Human @reviewer `)
   await invitationComposer.press('Enter')
   await page.getByRole('status').filter({ hasText: '再次发送' }).waitFor()
   await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('消息内容')
@@ -961,7 +964,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
     requestId: 'm2-06-reviewer-reply' as never,
     workspaceId: workspace.id,
     taskRef: task.taskRef,
-    body: `reviewer 已读取邀请并回复 Human，关联 **${task.taskRef}**；风格记录 \`task::${task.taskRef.slice('task:'.length)}\`\n\n- 已核实邀请`,
+    body: `reviewer 已读取邀请并回复 @human，关联 **${task.taskRef}**；风格记录 \`task::${task.taskRef.slice('task:'.length)}\`\n\n- 已核实邀请`,
     baseRevision: reviewerRead.thread.revision,
     recipients: [scaffold.ctx.agentTeam.status().humanMemberId],
   })
@@ -1047,8 +1050,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.reload()
   await page.getByRole('button', { name: '# delivery' }).click()
   await page.getByRole('button', { name: /Task #1/ }).click()
-  // The structured Human mention renders as the canonical @human chip (the
-  // stored body keeps the bare word; only the rendering chipifies it).
+  // The authored @human mention renders as the canonical chip at its prose
+  // position — the same occurrence the Host delivery scan resolves.
   await page.getByText('reviewer 已读取邀请并回复 @human，关联', { exact: false }).waitFor()
 
   // Open-onto-unread acceptance: while the Human is away from the Thread,
@@ -1151,8 +1154,8 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.screenshot({ path: join(UI05_SHOTS, 'open-onto-unread-drained.png'), fullPage: true })
 
   const replayedThread = scaffold.ctx.agentTeam.threadHistory({ workspaceId: workspace.id, taskRef: task.taskRef, limit: 100 })
-  expect(JSON.stringify(replayedThread)).toContain('请 reviewer 加入这个已有 Thread 并回复 Human @reviewer')
-  expect(JSON.stringify(replayedThread)).toContain('reviewer 已读取邀请并回复 Human')
+  expect(JSON.stringify(replayedThread)).toContain('请 @reviewer 加入这个已有 Thread 并回复 Human @reviewer')
+  expect(JSON.stringify(replayedThread)).toContain('reviewer 已读取邀请并回复 @human')
 
   await page.getByRole('button', { name: '返回频道' }).click()
   await page.getByRole('button', { name: '# delivery' }).click()
