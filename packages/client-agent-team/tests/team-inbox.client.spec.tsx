@@ -365,26 +365,27 @@ describe('Team Inbox surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('merges the Workspace slices into one recency order, newest unread first', async () => {
+  it('merges the Workspace slices in the Host order, mentions before merely newer rows', async () => {
     const b = await runtimeWithTeam({ mode: 'team', workspaceId: 'w1' })
     const card = await b.view.findByRole('button', { name: '收件箱' })
-    // The visible Workspace (w1) holds the two oldest rows, so a Workspace-order
-    // merge would put both of them above Beta — the regression this asserts.
+    // The mentioned row is the oldest of the three, so a recency merge would
+    // sink it to the bottom; it also sits in w1 with another row, so a
+    // Workspace-order merge would keep both above Beta. This order is neither.
     b.seedInbox([
-      inboxRow('w1', 'thread:w1-old', { previewText: 'oldest', newestSequence: 3, newestOccurredAt: '2026-09-01T02:00:00.000Z' }),
-      inboxRow('w2', 'thread:w2-new', { previewText: 'newest', newestSequence: 40, newestOccurredAt: '2026-09-13T02:00:00.000Z' }),
-      inboxRow('w1', 'thread:w1-mid', { previewText: 'middle', newestSequence: 9, newestOccurredAt: '2026-09-10T02:00:00.000Z' }),
+      inboxRow('w1', 'thread:w1-old', { previewText: 'mentioned', directCount: 2, newestSequence: 3, newestOccurredAt: '2026-09-01T02:00:00.000Z' }),
+      inboxRow('w2', 'thread:w2-new', { previewText: 'newest', directCount: 0, newestSequence: 40, newestOccurredAt: '2026-09-13T02:00:00.000Z' }),
+      inboxRow('w1', 'thread:w1-mid', { previewText: 'middle', directCount: 0, newestSequence: 9, newestOccurredAt: '2026-09-10T02:00:00.000Z' }),
     ])
     b.seedInbox([
-      inboxRow('w1', 'thread:w1-old', { previewText: 'oldest', newestSequence: 3, newestOccurredAt: '2026-09-01T02:00:00.000Z' }),
-      inboxRow('w2', 'thread:w2-new', { previewText: 'newest', newestSequence: 40, newestOccurredAt: '2026-09-13T02:00:00.000Z' }),
-      inboxRow('w1', 'thread:w1-mid', { previewText: 'middle', newestSequence: 9, newestOccurredAt: '2026-09-10T02:00:00.000Z' }),
+      inboxRow('w1', 'thread:w1-old', { previewText: 'mentioned', directCount: 2, newestSequence: 3, newestOccurredAt: '2026-09-01T02:00:00.000Z' }),
+      inboxRow('w2', 'thread:w2-new', { previewText: 'newest', directCount: 0, newestSequence: 40, newestOccurredAt: '2026-09-13T02:00:00.000Z' }),
+      inboxRow('w1', 'thread:w1-mid', { previewText: 'middle', directCount: 0, newestSequence: 9, newestOccurredAt: '2026-09-10T02:00:00.000Z' }),
     ])
     await waitForEntryUnread(card, 3)
     fireEvent.click(card)
     await waitFor(() => expect(b.view.container.querySelectorAll('[data-team-inbox] button[class*="row"]').length).toBe(3))
     const previews = [...b.view.container.querySelectorAll('[data-team-inbox] button[class*="row"] [class*="rowPreview"]')].map(node => node.textContent)
-    expect(previews).toEqual(['newest', 'middle', 'oldest'])
+    expect(previews).toEqual(['mentioned', 'newest', 'middle'])
     await b.runtime.dispose()
   })
 

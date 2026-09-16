@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [Unreleased]
+
+- Mention chips now render only where delivery reaches: a name needs its authored `@` to chipify — a bare name is prose, and code stays literal. Composer previews and the Host resolve from the same scan, so a chip is always a delivered notification.
+- The Inbox queue leads with mentions: rows that name you sort before merely newer ones, matching the Host's truncation order across every Workspace.
+
 ## [0.1.12] - 2026-09-16
 
 - Reworked Inbox around unread and recent activity: the unread queue leads with counts, and threads you keep returning to get their own list.
