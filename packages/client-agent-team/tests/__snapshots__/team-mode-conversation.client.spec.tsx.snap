@@ -111,29 +111,6 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
               aria-label="工作区"
               class="workspaceBrowser"
             >
-              <button
-                aria-label="收件箱"
-                class="inboxCard"
-                type="button"
-              >
-                <span
-                  class="inboxMark"
-                >
-                  <svg
-                    data-content="2ee99417"
-                    fill="none"
-                    height="16"
-                    viewBox="0 0 14 14"
-                    width="16"
-                    xmlns="http://www.w3.org/2000/svg"
-                  />
-                </span>
-                <span
-                  class="inboxCardLabel"
-                >
-                  收件箱
-                </span>
-              </button>
               <span
                 class="root"
               >
@@ -179,6 +156,29 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                   </span>
                 </button>
               </span>
+              <button
+                aria-label="收件箱"
+                class="inboxCard"
+                type="button"
+              >
+                <span
+                  class="inboxMark"
+                >
+                  <svg
+                    data-content="2ee99417"
+                    fill="none"
+                    height="16"
+                    viewBox="0 0 14 14"
+                    width="16"
+                    xmlns="http://www.w3.org/2000/svg"
+                  />
+                </span>
+                <span
+                  class="inboxCardLabel"
+                >
+                  收件箱
+                </span>
+              </button>
               <div
                 class="workspaceSection"
               >

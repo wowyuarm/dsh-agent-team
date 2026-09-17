@@ -500,6 +500,16 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('menuitem', { name: 'team-workspace' }).waitFor()
   await page.keyboard.press('Escape')
   await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('false')
+  // Scope leads what is read through it: the selector is the browser's first
+  // line and the Inbox card — whose counts move with the Workspace — sits under
+  // it rather than above it.
+  const [workspaceTriggerBox, inboxCardBox] = await Promise.all([
+    workspaceTrigger.boundingBox(),
+    page.locator('button[class*="inboxCard"]').boundingBox(),
+  ])
+  expect(workspaceTriggerBox).not.toBeNull()
+  expect(inboxCardBox).not.toBeNull()
+  expect(inboxCardBox!.y).toBeGreaterThan(workspaceTriggerBox!.y)
 
   const builderRow = page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).first()
   await builderRow.hover()

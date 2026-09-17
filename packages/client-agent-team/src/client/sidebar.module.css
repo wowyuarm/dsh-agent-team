@@ -34,8 +34,10 @@
 /* The Workspace selector is a field, not a list row: it carries the bordered
    trigger shape the creation forms already use for a single choice, so the one
    line that states where the reader is does not read as the first entry of the
-   Channels list below it. Its folder icon keeps the selected tint the list rows
-   used to carry, because the trigger is always showing a selection. */
+   list below it. Its folder icon keeps the selected tint the list rows used to
+   carry, because the trigger is always showing a selection. It sits above the
+   Inbox because everything under it — the Inbox counts included — is scoped by
+   the Workspace it names. */
 .workspaceTrigger {
   align-items: center;
   background: var(--dsw-alias-bg-layer-1);
@@ -48,7 +50,7 @@
   font-size: 14px;
   gap: 6px;
   line-height: 22px;
-  margin-bottom: 2px;
+  margin: 4px 0 2px;
   min-height: 34px;
   padding: 4px 8px;
   text-align: left;
@@ -122,7 +124,7 @@
   flex: 0 0 auto;
   gap: 6px;
   height: 34px;
-  margin: 4px 0 2px;
+  margin: 0 0 2px;
   padding: 0 8px;
   text-align: left;
   width: 100%;
