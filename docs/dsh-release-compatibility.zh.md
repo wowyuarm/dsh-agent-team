@@ -202,7 +202,9 @@ Harness 随附一套 experimental Agent Teams，以独立 profile bundle 形式�
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.5-rc.1`，`0.1.5-rc.2` 已在同一 peer 区间上认证（见本节末段）。认证在该 tag 的 Harness library/Web build 上完成，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint 和真实 browser composition；浏览器旅程通过了外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。DSH peers 现在正好声明这一条已认证线：`>=0.1.5-rc.1 <0.1.6`，由 `>=0.1.5-rc.1 <0.2.0` 收紧而来——旧上界还会准入此后每一个从未认证过的 `0.1.x` 稳定版；因此更新的线现在落在声明区间之外，而不是在本仓库尚未验证的兼容声明下被装上。经路由的 sqlite 后端是 vendored fork，根本不是 dependency（GitHub issue #28）：上游包只以 devDependency 钉在 fork 来源版本 0.1.5-rc.2，用作字节兼容 fixture 参照；每次兼容认证先把 fork 与该版本文件对一遍 diff，再做其他事。
+当前 Team bundle 的已认证基线是 DSH `0.1.6-alpha.1`；该切点的记录见本节最后一个小节，紧随其后的几段保留产生上一条基线的 `0.1.5` 历史。DSH peers 正好声明这条已认证线，现为 `>=0.1.6-alpha.1 <0.1.7`，因此本仓库尚未验证的线会落在声明区间之外，而不是在未经核实的兼容声明下被装上。sqlite 后端保持 vendored fork，根本不是 dependency（GitHub issue #28）：上游包只以 devDependency 钉在 fork 来源版本 0.1.5-rc.2，用作字节兼容 fixture 参照；每次兼容认证先把 fork 与该版本文件对一遍 diff，再做其他事。
+
+被替换的 `0.1.5-rc.1` 基线曾在 peers `>=0.1.5-rc.1 <0.1.6` 上完成认证，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint，以及真实 browser composition：外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
 
 这个候选版本落在旧 `>=0.1.2-rc.1 <0.2.0` peers 之外且需要源码适配，因此 peers 按硬切换整体移动到 `>=0.1.5-rc.1 <0.2.0`；本 bundle 不再运行在 `0.1.2-rc.1` 线。七处上游断裂决定了这一点：`ctx.agent` 从 `AgentSetup` 移除（setup 现在以第二个参数接收活的 `Agent`）；根 `conversation` slot 变成 keyed `main` 条目（Team 以 key `conversation`、priority `-100` 注册 `main`，harness 用 `renderSlot('main', {}, { entryKey: 'conversation' })` 渲染）；`SessionPersistence.inspect()`/`borrowSession()` 被 handle API 取代（`open(id, 'read')` + `read()` + `close()`、`stat()` 返回 header 快照、以及脱离实例的 `Session.create` 工厂）；`assistant/chunk` 事件类型退出 Session 词汇表；`MessageText` 退出 `dsh-client-ui-primitives`（TeamMessage 直接渲染文本）；keyed slot 冲突诊断文案取代了测试中的单 slot 表述；`dsh-persona` 行把配置键 `text` 改名为 `prefix`。最后一条只在运行时显形：成员 preset 从磁盘组合，因此类型检查、单测、构建全绿，而所有成员都以 `preset "team-member" failed to mount: … $.prefix missing required value` 激活失败。Session persistence 现在是随附的 JSONL backend，带 released-format 迁移链（v0/v1/v2 → V3），因此之前关于 SQLite schema 丢弃的说明不再适用。
 
@@ -212,8 +214,26 @@ preset 组合没有编译期或单测守卫：成员类 spec 用的是合成 pre
 
 存量历史的升级可行性是**实测**的，不是假定的。0.1.5 候选版的封闭 source-kind 审计会拒绝已发布线写出的每一份 Member artifact，因此 Team bundle 增加了启动期修复：只为这些 artifact 发布一份当前格式兄弟文件（机制见 [architecture.zh.md](architecture.zh.md) §「Workspace、Session 和 storage reuse」）。在本机全量 store 上——23 个 enabled 成员、215 份 artifact——该过程修复了 44 份被拒 artifact，未动 6 份（其中 3 份除旧 kind 外还带未闭合的 `turn/start`，另 3 份纯粹因该结构缺陷被拒），没有向任何既有 artifact 写入一个字节（前后 sha256 比对），第二次遍历零发布。所有残留拒绝都是 Session 的结构缺陷，而不是 source-kind 墙。因此基线的结论是精确的：**上一认证线写出的历史之所以可读，来自 Team bundle 的修复，而不是来自候选版本本身**；不带该修复的 bundle 无法在本候选版上声明升级可行，无论新建 Session 的检查多绿。
 
-一条验证事实仍只记录、不修补：`npm run typecheck` 在 `npm run build` 之前会因 `@wowyuarm/dsh-agent-team/time-format` 与 `member-time-context` 的 import 失败——它们经由构建产物 `lib/` 的 self-link 解析，不在 sync-paths `own` map 里；先 build（潜在仓库缺口，不是兼容性缺陷）。另一条——隔离的 Harness checkout 在跑 Team 套件前需要 `pnpm build:native-system`，因为 JSONL backend 的 flock 租约锁会加载一个被 gitignore 的 Node-API 插件（`native/system/packages/<platform>/bin/{glibc|musl}/system.node`），只有原生构建会产出它——现已归入 [development.zh.md](development.zh.md) 的环境契约，漏掉它表现为宿主 Team 激活失败（`Agent is not an active Team Member`），而不是缺模块报错。
+这里曾记录的一条验证事实属于潜在仓库缺口而非兼容性缺陷，`0.1.6-alpha.1` 这一轮已将其修复：`npm run typecheck` 在 `npm run build` 之前会因 `@wowyuarm/dsh-agent-team/time-format` 与 `member-time-context` 的 import 失败，原因是这两个 subpath 存在于 manifest `exports`、却从未进入 `scripts/sync-paths.mjs` 的 `own` map，因此只能经由构建产物 `lib/` 的 self-link 解析。现在这两个 subpath 已在该生成器中登记，typecheck 不再依赖先行 build。另一条——隔离的 Harness checkout 在跑 Team 套件前需要 `pnpm build:native-system`，因为 JSONL backend 的 flock 租约锁会加载一个被 gitignore 的 Node-API 插件（`native/system/packages/<platform>/bin/{glibc|musl}/system.node`），只有原生构建会产出它——现已归入 [development.zh.md](development.zh.md) 的环境契约，漏掉它表现为宿主 Team 激活失败（`Agent is not an active Team Member`），而不是缺模块报错。
 
 DSH `0.1.5-rc.2` 已在同一 peer 区间上认证，manifest 无改动。它是发布卫生型版本、而非新的一条线：334 个变更文件里 272 个只是版本号，真实源码改动全部落在 client 包内（`ui-primitives` 新增文件类型图标素材；`ui-message-feedback`、`ui-deliverables`、`ui-chat` 与 feedback 命令有改动），没有新增、重命名或删除的包路径。本 bundle 引用的 `dsh-client-ui-primitives` 符号在 rc.2 全部仍存在，Session 格式、message-source 词表与随包 preset 行均未变动，因此 §3.6 的存量历史检查不因本候选版再次触发。在该 tag 的隔离 checkout 上——类型/测试层经共享指针指向它、唯一的 npm 依赖按候选版本安装——本 bundle 构建通过、类型检查通过、513 个测试通过（1 个跳过）、打包 206 个文件，并跑通真实浏览器旅程（Team 进入、Remote mount、普通 DSH 恢复）。`>=0.1.5-rc.1 <0.2.0` 本就匹配 rc.2，因此这段是基线记录，而不是 peer 移动。
 
 该记录带来的发布紧迫性现已解除：Team `0.1.10`（2026-09-11 发布）是第一个携带 `>=0.1.5-rc.1 <0.2.0` peers 的版本，npm `latest` 自此在本候选线上可安装；当前 `latest` 为 Team `0.1.11`（2026-09-14 发布），其 peers 正是已认证线 `>=0.1.5-rc.1 <0.1.6`。这段受阻窗口仍留档：当已发布的 `latest` 还是 `0.1.9` 时，其 `>=0.1.2-rc.1 <0.2.0` 区间**不**准入 `0.1.5-rc.2`（预发布版本只在区间自身 base tuple 上开放，已用 `semver` 核验），处于本候选版的用户根本无法安装已发布的 bundle；即使能装，上面列出的源码断裂也会让它跑不起来。
+
+### DSH 0.1.6-alpha.1
+
+DSH `0.1.6-alpha.1` 已认证，并推动基线前移。它落在旧 `>=0.1.5-rc.1 <0.1.6` peers 之外——比较符只在自身 base tuple 上开放预发布，因此 `<0.1.6` 既不准入 `0.1.6-alpha.1`，也不准入 `0.1.6` 本身——所以全部 `@deepseek-ai/dsh-*` peers 整体移动到 `>=0.1.6-alpha.1 <0.1.7`。sqlite 后端不进 `dependencies`：它是 vendored fork（GitHub issue #28），不存在需要跟随移动的 `dsh-storage-sqlite` 区间——上游包只以 devDependency 钉在 fork 来源版本。`@deepseek-ai/cordis` 从 `4.0.1` 升到 `4.0.2`，现有 `^4.0.1` peer 已准入。
+
+本轮由三处源码级断裂驱动，其中只有一处是 Team 自身的缺陷：
+
+- **`IconSendOutline16` 从 `dsh-client-ui-primitives` 移除。** 上游为 feedback 命令把它改名为 `IconPaperPlaneOutline14`，**并同时更换了图形**（改为纸飞机）。本 bundle 需要的向上箭头 send 图形仍以另一个名字 `IconSendOutline14` 存在，随包的 queue dock 自身的 send 操作用的正是它；因此 `TeamComposer` 改为 import 该符号，并保留显式 `size={16}` 以维持 send 圆形按钮既有的视觉节奏。若仅按名称选择那个被改名的符号，会悄悄改掉 composer 主操作的图形。
+- **Web e2e scaffold 不再物化 profile 链接。** `launchWebScaffold` 现在改为从计算出的 generation 解析 plugin import（`createProfileResolutionGeneration` 加 `PluginPackages` 行），而不再写 symlink，而该 generation 由 `profile.layers` 构建。因此，未被 `extraInstallAnchors` 命名的暂存 bundle 既解析不到自己的行，也解析不到自己的依赖闭包，全部 Team 行都报 `failed to import`，且读不到任何模块解析错误。`scripts/team-ui.e2e.ts` 现在在两个启动点都把暂存 bundle 的 manifest 作为 install anchor 传入。这只涉及测试通道的 composition：随包 `cordis.patch.yml` 与真实 profile 安装均未改变。
+- **两处随包设计语言参照物发生位移**，但语言本身未变：attach 控件的 `IconPaperclipOutline16` 从 `ui-conversation` 的 `InputBar.tsx` 移到其 `apply.ts` 表中；`PermissionSelect.module.css` 移入新的 `ui-permission-presets` 包。`scripts/audit-ui-parity.mjs` 仍按旧路径跟踪二者，因此其升级 tripwire 是被这次位移本身触发的；现已指向当前路径，审计报告零违规。这正是 tripwire 按设计生效——发现上游位移的正是该审计。
+
+Session 格式、迁移审计准入的 source-kind 列表、以及随包 preset 行相对上一条基线均未改变，因此本候选版不会再次触发 §3.6 的存量历史检查。本 bundle 仍然只写入准入的 `plugin` source kind，形态为 `snapshot` 与 `notice`。
+
+证据：Typert 生成稳定；`npm run typecheck` 通过；`npm test` 在 645 个测试中通过 644 个、跳过 1 个、**零失败**；`npm run build` 与 `npm pack --dry-run`（230 个文件）成功；`npm run lint` 仅报 `scripts/check-package-boundaries.mjs` 中一处既有的未使用 import 警告；`node scripts/audit-ui-parity.mjs` 零违规；`npm run test:browser` 两条旅程全部通过——完整的 opt-in Team 旅程，以及四页同源订阅用例——覆盖 Remote mount、Team 进入/重载/退出，以及普通 DSH 恢复。两条 preview 通道（`npm run preview:ui` 与 `npm run preview`）也都能启动暂存 bundle，无失败行。
+
+这份全绿结果要求以**非特权**用户运行。`session-remediation.spec.ts` 通过把 Session 目录 `chmod` 成 `0o500` 来注入一次瞬时写失败，而以 root 运行的进程会绕过目录模式位（`CAP_DAC_OVERRIDE`），注入的失败从未发生，该测试对已提交读取的断言因而失败。以 root 运行时套件报告 643 通过 / 1 失败；以普通用户运行则是 644 通过 / 0 失败。请以非 root 用户运行套件——在 root 下，这一处失败是环境产物，而不是缺陷。
+
+同一处 computed-generation 变化除了打断浏览器通道，也波及 `npm run preview` 与 `npm run preview:ui`：两者以相同方式暂存 bundle，因此同样需要 install anchor。`npm run test:browser` 并不覆盖它们，认证时必须手工启动一次——缺少 anchor 时，它们会表现为 `failed to import` 行；对无密钥 fixture 而言，则是 `ctx.agentTeam` 为 `undefined`。

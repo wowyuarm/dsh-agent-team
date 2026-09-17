@@ -86,6 +86,8 @@ npm run test:browser
 
 `preview` 与 `preview:ui` 都使用临时 profile、临时 storage 和已构建 package，输出本地 URL，并在 `Ctrl+C` 后清理。`preview` 固定使用 Harness 的真实 DeepSeek adapter，不会因缺少凭据静默切换到 replay；凭据缺失时会在 build 和启动前失败。`preview:ui` 固定使用 keyless route-only adapter，初始 fixture 不触发模型；任何误触发的模型请求都会以明确错误终止，不能伪装成可用的真实交互。
 
+三条通道都会把本 bundle 暂存到临时 profile，并且都必须经 scaffold 的 `extraInstallAnchors` 声明这份暂存副本。scaffold 从 `profile.layers` 构建出的 computed generation 解析插件 import，因此未被声明的暂存 bundle 既解析不到自己的行，也解析不到依赖闭包：全部 Team 行报 `failed to import` 且读不到任何模块解析错误，无密钥 fixture 随后会因 `ctx.agentTeam` 为 `undefined` 失败。`test:browser` 不覆盖这两条 preview 通道，因此在改动 scaffold composition 或 profile resolution 之后，必须手工启动它们各一次。
+
 `test:browser` 固定使用 keyless、确定性的 Host/Client 驱动，不读取真实 provider 凭据。代表性链路从已有 Thread 开始，Human 两次确认邀请未关注 Agent，随后验证 Agent Inbox 读取/回复、Human Channel 与 Thread、页面 reload 后的 Host 持久事实，以及退出 Team mode 后普通 DSH surface 恢复。
 
 ## UI 改动与浏览器证据
@@ -182,7 +184,7 @@ invariant companion 是"被覆盖"而不是"要扩展"：`invariant.ts` 注册�
 
 **按顺序准备：**
 
-1. 先 `corepack enable pnpm` 落地 shim，再 clone `../deepseek-harness`，checkout 最新认证 release tag（当前 `dsh-v0.1.5-rc.1`，随认证前进），然后 `corepack pnpm install`（workspace 全量一次到位）、`corepack pnpm build:lib` 与 `corepack pnpm build:native-system`。shim 是必需的：认证 Harness 自身的 script 内部会调裸 `pnpm`（`build:lib`、`build:web`），而 `corepack pnpm` 只在自己进程内解析；缺了 shim 这些步骤会以 `pnpm: not found` 失败。两个仓库的 `packageManager` 都锁 `pnpm@11.7.0`，shim 因此解析到该版本，而非环境预装的任意版本。native 这一步是独立的构建，不会由别处替我们完成：host addon 被 gitignore，Harness 的 `test` script 会在自己的 Vitest 之前用 `build:native-system` 构建它，而本仓库是直接对那个 checkout 跑 Vitest——全新 clone 缺了它会表现为宿主 Team 激活失败（`Agent is not an active Team Member`），而不是缺模块报错。`--host-addon-only` 在非 Linux/macOS 上直接退出、不构建，因此该步骤在所有平台都安全。不要复用上一次构建遗留的 `lib/` 或 `node_modules/`——旧产物可能掩盖声明或运行时不兼容。
+1. 先 `corepack enable pnpm` 落地 shim，再 clone `../deepseek-harness`，checkout 最新认证 release tag（当前 `dsh-v0.1.6-alpha.1`，随认证前进），然后 `corepack pnpm install`（workspace 全量一次到位）、`corepack pnpm build:lib` 与 `corepack pnpm build:native-system`。shim 是必需的：认证 Harness 自身的 script 内部会调裸 `pnpm`（`build:lib`、`build:web`），而 `corepack pnpm` 只在自己进程内解析；缺了 shim 这些步骤会以 `pnpm: not found` 失败。两个仓库的 `packageManager` 都锁 `pnpm@11.7.0`，shim 因此解析到该版本，而非环境预装的任意版本。native 这一步是独立的构建，不会由别处替我们完成：host addon 被 gitignore，Harness 的 `test` script 会在自己的 Vitest 之前用 `build:native-system` 构建它，而本仓库是直接对那个 checkout 跑 Vitest——全新 clone 缺了它会表现为宿主 Team 激活失败（`Agent is not an active Team Member`），而不是缺模块报错。`--host-addon-only` 在非 Linux/macOS 上直接退出、不构建，因此该步骤在所有平台都安全。不要复用上一次构建遗留的 `lib/` 或 `node_modules/`——旧产物可能掩盖声明或运行时不兼容。
 2. 工作流需要 `test:browser` 时，用 `corepack pnpm build:web` 构建 Harness `apps/web` dist；workspace install 已备好其依赖。
 3. 在本仓库内用 `corepack pnpm install` 安装依赖。绝不能运行 `npm install`：它会静默破坏指向相邻 checkout vendor 包的 workspace 符号链接，故障随后才以误导性的 `Cannot find module 'zod'` 暴露。
 4. 用 `node scripts/link-harness-packages.mjs` 把 Harness 的 workspace 与 vendor 包链接进本仓库 `node_modules`，再 `npm run build` 构建 bundle。宿主测试从本仓库根按真实 `node_modules` 查找解析 preset row 与 bundle 自身的未发布 row（如 `@wowyuarm/dsh-agent-team/member-context`）——与已发布 bundle 的 profile 安装布局一致。
@@ -238,7 +240,7 @@ dsh web
 
 每次发布后随即在稳定 profile 执行上述 update 命令。稳定 profile 与开发 profile 共享全局 ledger 存储（`$DSH_HOME/storages/`）：稳定 profile 停留在旧版而 ledger 已被新版写入时，启动会因记录 schema 校验失败而崩溃（2026-08 的 0.1.1 即是这种"写得出、读不回"的中间版本）。
 
-本 bundle 的最低兼容版本是 DSH `0.1.5-rc.1`。DSH 的 JSONL Session persistence 会自行迁移已发布的旧格式（v0/v1/v2 → V3）；旧格式 Session 数据无需手动处置。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
+本 bundle 的最低兼容版本是 DSH `0.1.6-alpha.1`。DSH 的 JSONL Session persistence 会自行迁移已发布的旧格式（v0/v1/v2 → V3）；旧格式 Session 数据无需手动处置。不要为 Team ledger 或 Member Session 添加迁移、读取旧格式或静默回退逻辑。
 
 ### 重写与推送历史
 
