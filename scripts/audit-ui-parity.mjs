@@ -175,12 +175,19 @@ if (!attachBlock.includes('Tooltip')) {
 //    or rename them — this is the upgrade tripwire).
 // ---------------------------------------------------------------------------
 
+// DSH 0.1.6 relocated two references without changing the language they
+// define: the attach control's paperclip moved from InputBar to the
+// conversation apply table, and PermissionSelect moved into its own
+// ui-permission-presets package. Track the current paths so these tripwires
+// keep reporting real language drift rather than the relocation itself.
 const shippedInputBar = join(shippedDir, 'ui-conversation/src/client/skeleton/InputBar.tsx')
+const shippedApply = join(shippedDir, 'ui-conversation/src/client/apply.ts')
 const shippedSidebarCss = join(shippedDir, 'ui-sidebar/src/client/SidebarRoot.module.css')
 for (const [label, file, needles] of [
-  ['shipped composer icons', shippedInputBar, ['IconPaperclipOutline16', 'IconPlusOutline16']],
+  ['shipped attach icon', shippedApply, ['IconPaperclipOutline16']],
+  ['shipped command-menu icon', shippedInputBar, ['IconPlusOutline16']],
   ['shipped sidebar focus ring', shippedSidebarCss, ['panelRow:focus-visible', 'outline: 2px solid var(--dsw-alias-label-primary)']],
-  ['shipped mode-chip label cut', join(shippedDir, 'ui-conversation/src/client/skeleton/PermissionSelect.module.css'), ['@container (max-width: 460px)']],
+  ['shipped mode-chip label cut', join(shippedDir, 'ui-permission-presets/src/client/PermissionSelect.module.css'), ['@container (max-width: 460px)']],
 ]) {
   let text
   try {

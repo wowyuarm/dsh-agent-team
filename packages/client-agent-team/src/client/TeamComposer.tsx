@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { IconChecklistOutline14, IconPaperclipOutline16, IconSendOutline16, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChecklistOutline14, IconPaperclipOutline16, IconSendOutline14, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -397,7 +397,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
             inputRef.current?.focus({ preventScroll: true })
           }}
         >
-          <IconSendOutline16 size={16} />
+          <IconSendOutline14 size={16} />
         </button>
       </div>
     </div>

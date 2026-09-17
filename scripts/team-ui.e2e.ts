@@ -10,6 +10,14 @@ const OVERLAY = '__OVERLAY__'
 const HOME = '__HOME__'
 const CHROME = '__CHROME__'
 const BROWSER_ARTIFACTS = join(TEAM_ROOT, 'artifacts/browser')
+// Where installLocalBundle stages this bundle, and the profile layer anchor
+// derived from it. One spelling on purpose: since 0.1.6 the scaffold resolves
+// plugin imports from a computed generation instead of materialized links, so
+// an anchor that drifts from the staged copy resolves neither the bundle's own
+// rows nor its dependency closure (`zod`, the routed ledger backend), and every
+// Team row reports "failed to import" with no module-resolution error to read.
+const TEAM_STAGED_ROOT = join(HOME, 'profiles/node_modules/@wowyuarm/dsh-agent-team')
+const TEAM_INSTALL_ANCHOR = join(TEAM_STAGED_ROOT, 'package.json')
 const UI01_SHOTS = join(BROWSER_ARTIFACTS, 'ui-01')
 const UI02_SHOTS = join(BROWSER_ARTIFACTS, 'ui-02')
 const UI03_SHOTS = join(BROWSER_ARTIFACTS, 'ui-03')
@@ -202,11 +210,10 @@ async function entryUnreadCapsule(page: Page, lineSelector: string): Promise<Ret
 async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
   if (clearArtifacts) await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
-  const scope = `${HOME}/profiles/node_modules/@wowyuarm`
-  await mkdir(scope, { recursive: true })
+  await mkdir(join(TEAM_STAGED_ROOT, '..'), { recursive: true })
   // The filter must match on both separators: on Windows cp walks backslash
   // paths, so forward-slash-only matching lets node_modules and src through.
-  await cp(TEAM_ROOT, `${scope}/dsh-agent-team`, {
+  await cp(TEAM_ROOT, TEAM_STAGED_ROOT, {
     recursive: true,
     filter: source => {
       const normalized = source.replaceAll('\\', '/')
@@ -234,7 +241,7 @@ async function installLocalBundle(clearArtifacts = true): Promise<void> {
 
 it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await installLocalBundle()
-  scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME })
+  scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME, extraInstallAnchors: [TEAM_INSTALL_ANCHOR] })
   browser = await chromium.launch({ headless: true, executablePath: CHROME })
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
   const consoleWatch = watchConsole(page)
@@ -2154,7 +2161,7 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
 
 it('keeps four same-origin Team pages responsive and independently subscribed', async () => {
   await installLocalBundle(false)
-  scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME })
+  scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME, extraInstallAnchors: [TEAM_INSTALL_ANCHOR] })
   const workspace = await scaffold.ctx.workspaceRegistry.create(scaffold.workspaceCwd, 'multi-web')
   await scaffold.ctx.agentTeam.createChannel({ requestId: 'multi-channel' as never, workspaceId: workspace.id, name: 'multi-web', description: 'Multi-page regression' })
   browser = await chromium.launch({ headless: true, executablePath: CHROME })
