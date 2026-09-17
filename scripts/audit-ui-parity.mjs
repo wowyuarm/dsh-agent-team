@@ -269,7 +269,7 @@ const GEOMETRY = [
   ['composer.module.css', '.sendButton', [['height', '34px'], ['width', '34px'], ['border-radius', '999px'], ['transform', 'translateY(-2px)']], 'primary round action is 34×34 with the -2px seat compensation'],
   ['sidebar.module.css', '.channelRow', [['border-radius', '8px']], 'list row radius is 8px'],
   ['sidebar.module.css', '.agentRow', [['border-radius', '8px']], 'list row radius is 8px'],
-  ['sidebar.module.css', '.workspaceRow', [['border-radius', '8px']], 'list row radius is 8px'],
+  ['sidebar.module.css', '.workspaceTrigger', [['border-radius', '8px'], ['min-height', '34px']], 'the Workspace selector keeps the sidebar row geometry: 8px radius, 34px line'],
   ['sidebar.module.css', '.inboxCard', [['border-radius', '8px'], ['height', '34px']], 'the Inbox entry is a sidebar row: 8px radius, 34px height'],
   ['countBadge.module.css', '.badge', [['height', '18px'], ['min-width', '18px'], ['border-radius', '999px'], ['box-sizing', 'border-box'], ['line-height', '18px'], ['flex', 'none']], 'every count is one 18px capsule in one place; border-box keeps one digit a circle instead of a padded oval, the line box is the capsule\'s own height so a surface inheriting `normal` cannot move the digit, and `flex: none` keeps a squeezed row from shrinking it'],
   ['inbox.module.css', '.row', [['border-radius', '8px']], 'the mention queue row shares the shipped 8px list-row radius'],

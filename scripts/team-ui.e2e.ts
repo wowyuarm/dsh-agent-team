@@ -490,13 +490,16 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await channelsToggle.click()
   await page.getByRole('button', { name: '# engineering' }).waitFor()
 
-  // The workspace list folds behind the same quiet section header as the
-  // panels: rows vanish on collapse and return on the second toggle.
-  const workspacesToggle = page.getByRole('button', { name: '工作区', exact: true })
-  await workspacesToggle.click()
-  await expect.poll(() => page.getByRole('button', { name: 'team-workspace' }).count()).toBe(0)
-  await workspacesToggle.click()
-  await page.getByRole('button', { name: 'team-workspace' }).waitFor()
+  // The Workspace is one selector line, not a list: its own text names where
+  // the reader is, and the other Workspaces exist only inside its menu.
+  const workspaceTrigger = page.getByRole('button', { name: '工作区', exact: true })
+  await expect.poll(async () => (await workspaceTrigger.textContent())?.trim() ?? '').toContain('team-workspace')
+  await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('false')
+  await workspaceTrigger.click()
+  await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('true')
+  await page.getByRole('menuitem', { name: 'team-workspace' }).waitFor()
+  await page.keyboard.press('Escape')
+  await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('false')
 
   const builderRow = page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).first()
   await builderRow.hover()

@@ -11,14 +11,15 @@ import { useCallback, useSyncExternalStore } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 
 /** Which sidebar section a collapse state belongs to. */
-export type TeamSidebarSectionKind = 'workspaces' | 'channels' | 'agents'
+export type TeamSidebarSectionKind = 'channels' | 'agents'
 
 const STORAGE_KEY = 'dsh.agent-team.sidebar-sections'
 
 function sectionKey(workspaceId: WorkspaceId | undefined, kind: TeamSidebarSectionKind): string | undefined {
-  // The workspaces section is workspace-independent; the two panels are
-  // per-workspace because the Team shell remounts them on workspace switch.
-  return workspaceId === undefined ? (kind === 'workspaces' ? kind : undefined) : `${workspaceId}|${kind}`
+  // Both panels are per-workspace: the Team shell remounts them on workspace
+  // switch, and the Workspace selector above them is a field rather than a
+  // collapsible section, so it keeps no preference of its own.
+  return workspaceId === undefined ? undefined : `${workspaceId}|${kind}`
 }
 
 const MEMORY_ONLY = Symbol('sidebar-sections.memory')

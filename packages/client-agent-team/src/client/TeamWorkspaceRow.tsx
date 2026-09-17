@@ -1,29 +1,67 @@
-import { IconFolderClose16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useState } from 'react'
+import { IconChevronDownOutline14, IconFolderOpen16, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import css from './sidebar.module.css'
 
-export function TeamWorkspaceRow({ workspaceId, title, path, selected, current, onSelect }: {
-  workspaceId: WorkspaceId
-  title: string
-  path: string
-  selected: boolean
-  /** The Team center shows this Workspace's overview (no Channel is open). */
-  current: boolean
-  onSelect: (workspaceId: WorkspaceId) => void
+/** One selectable Workspace, in the order the Workspace list already carries. */
+export interface TeamWorkspaceChoice {
+  readonly workspaceId: WorkspaceId
+  readonly title: string
+  readonly path: string
+}
+
+/**
+ * The single-line Workspace selector that opens the Team sidebar.
+ *
+ * The sections below it — Channels and Agents — belong to exactly one
+ * Workspace, so a flat list of every Workspace above them states a global
+ * scope over local content. Collapsing that list into one selector makes the
+ * sidebar read as "you are in X, and here is X's content", and returns the
+ * rows a low-frequency switch was holding. Nothing is hidden by the collapse:
+ * Workspace rows carry no unread mark of their own, and cross-Workspace unread
+ * is summarized by the Inbox entry above.
+ */
+export function TeamWorkspaceRow({ workspaces, selectedId, current, onSelect, t }: {
+  readonly workspaces: readonly TeamWorkspaceChoice[]
+  readonly selectedId: WorkspaceId | undefined
+  /** The Team center shows the selected Workspace's overview (no Channel is open). */
+  readonly current: boolean
+  readonly onSelect: (workspaceId: WorkspaceId) => void
+  readonly t: (key: 'workspaces' | 'empty') => string
 }) {
+  const [open, setOpen] = useState(false)
+  const selected = workspaces.find(workspace => workspace.workspaceId === selectedId)
+  const items: MenuEntry[] = workspaces.map(workspace => ({
+    id: workspace.workspaceId,
+    label: workspace.title,
+  }))
+  const label = t('workspaces')
   return (
-    <button
-      type="button"
-      className={css.workspaceRow}
-      data-selected={selected || undefined}
-      aria-current={current ? 'page' : undefined}
-      onClick={() => { onSelect(workspaceId) }}
-      title={`${title} · ${path}`}
-    >
-      <span className={css.workspaceIcon} aria-hidden="true">
-        {selected ? <IconFolderOpen16 size={16} /> : <IconFolderClose16 size={16} />}
-      </span>
-      <span className={css.workspaceCopy}><strong>{title}</strong></span>
-    </button>
+    <Menu
+      open={open}
+      portal
+      items={items}
+      {...(selectedId === undefined ? {} : { selectedIds: [selectedId] })}
+      onSelect={id => { setOpen(false); onSelect(id as WorkspaceId) }}
+      onClose={() => { setOpen(false) }}
+      anchor={(
+        <button
+          type="button"
+          className={css.workspaceTrigger}
+          data-team-workspace-trigger
+          aria-label={label}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-current={current ? 'page' : undefined}
+          disabled={workspaces.length === 0}
+          title={selected === undefined ? label : `${selected.title} · ${selected.path}`}
+          onClick={() => { setOpen(value => !value) }}
+        >
+          <span className={css.workspaceIcon} aria-hidden="true"><IconFolderOpen16 size={16} /></span>
+          <span className={css.workspaceValue}>{selected?.title ?? t('empty')}</span>
+          <span className={`${css.workspaceChevron!} ${open ? css.workspaceChevronOpen! : ''}`} aria-hidden="true"><IconChevronDownOutline14 /></span>
+        </button>
+      )}
+    />
   )
 }

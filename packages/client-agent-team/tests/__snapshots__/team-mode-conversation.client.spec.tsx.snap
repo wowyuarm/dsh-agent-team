@@ -134,19 +134,41 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                   收件箱
                 </span>
               </button>
-              <section
-                class="section"
+              <span
+                class="root"
               >
-                <div
-                  class="sectionHeader"
+                <button
+                  aria-current="page"
+                  aria-expanded="false"
+                  aria-haspopup="listbox"
+                  aria-label="工作区"
+                  class="workspaceTrigger"
+                  data-team-workspace-trigger="true"
+                  title="Alpha · /work/alpha"
+                  type="button"
                 >
-                  <button
-                    aria-expanded="true"
-                    class="sectionToggle"
-                    type="button"
+                  <span
+                    aria-hidden="true"
+                    class="workspaceIcon"
                   >
                     <svg
-                      class="sectionChevron"
+                      data-content="34102cd0"
+                      fill="none"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      width="16"
+                    />
+                  </span>
+                  <span
+                    class="workspaceValue"
+                  >
+                    Alpha
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    class="workspaceChevron"
+                  >
+                    <svg
                       data-content="6506c885"
                       fill="none"
                       height="14"
@@ -154,70 +176,9 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                       width="14"
                       xmlns="http://www.w3.org/2000/svg"
                     />
-                    <span
-                      class="sectionTitle"
-                    >
-                      工作区
-                    </span>
-                  </button>
-                </div>
-                <div
-                  class="workspaceList"
-                >
-                  <button
-                    aria-current="page"
-                    class="workspaceRow"
-                    data-selected="true"
-                    title="Alpha · /work/alpha"
-                    type="button"
-                  >
-                    <span
-                      aria-hidden="true"
-                      class="workspaceIcon"
-                    >
-                      <svg
-                        data-content="34102cd0"
-                        fill="none"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        width="16"
-                      />
-                    </span>
-                    <span
-                      class="workspaceCopy"
-                    >
-                      <strong>
-                        Alpha
-                      </strong>
-                    </span>
-                  </button>
-                  <button
-                    class="workspaceRow"
-                    title="Beta · /work/beta"
-                    type="button"
-                  >
-                    <span
-                      aria-hidden="true"
-                      class="workspaceIcon"
-                    >
-                      <svg
-                        data-content="6bfefcb5"
-                        fill="none"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        width="16"
-                      />
-                    </span>
-                    <span
-                      class="workspaceCopy"
-                    >
-                      <strong>
-                        Beta
-                      </strong>
-                    </span>
-                  </button>
-                </div>
-              </section>
+                  </span>
+                </button>
+              </span>
               <div
                 class="workspaceSection"
               >

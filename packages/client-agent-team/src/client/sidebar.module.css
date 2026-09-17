@@ -31,60 +31,71 @@
   outline-offset: 1px;
 }
 
-.workspaceList {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-bottom: 2px;
-}
-
-.workspaceRow {
+/* The Workspace selector is a field, not a list row: it carries the bordered
+   trigger shape the creation forms already use for a single choice, so the one
+   line that states where the reader is does not read as the first entry of the
+   Channels list below it. Its folder icon keeps the selected tint the list rows
+   used to carry, because the trigger is always showing a selection. */
+.workspaceTrigger {
   align-items: center;
-  background: transparent;
-  border: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
+  box-sizing: border-box;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
   display: flex;
+  font-size: 14px;
   gap: 6px;
-  height: 34px;
-  padding: 0 8px;
+  line-height: 22px;
+  margin-bottom: 2px;
+  min-height: 34px;
+  padding: 4px 8px;
   text-align: left;
   width: 100%;
 }
-/* Location reads like the harness session tree: the leaf that is the current
-   page carries the fill (aria-current='page' — the open Channel row, or this
-   Workspace row while its overview is up); the browsed Workspace row otherwise
-   stays quiet and only its folder icon tints (data-selected). */
-.workspaceRow:hover,
-.workspaceRow:focus-visible,
-.workspaceRow[aria-current='page'] {
+.workspaceTrigger:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
-.workspaceRow:focus-visible {
+.workspaceTrigger:focus-visible {
+  border-color: var(--dsw-alias-brand-primary);
   outline: 2px solid var(--dsw-alias-label-primary);
   outline-offset: -2px;
+}
+.workspaceTrigger:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .workspaceIcon {
   align-items: center;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-state-business-primary);
   display: inline-flex;
   flex: 0 0 16px;
   height: 20px;
   justify-content: center;
 }
-.workspaceRow[data-selected] .workspaceIcon {
-  color: var(--dsw-alias-state-business-primary);
+.workspaceTrigger:disabled .workspaceIcon {
+  color: var(--dsw-alias-label-tertiary);
 }
-.workspaceCopy { display: flex; min-width: 0; }
-.workspaceCopy strong {
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 20px;
+.workspaceValue {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.workspaceChevron {
+  color: var(--dsw-alias-label-tertiary);
+  display: inline-flex;
+  flex: none;
+  transition: transform 120ms ease;
+}
+.workspaceChevronOpen {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspaceChevron { transition: none; }
 }
 
 .emptyState {
