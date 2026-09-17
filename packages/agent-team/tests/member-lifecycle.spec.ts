@@ -1,3 +1,4 @@
+import { changeBaseline, nextChange } from './helpers/change-stream.ts'
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, basename, sep } from 'node:path'
@@ -4214,11 +4215,10 @@ describe('Agent Team presence-scope invalidation (issue #21)', () => {
     const agent = ctx.agents.get(builder.status.member.sessionId)!
     // Presence versions are their own domain, so a presence waiter is parked
     // with a cursor sampled from the presence scope itself.
-    const presenceBaseline = await ctx.agentTeam.changes({ afterVersion: 0, scope: { kind: 'presence', workspaceId } })
-    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
-    const presenceWaiter = ctx.agentTeam.changes({ afterVersion: presenceBaseline.version, scope: { kind: 'presence', workspaceId } })
-    const workspaceWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'workspace', workspaceId } })
-    const unscopedWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version })
+    const presenceBaseline = await changeBaseline(ctx.agentTeam, { kind: 'presence', workspaceId })
+    const presenceWaiter = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId })
+    const workspaceWaiter = nextChange(ctx.agentTeam, { kind: 'workspace', workspaceId })
+    const unscopedWaiter = nextChange(ctx.agentTeam)
     expect(await staysPending(presenceWaiter)).toBe(true)
 
     // A turn start (running) and its end (idle) change no durable projection:
@@ -4230,7 +4230,7 @@ describe('Agent Team presence-scope invalidation (issue #21)', () => {
     expect(await staysPending(workspaceWaiter)).toBe(true)
     expect(await staysPending(unscopedWaiter)).toBe(true)
 
-    const idleWaiter = ctx.agentTeam.changes({ afterVersion: runningWake.version, scope: { kind: 'presence', workspaceId } })
+    const idleWaiter = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId })
     ctx.emit('agent/status', { agent, status: 'idle' })
     expect((await idleWaiter).version).toBeGreaterThan(runningWake.version)
 
@@ -4238,10 +4238,8 @@ describe('Agent Team presence-scope invalidation (issue #21)', () => {
     // a fresh presence waiter stays parked through it — and it leaves the
     // projection cursors alone: channel creation must refresh the sidebar
     // catalog, never the presence rows.
-    const settled = await ctx.agentTeam.changes({ afterVersion: 0 })
-    const presenceSettled = await ctx.agentTeam.changes({ afterVersion: 0, scope: { kind: 'presence', workspaceId } })
-    const committedWaiter = ctx.agentTeam.changes({ afterVersion: presenceSettled.version, scope: { kind: 'presence', workspaceId } })
-    const committedWorkspaceWaiter = ctx.agentTeam.changes({ afterVersion: settled.version, scope: { kind: 'workspace', workspaceId } })
+    const committedWaiter = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId })
+    const committedWorkspaceWaiter = nextChange(ctx.agentTeam, { kind: 'workspace', workspaceId })
     await ctx.agentTeam.createChannel({ requestId: requestId('presence-channel'), workspaceId, name: 'presence-check', description: 'Presence work' })
     expect(await committedWorkspaceWaiter).toMatchObject({ version: expect.any(Number) })
     expect(await staysPending(committedWaiter)).toBe(true)
@@ -4251,10 +4249,9 @@ describe('Agent Team presence-scope invalidation (issue #21)', () => {
     const { ctx, workspaceId } = await realHarness(new EmptyAdapter())
     const builder = await ctx.agentTeam.addMember({ requestId: requestId('presence-error-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [] })
     const agent = ctx.agents.get(builder.status.member.sessionId)!
-    const presenceBaseline = await ctx.agentTeam.changes({ afterVersion: 0, scope: { kind: 'presence', workspaceId } })
-    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
-    const presenceWaiter = ctx.agentTeam.changes({ afterVersion: presenceBaseline.version, scope: { kind: 'presence', workspaceId } })
-    const unscopedWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version })
+    const presenceBaseline = await changeBaseline(ctx.agentTeam, { kind: 'presence', workspaceId })
+    const presenceWaiter = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId })
+    const unscopedWaiter = nextChange(ctx.agentTeam)
     expect(await staysPending(presenceWaiter)).toBe(true)
 
     ctx.emit('agent/error', { agent, turn: 1, step: 1, error: new Error('fetch failed') })
@@ -4281,10 +4278,10 @@ describe('Agent Team change version domains', () => {
     const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('domain-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Unread work', recipients: [added.status.member.memberId] })
     if (started.kind !== 'committed') throw new Error(`expected committed start, received ${started.kind}`)
 
-    const baseline = (await ctx.agentTeam.changes({ afterVersion: 0 })).version
+    const baseline = (await changeBaseline(ctx.agentTeam)).version
     const clients = Array.from({ length: 10 }, (_unused, index) => index % 2 === 0
-      ? ctx.agentTeam.changes({ afterVersion: baseline })
-      : ctx.agentTeam.changes({ afterVersion: baseline, scope: { kind: 'thread' as const, threadRef: started.thread.threadRef } }))
+      ? nextChange(ctx.agentTeam)
+      : nextChange(ctx.agentTeam, { kind: 'thread' as const, threadRef: started.thread.threadRef }))
     expect(await Promise.all(clients.map(client => staysPending(client)))).toEqual(clients.map(() => true))
 
     // One private read that really commits: the Human's anchor is unread for
@@ -4295,7 +4292,7 @@ describe('Agent Team change version domains', () => {
 
     // The record exists, and still no cursor moved: a private read is not a
     // projection change, so no parked Client is answered by it.
-    expect((await ctx.agentTeam.changes({ afterVersion: 0 })).version).toBe(baseline)
+    expect((await changeBaseline(ctx.agentTeam)).version).toBe(baseline)
     expect(await Promise.all(clients.map(client => staysPending(client)))).toEqual(clients.map(() => true))
 
     // A real Thread change still reaches every parked Client, at the durable
@@ -4310,18 +4307,18 @@ describe('Agent Team change version domains', () => {
     const { ctx, workspaceId } = await realHarness(new EmptyAdapter())
     const added = await ctx.agentTeam.addMember({ requestId: requestId('domain-presence-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', channelRefs: [] })
     const agent = ctx.agents.get(added.status.member.sessionId)!
-    const projection = (await ctx.agentTeam.changes({ afterVersion: 0 })).version
+    const projection = (await changeBaseline(ctx.agentTeam)).version
 
     // A cursor taken from the projection domain must never park a presence
     // scope: a presence wake is an edge, not a position comparison.
-    const presence = ctx.agentTeam.changes({ afterVersion: projection, scope: { kind: 'presence', workspaceId } })
+    const presence = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId })
     expect(await staysPending(presence)).toBe(true)
 
     ctx.emit('agent/status', { agent, status: 'running' })
     expect(await presence).toMatchObject({ version: expect.any(Number) })
 
     // The edge left every projection cursor exactly where it was.
-    expect((await ctx.agentTeam.changes({ afterVersion: 0 })).version).toBe(projection)
-    expect(await staysPending(ctx.agentTeam.changes({ afterVersion: projection }))).toBe(true)
+    expect((await changeBaseline(ctx.agentTeam)).version).toBe(projection)
+    expect(await staysPending(nextChange(ctx.agentTeam))).toBe(true)
   })
 })

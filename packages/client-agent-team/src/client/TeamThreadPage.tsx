@@ -22,7 +22,6 @@ import { TeamRunDivider } from './TeamRunDivider.tsx'
 import { formatActivity, formatClaimState, formatTaskStatus, formatTaskTitle, mentionNamesOf, mentionedMemberIds, taskStatusDot } from './team-formatters.ts'
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { mintRequestId, uploadComposerFiles } from './requests.ts'
-import { ScopeCoverage, type ScopeWake } from './scope-coverage.ts'
 import { daySeparatorLabel, isRunGap, timelineDayKey } from './team-separators.ts'
 import { useTimelineScroll } from './timeline-scroll.ts'
 import { hostTaskRefLookup, jumpToTaskThread } from './task-refs.ts'
@@ -227,32 +226,19 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     }
   }
 
-  // One Host change event wakes every scope it matches: here a workspace commit
-  // and a presence transition, whose separate polls both deliver that event's
-  // version. Both asks are the same roster and view read, so each round answers
-  // one version per scope, and a newer version arriving mid-round runs one
-  // trailing round instead of being dropped. The two scopes count different
-  // domains, so coverage and pending versions are tracked per scope.
   const supplementalRef = useRef<Promise<void>>()
-  const supplementalCoverageRef = useRef(new ScopeCoverage())
-  const refreshSupplemental = (wake?: ScopeWake): Promise<void> => {
-    const inFlight = supplementalRef.current
-    if (wake === undefined) {
-      if (inFlight !== undefined) return inFlight
-    } else if (!supplementalCoverageRef.current.wake(wake.scope, wake.version)) {
-      return inFlight ?? Promise.resolve()
-    }
-    const coverage = supplementalCoverageRef.current
+  const supplementalPendingRef = useRef(false)
+  const refreshSupplemental = (): Promise<void> => {
+    supplementalPendingRef.current = true
+    if (supplementalRef.current !== undefined) return supplementalRef.current
     const round = (async () => {
-      for (;;) {
-        coverage.beginRound()
-        const applied = await applySupplemental()
-        // A newer change landed while this round fetched: cover it too, and
-        // keep going only while the page is still the one asking.
-        if (!applied || !coverage.finishRound()) return
+      // Collect synchronous scope notifications before issuing the shared read.
+      await Promise.resolve()
+      while (mountedRef.current && supplementalPendingRef.current) {
+        supplementalPendingRef.current = false
+        if (!await applySupplemental()) return
       }
     })().finally(() => {
-      // A remount may already own a newer round; only this one clears itself.
       if (supplementalRef.current === round) supplementalRef.current = undefined
     })
     supplementalRef.current = round
@@ -312,7 +298,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     mountedRef.current = true
     // The previous mount's supplemental round must not answer for this one.
     supplementalRef.current = undefined
-    supplementalCoverageRef.current.reset()
+    supplementalPendingRef.current = false
     projectionRef.current = undefined
     setProjection(undefined)
     setChannelView(undefined)
@@ -333,7 +319,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
     setLoading(true)
     void (async () => {
       // One parallel round covers the whole first paint. The durable read no
-      // longer wakes any change scope, so no second wave follows it.
+      // longer wakes any change scope; only the subscription baseline can
+      // request a catch-up while this first paint is loading.
       const [read, history, observations] = await Promise.all([
         readThread({ requestId: readRequestIdRef.current, workspaceId, ...threadRequest }),
         loadThreadHistory({ workspaceId, ...threadRequest, limit: 20 }).catch(() => undefined),
@@ -375,7 +362,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setError(update.message); return }
-        void refreshSupplemental({ scope: 'workspace', version: update.version })
+        void refreshSupplemental()
       }),
       // Presence transitions commit nothing: only the member rows move, so
       // the roster refresh rides the same supplemental fetch as workspace
@@ -383,7 +370,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
       subscribeChanges({ kind: 'presence', workspaceId }, update => {
         if (!mountedRef.current) return
         if (update.type === 'failed') { setError(update.message); return }
-        void refreshSupplemental({ scope: 'presence', version: update.version })
+        void refreshSupplemental()
       }),
     ]
     return () => {

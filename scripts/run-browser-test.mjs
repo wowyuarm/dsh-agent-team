@@ -39,7 +39,7 @@ try {
     .replace('__HOME__', quote(home))
     .replace('__CHROME__', quote(chrome))
   await writeFile(test, rendered)
-  await run('corepack', ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.web.config.ts', 'apps/web/tests/__external-agent-team.e2e.ts', '--reporter=verbose'], harness)
+  await run('corepack', ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.web.config.ts', 'apps/web/tests/__external-agent-team.e2e.ts', '--reporter=verbose', ...process.argv.slice(2)], harness)
 } finally {
   await rm(test, { force: true })
   await rm(temporary, { recursive: true, force: true })

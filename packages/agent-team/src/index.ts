@@ -161,7 +161,7 @@ const CONTEXT_SAFE_OUTPUT_RESERVE = 16_000
  */
 const ACCEPT_TASK_BOUNDARY_THRESHOLD = 128_000
 
-/** One parked long-poll, restricted to one change scope when it declares one. */
+/** One live invalidation subscription, restricted to its declared scope. */
 interface ChangeWaiter {
   readonly scope: AgentTeamChangeScope | undefined
   wake(version: number): void
@@ -615,42 +615,40 @@ export default class AgentTeam extends TypertRemoteService {
       .map(({ member: { privateMemoryPath: _privateMemoryPath, ...member }, ...status }) => Object.freeze({ ...status, member: Object.freeze(member) }))
   }
 
-  /** Wait for a lightweight projection invalidation without exposing ledger records. */
-  @Remote('changes')
-  async changes(request: AgentTeamChangesRequest, signal?: AbortSignal): Promise<AgentTeamChangesResult> {
-    if (!Number.isInteger(request.afterVersion) || request.afterVersion < 0) throw new Error('afterVersion must be a non-negative integer')
+  /** Emit a current baseline, then coalesced invalidations until canceled. */
+  @Remote({ mode: 'stream' })
+  async * changes(request: AgentTeamChangesRequest, signal?: AbortSignal): AsyncIterable<AgentTeamChangesResult> {
     const scope = this.validateChangeScope(request.scope)
-    const version = this.changeVersionOf(scope)
-    if (version > request.afterVersion || !this.accepting) return Object.freeze({ version })
-    return new Promise<AgentTeamChangesResult>((resolve, reject) => {
-      let settled = false
-      const waiter: ChangeWaiter = {
-        scope,
-        wake: version => {
-          if (settled) return
-          settled = true
-          clearTimeout(timeout)
-          signal?.removeEventListener('abort', onAbort)
-          resolve(Object.freeze({ version }))
-        },
+    let pending: number | undefined
+    let resume: (() => void) | undefined
+    const waiter: ChangeWaiter = {
+      scope,
+      wake: version => {
+        pending = version
+        resume?.()
+      },
+    }
+    const onAbort = (): void => { resume?.() }
+    if (signal?.aborted || !this.accepting) return
+    this.changeWaiters.add(waiter)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      // Listen before yielding so a commit during the consumer's read is kept.
+      yield { version: this.changeVersionOf(scope) }
+      while (!signal?.aborted && this.accepting) {
+        if (pending === undefined) await new Promise<void>(resolve => { resume = resolve })
+        resume = undefined
+        if (signal?.aborted || !this.accepting) return
+        if (pending !== undefined) {
+          const version = pending
+          pending = undefined
+          yield { version }
+        }
       }
-      const timeout = setTimeout(() => {
-        if (settled) return
-        settled = true
-        this.changeWaiters.delete(waiter)
-        resolve(Object.freeze({ version: this.changeVersionOf(scope) }))
-      }, 25_000)
-      const onAbort = (): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        this.changeWaiters.delete(waiter)
-        reject(new Error('changes wait was aborted'))
-      }
-      signal?.addEventListener('abort', onAbort, { once: true })
-      if (signal?.aborted === true) { onAbort(); return }
-      this.changeWaiters.add(waiter)
-    })
+    } finally {
+      this.changeWaiters.delete(waiter)
+      signal?.removeEventListener('abort', onAbort)
+    }
   }
 
   /** Return durable Team status without issuing a model request or a storage write. */
@@ -2774,7 +2772,6 @@ export default class AgentTeam extends TypertRemoteService {
     for (const waiter of this.changeWaiters) {
       const waiterScope = waiter.scope
       if (scopes !== undefined && (waiterScope === undefined ? !touchesProjection : !scopes.some(scope => sameChangeScope(scope, waiterScope)))) continue
-      this.changeWaiters.delete(waiter)
       waiter.wake(this.changeVersionOf(waiterScope))
     }
   }

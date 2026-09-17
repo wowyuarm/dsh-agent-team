@@ -211,9 +211,7 @@ describe('Team conversation surfaces', () => {
       seededMessages: [{ body: '开工任务', occurredAt: '2026-08-21T09:00:00.000Z' }],
     })
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
-    // The active Claim arrives with the agent activity refresh; the scaffold's
-    // parked first probe consumes one publish, so the second wakes the page.
-    b.publishAgentReply()
+    // The active Claim arrives with the agent activity refresh.
     b.publishAgentReply()
     // The in_progress Task's entry leads with its live Claim owner and its
     // status word: ownership and state ride the row that opens the Thread,
@@ -615,7 +613,7 @@ describe('Team conversation surfaces', () => {
     await b.runtime.dispose()
   })
 
-  it('opens a Thread with one parallel request round and no self-triggered second wave', async () => {
+  it('opens a Thread and performs one baseline catch-up without repeated reads', async () => {
     const b = await runtimeWithTeam()
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建频道' }))
@@ -641,20 +639,22 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
+    await new Promise(resolve => setTimeout(resolve, 20))
     expect(b.readThread).toHaveBeenCalledTimes(1)
-    expect(b.threadObservations).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(b.threadObservations).toHaveBeenCalledTimes(2))
 
-    // The durable read no longer wakes any scope, so the first round is the
-    // whole load: no second members/view/history wave may follow it.
+    // The stream baseline closes the read/subscribe gap. Private reads must
+    // not trigger further rounds after that bounded catch-up.
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(b.readThread).toHaveBeenCalledTimes(1)
-    expect(b.loadThreadHistory).toHaveBeenCalledTimes(1)
+    expect(b.loadThreadHistory).toHaveBeenCalledTimes(2)
     expect(b.members).toHaveBeenCalledTimes(1)
     expect(b.viewChannels).toHaveBeenCalledTimes(1)
 
     // The page waits on its own thread scope. The workspace presence scope
-    // rides the shared poll the always-mounted sidebar Agents section holds:
-    // opening a Thread must not open a second workspace long-poll.
+    // rides the shared subscription the always-mounted sidebar Agents section holds:
+    // opening a Thread must not open a second workspace subscription.
     const scopedCalls = b.changes.mock.calls.filter(([request]) => request.scope !== undefined)
     const scopes = scopedCalls.map(([request]) => request.scope as { kind: string; threadRef?: string })
     expect(scopes.some(scope => scope.kind === 'thread' && scope.threadRef === 'thread:1')).toBe(true)
@@ -763,6 +763,8 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
+    await new Promise(resolve => setTimeout(resolve, 20))
 
     const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
       sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
@@ -773,10 +775,6 @@ describe('Team conversation surfaces', () => {
     const backfillFact = { kind: 'message', sequence: 1, message: { messageRef: 'message:old-1', channelRef: 'channel:1', threadRef: 'thread:1',
       taskRef: 'task:1', sender: 'member:human', body: 'old backfill', topLevel: false, sequence: 1, occurredAt: '' }, mentions: [] }
 
-    // The change stream swallows one wake inside its initial silent probe;
-    // flush that probe so later wakes reach the listener.
-    b.publishAgentReply()
-    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
 
     // Backfill from the wider passive window is already-read material, not news.
     historyWith([backfillFact])
@@ -822,6 +820,8 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
+    await new Promise(resolve => setTimeout(resolve, 20))
 
     const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
       sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
@@ -834,11 +834,7 @@ describe('Team conversation surfaces', () => {
       thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts, cursor: 0, hasMore: false,
     } } as never))
 
-    // The change stream swallows one wake inside its initial silent probe;
-    // flush that probe so later wakes reach the listener.
     historyWith([])
-    b.publishAgentReply()
-    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
 
     const timelineSection = document.querySelector('section[aria-label="消息时间线"]') as HTMLElement
     Object.defineProperty(timelineSection, 'scrollHeight', { configurable: true, value: 1000 })
@@ -848,7 +844,7 @@ describe('Team conversation surfaces', () => {
     // A reader away from the tail gets the hint for the arrival...
     historyWith([newFact])
     b.publishAgentReply()
-    await waitFor(() => expect(b.view.findByText('↓ 1 条新更新')).toBeTruthy())
+    expect(await b.view.findByText('↓ 1 条新更新')).toBeTruthy()
 
     // ...and scrolling back within the follow margin clears it via the scroll
     // event alone, without any other re-render in between.
@@ -884,6 +880,8 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
+    await new Promise(resolve => setTimeout(resolve, 20))
     expect(b.readThread).toHaveBeenCalledTimes(1)
 
     const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
@@ -895,10 +893,6 @@ describe('Team conversation surfaces', () => {
       thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts: [watchedFact], cursor: 0, hasMore: false,
     } } as never))
 
-    // The change stream swallows one wake inside its initial silent probe;
-    // flush that probe so later wakes reach the listener.
-    b.publishChannelUpdate()
-    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
 
     // jsdom never scrolls the reader away from the bottom, so the arriving
     // fact renders in front of them and must be acknowledged durably rather
@@ -949,6 +943,8 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '打开 Task #1' }))
     expect(await b.view.findByRole('heading', { name: 'Task #1' })).toBeTruthy()
     await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 20 })))
+    await vi.waitFor(() => expect(b.loadThreadHistory).toHaveBeenCalledWith(expect.objectContaining({ taskRef: 'task:1', limit: 100 })))
+    await new Promise(resolve => setTimeout(resolve, 20))
 
     const anchor = { messageRef: 'message:anchor', channelRef: 'channel:1', threadRef: 'thread:1', taskRef: 'task:1',
       sender: 'member:human', body: 'first task', topLevel: true, sequence: 2, occurredAt: '' }
@@ -959,8 +955,6 @@ describe('Team conversation surfaces', () => {
       thread: { threadRef: 'thread:1', revision: 3 }, anchor, claims: [], facts: [failedFact], cursor: 0, hasMore: false,
     } } as never))
 
-    b.publishAgentReply()
-    await vi.waitFor(() => expect(b.changes.mock.calls.some(([request]) => (request as { afterVersion?: number }).afterVersion === 1)).toBe(true))
 
     // The reader sits away from the tail, so the arrival raises the hint;
     // the failed acknowledgment must not rob them of it — the hint is the
@@ -987,10 +981,6 @@ describe('Team conversation surfaces', () => {
     await b.view.findByText('还没有频道')
     expect(b.view.queryByRole('button', { name: '# gamma' })).toBeNull()
     b.seedChannel({ channelRef: 'channel:gamma', workspaceId: 'w1', name: 'gamma', description: 'Gamma work', createdAtSequence: 2 })
-    // The stream's initial probe samples silently, so the first external bump
-    // only arms the parked poll; the second one is what wakes the listener.
-    b.publishChannelUpdate()
-    await vi.waitFor(() => expect(b.changes.mock.calls.length).toBeGreaterThanOrEqual(2))
     b.publishChannelUpdate()
     await b.view.findByRole('button', { name: '# gamma' })
     expect(b.view.queryByText('还没有频道')).toBeNull()

@@ -259,6 +259,12 @@ DSH_BENCH_STORAGE=1 npx vitest run packages/agent-team/tests/storage-bench.spec.
 
 The startup path remains full `loadAll()` plus full replay; checkpoint/log work is historical direction in the archive.
 
+## Multi-page notification regression
+
+`npm run test:browser` includes four pages in the same BrowserContext (not four isolated connection pools), then a separate BrowserContext. It checks rendered Channels, cross-page messages, closing a page, leaving Team mode, and browser-originated member queries under a 3-second regression threshold. This is a small-fixture regression bound, not a production latency guarantee. The complete journey also checks recovery without a new commit after intentional network loss. Screenshots remain under `artifacts/browser/`, including desktop and 390×844 multi-page views.
+
+For a focused run: `npm run test:browser -- -t "four same-origin"`. Run the complete suite before accepting a transport change. These checks do not certify cross-page drafts, navigation storage, private unread synchronization, or hidden-page automatic reading; assess those separately.
+
 ## Delivery checklist
 
 - No shipped DSH defaults were changed accidentally.

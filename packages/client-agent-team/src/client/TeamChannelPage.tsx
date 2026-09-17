@@ -82,7 +82,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
   const [view, setView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
   const [unreadByThread, setUnreadByThread] = useState<ReadonlyMap<AgentTeamThreadRef, number>>(new Map())
-  const [error, setError] = useState<string>()
+  const [actionError, setError] = useState<string>()
+  const [loadError, setLoadError] = useState<string>()
+  const error = actionError ?? loadError
   const [pendingFiles, setPendingFiles] = useState<readonly File[]>([])
   const [statusMessage, setStatusMessage] = useState<string>()
   const [loading, setLoading] = useState(true)
@@ -160,7 +162,7 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     // the rendered timeline in place instead of flashing it back to skeleton.
     if (!loadedRef.current) setLoading(true)
     if (clearError) {
-      setError(undefined)
+      setLoadError(undefined)
       setStatusMessage(undefined)
     }
     try {
@@ -174,15 +176,16 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
         loadInbox({ workspaceId, limit: 100 }),
       ])
       if (!mountedRef.current || sequence !== refreshSequenceRef.current) return false
-      if (loaded.ok) { setView(current => current === undefined ? loaded.value : mergeChannelView(current, loaded.value)); loadedRef.current = true } else setError(loaded.error.message)
-      if (loadedMembers.ok) setMembers(loadedMembers.value); else setError(loadedMembers.error.message)
+      if (loaded.ok) { setView(current => current === undefined ? loaded.value : mergeChannelView(current, loaded.value)); loadedRef.current = true } else setLoadError(loaded.error.message)
+      if (loadedMembers.ok) setMembers(loadedMembers.value); else setLoadError(loadedMembers.error.message)
       // A failed unread read drops the badges instead of leaving counts the
       // reader can no longer trust; the failure surfaces like any other read.
       if (loadedInbox.ok) setUnreadByThread(unreadCounts(loadedInbox.value))
-      else { setUnreadByThread(new Map()); setError(loadedInbox.error.message) }
+      else { setUnreadByThread(new Map()); setLoadError(loadedInbox.error.message) }
+      if (loaded.ok && loadedMembers.ok && loadedInbox.ok) setLoadError(undefined)
       return loaded.ok && loadedMembers.ok && loadedInbox.ok
     } catch (cause) {
-      if (mountedRef.current && sequence === refreshSequenceRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+      if (mountedRef.current && sequence === refreshSequenceRef.current) setLoadError(cause instanceof Error ? cause.message : String(cause))
       return false
     } finally {
       if (mountedRef.current && sequence === refreshSequenceRef.current) setLoading(false)
@@ -196,9 +199,9 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     try {
       const loaded = await loadMembers({ workspaceId })
       if (!mountedRef.current) return
-      if (loaded.ok) setMembers(loaded.value); else setError(loaded.error.message)
+      if (loaded.ok) setMembers(loaded.value); else setLoadError(loaded.error.message)
     } catch (cause) {
-      if (mountedRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+      if (mountedRef.current) setLoadError(cause instanceof Error ? cause.message : String(cause))
     }
   }
 
@@ -206,26 +209,26 @@ export function TeamChannelPage({ workspaceId, channelRef, loadChannels, subscri
     mountedRef.current = true
     loadedRef.current = false
     setView(undefined)
-    setError(undefined)
+    setLoadError(undefined)
     setLoading(true)
     setManagingMembers(false)
     void refresh()
     const disposers = [
       subscribeChanges({ kind: 'channel', channelRef }, update => {
         if (!mountedRef.current) return
-        if (update.type === 'failed') { setError(update.message); return }
+        if (update.type === 'failed') { setLoadError(update.message); return }
         void refresh()
       }),
       subscribeChanges({ kind: 'workspace', workspaceId }, update => {
         if (!mountedRef.current) return
-        if (update.type === 'failed') { setError(update.message); return }
+        if (update.type === 'failed') { setLoadError(update.message); return }
         void refreshMembers()
       }),
       // Presence transitions commit nothing: only the member rows move, so
       // the header presence counts refresh without a timeline refetch.
       subscribeChanges({ kind: 'presence', workspaceId }, update => {
         if (!mountedRef.current) return
-        if (update.type === 'failed') { setError(update.message); return }
+        if (update.type === 'failed') { setLoadError(update.message); return }
         void refreshMembers()
       }),
     ]

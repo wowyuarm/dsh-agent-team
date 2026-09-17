@@ -199,9 +199,9 @@ async function entryUnreadCapsule(page: Page, lineSelector: string): Promise<Ret
   return await capsule.count() === 0 ? null : await capsule.evaluate(readCountCapsule)
 }
 
-async function installLocalBundle(): Promise<void> {
+async function installLocalBundle(clearArtifacts = true): Promise<void> {
   await rm(HOME, { recursive: true, force: true })
-  await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
+  if (clearArtifacts) await rm(BROWSER_ARTIFACTS, { recursive: true, force: true })
   const scope = `${HOME}/profiles/node_modules/@wowyuarm`
   await mkdir(scope, { recursive: true })
   // The filter must match on both separators: on Windows cp walks backslash
@@ -2012,16 +2012,14 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await settleAnimations(page)
   await page.screenshot({ path: join(UI08_SHOTS, 'sidebar-error-offline.png'), fullPage: true })
 
-  // The Channel's own retry re-reads once the Host answers again…
+  // Reopening the stream supplies a baseline even without a new commit;
+  // both the Channel and sidebar must recover without a manual retry.
   await page.context().setOffline(false)
-  await channelSurface.locator('[role="alert"]').getByRole('button', { name: '重试' }).click()
   await page.getByRole('heading', { name: '# recovery' }).waitFor({ timeout: 30_000 })
-  // …and the rail heals from the change stream alone: the retrying poll is
-  // answered again — the Host replies to a parked wait on its own deadline even
-  // with nothing committed — which drops the error line and brings back the rows
-  // it lost, with no second mode switch and no page reload.
+  await expect.poll(() => channelSurface.locator('[role="alert"]').count()).toBe(0)
   await recoveryRow.waitFor({ timeout: 45_000 })
   await expect.poll(async () => await railAlert.count(), { timeout: 20_000 }).toBe(0)
+  await expect.poll(() => consoleWatch.warnings.slice(offlineWarningStart).some(warning => /connection lost/i.test(warning)), { timeout: 20_000 }).toBe(true)
   acknowledgeReloadConnectionLoss(consoleWatch, offlineWarningStart)
   await settleAnimations(page)
   await page.screenshot({ path: join(UI08_SHOTS, 'sidebar-recovered-online.png'), fullPage: true })
@@ -2142,4 +2140,59 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await expect.poll(() => page.locator('[data-team-channel]').count()).toBe(0)
 
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 120_000)
+
+
+it('keeps four same-origin Team pages responsive and independently subscribed', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY, harnessHome: HOME })
+  const workspace = await scaffold.ctx.workspaceRegistry.create(scaffold.workspaceCwd, 'multi-web')
+  await scaffold.ctx.agentTeam.createChannel({ requestId: 'multi-channel' as never, workspaceId: workspace.id, name: 'multi-web', description: 'Multi-page regression' })
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const pages: Page[] = []
+  let membersRequest: { url: string; body: string } | undefined
+  context.on('request', request => {
+    if (request.url().endsWith('/agentTeam/members')) membersRequest = { url: request.url(), body: request.postData()! }
+  })
+  const probe = async (page: Page) => {
+    expect(membersRequest).toBeDefined()
+    const result = await page.evaluate(async request => {
+      const start = performance.now()
+      const response = await fetch(request.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: request.body, signal: AbortSignal.timeout(3000) })
+      return { status: response.status, body: await response.json(), ms: performance.now() - start }
+    }, membersRequest!)
+    expect(result.status).toBe(200)
+    expect(result.body.result.ok).toBe(true)
+    console.log(`Team multi-page query (${pages.length} pages): ${Math.round(result.ms)}ms`)
+  }
+  for (let index = 0; index < 4; index++) {
+    const page = await context.newPage()
+    pages.push(page)
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'domcontentloaded' })
+    if (index === 0) await page.getByRole('button', { name: '团队', exact: true }).click()
+    await page.getByRole('button', { name: '# multi-web', exact: true }).click()
+    await page.getByRole('heading', { name: '# multi-web', exact: true }).waitFor()
+    await probe(page)
+  }
+  const composer = pages[0]!.locator('[data-team-channel] textarea')
+  await composer.fill('来自第一页的消息')
+  await pages[0]!.getByRole('button', { name: '发送', exact: true }).click()
+  for (const page of pages) await page.locator('[data-team-channel] article').filter({ hasText: '来自第一页的消息' }).waitFor()
+  await pages.shift()!.close()
+  await probe(pages[0]!)
+  await pages[0]!.getByRole('button', { name: '对话', exact: true }).click()
+  await probe(pages[1]!)
+  const separate = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const other = await separate.newPage()
+  await other.goto(scaffold.authenticatedUrl)
+  await other.getByRole('button', { name: '团队', exact: true }).click()
+  await other.getByRole('button', { name: '# multi-web', exact: true }).click()
+  await other.locator('[data-team-channel] textarea').fill('来自独立浏览器的消息')
+  await other.getByRole('button', { name: '发送', exact: true }).click()
+  await pages[1]!.locator('[data-team-channel] article').filter({ hasText: '来自独立浏览器的消息' }).waitFor()
+  await pages[1]!.screenshot({ path: join(BROWSER_ARTIFACTS, 'multi-web-desktop.png'), fullPage: true })
+  await pages[1]!.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(pages[1]!)
+  await pages[1]!.screenshot({ path: join(BROWSER_ARTIFACTS, 'multi-web-mobile.png'), fullPage: true })
 }, 120_000)

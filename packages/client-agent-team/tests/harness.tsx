@@ -1,3 +1,5 @@
+import { RemoteStream, RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
+import type { AgentTeamChangesRequest } from '@wowyuarm/dsh-agent-team/types'
 import { vi } from 'vitest'
 import { useState } from 'react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -214,31 +216,23 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     viewItems = [{ message, mentions: [], ...(task === undefined ? {} : { task, taskNumber: 1 }), thread, claimOwners: [], messageCount: 1, lastActivityAt: message.occurredAt }]
     return { ok: true as const, value: { kind: 'committed' as const, receipt: {}, message, ...(task === undefined ? {} : { task }), thread, attention: [], directMarkers: [] } }
   })
-  // The double parks a subscriber's silent first probe while caught up
-  // (version <= afterVersion), so the first publish after mount is consumed
-  // by that probe and only the second one wakes subscribers — seed/publish
-  // twice when a change-driven refresh must be observed.
   let changeVersion = 0
-  // Set by `failChanges`: while it holds a message every `changes` call fails,
-  // which is how a dropped Host connection reaches the mounted surfaces.
   let changeFailure: string | undefined
-  // Waiters carry their request so publishers can mirror the Host's scope
-  // filtering: a presence wake invalidates only presence subscribers.
-  const changeWaiters: Array<{ request: { afterVersion: number; scope?: { kind?: string } }; resolve: (value: { ok: true; value: { version: number } }) => void }> = []
+  const generationListeners = new Set<() => void>()
+  const changeWaiters = new Set<{ request: AgentTeamChangesRequest; wake(): void }>()
   const wakeAll = (): void => {
     changeVersion += 1
-    for (const waiter of changeWaiters.splice(0)) waiter.resolve({ ok: true, value: { version: changeVersion } })
+    for (const waiter of changeWaiters) waiter.wake()
   }
-  /** Presence-only wake: workspace and scope-less waiters stay parked. */
   const publishPresence = (): void => {
     changeVersion += 1
-    for (const waiter of changeWaiters.splice(0)) {
-      if (waiter.request.scope?.kind !== 'presence') {
-        changeWaiters.push(waiter)
-        continue
-      }
-      waiter.resolve({ ok: true, value: { version: changeVersion } })
-    }
+    for (const waiter of changeWaiters) if (waiter.request.scope?.kind === 'presence') waiter.wake()
+  }
+  const connection = {
+    generation: {
+      getSnapshot: () => changeFailure === undefined ? {} as never : undefined,
+      subscribe: (listener: () => void) => { generationListeners.add(listener); return () => { generationListeners.delete(listener) } },
+    },
   }
   const reply = vi.fn(async (request: AgentTeamReplyRequest) => {
     const top = viewItems[0]!
@@ -348,24 +342,34 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
     inboxRows = rows.map(row => ({ workspaceId: row.workspaceId, item: row as Record<string, unknown> }))
     wakeAll()
   }
-  const changes = vi.fn((request: { afterVersion: number; scope?: unknown }, _signal?: AbortSignal) => changeFailure === undefined && changeVersion > request.afterVersion
-    ? Promise.resolve({ ok: true as const, value: { version: changeVersion } })
-    : changeFailure === undefined
-      ? new Promise<{ ok: true; value: { version: number } }>(resolve => { changeWaiters.push({ request: request as { afterVersion: number; scope?: { kind?: string } }, resolve }) })
-      : Promise.resolve({ ok: false as const, error: { code: 'transport', message: changeFailure, details: {} } }))
-  /**
-   * Simulates the Host connection dropping: every later `changes` call fails,
-   * and parking waiters are released so each live poll re-issues and reports the
-   * failure to its listeners.
-   */
+  const changes = vi.fn(async function* (request: AgentTeamChangesRequest, signal?: AbortSignal) {
+    let pending = false
+    let resume: (() => void) | undefined
+    const waiter = { request, wake: () => { pending = true; resume?.() } }
+    const abort = () => resume?.()
+    changeWaiters.add(waiter)
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      if (changeFailure !== undefined) throw new RemoteStreamCarrierError(changeFailure)
+      yield { version: changeVersion }
+      while (!signal?.aborted) {
+        if (!pending) await new Promise<void>(resolve => { resume = resolve })
+        resume = undefined
+        if (signal?.aborted) return
+        if (changeFailure !== undefined) throw new RemoteStreamCarrierError(changeFailure)
+        pending = false
+        yield { version: changeVersion }
+      }
+    } finally {
+      changeWaiters.delete(waiter)
+      signal?.removeEventListener('abort', abort)
+    }
+  })
   const failChanges = (message = 'transport down'): void => { changeFailure = message; wakeAll() }
-  /**
-   * Simulates the transport coming back: `changes` answers again, and the wake
-   * that follows carries a new version, so every mounted surface re-reads. A
-   * surface whose own reads failed while it was cut off heals only from such a
-   * wake — it must not need a remount for it.
-   */
-  const recoverChanges = (): void => { changeFailure = undefined; wakeAll() }
+  const recoverChanges = (): void => {
+    changeFailure = undefined
+    for (const listener of generationListeners) listener()
+  }
   const publishAgentReply = () => {
     const top = viewItems[0]!
     // The reply and the Claim it carries are newer facts than the opener, so
@@ -389,7 +393,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const publishChannelUpdate = () => { wakeAll() }
   // rc.1: the client injects the model-catalog sub-namespace explicitly.
   runtime.ctx.provide('remote.session', { modelCatalog })
-  runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $mount: async () => async () => {} } as never)
+  runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options), $mount: async () => async () => {} } as never)
   runtime.ctx.provide('remote.agentTeam', {})
   runtime.ctx.provide('connection', { isLoopback: true, generation: { getSnapshot: () => ({}) }, state: { getSnapshot: () => ({}) }, rpc: {}, reconnect: vi.fn(), registerGenerationSource: vi.fn(), start: vi.fn(), stop: vi.fn() })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })

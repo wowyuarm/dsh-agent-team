@@ -20,7 +20,7 @@ Client 使用以下 Host 接口：
 - `archiveChannel`：把频道从所有面收起，事实保留（暂无恢复入口）。
 - `updateMember`：提交 Agent 名称/说明编辑，以及可选的成员级模型覆盖。
 - `archiveMember`：把 Agent 从所有面收起，会话日志与私有记忆保留（暂无恢复入口）。
-Host Remote 仍提供 `threadObservations` 和 `changeAttention`，供后续 UI 与 Agent 工作流使用；当前 Human Thread surface 不渲染这些控制或观察。`changes` 提供轻量的范围化变更通知：每个请求声明一个 `scope`（workspace、channel、thread 或 presence），只有匹配的事件会唤醒对应 long-poll；Thread 读取会持久化提交，但既不唤醒任何 scope、也不推进任何 version，因为它不改变任何共享投影。version 是各 scope 自己的游标：`presence` scope 计进程内的 presence 边沿，其余 scope 报「最后一条改变共享投影的提交」在 ledger 上的 durable 位置。因此 parked client 不会被自己不订阅的变化唤醒，也不会被它提前应答。Client 通过 `TeamChangeStream` 在每个 scope 上共享一条可取消的 long-poll，每个 poll 的游标只留在签发它的 scope 内，任何被应答的差异都会重新锚定——面板与页面不会为同一 scope 并行发起 `changes` 请求，陈旧的游标也不会让订阅无声停靠；最后一个订阅者离开时轮询即被取消。打开 Task Thread 只发出一轮并行请求（`readThread`、有界历史、成员、频道视图），不会出现自触发的第二波请求。
+Host Remote 仍提供 `threadObservations` 和 `changeAttention`；当前 Human Thread 界面不渲染这些控制或观察。`changes` 是按 scope 订阅的流式 Remote，通过 Harness `ctx.remote.$stream()` 消费。每个页面内同 scope 共享一个逻辑订阅，Harness 将其复用到该页面的共享 WebSocket，因此多个 Team 页面不会因通知长期占用普通 HTTP 连接。每次开场或重连基线都触发重新读取 Host，包括版本未变化的情况；最后一个订阅者离开时取消该 scope。打开 Thread 时并行完成首次读取，允许基线到达后补读，但私有已读确认不会形成共享通知循环。scope 与恢复契约见[架构文档](../../docs/architecture.zh.md#host-authority)。
 
 浏览器持久化 Team mode、当前 Workspace，以及最后选中的 Channel 或 Thread，返回 Team 时会恢复之前的位置。Attention、未读数量、revision、observations 和 Thread facts 始终由 Host 管理。持久化操作提交或拒绝后，Client 会重新读取 Host 投影。
 

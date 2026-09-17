@@ -213,7 +213,8 @@ function applyUi(ctx: ClientContext): void {
     }
   }, 'agent-team: member session restore')
 
-  const changes = new TeamChangeStream((request, signal) => ctx.remote.agentTeam.changes(request, signal))
+  const changes = new TeamChangeStream(ctx.remote)
+  ctx.effect(() => () => changes.dispose(), 'agent-team: change subscriptions')
   const reads = new TeamReadStream()
 
   const loadMemberGroups = async () => {

@@ -1,3 +1,4 @@
+import { changeBaseline, nextChange } from './helpers/change-stream.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
@@ -108,9 +109,9 @@ describe('scoped Team change notifications', () => {
   it('does not wake or advance any waiter when a Human Thread read makes no progress', async () => {
     const { ctx } = await harness()
     const thread = await startThread(ctx, 'read-scope')
-    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
-    const threadWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'thread', threadRef: thread.threadRef } })
-    const globalWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version })
+    const baseline = await changeBaseline(ctx.agentTeam)
+    const threadWaiter = nextChange(ctx.agentTeam, { kind: 'thread', threadRef: thread.threadRef })
+    const globalWaiter = nextChange(ctx.agentTeam)
     expect(await staysPending(threadWaiter)).toBe(true)
     expect(await staysPending(globalWaiter)).toBe(true)
 
@@ -118,7 +119,7 @@ describe('scoped Team change notifications', () => {
 
     // Nothing was unread for the reader, so the read writes no operation and
     // publishes no new version: no parked waiter can mistake it for a change.
-    const after = await ctx.agentTeam.changes({ afterVersion: 0 })
+    const after = await changeBaseline(ctx.agentTeam)
     expect(after.version).toBe(baseline.version)
     expect(await staysPending(threadWaiter)).toBe(true)
     expect(await staysPending(globalWaiter)).toBe(true)
@@ -135,8 +136,7 @@ describe('scoped Team change notifications', () => {
     const { ctx } = await harness()
     const first = await startThread(ctx, 'alpha-thread')
     const second = await startThread(ctx, 'beta-thread')
-    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
-    const firstWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'thread', threadRef: first.threadRef } })
+    const firstWaiter = nextChange(ctx.agentTeam, { kind: 'thread', threadRef: first.threadRef })
     expect(await staysPending(firstWaiter)).toBe(true)
 
     await ctx.agentTeam.reply({ requestId: requestId('other-reply'), workspaceId: alpha, taskRef: second.taskRef, body: 'Unrelated', baseRevision: second.revision })
@@ -150,9 +150,9 @@ describe('scoped Team change notifications', () => {
   it('wakes Channel and Workspace waiters through their own scopes', async () => {
     const { ctx } = await harness()
     const thread = await startThread(ctx, 'mixed')
-    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
-    const channelWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'channel', channelRef: thread.channelRef } })
-    const workspaceWaiter = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'workspace', workspaceId: alpha } })
+    const baseline = await changeBaseline(ctx.agentTeam)
+    const channelWaiter = nextChange(ctx.agentTeam, { kind: 'channel', channelRef: thread.channelRef })
+    const workspaceWaiter = nextChange(ctx.agentTeam, { kind: 'workspace', workspaceId: alpha })
     expect(await staysPending(channelWaiter)).toBe(true)
     expect(await staysPending(workspaceWaiter)).toBe(true)
 
@@ -170,10 +170,9 @@ describe('scoped Team change notifications', () => {
   it('rejects an aborted waiter and keeps later commits working', async () => {
     const { ctx } = await harness()
     const thread = await startThread(ctx, 'abort')
-    const baseline = await ctx.agentTeam.changes({ afterVersion: 0 })
     const controller = new AbortController()
-    const aborted = ctx.agentTeam.changes({ afterVersion: baseline.version, scope: { kind: 'thread', threadRef: thread.threadRef } }, controller.signal)
-    const survivor = ctx.agentTeam.changes({ afterVersion: baseline.version })
+    const aborted = nextChange(ctx.agentTeam, { kind: 'thread', threadRef: thread.threadRef }, controller.signal)
+    const survivor = nextChange(ctx.agentTeam)
     controller.abort()
     await expect(aborted).rejects.toThrow(/aborted/)
 
@@ -200,19 +199,19 @@ describe('scoped Team change notifications', () => {
     // The Human's read through the service really commits (there is something
     // unread) and yet moves no cursor: it is private read progress.
     const second = await restartHarness(pool)
-    expect((await second.ctx.agentTeam.changes({ afterVersion: 0 })).version).toBe(reply.receipt.sequence)
+    expect((await changeBaseline(second.ctx.agentTeam)).version).toBe(reply.receipt.sequence)
     const read = await second.ctx.agentTeam.readThread({ requestId: requestId('restart-read'), workspaceId: alpha, taskRef: thread.taskRef })
     expect(read.receipt).toBeDefined()
-    expect((await second.ctx.agentTeam.changes({ afterVersion: 0 })).version).toBe(reply.receipt.sequence)
+    expect((await changeBaseline(second.ctx.agentTeam)).version).toBe(reply.receipt.sequence)
     await second.fiber.dispose()
 
     // A further restart re-derives the same position from the records: neither
     // zero (a process counter) nor the record count (which the private read
     // advanced). A Client that parked before it is not answered by the restart.
     const third = await restartHarness(pool)
-    const after = (await third.ctx.agentTeam.changes({ afterVersion: 0 })).version
+    const after = (await changeBaseline(third.ctx.agentTeam)).version
     expect(after).toBe(reply.receipt.sequence)
-    const parked = third.ctx.agentTeam.changes({ afterVersion: after })
+    const parked = nextChange(third.ctx.agentTeam)
     expect(await staysPending(parked)).toBe(true)
 
     const update = await third.ctx.agentTeam.reply({ requestId: requestId('restart-update'), workspaceId: alpha, taskRef: thread.taskRef,
@@ -221,10 +220,60 @@ describe('scoped Team change notifications', () => {
     expect(await parked).toMatchObject({ version: update.receipt.sequence })
   })
 
+  it('streams the opening version immediately and later commits without polling', async () => {
+    const { ctx } = await harness()
+    const thread = await startThread(ctx, 'stream-opening')
+    const controller = new AbortController()
+    const stream = ctx.agentTeam.changes({ scope: { kind: 'thread', threadRef: thread.threadRef } }, controller.signal)
+    const iterator = stream[Symbol.asyncIterator]()
+    try {
+      const opening = await iterator.next()
+      expect(opening).toMatchObject({ done: false, value: { version: expect.any(Number) } })
+      const reply = await ctx.agentTeam.reply({ requestId: requestId('stream-reply'), workspaceId: alpha, taskRef: thread.taskRef, body: 'Streamed', baseRevision: thread.revision })
+      if (reply.kind !== 'committed') throw new Error(`expected committed reply, received ${reply.kind}`)
+      expect(await iterator.next()).toMatchObject({ done: false, value: { version: reply.receipt.sequence } })
+    } finally {
+      controller.abort()
+      await iterator.return?.()
+    }
+  })
+
+  it('coalesces commits while the consumer pauses and cancels a pending pull', async () => {
+    const { ctx } = await harness()
+    const thread = await startThread(ctx, 'coalescing')
+    const controller = new AbortController()
+    const iterator = ctx.agentTeam.changes({}, controller.signal)[Symbol.asyncIterator]()
+    await iterator.next()
+    let revision = thread.revision
+    let sequence = 0
+    for (let index = 0; index < 5; index++) {
+      const reply = await ctx.agentTeam.reply({ requestId: requestId(`coalesce-${index}`), workspaceId: alpha, taskRef: thread.taskRef, body: `Reply ${index}`, baseRevision: revision })
+      if (reply.kind !== 'committed') throw new Error('expected reply')
+      revision = reply.thread.revision
+      sequence = reply.receipt.sequence
+    }
+    expect(await iterator.next()).toMatchObject({ done: false, value: { version: sequence } })
+    const pending = iterator.next()
+    expect(await staysPending(pending)).toBe(true)
+    controller.abort()
+    expect(await pending).toMatchObject({ done: true })
+    expect(await iterator.next()).toMatchObject({ done: true })
+  })
+
+  it('does not open an already canceled stream and closes live streams on Host disposal', async () => {
+    const { ctx, fiber } = await restartHarness(new MemoryMediaPool())
+    const canceled = ctx.agentTeam.changes({}, AbortSignal.abort())[Symbol.asyncIterator]()
+    expect(await canceled.next()).toMatchObject({ done: true })
+    const live = ctx.agentTeam.changes({})[Symbol.asyncIterator]()
+    await live.next()
+    const pending = live.next()
+    await fiber.dispose()
+    expect(await pending).toMatchObject({ done: true })
+  })
+
   it('validates change scopes before parking', async () => {
     const { ctx } = await harness()
-    await expect(ctx.agentTeam.changes({ afterVersion: 0, scope: { kind: 'channel', channelRef: '' } as unknown as AgentTeamChangeScope })).rejects.toThrow(/non-empty ref/)
-    await expect(ctx.agentTeam.changes({ afterVersion: -1 })).rejects.toThrow(/non-negative integer/)
+    await expect(changeBaseline(ctx.agentTeam, { kind: 'channel', channelRef: '' } as unknown as AgentTeamChangeScope)).rejects.toThrow(/non-empty ref/)
   })
 })
 
