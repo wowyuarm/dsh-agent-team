@@ -232,8 +232,8 @@ DSH `0.1.6-alpha.1` 已认证，并推动基线前移。它落在旧 `>=0.1.5-rc
 
 Session 格式、迁移审计准入的 source-kind 列表、以及随包 preset 行相对上一条基线均未改变，因此本候选版不会再次触发 §3.6 的存量历史检查。本 bundle 仍然只写入准入的 `plugin` source kind，形态为 `snapshot` 与 `notice`。
 
-证据：Typert 生成稳定；`npm run typecheck` 通过；`npm test` 在 645 个测试中通过 644 个、跳过 1 个、**零失败**；`npm run build` 与 `npm pack --dry-run`（230 个文件）成功；`npm run lint` 仅报 `scripts/check-package-boundaries.mjs` 中一处既有的未使用 import 警告；`node scripts/audit-ui-parity.mjs` 零违规；`npm run test:browser` 两条旅程全部通过——完整的 opt-in Team 旅程，以及四页同源订阅用例——覆盖 Remote mount、Team 进入/重载/退出，以及普通 DSH 恢复。两条 preview 通道（`npm run preview:ui` 与 `npm run preview`）也都能启动暂存 bundle，无失败行。
+证据：Typert 生成稳定；`npm run typecheck` 通过；`npm test` 在 650 个测试中通过 649 个、跳过 1 个、**零失败**；`npm run build` 与 `npm pack --dry-run`（239 个文件）成功；`npm run lint` 零错误、2 个警告——`scripts/check-package-boundaries.mjs` 中一处既有的未使用 `sep` import，以及 vendored sqlite fork 内一处多余 spread；`node scripts/audit-ui-parity.mjs` 零违规；`npm run test:browser` 两条旅程全部通过——完整的 opt-in Team 旅程，以及四页同源订阅用例——覆盖 Remote mount、Team 进入/重载/退出，以及普通 DSH 恢复。两条 preview 通道（`npm run preview:ui` 与 `npm run preview`）也都能启动暂存 bundle，无失败行。
 
-这份全绿结果要求以**非特权**用户运行。`session-remediation.spec.ts` 通过把 Session 目录 `chmod` 成 `0o500` 来注入一次瞬时写失败，而以 root 运行的进程会绕过目录模式位（`CAP_DAC_OVERRIDE`），注入的失败从未发生，该测试对已提交读取的断言因而失败。以 root 运行时套件报告 643 通过 / 1 失败；以普通用户运行则是 644 通过 / 0 失败。请以非 root 用户运行套件——在 root 下，这一处失败是环境产物，而不是缺陷。
+这份全绿结果要求以**非特权**用户运行。`session-remediation.spec.ts` 通过把 Session 目录 `chmod` 成 `0o500` 来注入一次瞬时写失败，而以 root 运行的进程会绕过目录模式位（`CAP_DAC_OVERRIDE`），注入的失败从未发生，该测试对已提交读取的断言因而失败。以 root 运行时套件报告 648 通过 / 1 失败；以普通用户运行则是 649 通过 / 0 失败。请以非 root 用户运行套件——在 root 下，这一处失败是环境产物，而不是缺陷。
 
 同一处 computed-generation 变化除了打断浏览器通道，也波及 `npm run preview` 与 `npm run preview:ui`：两者以相同方式暂存 bundle，因此同样需要 install anchor。`npm run test:browser` 并不覆盖它们，认证时必须手工启动一次——缺少 anchor 时，它们会表现为 `failed to import` 行；对无密钥 fixture 而言，则是 `ctx.agentTeam` 为 `undefined`。
