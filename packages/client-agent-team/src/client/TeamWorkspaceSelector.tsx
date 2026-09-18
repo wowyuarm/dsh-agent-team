@@ -21,7 +21,7 @@ export interface TeamWorkspaceChoice {
  * Workspace rows carry no unread mark of their own, and cross-Workspace unread
  * is summarized by the Inbox entry above.
  */
-export function TeamWorkspaceRow({ workspaces, selectedId, current, onSelect, t }: {
+export function TeamWorkspaceSelector({ workspaces, selectedId, current, onSelect, t }: {
   readonly workspaces: readonly TeamWorkspaceChoice[]
   readonly selectedId: WorkspaceId | undefined
   /** The Team center shows the selected Workspace's overview (no Channel is open). */
