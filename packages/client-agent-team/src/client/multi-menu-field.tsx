@@ -66,7 +66,7 @@ export function MultiMenuField<I extends string>({ label, options, selected, onT
               type="button"
               className={createCss.selectTrigger!}
               aria-label={label}
-              aria-haspopup="listbox"
+              aria-haspopup="menu"
               aria-expanded={open}
               disabled={disabled}
               onClick={() => { setOpen(value => !value) }}

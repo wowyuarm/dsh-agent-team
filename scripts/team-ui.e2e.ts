@@ -491,25 +491,35 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   await page.getByRole('button', { name: '# engineering' }).waitFor()
 
   // The Workspace is one selector line, not a list: its own text names where
-  // the reader is, and the other Workspaces exist only inside its menu.
-  const workspaceTrigger = page.getByRole('button', { name: '工作区', exact: true })
-  await expect.poll(async () => (await workspaceTrigger.textContent())?.trim() ?? '').toContain('team-workspace')
+  // the reader is, its accessible name states that same Workspace, and the
+  // other Workspaces exist only inside its menu.
+  const workspaceTrigger = page.getByRole('button', { name: '工作区，team-workspace', exact: true })
+  await expect.poll(async () => (await workspaceTrigger.textContent())?.trim() ?? '').toBe('team-workspace')
+  await expect.poll(() => workspaceTrigger.getAttribute('aria-haspopup')).toBe('menu')
   await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('false')
   await workspaceTrigger.click()
   await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('true')
   await page.getByRole('menuitem', { name: 'team-workspace' }).waitFor()
   await page.keyboard.press('Escape')
   await expect.poll(() => workspaceTrigger.getAttribute('aria-expanded')).toBe('false')
-  // Scope leads what is read through it: the selector is the browser's first
-  // line and the Inbox card — whose counts move with the Workspace — sits under
-  // it rather than above it.
+  // The menu is the only way to switch Workspaces, so its rows have to be
+  // reachable without a pointer: opening from the keyboard puts focus on the
+  // first row, and Escape hands focus back to the trigger.
+  await workspaceTrigger.focus()
+  await page.keyboard.press('Enter')
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role') ?? '')).toBe('menuitem')
+  await page.keyboard.press('Escape')
+  await expect.poll(() => page.evaluate(() => document.activeElement?.matches('[data-team-workspace-trigger]') ?? false)).toBe(true)
+  // The Inbox is the one entry that crosses Workspaces — its total sums every
+  // one of them — so it stands above the selector that scopes the sections
+  // below it rather than inside that scope.
   const [workspaceTriggerBox, inboxCardBox] = await Promise.all([
     workspaceTrigger.boundingBox(),
     page.locator('button[class*="inboxCard"]').boundingBox(),
   ])
   expect(workspaceTriggerBox).not.toBeNull()
   expect(inboxCardBox).not.toBeNull()
-  expect(inboxCardBox!.y).toBeGreaterThan(workspaceTriggerBox!.y)
+  expect(workspaceTriggerBox!.y).toBeGreaterThan(inboxCardBox!.y)
 
   const builderRow = page.locator('[class*="agentRow"]').filter({ hasText: 'builder' }).first()
   await builderRow.hover()

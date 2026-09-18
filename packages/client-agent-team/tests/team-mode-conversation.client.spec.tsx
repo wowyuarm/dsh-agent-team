@@ -730,21 +730,29 @@ describe('Team conversation surfaces', () => {
     expect(await b.view.findByRole('heading', { name: '频道' })).toBeTruthy()
     fireEvent.click(b.view.getByRole('button', { name: 'Toggle fixture sidebar' }))
     await waitFor(() => { expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy() })
-    // The selected Workspace is the trigger's own text; the others are not rows
-    // on the surface, so the sections below read as that Workspace's content.
-    const trigger = b.view.getByRole('button', { name: '工作区' })
+    // The selected Workspace is the trigger's own text and its accessible name:
+    // a reader who cannot see the field still learns which one is stated. The
+    // others are not rows on the surface, so the sections below read as that
+    // Workspace's content.
+    const trigger = b.view.getByRole('button', { name: '工作区，Alpha' })
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     expect(trigger.textContent).toContain('Alpha')
+    expect(b.view.queryByRole('button', { name: '工作区' })).toBeNull()
     expect(b.view.queryByRole('button', { name: 'Beta' })).toBeNull()
+    // The Inbox crosses Workspaces, so it stands above the selector that scopes
+    // the sections below it.
+    const inboxCard = b.view.getByRole('button', { name: /^收件箱/ })
+    expect(inboxCard.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
     fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'Beta' }))
 
     await waitFor(() => { expect(b.runtime.ctx.teamNavigation.getSnapshot().workspaceId).toBe('w2') })
-    await waitFor(() => { expect(b.view.getByRole('button', { name: '工作区' }).textContent).toContain('Beta') })
+    await waitFor(() => { expect(b.view.getByRole('button', { name: '工作区，Beta' })).toBeTruthy() })
     // Picking closes the menu and leaves the content sections standing.
-    expect(b.view.getByRole('button', { name: '工作区' }).getAttribute('aria-expanded')).toBe('false')
+    expect(b.view.getByRole('button', { name: '工作区，Beta' }).getAttribute('aria-expanded')).toBe('false')
     expect(b.view.getByRole('button', { name: '频道' })).toBeTruthy()
     await b.runtime.dispose()
   })

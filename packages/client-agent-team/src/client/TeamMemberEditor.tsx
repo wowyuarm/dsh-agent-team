@@ -89,7 +89,7 @@ export function ModelPickerField({ model, onModelChange, loadModels, disabled, t
             type="button"
             className={createCss.selectTrigger!}
             aria-label={t('memberModel')}
-            aria-haspopup="listbox"
+            aria-haspopup="menu"
             aria-expanded={open}
             disabled={disabled}
             onClick={() => { setModelOpen(value => !value) }}
@@ -119,7 +119,7 @@ export function ModelPickerField({ model, onModelChange, loadModels, disabled, t
             type="button"
             className={createCss.selectTrigger!}
             aria-label={t('reasoningEffort')}
-            aria-haspopup="listbox"
+            aria-haspopup="menu"
             aria-expanded={effortOpen}
             disabled={disabled}
             onClick={() => { setEffortOpen(value => !value) }}

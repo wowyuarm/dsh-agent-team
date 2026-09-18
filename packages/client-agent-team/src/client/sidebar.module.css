@@ -35,9 +35,9 @@
    trigger shape the creation forms already use for a single choice, so the one
    line that states where the reader is does not read as the first entry of the
    list below it. Its folder icon keeps the selected tint the list rows used to
-   carry, because the trigger is always showing a selection. It sits above the
-   Inbox because everything under it — the Inbox counts included — is scoped by
-   the Workspace it names. */
+   carry, because the trigger is always showing a selection. It leads the sections
+   it scopes rather than the whole browser: the Inbox entry above it crosses
+   Workspaces, so that entry stays outside this selector's reach. */
 .workspaceTrigger {
   align-items: center;
   background: var(--dsw-alias-bg-layer-1);
@@ -50,23 +50,23 @@
   font-size: 14px;
   gap: 6px;
   line-height: 22px;
-  margin: 4px 0 2px;
+  margin: 0 0 2px;
   min-height: 34px;
   padding: 4px 8px;
   text-align: left;
   width: 100%;
 }
-.workspaceTrigger:hover:not(:disabled) {
+/* Location reads like the harness session tree: the leaf that is the current
+   page carries the fill. The field already sits on its own layer, so the shared
+   hover fill is what says its overview is the page on screen. */
+.workspaceTrigger:hover,
+.workspaceTrigger[aria-current='page'] {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 .workspaceTrigger:focus-visible {
   border-color: var(--dsw-alias-brand-primary);
   outline: 2px solid var(--dsw-alias-label-primary);
   outline-offset: -2px;
-}
-.workspaceTrigger:disabled {
-  cursor: default;
-  opacity: 0.6;
 }
 
 .workspaceIcon {
@@ -76,9 +76,6 @@
   flex: 0 0 16px;
   height: 20px;
   justify-content: center;
-}
-.workspaceTrigger:disabled .workspaceIcon {
-  color: var(--dsw-alias-label-tertiary);
 }
 .workspaceValue {
   flex: 1;
@@ -107,8 +104,8 @@
   margin: 8px;
 }
 
-/* The Human mention-Inbox entry: a card above the Workspaces section on the
-   wide rail, a queue icon on the narrow rail. Both mark unread the same way — a
+/* The Human mention-Inbox entry: a card above the Workspace selector on the wide
+   rail, a queue icon on the narrow rail. Both mark unread the same way — a
    dot on the icon's corner rather than a number beside it. The quantity is not
    gone, it moved into the control's own name: what a reader scans the sidebar
    for is whether anything waits, and the count answers a question asked on
@@ -124,7 +121,7 @@
   flex: 0 0 auto;
   gap: 6px;
   height: 34px;
-  margin: 0 0 2px;
+  margin: 4px 0 2px;
   padding: 0 8px;
   text-align: left;
   width: 100%;

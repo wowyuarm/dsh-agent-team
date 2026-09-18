@@ -413,6 +413,25 @@ for (const file of readdirSync(clientDir).filter(name => name.endsWith('.module.
 }
 
 // ---------------------------------------------------------------------------
+// 12. Popup roles: a trigger that opens the shared Menu renders `role="menu"`
+//     with `role="menuitem"` rows — the primitive owns that markup — so a
+//     trigger announcing `aria-haspopup="listbox"` promises the reader a popup
+//     they will never get, and a screen reader voices the wrong control class.
+//     Every `aria-haspopup` in the Team Client opens either that Menu or a
+//     dialog; the composer's mention picker is a genuine listbox, but it is
+//     driven from the textarea through `aria-activedescendant` and carries no
+//     haspopup attribute at all, so it is not in this rule's path.
+// ---------------------------------------------------------------------------
+
+for (const file of readdirSync(clientDir).filter(name => name.endsWith('.tsx'))) {
+  const source = readFileSync(join(clientDir, file), 'utf8')
+  for (const match of source.matchAll(/aria-haspopup="listbox"/g)) {
+    const line = source.slice(0, match.index).split('\n').length
+    note('error', `${file}:${line}`, 'aria-haspopup="listbox" on a trigger whose popup is the shared Menu (role="menu", menuitem rows); declare aria-haspopup="menu"')
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 
