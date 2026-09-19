@@ -781,9 +781,14 @@ describe('Team conversation surfaces', () => {
 
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: 'Beta' }))
-
-    await waitFor(() => { expect(b.runtime.ctx.teamNavigation.getSnapshot().workspaceId).toBe('w2') })
+    // The menu list is a portal the loaded runtime can re-render between the
+    // query and the click, so a click can land on a detached node and be lost.
+    // Retry the interaction — not just the assertion — until the selection
+    // actually moves the navigation snapshot.
+    await waitFor(() => {
+      fireEvent.click(within(document.body).getByRole('menuitem', { name: 'Beta' }))
+      expect(b.runtime.ctx.teamNavigation.getSnapshot().workspaceId).toBe('w2')
+    })
     await waitFor(() => { expect(b.view.getByRole('button', { name: '工作区，Beta' })).toBeTruthy() })
     // Picking closes the menu and leaves the content sections standing.
     expect(b.view.getByRole('button', { name: '工作区，Beta' }).getAttribute('aria-expanded')).toBe('false')
