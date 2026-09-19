@@ -330,10 +330,10 @@ describe('session remediation over a real persistence service', () => {
     expect(await stat(join(directory, V3_FILENAME)).then(() => true, () => false)).toBe(false)
   })
 
-  // Windows ignores a directory's mode bits, so the unwritable-directory
-  // injection below cannot be built there; the companion probe underneath
-  // asserts the same contract on every platform.
-  it.skipIf(process.platform === 'win32')('does not record a real failed repair, so a restart can still heal', async () => {
+  // The unwritable-directory injection below needs mode bits to deny a write:
+  // Windows ignores a directory's mode bits and a root uid bypasses them, so
+  // the companion probe underneath asserts the same contract everywhere else.
+  it.skipIf(process.platform === 'win32' || (process.getuid?.() ?? -1) === 0)('does not record a real failed repair, so a restart can still heal', async () => {
     const { root, persistence, remediation } = await fixture()
     const sessionId = 'agent-team-transient'
     const directory = await writeArtifact(root, sessionId, v0Rows(sessionId, [v0UserMessageRow(2, 'handoff', legacyHandoffSource())]))
