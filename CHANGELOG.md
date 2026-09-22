@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format foll
 
 - The Team sidebar states the current Workspace on one selector line instead of listing every Workspace above the Channels and Agents that belong to it. The cross-Workspace Inbox keeps its own entry above that line, and the selector's menu is fully keyboard-operable.
 - The Inbox row's clock yields when the identity line is too narrow to hold it beside the count: on a phone-width page with the sidebar forced open the row no longer draws past its own edge.
+- The certified DSH baseline moves to `0.1.7-alpha.1`, and every `@deepseek-ai/dsh-*` peer moves with it to `>=0.1.7-alpha.1 <0.1.8`. The previous range admits no prerelease of this line — a comparator enables prereleases only on its own base tuple — so upgrade `@deepseek-ai/dsh` together with this release. The removed `@deepseek-ai/dsh-agent-presets` peer leaves with the package it named: the team preset is declared as rows through `@deepseek-ai/dsh-agent-preset` and its registry instead, and a Member session still composes `team-member` while an ordinary session keeps composing the host's `standard` default.
+- Durable messages carry their own producer's kind, as DSH's V4 session format requires, and history written by earlier lines still reads back without rewriting anything on disk. The startup repair pass that rewrote those sources is gone: what it published is precisely the wrapper V4 refuses, so keeping it would have manufactured unreadable files.
 
 ## [0.1.14-alpha.1] - 2026-09-18
 
