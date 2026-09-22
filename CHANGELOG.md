@@ -5,9 +5,6 @@ All notable changes to this project are documented in this file. The format foll
 ## [Unreleased]
 
 - The Team sidebar states the current Workspace on one selector line instead of listing every Workspace above the Channels and Agents that belong to it. The cross-Workspace Inbox keeps its own entry above that line, and the selector's menu is fully keyboard-operable.
-
-## [Unreleased]
-
 - The Inbox row's clock yields when the identity line is too narrow to hold it beside the count: on a phone-width page with the sidebar forced open the row no longer draws past its own edge.
 
 ## [0.1.14-alpha.1] - 2026-09-18
