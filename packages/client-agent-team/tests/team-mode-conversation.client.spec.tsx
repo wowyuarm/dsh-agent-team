@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+// Rendering the whole Team surface in jsdom has reached 3.4s on the windows lane
+// (worst of 11 CI runs, 2026-09-17..21) against vitest's 5s default, so the file
+// keeps headroom rather than betting on runner throughput.
+vi.setConfig({ testTimeout: 30_000 })
 import { cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'

@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { memo } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+// Mounting the Team runtime in jsdom has reached 3.0s on the windows lane (worst
+// of 11 CI runs, 2026-09-17..21) against vitest's 5s default, so the file keeps
+// headroom rather than betting on runner throughput.
+vi.setConfig({ testTimeout: 30_000 })
 import { cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { runtimeWithTeam } from './harness.tsx'

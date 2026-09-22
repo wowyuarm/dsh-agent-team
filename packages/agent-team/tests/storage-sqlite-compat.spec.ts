@@ -1,7 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+// The vendored-vs-upstream byte diff writes and re-reads a real SQLite file, and
+// the windows lane has stretched it to 2.2s against vitest's 5s default (worst
+// of 11 CI runs, 2026-09-17..21), so the file keeps headroom.
+vi.setConfig({ testTimeout: 30_000 })
 // Byte-compatibility anchor for the vendored fork (GitHub issue #28): the
 // upstream package stays a devDependency as the fixture reference, so this
 // test always diffs the fork against the exact source version named in the
