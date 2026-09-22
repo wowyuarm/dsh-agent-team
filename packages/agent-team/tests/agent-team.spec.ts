@@ -2,6 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+// Every test here boots a Host over a throwaway tree, and the windows lane has
+// stretched one cold replay to 2.7s against vitest's 5s default (worst of 11 CI
+// runs, 2026-09-17..21). The SQLite case below keeps its own 30s argument.
+vi.setConfig({ testTimeout: 30_000 })
 import { Context } from '@deepseek-ai/cordis'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import Storage from '@deepseek-ai/dsh-storage'

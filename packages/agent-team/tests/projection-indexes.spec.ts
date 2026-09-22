@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+// Booting a real Storage-backed Host per test has reached 3.2s on the windows
+// lane (worst of 11 CI runs, 2026-09-17..21) against vitest's 5s default, so the
+// file keeps headroom rather than betting on runner throughput.
+vi.setConfig({ testTimeout: 30_000 })
 import { Context } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'

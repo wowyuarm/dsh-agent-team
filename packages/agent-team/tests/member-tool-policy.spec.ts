@@ -3,6 +3,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+// Every test here boots a whole Host harness over a throwaway tree. The windows
+// lane stretched that boot to 4.1s against vitest's 5s default (worst of 11 CI
+// runs, 2026-09-17..21) and on 2026-09-21 a run crossed it, painting master red
+// while the same commit passed on a rerun. Headroom, not a retry.
+vi.setConfig({ testTimeout: 30_000 })
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
