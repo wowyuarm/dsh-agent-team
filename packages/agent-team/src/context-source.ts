@@ -1,14 +1,10 @@
 /**
- * Plugin-attributed message sources for Agent Team context management.
+ * Producer-attributed message sources for Agent Team context management.
  *
- * Both sources ride ordinary `UserMessage`s under the shipped `plugin` kind
- * with the `snapshot` context form — the same shape the Harness's own
- * system-prompt producer writes. This module declares no `MessageSourceMap`
- * member of its own, and carries no bespoke source members: Session format
- * migration validates a `plugin` source against a closed member list
- * (`kind`, `plugin`, `form`, `sections`, `summary`), and refuses every logged
- * Session that carries anything else. A plugin-declared kind is type-legal yet
- * refused the same way. See `docs/dsh-release-compatibility.md`
+ * Both sources ride ordinary `UserMessage`s under this plugin's own
+ * producer kind with the `snapshot` context form — Session format V4 admits
+ * exactly that shape and refuses the retired `{ kind: 'plugin', plugin: … }`
+ * wrapper at write time. See `docs/dsh-release-compatibility.md`
  * § "Session message sources".
  *
  * Everything the Host needs to read back therefore rides the admitted payload
@@ -23,11 +19,52 @@
  * @module @wowyuarm/dsh-agent-team/context-source
  */
 
-import type { ContextSnapshotSection, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed, ContextSnapshotSection, MessageSource, MessageSourceMap, UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-/** Plugin identity attributing every Agent Team message source. */
+/** The producer kind attributing every Agent Team message source. */
 export const AGENT_TEAM_PLUGIN_ID = '@wowyuarm/dsh-agent-team'
+
+/**
+ * The kind the Harness's V4 read-time conversion renames this plugin's
+ * released V3 `plugin` sources into: `plugin:` + the producer id, with the
+ * `plugin` key dropped and every payload field (`form`, `sections`,
+ * `summary`) preserved. History read through the new line carries exactly
+ * this shape, so the read side recognizes both identities below.
+ */
+export const AGENT_TEAM_V3_RENAMED_KIND = `plugin:${AGENT_TEAM_PLUGIN_ID}`
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** The kind this plugin writes now; V4 admission requires a producer-owned kind. */
+    [AGENT_TEAM_PLUGIN_ID]: { kind: typeof AGENT_TEAM_PLUGIN_ID } & ContextFormed
+    /** The converted shape of this plugin's released V3 history; read-side only. */
+    [AGENT_TEAM_V3_RENAMED_KIND]: { kind: typeof AGENT_TEAM_V3_RENAMED_KIND } & ContextFormed
+  }
+}
+
+/** The source shapes carrying this plugin's attribution: its current kind and the read-time conversion of its V3 history. */
+export type AgentTeamMessageSource = Extract<MessageSource, { kind: typeof AGENT_TEAM_PLUGIN_ID | typeof AGENT_TEAM_V3_RENAMED_KIND }>
+
+/** The kind the read-time conversion renames one producer's released V3 sources into. */
+export const v3RenamedSourceKind = <const P extends string>(producer: P): `plugin:${P}` => `plugin:${producer}`
+
+/**
+ * Whether one message source carries this plugin's own attribution. Both
+ * identities are matched by exact kind equality — never by a `plugin:`
+ * prefix test, which would claim third-party producers' rows as Team facts.
+ */
+export function isAgentTeamSource(source: MessageSource): source is AgentTeamMessageSource {
+  return source.kind === AGENT_TEAM_PLUGIN_ID || source.kind === AGENT_TEAM_V3_RENAMED_KIND
+}
+
+/**
+ * Whether one source kind carries this plugin's attribution, for call sites
+ * whose sources arrive untyped. Exact identities only, never a prefix test.
+ */
+export function isAgentTeamSourceKind(kind: string | undefined): boolean {
+  return kind === AGENT_TEAM_PLUGIN_ID || kind === AGENT_TEAM_V3_RENAMED_KIND
+}
 
 /** Handoff snapshot section name carrying the model-authored prose. */
 export const HANDOFF_SECTION_NAME = 'HANDOFF'
@@ -79,8 +116,7 @@ export function createHandoffMessage(input: {
   return createUserMessage({
     content: [{ type: 'text', text: handoffBody(input) }],
     source: {
-      kind: 'plugin',
-      plugin: AGENT_TEAM_PLUGIN_ID,
+      kind: AGENT_TEAM_PLUGIN_ID,
       form: 'snapshot',
       sections: handoffSections(input),
     },
@@ -102,8 +138,7 @@ export function createCheckpointContinuationMessage(checkpointRef: string): User
   return createUserMessage({
     content: [{ type: 'text', text: CHECKPOINT_CONTINUATION_TEXT }],
     source: {
-      kind: 'plugin',
-      plugin: AGENT_TEAM_PLUGIN_ID,
+      kind: AGENT_TEAM_PLUGIN_ID,
       form: 'snapshot',
       sections: [{ name: CHECKPOINT_SECTION_NAME, text: checkpointRef }],
     },
@@ -117,7 +152,7 @@ export function createCheckpointContinuationMessage(checkpointRef: string): User
  */
 function ownSections(message: UserMessage): readonly ContextSnapshotSection[] | undefined {
   const source = message.source
-  if (source.kind !== 'plugin' || source.plugin !== AGENT_TEAM_PLUGIN_ID) return undefined
+  if (!isAgentTeamSource(source)) return undefined
   if (source.form !== 'snapshot') return undefined
   return source.sections
 }
@@ -210,8 +245,8 @@ export function isAgentTeamContextSource(message: UserMessage): boolean {
 }
 
 /** Envelope section names; stable, because they are read back from the log.
- * Exported for the legacy-artifact remediation, which rewrites pre-0.1.10
- * envelopes into exactly these names — one shared vocabulary, no drift. */
+ * One shared vocabulary for writer and reader — no drift between the shape
+ * published at rollover and the shape the projection folds back. */
 export const HANDOFF_PREVIOUS_SESSION = 'Previous session'
 export const HANDOFF_NEW_SESSION = 'New session'
 export const HANDOFF_TRIGGER = 'Trigger'

@@ -25,7 +25,7 @@ import type { ToolResultMessage, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionHeader, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type { AgentTeamContextCheckpointRef } from './types.ts'
-import { AGENT_TEAM_PLUGIN_ID, continuationCheckpointRefOf, handoffOf, isAgentTeamContextSource, isCheckpointContinuationMessage } from './context-source.ts'
+import { continuationCheckpointRefOf, handoffOf, isAgentTeamContextSource, isAgentTeamSource, isCheckpointContinuationMessage } from './context-source.ts'
 import type { SessionEventFold } from './session-event-cursor.ts'
 
 /** Summary marker of the pre-compaction memory hint. */
@@ -404,7 +404,7 @@ function boundaryFromUserMessage(sessionId: string, seq: number, message: UserMe
   if (handoffOf(message) !== undefined) {
     return { key: `handoff:${seq}`, source: 'handoff', label: 'context handoff', seq, turn: -1, turnEndSeq: -1 }
   }
-  if (source.kind !== 'plugin' || source.plugin !== AGENT_TEAM_PLUGIN_ID) return undefined
+  if (!isAgentTeamSource(source)) return undefined
   if (source.form === 'relay') return undefined
   if (source.form === 'notice' && source.summary === PRE_COMPACTION_NOTICE_SUMMARY) {
     return { key: `compaction:${seq}`, source: 'compaction', label: 'compaction notice', seq, turn: -1, turnEndSeq: -1 }
@@ -461,22 +461,20 @@ function applyToolResult(
   sessionId: string,
   meta: unknown,
 ): AgentTeamContextProjectionState {
-  const block = message.content[0]
-  if (block === undefined || block.type !== 'tool-result') return state
   // A landed result — success or failure — consumes its paired open call.
   // Leaving a failed result's call open would dangle it forever, and a
   // provider retry reusing the callId would pair its fresh success result
   // with these stale arguments. An unpaired result (no matching open call)
   // touches nothing.
-  const index = state.openCalls.findIndex(call => call.callId === block.toolCallId)
+  const index = state.openCalls.findIndex(call => call.callId === message.toolCallId)
   if (index === -1) return state
   const recorded = state.openCalls[index]!
-  const openCalls = state.openCalls.filter(call => call.callId !== block.toolCallId)
+  const openCalls = state.openCalls.filter(call => call.callId !== message.toolCallId)
   // A successful pair only: model-visible errors and internal failures carry
   // neither checkpoint, rollover intent, nor an effect boundary — the
   // failure-face contract also holds for a team_message whose presentation
   // meta projection failed (that lands as a ToolOutputError result).
-  if (block.isError === true || internalFailure) return { ...state, openCalls }
+  if (message.isError === true || internalFailure) return { ...state, openCalls }
   if (isRolloverToolName(recorded.name)) {
     const parsed = parseRolloverArguments(recorded.arguments)
     if (parsed === undefined) return { ...state, openCalls }
@@ -494,7 +492,7 @@ function applyToolResult(
   if (recorded.name === CONTEXT_CHECKPOINT_TOOL_NAME) {
     const parsed = parseCheckpointArguments(recorded.arguments)
     if (parsed === undefined) return { ...state, openCalls }
-    const checkpointRef = checkpointRefFor(sessionId, block.toolCallId)
+    const checkpointRef = checkpointRefFor(sessionId, message.toolCallId)
     return {
       ...state,
       openCalls,
@@ -633,8 +631,7 @@ export function carriedInputOf(state: AgentTeamContextProjectionState): readonly
  * they are excluded rather than dropped.
  */
 function isTeamNotice(message: UserMessage): boolean {
-  const source = message.source
-  return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID && !isAgentTeamContextSource(message)
+  return isAgentTeamSource(message.source) && !isAgentTeamContextSource(message)
 }
 
 /** Whether a quiet continuation for one checkpoint was already delivered in this Session. */

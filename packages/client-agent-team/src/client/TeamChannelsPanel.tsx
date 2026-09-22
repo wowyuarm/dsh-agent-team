@@ -10,7 +10,7 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconArchiveOutline20, IconEditOutline16, IconPlusOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconEditOutlineRegular, IconPlusOutlineRegular, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
 import { TeamMemberRow } from './TeamMemberRow.tsx'
@@ -205,7 +205,7 @@ export function TeamChannelsPanel(props: TeamChannelsPanelProps) {
         actions={(
           <Tooltip label={t('addChannel')} delayMs={500}>
             <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addChannel')} onClick={() => { setError(undefined); setFormOpen(true) }}>
-              <IconPlusOutline16 size={14} />
+              <IconPlusOutlineRegular size={14} />
             </button>
           </Tooltip>
         )}
@@ -289,8 +289,8 @@ function ChannelRow({ channel, members, joinedIds, selected, updateChannel, arch
           <TeamRowMenu
             label={t('actionsChannel', { name: channel.name })}
             items={[
-              { id: 'edit', label: t('editChannel'), icon: <IconEditOutline16 /> },
-              { id: 'archive', label: t('archiveChannel'), icon: <IconArchiveOutline20 size={16} />, danger: true },
+              { id: 'edit', label: t('editChannel'), icon: <IconEditOutlineRegular /> },
+              { id: 'archive', label: t('archiveChannel'), icon: <IconArchiveOutlineRegular size={16} />, danger: true },
             ]}
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)

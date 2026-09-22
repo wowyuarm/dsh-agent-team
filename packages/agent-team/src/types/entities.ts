@@ -166,9 +166,9 @@ export interface AgentTeamMemberDiagnostic {
   /** The Session the failure is about, when it is about one. */
   readonly sessionId?: SessionId
   /**
-   * `session-refused` only: `false` once a repair attempt ran to completion
-   * and proved nothing remediable — restarting cannot help and the surface
-   * must stop offering it.
+   * `session-refused` only: `false` marks a refusal the surface must not
+   * offer restart for. Part of the rendered wire contract the Client reads;
+   * the Host currently never sets it, since no write-side repair pass exists.
    */
   readonly remediable?: boolean
 }

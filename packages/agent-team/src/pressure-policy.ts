@@ -21,7 +21,7 @@ import type { CompactionEngine, CompactionResult } from '@deepseek-ai/dsh-compac
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AgentTeamMemberId } from './types.ts'
 import { CONTEXT_PRESSURE_NOTICE_SUMMARY } from './context-management.ts'
-import { AGENT_TEAM_PLUGIN_ID } from './context-source.ts'
+import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSourceKind } from './context-source.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { advanceOwnedSessionEventCursor, type OwnedSessionEventCursor, type SessionEventFold } from './session-event-cursor.ts'
 
@@ -80,8 +80,10 @@ export interface PressurePolicyOptions {
 
 /** Whether one user message is this policy's one-shot pressure notice. */
 function isPressureNotice(message: { readonly source?: unknown }): boolean {
-  const source = message.source as { plugin?: string; summary?: string } | undefined
-  return source?.plugin === AGENT_TEAM_PLUGIN_ID
+  // The source arrives untyped from the inbox; identity is matched by exact
+  // kind — the shape written now and the read-time conversion's V3 rename.
+  const source = message.source as { readonly kind?: string; readonly summary?: string } | undefined
+  return isAgentTeamSourceKind(source?.kind)
     && source?.summary === CONTEXT_PRESSURE_NOTICE_SUMMARY
 }
 
@@ -166,7 +168,7 @@ export class PressurePolicyCoordinator {
           activeClaims: this.options.activeClaimLabels(member.memberId),
           runningJobs: this.options.runningJobLabels(member.memberId),
         }) }],
-        source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY },
+        source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY },
       })
       try {
         agent.steer(notice)

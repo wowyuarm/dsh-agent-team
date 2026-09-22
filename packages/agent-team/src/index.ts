@@ -12,7 +12,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type {} from '@deepseek-ai/dsh-agent-presets'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
@@ -25,14 +25,13 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
 import { PressurePolicyCoordinator } from './pressure-policy.ts'
 import { ContextManagementCoordinator, type TransitionPlan } from './context-management.ts'
-import { AGENT_TEAM_PLUGIN_ID, createHandoffMessage } from './context-source.ts'
+import { AGENT_TEAM_PLUGIN_ID, createHandoffMessage, isAgentTeamSource, isAgentTeamSourceKind } from './context-source.ts'
 import { carriedInputOf, checkpointByRef, checkpointRefFor, contextProjectionFold, foldContextProjection, isReminderNoticeSummary, timelineCandidates, type AgentTeamContextProjectionState, type TimelineCandidate } from './context-projection.ts'
 import { advanceOwnedSessionEventCursor, type OwnedSessionEventCursor } from './session-event-cursor.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHumanActor, type AgentTeamDurableMemberResult } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, memberMemoryDirectoryName, MemberRuntime } from './member-runtime.ts'
 import type { MemberSkillSelectionRef } from './member-skills.ts'
 import { classifyRecoverableError, RecoveryCoordinator, RECOVERY_MAX_CONSECUTIVE_ERRORS } from './recovery.ts'
-import { SessionRemediation, handoffAlreadyInLog } from './session-remediation.ts'
 import { StoredSessionReadError, StoredSessionReader, sessionFailureOf } from './stored-session-reader.ts'
 import { agentTeamDomainSpec } from './spec.ts'
 import { formatTeamTimestamp } from './time-format.ts'
@@ -445,12 +444,6 @@ export default class AgentTeam extends TypertRemoteService {
    */
   private presenceEpoch = 0
   private readonly changeWaiters = new Set<ChangeWaiter>()
-  /**
-   * The startup-opened remediation instance, held for the restart heal: the
-   * completion-cache domain may only be opened once per plugin lifecycle, so
-   * the restart path reuses this instance instead of opening its own.
-   */
-  private remediation: SessionRemediation | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'agentTeam')
@@ -532,7 +525,6 @@ export default class AgentTeam extends TypertRemoteService {
     const domain = await this.ctx.storageDomain.open(agentTeamDomainSpec)
     this.ctx.effect(() => async () => {
       this.accepting = false
-      this.remediation = undefined
       this.recovery.dispose()
       this.contextManagement.dispose()
       this.pressurePolicy.dispose()
@@ -553,17 +545,6 @@ export default class AgentTeam extends TypertRemoteService {
     const initialization = await ledger.initialize()
     if (initialization.committed) this.emitCommitted(initialization.value)
     this.startAttachmentGc(ledger)
-    // Legacy-artifact remediation runs before any Member activation: no write
-    // lease exists yet, so publishing sibling generations for refused Session
-    // logs cannot race a live writer. Remediation failure never blocks
-    // startup — the next start retries exactly what the cache does not cover.
-    try {
-      const remediation = new SessionRemediation(this.ctx, this.ctx.sessionPersistence, await SessionRemediation.open(this.ctx))
-      this.remediation = remediation
-      await remediation.remediateEnabledMembers(ledger.listMembers())
-    } catch (error) {
-      this.ctx.logger.warn(`agent-team: legacy Session remediation did not run to completion (it will retry on the next start): ${error instanceof Error ? error.message : String(error)}`)
-    }
     // One metadata listing serves every Member restore; per-member list calls
     // would repeat the same I/O linearly during startup.
     const persistedSessions = new Set((await this.persistedSessionHeaders()).map(snapshot => snapshot.header.id))
@@ -803,22 +784,10 @@ export default class AgentTeam extends TypertRemoteService {
     if (handle === undefined) {
       if (member.state !== 'enabled') throw new Error(`Agent Member '${member.handle}' is ${member.state}; only enabled Members can be restarted`)
       this.ctx.logger.info(`agent-team: restarting member '${member.handle}' after a failed activation`)
-      // A deterministic session refusal may be repairable in place: run the
-      // same bounded startup remediation for this one Member before retrying
-      // activation, so the restart heals instead of replaying the failure.
-      const activation = this.memberFailures.get(request.memberId)?.activation
-      if (activation !== undefined && activation.class === 'session-refused' && this.remediation !== undefined) {
-        const outcome = await this.remediation.remediateMember(member)
-        if (outcome.repaired > 0) {
-          this.ctx.logger.info(`agent-team: repaired ${outcome.repaired} refused Session artifact(s) for member '${member.handle}'; retrying activation`)
-        } else if (outcome.completed) {
-          // The walk finished and nothing was provably this plugin's to fix:
-          // a retry would fail identically. Mark the refusal non-remediable
-          // so the surface stops offering restart and says why.
-          this.markRefusalNonRemediable(request.memberId)
-          return Object.freeze({ status: this.memberStatus(member) })
-        }
-      }
+      // There is no write-side repair pass anymore: dsh 0.1.7 converts the
+      // released V3 history at read time, and this bundle no longer authors
+      // the old wrapper shape, so a refusal stays a deterministic failure the
+      // retry reports again rather than something the restart heals.
       await this.reactivateMember(request.memberId)
       return Object.freeze({ status: this.memberStatus(member) })
     }
@@ -1021,7 +990,7 @@ export default class AgentTeam extends TypertRemoteService {
     const body = notifications.length === 0 ? text : `${text}\n\n${this.notificationText(notifications, member.memberId)}`
     const hint = createUserMessage({
       content: [{ type: 'text', text: body }],
-      source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: RECOVERY_NOTICE_SUMMARY },
+      source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: RECOVERY_NOTICE_SUMMARY },
     })
     for (const pending of [...handle.agent.inbox.nextStep, ...handle.agent.inbox.nextTurn]) {
       if (this.isInboxNotice(pending)) handle.agent.inbox.remove(pending.id)
@@ -1417,7 +1386,7 @@ export default class AgentTeam extends TypertRemoteService {
     try {
       const message = createUserMessage({
         content: [{ type: 'text', text: this.dmRelayText(agent, recipient, request.body.trim(), result.value.receipt.occurredAt, result.value.receipt.operationId, request.workspaceId) }],
-        source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'relay' },
+        source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'relay' },
       })
       // An idle recipient gets one ordinary turn; a busy one is steered into
       // its current turn — the same wake split subagent continuations use.
@@ -1946,11 +1915,11 @@ export default class AgentTeam extends TypertRemoteService {
       if (event.type === 'tool/call' && (event.data.name === 'team_claim' || event.data.name === 'team_message')) {
         openAttributions.set(event.data.callId, { name: event.data.name, arguments: event.data.arguments })
       } else if (event.type === 'tool/result') {
-        const block = (event.data.message as { content?: Array<{ type?: string; toolCallId?: string; isError?: boolean }> }).content?.[0]
-        if (block !== undefined && block.toolCallId !== undefined) {
-          const recorded = openAttributions.get(block.toolCallId)
-          if (recorded !== undefined && block.isError !== true) {
-            openAttributions.delete(block.toolCallId)
+        const result = event.data.message
+        if (result.isError !== true) {
+          const recorded = openAttributions.get(result.toolCallId)
+          if (recorded !== undefined) {
+            openAttributions.delete(result.toolCallId)
             try {
               const args = JSON.parse(recorded.arguments) as { taskRef?: unknown; threadRef?: unknown }
               // A claim mutation resolves its Task overlay through the ledger;
@@ -1974,8 +1943,12 @@ export default class AgentTeam extends TypertRemoteService {
           }
         }
       } else if (event.type === 'user/message') {
-        const source = event.data.source as { kind?: string; plugin?: string; form?: string; summary?: string } | undefined
-        if (source?.kind !== 'plugin') continue
+        const source = event.data.source as { kind?: string; form?: string; summary?: string } | undefined
+        // Only this plugin's own delivered notices attribute Threads, by exact
+        // kind identity — the shape written now and the read-time conversion's
+        // rename of the released V3 history. A `plugin:` prefix test would
+        // claim third-party producers' rows as Team facts.
+        if (source === undefined || !isAgentTeamSourceKind(source.kind)) continue
         // Reminder notices never enter attribution — a recovery instruction
         // (or a historical progress-nudge notice, kept decodable in session
         // logs recorded before that system was removed) is not a Team fact.
@@ -2385,12 +2358,11 @@ export default class AgentTeam extends TypertRemoteService {
         // delivered activates the new Session with no handoff in its own
         // log — never treat that as an ordinary blank Member Session. The
         // operation's recorded previous Session (the lineage parent) still
-        // holds the intent; rebuild the handoff from it. "No handoff in its
-        // own log" is judged over both shapes: a generation rescued from the
-        // retired custom kinds carries its handoff as a source the projection
-        // does not classify, and rebuilding on top of it would inject the same
-        // handoff twice.
-        if (!handoffAlreadyInLog(state.boundaries, created.agent.session.ownEvents())) {
+        // holds the intent; rebuild the handoff from it. Presence is judged
+        // by the projection boundary alone: every handoff this Host ever
+        // published classifies under the context source's recognizer,
+        // including the history the read-time conversion renamed.
+        if (!state.boundaries.some(boundary => boundary.source === 'handoff')) {
           await this.reconstructMissingHandoff(member, created.agent)
         }
         // Carried input redelivery binds to the committed transition target —
@@ -2555,14 +2527,6 @@ export default class AgentTeam extends TypertRemoteService {
     return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
   }
 
-  /** Mark a session-refused activation diagnostic as proven non-remediable. */
-  private markRefusalNonRemediable(memberId: AgentTeamMemberId): void {
-    const failures = this.memberFailures.get(memberId)
-    const activation = failures?.activation
-    if (activation === undefined || activation.class !== 'session-refused') return
-    failures!.activation = Object.freeze({ ...activation, remediable: false })
-  }
-
   private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction'): boolean {
     const failures = this.memberFailures.get(memberId)
     if (failures === undefined || failures[slot] === undefined) return false
@@ -2601,7 +2565,7 @@ export default class AgentTeam extends TypertRemoteService {
         const path = this.ctx.workspaceRegistry.get(operation.data.workspaceId)?.path
         const text = `Team participation changed: you have ${operation.kind === 'team/member-workspace-joined' ? 'joined' : 'left'} Workspace ${operation.data.workspaceId}${path === undefined ? ' (path unavailable)' : ` (${JSON.stringify(path)})`}.\nCurrent Workspace ids: ${ledger.workspacesOf(operation.data.memberId).join(', ')}. This replaces earlier participation information. Your Session and cwd have not moved.`
         const notice = createUserMessage({ content: [{ type: 'text', text }],
-          source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Team Workspace participation changed' } })
+          source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Team Workspace participation changed' } })
         try {
           if (agent.status === 'idle' || agent.inbox.nextTurn.some(message => message.source.kind === 'user')) agent.followup(notice)
           else agent.steer(notice)
@@ -2691,7 +2655,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (existingInboxHint !== undefined) agent.inbox.remove(existingInboxHint.id)
     const hint = createUserMessage({
       content: [{ type: 'text', text: this.notificationText(notifications, member.memberId) }],
-      source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
+      source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: INBOX_NOTICE_SUMMARY },
     })
     this.notifiedInbox.set(member.memberId, signature)
     try {
@@ -2710,13 +2674,13 @@ export default class AgentTeam extends TypertRemoteService {
 
   private isInboxNotice(message: UserMessage): boolean {
     const source = message.source
-    return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+    return isAgentTeamSource(source)
       && source.form === 'notice' && source.summary === INBOX_NOTICE_SUMMARY
   }
 
   private isRecoveryNotice(message: UserMessage): boolean {
     const source = message.source
-    return source.kind === 'plugin' && source.plugin === AGENT_TEAM_PLUGIN_ID
+    return isAgentTeamSource(source)
       && source.form === 'notice' && source.summary === RECOVERY_NOTICE_SUMMARY
   }
 

@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | Agent Team 的领域对象、权限、ledger、Task/Claim/Thread Attention/Inbox 语义 | `docs/domain-model.zh.md`、`docs/team-collaboration.zh.md`、`packages/agent-team/src/` 与 tests；历史来由按 `.scratch/README.md` 查 archive | 只在需要确认被消费的 DSH service contract 时查 Harness | 本仓库实现；历史资料不定义当前行为 |
 | Host package 的具体行为 | `packages/agent-team/src/{index,ledger,spec,types}.ts` 及 `tests/` | `docs/architecture.zh.md`、相关 `subsystems/*`，确认 Agent/Session/Workspace/Storage/Typert 的宿主能力 | 本仓库实现；Harness 只拥有底层能力事实 |
-| Model-facing tools 与 preset | `docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`、`packages/agent-team/preset/team-member/agent.cordis.yml` | `docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md` | 本仓库工具语义；Harness 规定扩展接口 |
+| Model-facing tools 与 preset | `docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`、`cordis.patch.yml` 中的 `team-member` 声明行 | `docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md` | 本仓库工具语义；Harness 规定扩展接口 |
 | Client plugin / Team mode / UI | `docs/architecture.zh.md`、`docs/development.zh.md`、`packages/client-agent-team/src/client/`；历史取舍见 `.scratch/archive/2026-08/ui-redesign/` | `docs/subsystems/client-modules.md`、`.agents/notes/implemented/architecture/2026-07-23-client-plugin-loading-model.md`、`packages/client/AGENTS.md`、对应 shipped UI package 源码 | 本仓库实现与 UI 验收规则；Harness 规定加载、slot、React 分层 |
 | Typed Remote | `docs/architecture.zh.md`、`packages/agent-team/src/index.ts` 的 `@Remote`、`scripts/generate-typert.mjs` | `docs/subsystems/typert.md`、`packages/typert/{generator,loader,protocol,registry}`、`packages/api/remotes` | Harness 规定生成/装配，Host 与 Team 规定远程方法 |
 | 发布、profile、bundle 安装 | `README.md` / `README.zh.md`、`cordis.patch.yml`、根 `package.json` | `README.md`、`docs/cookbook/adding-a-package.md`、profile/bundle 文档和 `packages/bundle/*` | Harness 规定安装器与 bundle 机制；本仓库规定单一外部 bundle 的布局 |
@@ -38,9 +38,9 @@
 
 ### 2.2 修改 model-facing tool 或 preset
 
-- 本仓库：`docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`（六个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
+- 本仓库：`docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`（六个工具及运行时依赖）、`cordis.patch.yml` 中的 `team-member` 声明行（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
 - Harness 文档：`docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md`、`docs/subsystems/system-prompt.md`。
-- Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-presets/src`。
+- Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-preset{,-registry}/src`。
 
 Tool schema、canonical output、execute 与 presentation 是不同层。不要让 Host service 直接变成 global tool；不要把 `output`、`execute`、`timeoutMs` 等 implementation fields 泄漏到 model request。Tool 只在显式 team preset scope 中存在，普通 Session 不应出现 Team tools 或 guidance。
 

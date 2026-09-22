@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconEllipsisOutline16, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconEllipsisOutlineRegular, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './sidebar.module.css'
 
 /**
@@ -44,7 +44,7 @@ export function TeamRowMenu({ label, items, onSelect, onOpenChange }: {
           aria-expanded={open}
           onClick={(event) => { event.stopPropagation(); toggle() }}
         >
-          <IconEllipsisOutline16 />
+          <IconEllipsisOutlineRegular />
         </button>
       )}
     />

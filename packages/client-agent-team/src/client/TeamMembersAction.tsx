@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { IconUserOutline16, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconUserOutlineRegular, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSettingsProps } from './slots.ts'
 import { TeamMemberRow } from './TeamMemberRow.tsx'
 import membersCss from './members.module.css'
@@ -38,7 +38,7 @@ export function TeamMembersAction({ wide, loadMemberGroups, t }: TeamMembersActi
     <>
       <Tooltip label={t('members')} delayMs={500} disabled={wide}>
         <button ref={triggerRef} type="button" className={wide ? css.settingsAction : `${css.settingsAction} ${css.rail}`} aria-label={t('members')} aria-haspopup="dialog" onClick={openMembers}>
-          <IconUserOutline16 size={wide ? 16 : 18} />
+          <IconUserOutlineRegular size={wide ? 16 : 18} />
           {wide && <span>{t('members')}</span>}
         </button>
       </Tooltip>

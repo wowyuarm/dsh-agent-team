@@ -12,7 +12,7 @@ import type {
   AgentTeamView,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, DisclosureRow, IconChevronLeftOutline14, IconChecklistOutline14, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, DisclosureRow, IconChevronLeftOutlineRegular, IconChecklistOutlineRegular, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
@@ -720,7 +720,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
 
   return <main className={css.surface} data-team-thread={threadRef}>
     <div className={css.surfaceHeader}>
-      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutline14 />} onClick={backToWorkspace}>{backLabel}</Button></div>
+      <div className={css.backRow}><Button size="sm" icon={<IconChevronLeftOutlineRegular />} onClick={backToWorkspace}>{backLabel}</Button></div>
       <header className={css.headerRow}>
         <div className={css.headerCopy}>
           <div className={threadCss.titleLine}>
@@ -780,7 +780,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           expandable
           open={claimsOpen}
           onToggle={() => { setClaimsOpen(current => !current) }}
-          icon={<IconChecklistOutline14 size={14} />}
+          icon={<IconChecklistOutlineRegular size={14} />}
           title={`${t('claims')} · ${taskClaims.length}`}
         >
           <div className={threadCss.claimList}>

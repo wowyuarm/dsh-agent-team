@@ -16,13 +16,13 @@ import Include from '@deepseek-ai/cordis-plugin-include'
 import Group from '@deepseek-ai/cordis-plugin-group'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import AgentPresets, { type AgentPreset } from '@deepseek-ai/dsh-agent-presets'
+import AgentPresetPlugin from '@deepseek-ai/dsh-agent-preset'
+import AgentPresetRegistry, { type AgentPreset, type PresetDefinition } from '@deepseek-ai/dsh-agent-preset-registry'
 import LlmRuntime, { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
-import { SessionRemediation } from '../src/session-remediation.ts'
 import SessionTitle from '@deepseek-ai/dsh-session-title'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -148,7 +148,7 @@ type PersistenceBackend = 'jsonl'
  * While `failingMount` is set, preset mounts throw, as a Host restart against
  * a broken preset would, leaving an enabled Member without a live session.
  */
-class TestablePresets extends AgentPresets {
+class TestablePresets extends AgentPresetRegistry {
   readonly orphaned = new WeakSet<Context>()
   failingMount = false
 
@@ -185,37 +185,27 @@ async function realHarness(
   const root = reopen?.root ?? await mkdtemp(join(tmpdir(), 'dsh-agent-team-member-'))
   const project = join(root, 'project')
   const persistence = join(root, 'sessions')
-  const presetRoot = join(root, 'presets')
-  const presetDir = join(presetRoot, 'team-member')
-  if (reopen === undefined) await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
+  if (reopen === undefined) await Promise.all([mkdir(project), mkdir(persistence)])
   process.env.DSH_HOME = join(root, 'dsh-home')
-  // rc.1 preset health check resolves every row from disk: bare internal
-  // loader names are reported broken. Real package rows resolve through the
-  // self-linked node_modules; the compaction stub is a real file the row
-  // points at with a file: URL.
+  // The preset's compaction row points at a real file with a file: URL, so
+  // its health check and the `compaction` service are both genuine.
   const compactionStub = join(root, 'compaction-stub.mjs')
   await writeFile(compactionStub, [
     "export const name = 'test-compaction'",
     "export function apply(scope) { scope.provide('compaction', { compactNow: async () => null, compactIfNeeded: async () => null }) }",
     '',
   ].join('\n'))
-  await writeFile(join(presetDir, 'agent.cordis.yml'), [
-    "- id: member-context",
-    "  name: '@wowyuarm/dsh-agent-team/member-context'",
-    "- id: member-time-context",
-    "  name: '@wowyuarm/dsh-agent-team/member-time-context'",
-    "- id: team-tools",
-    "  name: '@wowyuarm/dsh-agent-team/tools'",
-    "- id: compaction",
-    "  name: cordis:group",
-    "  group: true",
-    "  isolate:",
-    "    compaction: true",
-    "  config:",
-    `    - id: compaction-stub`,
-    `      name: ${JSON.stringify(pathToFileURL(compactionStub).href)}`,
-    '',
-  ].join('\n'))
+  // The team-member definition as one declarative row, the same shape the
+  // shipped cordis.patch.yml declares; bare internal loader names resolve
+  // through the self-linked node_modules.
+  const teamMemberPlugins: PresetDefinition['plugins'] = [
+    { id: 'member-context', name: '@wowyuarm/dsh-agent-team/member-context' },
+    { id: 'member-time-context', name: '@wowyuarm/dsh-agent-team/member-time-context' },
+    { id: 'team-tools', name: '@wowyuarm/dsh-agent-team/tools' },
+    { id: 'compaction', name: 'cordis:group', group: true, isolate: { compaction: true }, config: [
+      { id: 'compaction-stub', name: pathToFileURL(compactionStub).href },
+    ] },
+  ]
 
   const ctx = new Context()
   // rc.1: preset health resolves package rows by walking node_modules above
@@ -228,7 +218,7 @@ async function realHarness(
   await ctx.plugin(LlmRuntime)
   ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SessionStore)
-  // rc.1: AgentPresets injects 'sessionProjections'; the roster stays PENDING without it.
+  // The preset registry injects 'sessionProjections'; the roster stays PENDING without it.
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -248,10 +238,9 @@ async function realHarness(
   ctx.provide('jobs', { list: () => jobsState.jobs })
   if (persistenceBackend === 'jsonl') await ctx.plugin(JsonlSessionPersistence, { root: persistence })
   await ctx.plugin(SessionTitle, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
-  const presetsConfig = (): { default: string; roots: { path: string; trust: 'system' }[]; includeShippedRoot: boolean; includeUserRoot: boolean } => ({
-    default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false,
-  })
-  await ctx.plugin(TestablePresets, presetsConfig())
+  // The registry injects 'sessionProjections'; the roster stays PENDING without it.
+  await ctx.plugin(TestablePresets, { default: 'team-member' })
+  await ctx.plugin(AgentPresetPlugin, { id: 'team-member', plugins: teamMemberPlugins })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
@@ -846,8 +835,8 @@ describe('Agent Team Member lifecycle', () => {
     const relay = recipient.session.ownEvents().findLast(event => event.type === 'user/message'
       && (event.data as { source?: { form?: string } }).source?.form === 'relay')
     expect(relay).toBeDefined()
-    const relayData = relay!.data as { content: Array<{ type: string; text: string }>; source: { kind: string; plugin: string; form: string } }
-    expect(relayData.source).toMatchObject({ kind: 'plugin', form: 'relay' })
+    const relayData = relay!.data as { content: Array<{ type: string; text: string }>; source: { kind: string; form: string } }
+    expect(relayData.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'relay' })
     expect(relayData.content[0]!.text).toContain('Direct message from @builder')
     expect(relayData.content[0]!.text).toContain('quick check: is the build green?')
 
@@ -944,11 +933,11 @@ describe('Agent Team Member lifecycle', () => {
     const last = JSON.stringify(adapter.requests[2]!.messages)
     // The closing step still carries the turn's single snapshot in history.
     const lastSnapshots = adapter.requests[2]!.messages.filter(message =>
-      (message as { source?: { plugin?: string } }).source?.plugin === 'wowyuarm-agent-team-member-time-context')
+      (message as { source?: { kind?: string } }).source?.kind === 'wowyuarm-agent-team-member-time-context')
     expect(lastSnapshots).toHaveLength(1)
     expect(last).toContain('Team clock sampled while preparing turn ')
     const snapshots = agent.session.ownEvents().filter(event => event.type === 'user/message'
-      && (event.data as { source?: { plugin?: string; form?: string } }).source?.plugin === 'wowyuarm-agent-team-member-time-context')
+      && (event.data as { source?: { kind?: string; form?: string } }).source?.kind === 'wowyuarm-agent-team-member-time-context')
     expect(snapshots).toHaveLength(1)
     const data = snapshots[0]!.data as { content: Array<{ type: string; text: string }>; source: { kind: string; form: string; sections?: unknown[] } }
     expect(data.source.form).toBe('snapshot')
@@ -995,10 +984,8 @@ describe('Agent Team Member lifecycle', () => {
     expect(afterRejection).toContain('unread_required')
     const results = agent.session.ownEvents().filter(event => event.type === 'tool/result')
     expect(results).toHaveLength(2)
-    expect(results.map(result => result.data.message.content[0])).toEqual([
-      expect.objectContaining({ type: 'tool-result', isError: false }),
-      expect.objectContaining({ type: 'tool-result', isError: false }),
-    ])
+    // 0.1.7 carries the outcome on the message, not inside a tool-result block.
+    expect(results.map(result => (result.data.message as { isError?: boolean }).isError)).toEqual([false, false])
   })
 
   it('coalesces updates and delivers a running Member hint only at the next step boundary', async () => {
@@ -1538,7 +1525,7 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     const firstUserEvent = liveAfter.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstUserEvent?.type).toBe('user/message')
     if (firstUserEvent?.type !== 'user/message') throw new Error('expected handoff user message')
-    expect(firstUserEvent.data.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(firstUserEvent.data.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
     expect(handoffOf(firstUserEvent.data)).toMatchObject({
       previousSessionId, newSessionId, trigger: 'model',
     })
@@ -1842,10 +1829,10 @@ async function waitForArchived(archived: readonly SessionId[], ...sessionIds: re
     // generation to surface it before asserting.
     await waitFor(() => {
       const surfaced = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
-      return surfaced.some(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Direct follow-up that arrived during the transition')) ? surfaced : undefined
+      return surfaced.some(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Direct follow-up that arrived during the transition')) ? surfaced : undefined
     })
     const userEvents = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
-    const bodies = userEvents.map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+    const bodies = userEvents.map(event => (event as { data: { content: ReadonlyArray<{ type: string; text?: string }> } }).data.content
       .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
     const followUpCount = bodies.filter(body => body.includes('Direct follow-up that arrived during the transition')).length
     expect(followUpCount).toBe(1)
@@ -2002,11 +1989,11 @@ async function waitForArchived(archived: readonly SessionId[], ...sessionIds: re
     const firstUser = liveAfter.session.ownEvents().find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected first user message')
-    expect(firstUser.data.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(firstUser.data.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
     // The rederived Inbox still arrives afterwards — unread work is not lost.
     await waitFor(() => {
       const events = liveAfter.session.ownEvents().filter(event => event.type === 'user/message')
-      return events.some(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Team Inbox has unread work')) ? true : undefined
+      return events.some(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Team Inbox has unread work')) ? true : undefined
     })
   })
 
@@ -2083,7 +2070,7 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     const firstUser = afterTurn2.find(event => event.type === 'user/message')
     expect(firstUser?.type).toBe('user/message')
     if (firstUser?.type !== 'user/message') throw new Error('expected continuation user message')
-    expect(firstUser.data.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(firstUser.data.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
     expect(continuationCheckpointRefOf(firstUser.data)).toBeDefined()
   })
 
@@ -2482,7 +2469,7 @@ describe('Agent Team pressure policy integration (ticket 03)', () => {
       && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff')
     expect(notices()).toHaveLength(1)
     const notice = notices()[0]!
-    expect((notice.data as { content: Array<{ type: string; text?: string }> }).content[0]?.text).toContain('context_rollover')
+    expect((notice.data as { content: ReadonlyArray<{ type: string; text?: string }> }).content[0]?.text).toContain('context_rollover')
 
     adapter.enqueue(textResponse('still under pressure.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'third turn' }], source: { kind: 'user' } }))
@@ -2857,7 +2844,7 @@ describe('Agent Team pressure policy integration (ticket 03)', () => {
     const notices = live.session.ownEvents().filter(event => event.type === 'user/message'
       && (event.data as { source?: { summary?: string } }).source?.summary === 'Context pressure: prepare a handoff')
     expect(notices).toHaveLength(1)
-    const notice = notices[0] as { type: 'user/message'; data: { content: Array<{ type: string; text?: string }> } }
+    const notice = notices[0] as { type: 'user/message'; data: { content: ReadonlyArray<{ type: string; text?: string }> } }
     const noticeText = notice.data.content[0]?.text ?? ''
     // The notice quotes the NARROW route's budgets, not the default's.
     expect(noticeText).toContain('the handoff budget is 88000')
@@ -3166,14 +3153,14 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const resumed = await waitFor(() => ctx.agents.get(restarted.member.sessionId)!)
     await waitFor(() => {
       const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
-        .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+        .map(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content))
       return bodies.some(body => body.includes('Direct input that arrived right before the crash')) ? true : undefined
     })
     await resumed.whenIdle()
     await new Promise(resolve => setTimeout(resolve, 100))
 
     const userEvents = resumed.session.ownEvents().filter(event => event.type === 'user/message')
-    const bodies = userEvents.map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+    const bodies = userEvents.map(event => (event as { data: { content: ReadonlyArray<{ type: string; text?: string }> } }).data.content
       .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
     const carried = bodies.filter(body => body.includes('Direct input that arrived right before the crash'))
     expect(carried).toHaveLength(1)
@@ -3272,7 +3259,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const resumed = await waitFor(() => ctx.agents.get(currentSessionId)!)
     await resumed.whenIdle()
     const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
-      .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+      .map(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content))
     expect(bodies.filter(body => body.includes('P1 carried input.'))).toHaveLength(1)
   })
 
@@ -3335,7 +3322,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     // input that would have ridden behind the handoff never surfaces.
     await resumed.whenIdle()
     const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
-      .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+      .map(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content))
     expect(bodies.some(body => body.includes('P2 carried input that must be skipped.'))).toBe(false)
     warn.mockRestore()
   })
@@ -3428,7 +3415,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     expect(ctx.agents.get(failed.member.sessionId)).toBeUndefined()
   })
 
-  it('blocks activation with a session-refused diagnostic when the current binding is refused, and marks the refusal non-remediable after a heal attempt', async () => {
+  it('blocks activation with a session-refused diagnostic when the current binding is refused, and a restart replays the deterministic refusal', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId, teamFiber: initialFiber } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('ref-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -3454,17 +3441,19 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     })
     expect(blocked.diagnostic).toMatchObject({ class: 'session-refused', sessionId, detail: 'cannot safely transform unclassified message source (test seam)' })
 
-    // The restart heal runs the bounded remediation for this Member; nothing
-    // is provably this plugin's to fix (the refusal reports no artifact
-    // location), so the diagnostic is marked non-remediable and activation
-    // is NOT retried — restart stops being offered as a fix.
+    // No write-side repair pass exists anymore: the read-time conversion owns
+    // V3 history, and this bundle no longer authors the refused wrapper
+    // shape. A restart therefore re-runs the activation, which replays the
+    // deterministic refusal and reports it again — never silently, and never
+    // claiming the refusal was healed.
     const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('ref-recover'), workspaceId, memberId })
     expect(recovered.status.availability).toBe('unavailable')
-    expect(recovered.status.diagnostic).toMatchObject({ class: 'session-refused', remediable: false })
+    expect(recovered.status.diagnostic).toMatchObject({ class: 'session-refused', sessionId, detail: 'cannot safely transform unclassified message source (test seam)' })
+    expect(recovered.status.diagnostic?.remediable).toBeUndefined()
     expect(ctx.agents.get(sessionId)).toBeUndefined()
   })
 
-  it('retries activation after the restart heal repairs a refused artifact', async () => {
+  it('recovers a member by re-running activation once the refusal is gone', async () => {
     const adapter = new ScriptedAdapter()
     const { ctx, workspaceId, teamFiber: initialFiber } = await realHarness(adapter)
     const channel = await ctx.agentTeam.createChannel({ requestId: requestId('heal-channel'), workspaceId, name: 'engineering', description: 'Engineering work' })
@@ -3485,17 +3474,12 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
       return status !== undefined && status.availability === 'unavailable' ? status : undefined
     })
 
-    // The heal repairs one artifact; activation is retried. The refusal is
-    // still in place in this fixture, so the retried activation fails again
-    // — but through the retry path: the refreshed diagnostic carries no
-    // non-remediable verdict.
-    const heal = vi.spyOn(SessionRemediation.prototype, 'remediateMember').mockResolvedValue({ repaired: 1, untouched: 0, completed: true, cacheHit: false })
+    // The refusal was transient (an out-of-band repair removed it): the
+    // restart retry path re-runs the activation, which now succeeds.
+    ctx.sessionPersistence.open = realOpen
     const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('heal-recover'), workspaceId, memberId })
-    expect(heal).toHaveBeenCalledTimes(1)
-    heal.mockRestore()
-    expect(recovered.status.availability).toBe('unavailable')
-    expect(recovered.status.diagnostic).toMatchObject({ class: 'session-refused' })
-    expect(recovered.status.diagnostic?.remediable).toBeUndefined()
+    expect(recovered.status.availability).toBe('active')
+    expect(recovered.status.diagnostic).toBeUndefined()
   })
 
   it('logs a warning with the member handle when activation fails', async () => {
@@ -3539,7 +3523,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const threadA = started.thread.threadRef
     adapter.enqueue(textResponse('thread A acknowledged.'))
     await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('thread A work')) ? true : undefined)
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('thread A work')) ? true : undefined)
     await live.whenIdle()
 
     // The timeline marks the Thread-A delivery boundary as a selectable
@@ -3557,7 +3541,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const threadB = second.thread.threadRef
     adapter.enqueue(textResponse('thread B acknowledged.'))
     await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('thread B work')) ? true : undefined)
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('thread B work')) ? true : undefined)
     await live.whenIdle()
     const timelineB = await ctx.agentTeam.contextTimelineForAgent(live, { memberId })
     const boundaries = timelineB.items.filter(item => item.source === 'team-boundary')
@@ -3612,7 +3596,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const live = ctx.agents.get(firstSessionId)!
     adapter.enqueue(textResponse('gen1 acknowledged.'))
     await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Gen1 thread work')) ? true : undefined)
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Gen1 thread work')) ? true : undefined)
     await live.whenIdle()
 
     // Fresh rollover; generation 2 receives its own mention whose notice
@@ -3633,7 +3617,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     if (second.kind !== 'committed') throw new Error(`expected committed send, received ${second.kind}`)
     adapter.enqueue(textResponse('gen2 acknowledged.'))
     await waitFor(() => next.session.ownEvents().some(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Gen2 thread work')) ? true : undefined)
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Gen2 thread work')) ? true : undefined)
     await next.whenIdle()
 
     // The generation-2 timeline walks the archived ancestor: BOTH
@@ -3690,7 +3674,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     if (notice.kind !== 'committed') throw new Error(`expected committed send, received ${notice.kind}`)
     adapter.enqueue(textResponse('thread A context read.'))
     await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
     await live.whenIdle()
 
     await ctx.agentTeam.readThreadForAgent(live, { requestId: requestId('twostart-read'), workspaceId, threadRef: notice.thread.threadRef })
@@ -3733,7 +3717,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     if (notice.kind !== 'committed') throw new Error(`expected committed send, received ${notice.kind}`)
     adapter.enqueue(textResponse('thread A context read.'))
     await waitFor(() => live.session.ownEvents().some(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Thread A context')) ? true : undefined)
     await live.whenIdle()
 
     const started = await ctx.agentTeam.sendMessage({ asTask: true, requestId: requestId('mix-b-task'), workspaceId, channelRef: channel.channel.channelRef, body: 'Task B on another thread', recipients: [memberId] })
@@ -3809,14 +3793,14 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     disposeObserver()
     await waitFor(() => {
       const bodies = next.session.ownEvents().filter(event => event.type === 'user/message')
-        .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+        .map(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content))
       return bodies.some(body => body.includes('Team Inbox has unread work')) ? true : undefined
     })
     await next.whenIdle()
     await new Promise(resolve => setTimeout(resolve, 100))
 
     const bodies = next.session.ownEvents().filter(event => event.type === 'user/message')
-      .map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+      .map(event => (event as { data: { content: ReadonlyArray<{ type: string; text?: string }> } }).data.content
         .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
     const handoffIndex = bodies.findIndex(body => body.includes('order handoff'))
     const carriedIndex = bodies.findIndex(body => body.includes('Carried direct input in the transition window'))
@@ -3885,7 +3869,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const pendingCarried = [...firstRestartAgent.inbox.nextStep, ...firstRestartAgent.inbox.nextTurn]
       .filter(message => JSON.stringify(message.content).includes('Pending-splice carried input'))
     const surfacedCarried = firstRestartAgent.session.ownEvents().filter(event => event.type === 'user/message'
-      && JSON.stringify((event as { data: { content: unknown[] } }).data.content).includes('Pending-splice carried input'))
+      && JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content).includes('Pending-splice carried input'))
     expect(pendingCarried.length).toBeGreaterThanOrEqual(1)
     expect(surfacedCarried).toHaveLength(0)
 
@@ -3895,7 +3879,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     adapter.release.resolve()
     await waitFor(() => {
       const surfaced = firstRestartAgent.session.ownEvents().filter(event => event.type === 'user/message')
-        .map(event => JSON.stringify((event as { data: { content: unknown[] } }).data.content))
+        .map(event => JSON.stringify((event as { data: { content: readonly unknown[] } }).data.content))
       return surfaced.some(body => body.includes('Pending-splice carried input')) ? true : undefined
     })
     await firstRestartAgent.whenIdle()
@@ -3916,7 +3900,7 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     await new Promise(resolve => setTimeout(resolve, 100))
 
     const bodies = resumed.session.ownEvents().filter(event => event.type === 'user/message')
-      .map(event => (event as { data: { content: Array<{ type: string; text?: string }> } }).data.content
+      .map(event => (event as { data: { content: ReadonlyArray<{ type: string; text?: string }> } }).data.content
         .filter(block => block.type === 'text').map(block => block.text ?? '').join(''))
     const carried = bodies.filter(body => body.includes('Pending-splice carried input'))
     expect(carried).toHaveLength(1)

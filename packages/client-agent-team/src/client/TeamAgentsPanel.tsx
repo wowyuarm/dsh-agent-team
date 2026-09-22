@@ -5,7 +5,7 @@ import type {
   AgentTeamModelSelection,
 } from '@wowyuarm/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconArchiveOutline20, IconEditOutline16, IconPlayOutline16, IconPlusOutline16, IconRefreshOutline16, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconEditOutlineRegular, IconPlayOutlineRegular, IconPlusOutlineRegular, IconRefreshOutlineRegular, Input, Modal, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamMemberIdentity } from './TeamMemberRow.tsx'
 import { SortableRow, useSidebarRowDrag } from './sidebar-drag.tsx'
@@ -248,7 +248,7 @@ export function TeamAgentsPanel({ workspaceId, loadMembers, subscribeChanges, ad
         actions={(
           <Tooltip label={t('addAgent')} delayMs={500}>
             <button ref={triggerRef} type="button" className={css.iconButton} aria-label={t('addAgent')} onClick={() => { setError(undefined); setImporting(false); setFormOpen(true) }}>
-              <IconPlusOutline16 size={14} />
+              <IconPlusOutlineRegular size={14} />
             </button>
           </Tooltip>
         )}
@@ -360,10 +360,10 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
           <TeamRowMenu
             label={t('actionsAgent', { name: status.member.handle })}
             items={[
-              { id: 'edit', label: t('editAgent'), icon: <IconEditOutline16 /> },
-              ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutline16 /> }] : []),
-              ...(status.availability === 'unavailable' && restartOffered(status) ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutline16 /> }] : []),
-              { id: 'archive', label: t(withdrawing ? 'withdrawAgent' : 'archiveAgent'), icon: <IconArchiveOutline20 size={16} />, danger: true },
+              { id: 'edit', label: t('editAgent'), icon: <IconEditOutlineRegular /> },
+              ...(status.presence === 'error' ? [{ id: 'resume', label: t('resumeAgent'), icon: <IconPlayOutlineRegular /> }] : []),
+              ...(status.availability === 'unavailable' && restartOffered(status) ? [{ id: 'restart', label: t('restartAgent'), icon: <IconRefreshOutlineRegular /> }] : []),
+              { id: 'archive', label: t(withdrawing ? 'withdrawAgent' : 'archiveAgent'), icon: <IconArchiveOutlineRegular size={16} />, danger: true },
             ]}
             onSelect={(id) => {
               if (id === 'edit') setEditing(true)

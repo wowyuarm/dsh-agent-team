@@ -202,7 +202,7 @@ Harness 随附一套 experimental Agent Teams，以独立 profile bundle 形式�
 
 ## 6. 当前基线
 
-当前 Team bundle 的已认证基线是 DSH `0.1.6-alpha.1`；该切点的记录见本节最后一个小节，紧随其后的几段保留产生上一条基线的 `0.1.5` 历史。DSH peers 正好声明这条已认证线，现为 `>=0.1.6-alpha.1 <0.1.7`，因此本仓库尚未验证的线会落在声明区间之外，而不是在未经核实的兼容声明下被装上。sqlite 后端保持 vendored fork，根本不是 dependency（GitHub issue #28）：上游包只以 devDependency 钉在 fork 来源版本 0.1.5-rc.2，用作字节兼容 fixture 参照；每次兼容认证先把 fork 与该版本文件对一遍 diff，再做其他事。
+当前 Team bundle 的已认证基线是 DSH `0.1.7-alpha.1`；该切点的记录见本节最后一个小节，紧随其后的几段保留产生前几条基线的 `0.1.5`/`0.1.6` 历史。DSH peers 正好声明这条已认证线，现为 `>=0.1.7-alpha.1 <0.1.8`，因此本仓库尚未验证的线会落在声明区间之外，而不是在未经核实的兼容声明下被装上。sqlite 后端保持 vendored fork，根本不是 dependency（GitHub issue #28）：上游包只以 devDependency 钉在 fork 来源版本 0.1.5-rc.2，用作字节兼容 fixture 参照；每次兼容认证先把 fork 与该版本文件对一遍 diff，再做其他事。
 
 被替换的 `0.1.5-rc.1` 基线曾在 peers `>=0.1.5-rc.1 <0.1.6` 上完成认证，覆盖 Typert 生成、完整类型检查、499 个测试（1 个跳过）、构建、打包检查、lint，以及真实 browser composition：外部发布布局安装、Remote mount、Team mode 进入和退出，以及普通 DSH surface 恢复。
 
@@ -237,3 +237,14 @@ Session 格式、迁移审计准入的 source-kind 列表、以及随包 preset 
 这份全绿结果要求以**非特权**用户运行。`session-remediation.spec.ts` 通过把 Session 目录 `chmod` 成 `0o500` 来注入一次瞬时写失败，而以 root 运行的进程会绕过目录模式位（`CAP_DAC_OVERRIDE`），注入的失败从未发生，该测试对已提交读取的断言因而失败。以 root 运行时套件报告 648 通过 / 1 失败；以普通用户运行则是 649 通过 / 0 失败。请以非 root 用户运行套件——在 root 下，这一处失败是环境产物，而不是缺陷。
 
 同一处 computed-generation 变化除了打断浏览器通道，也波及 `npm run preview` 与 `npm run preview:ui`：两者以相同方式暂存 bundle，因此同样需要 install anchor。`npm run test:browser` 并不覆盖它们，认证时必须手工启动一次——缺少 anchor 时，它们会表现为 `failed to import` 行；对无密钥 fixture 而言，则是 `ctx.agentTeam` 为 `undefined`。
+
+### DSH 0.1.7-alpha.1
+
+DSH `0.1.7-alpha.1` 已认证，并推动基线前移。它落在旧 `>=0.1.6-alpha.1 <0.1.7` peers 之外——比较符只在自身 base tuple 上开放预发布——所以全部 `@deepseek-ai/dsh-*` peers 整体移动到 `>=0.1.7-alpha.1 <0.1.8`。被移除的 `@deepseek-ai/dsh-agent-presets` peer 随其指名的包一并删除；本轮组合中实际指名的两个包（`@deepseek-ai/dsh-agent-preset`、`@deepseek-ai/dsh-agent-preset-registry`）以同一区间成为 peers。sqlite 后端仍不进 `dependencies`（vendored fork，GitHub issue #28）：本轮把 fork 与钉住的上游 `0.1.5-rc.2` 源码对过 diff——`index.ts` 与 `schema.ts` 实质未变，`unit.ts` 仅上游把 `as unknown as` 简化为 `as`——fork 无需动作。
+
+本轮由两处上游契约变化驱动，且都需要源码适配：
+
+- **preset 体系被替换。** `@deepseek-ai/dsh-agent-presets`（经 `roots`/`trust` 的文件系统发现）已从上游包列表与 npm 移除；preset 改为声明行——`@deepseek-ai/dsh-agent-preset-registry`（Config `{ default, selectedDefault?, modeSelectionEnabled? }`，host 级单例）加上每个 preset 一行 `@deepseek-ai/dsh-agent-preset` 声明（`config: { id, plugins: EntryOptions[] }`）。Team 的 `cordis.patch.yml` 现在在同一个 `isolate: { agentPresets: true }` group 内声明注册表（`default: team-member`）与 `team-member` 定义行，把退役 roster 的条目列表原样内联为 `config.plugins`——包括两处 `!!js` 平台表达式，其语义由 `AgentPreset` 对子表达式的推迟求值保留。服务调用面（`inject: ['agentPresets']`、`serviceFor`、`composedPreset`、`mount`、`list`）未变，因此 Host 调用点一个未动；`packages/agent-team/src/preset-roster.ts` 与 `preset/` 目录是删除而不是改写，浏览器通道的 overlay（`scripts/agent-team-overlay.mjs`，两个 preview runner 共用）携带同样的行。隔离层保住了 roster 曾保证的不变量：成员 Session 组合 `team-member`，普通 Session 仍组合宿主默认的 `standard`。
+- **Session format V4 要求生产者署名的 message source。** 每条持久 message source 必须携带其生产者自身的 kind（非空，且不能是 `plugin`）；jsonl 写入路径以 `format v4 message requires a producer-owned source kind` 拒绝退役的 `{ kind: 'plugin', plugin: … }` wrapper。本 bundle 的九个写点现在写入三个生产者 id（`@wowyuarm/dsh-agent-team`、`wowyuarm-agent-team-member-context`、`wowyuarm-agent-team-member-time-context`）作为 kind；released V3 历史无需在磁盘上改写——V3→V4 读时转换把每个 wrapper 改名为 `plugin:<producer>`、删掉 `plugin` 键、保留 `form`/`sections`/`summary`。读侧对全部三个 id 的两种形状按精确身份识别（绝不是 `plugin:` 前缀判定——同一份日志里就有第三方行如 `tool-jobs`，它们保留自己的 kind），识别收敛在 `packages/agent-team/src/context-source.ts` 加上两个 per-Member 生产者各自的判定。`tests/context-source-migration.spec.ts` 用官方准入与转换函数直接驱动这些形状，正控与负控都在。
+
+启动期写侧修复（`session-remediation.ts`）在同一变更中移除，已经 Human 批准：它发布的正是 V4 写入拒绝的 wrapper，留着会主动制造读不回来的文件；而它针对的 0.1.5 前自定义 kind 在读时转换之前就被 released v2→v3 迁移链拒绝。确定性的 `session-refused` 激活失败现在在每次重启重试中报告同一失败，既不被修复、也不再标记 non-remediable；`remediable` diagnostic 字段保留在 Client 读取的渲染契约中，但已无 Host 路径设置它。

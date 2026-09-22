@@ -6,7 +6,8 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/clie
 import type { AgentTeamAddMemberRequest, AgentTeamCreateChannelRequest, AgentTeamMemberDiagnostic, AgentTeamReplyRequest, AgentTeamSendMessageRequest } from '@wowyuarm/dsh-agent-team/types'
 import { COMMON_NS, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn, zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/index.ts'
-import { SlotTestRuntime, stubSettingsScope } from '@deepseek-ai/dsh-client-test-runtime'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { SlotTestRuntime, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { apply as applySidebar, inject as injectSidebar } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import { apply as applyConversation, inject as injectConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -52,13 +53,25 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   runtime.slots.installLocale(locale)
   runtime.ctx.provide('layout', { toggleSidebar: vi.fn() })
   // rc.1: the shipped sidebar injects 'uiWorkspace'; the takeover bench
-  // provides a minimal navigation double.
-  runtime.ctx.provide('uiWorkspace', { startSession: vi.fn(), connectWorkspace: vi.fn(async () => 'ordinary-session') })
-  // The shipped ConversationRoot needs a settings scope; the composer's
-  // session-scoped inject resolves the conversation service lazily, so a
-  // placeholder carrying the attachment-registry verbs the InputBar calls
-  // keeps the root resident in every seat state.
-  runtime.ctx.provide('settingsScope', { bind: () => stubSettingsScope().scope } as never)
+  // provides a minimal navigation double whose openSession mirrors the
+  // shipped selection contract — retire the previous `mainView` reference,
+  // retain the next — so retention-based reads see one main session.
+  let mainReference: { release(): void } | undefined
+  const openSession = vi.fn((sessionId: string): void => {
+    mainReference?.release()
+    mainReference = runtime.sessions.retain(sessionId as never, { source: 'mainView' })
+  })
+  runtime.ctx.provide('uiWorkspace', { startSession: vi.fn(), connectWorkspace: vi.fn(async () => 'ordinary-session'), openSession })
+  // The shipped conversation reads the developer-tools switch and per-domain
+  // config scopes through the config-form registry.
+  const developerTools = createSnapshotStore(true)
+  runtime.ctx.provide('configForms', {
+    developerTools: {
+      enabled: developerTools,
+      setEnabled: async (enabled: boolean) => { developerTools.set(enabled) },
+    },
+    get: () => stubConfigForm().scope,
+  } as never)
   runtime.ctx.provide('conversation', {
     input: { for: () => ({ submit: vi.fn() }) },
     createDraftImages: () => [],
@@ -402,12 +415,24 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   /** Simulates an externally driven channel/membership commit reaching every workspace waiter. */
   const seedChannel = (channel: Record<string, unknown>) => { channels = [...channels, channel] }
   const publishChannelUpdate = () => { wakeAll() }
-  // rc.1: the client injects the model-catalog sub-namespace explicitly.
-  runtime.ctx.provide('remote.session', { modelCatalog })
-  runtime.ctx.provide('remote', { session: { modelCatalog }, agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes }, $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options), $mount: async () => async () => {} } as never)
-  runtime.ctx.provide('remote.agentTeam', {})
+  // rc.1: the runtime owns one TestRemote; the bench scripts the namespaces
+  // the mounted features reach (remote.<name> injects included) and attaches
+  // the change-stream and generated-remote-mount faces the shipped double
+  // refuses by contract.
+  runtime.remote.provideNamespaces({
+    session: { modelCatalog },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes },
+  })
+  Object.assign(runtime.remote, {
+    $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
+    $mount: async () => async () => {},
+  })
   runtime.ctx.provide('connection', { isLoopback: true, generation: { getSnapshot: () => ({}) }, state: { getSnapshot: () => ({}) }, rpc: {}, reconnect: vi.fn(), registerGenerationSource: vi.fn(), start: vi.fn(), stop: vi.fn() })
   await runtime.sessions.add({ id: 'ordinary-session', summary: { title: 'Ordinary', cwd: '/work/alpha' } })
+  // The workspace service restores the Human's saved selection at boot; the
+  // bench seeds the same `mainView` retention so return-target captures see
+  // a live selection.
+  mainReference = runtime.sessions.retain('ordinary-session' as never, { source: 'mainView' })
   await runtime.workspaces.update((draft) => {
     draft.items = [
       { workspaceId: 'w1' as WorkspaceId, title: 'Alpha', path: '/work/alpha', sessionIds: [], createdAt: '', updatedAt: '' },
@@ -428,5 +453,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, members, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, members, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession }
 }

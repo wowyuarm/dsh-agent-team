@@ -71,10 +71,12 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
             type="button"
           >
             <svg
+              aria-hidden="true"
               class="panelIcon"
-              data-content="35f95b0c"
+              data-content="88020f34"
               fill="none"
               height="16"
+              stroke-width="1"
               viewBox="0 0 16 16"
               width="16"
               xmlns="http://www.w3.org/2000/svg"
@@ -87,9 +89,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
           type="button"
         >
           <svg
-            data-content="c0ce4dcc"
+            aria-hidden="true"
+            data-content="47b5e433"
             fill="none"
             height="14"
+            stroke-width="1.3"
             viewBox="0 0 16 16"
             width="14"
             xmlns="http://www.w3.org/2000/svg"
@@ -120,10 +124,12 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                   class="inboxMark"
                 >
                   <svg
-                    data-content="2ee99417"
+                    aria-hidden="true"
+                    data-content="be386ae5"
                     fill="none"
                     height="16"
-                    viewBox="0 0 14 14"
+                    stroke-width="1"
+                    viewBox="0 0 16 16"
                     width="16"
                     xmlns="http://www.w3.org/2000/svg"
                   />
@@ -152,11 +158,14 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                     class="workspaceIcon"
                   >
                     <svg
-                      data-content="34102cd0"
+                      aria-hidden="true"
+                      data-content="a2987c53"
                       fill="none"
                       height="16"
+                      stroke-width="1"
                       viewBox="0 0 16 16"
                       width="16"
+                      xmlns="http://www.w3.org/2000/svg"
                     />
                   </span>
                   <span
@@ -169,10 +178,12 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                     class="workspaceChevron"
                   >
                     <svg
-                      data-content="6506c885"
+                      aria-hidden="true"
+                      data-content="2b5d7fd1"
                       fill="none"
                       height="14"
-                      viewBox="0 0 14 14"
+                      stroke-width="1"
+                      viewBox="0 0 16 16"
                       width="14"
                       xmlns="http://www.w3.org/2000/svg"
                     />
@@ -198,11 +209,13 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                           type="button"
                         >
                           <svg
+                            aria-hidden="true"
                             class="sectionChevron"
-                            data-content="6506c885"
+                            data-content="2b5d7fd1"
                             fill="none"
                             height="14"
-                            viewBox="0 0 14 14"
+                            stroke-width="1"
+                            viewBox="0 0 16 16"
                             width="14"
                             xmlns="http://www.w3.org/2000/svg"
                           />
@@ -221,9 +234,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                             type="button"
                           >
                             <svg
-                              data-content="31127fcc"
+                              aria-hidden="true"
+                              data-content="b713fe59"
                               fill="none"
                               height="14"
+                              stroke-width="1"
                               viewBox="0 0 16 16"
                               width="14"
                               xmlns="http://www.w3.org/2000/svg"
@@ -258,11 +273,13 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                           type="button"
                         >
                           <svg
+                            aria-hidden="true"
                             class="sectionChevron"
-                            data-content="6506c885"
+                            data-content="2b5d7fd1"
                             fill="none"
                             height="14"
-                            viewBox="0 0 14 14"
+                            stroke-width="1"
+                            viewBox="0 0 16 16"
                             width="14"
                             xmlns="http://www.w3.org/2000/svg"
                           />
@@ -281,9 +298,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                             type="button"
                           >
                             <svg
-                              data-content="31127fcc"
+                              aria-hidden="true"
+                              data-content="b713fe59"
                               fill="none"
                               height="14"
+                              stroke-width="1"
                               viewBox="0 0 16 16"
                               width="14"
                               xmlns="http://www.w3.org/2000/svg"
@@ -350,9 +369,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                   type="button"
                                 >
                                   <svg
-                                    data-content="97beeac2"
+                                    aria-hidden="true"
+                                    data-content="d1c61540"
                                     fill="none"
                                     height="16"
+                                    stroke-width="1"
                                     viewBox="0 0 16 16"
                                     width="16"
                                     xmlns="http://www.w3.org/2000/svg"
@@ -387,12 +408,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                 >
                                   <svg
                                     aria-hidden="true"
-                                    class="matrix"
-                                    data-content="46e5b206"
+                                    class="spinner"
+                                    data-content="7f45c13b"
                                     data-state="ongoing"
                                     height="10"
-                                    shape-rendering="crispEdges"
-                                    viewBox="0 0 10 10"
+                                    viewBox="0 0 24 24"
                                     width="10"
                                   />
                                 </span>
@@ -422,9 +442,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                   type="button"
                                 >
                                   <svg
-                                    data-content="97beeac2"
+                                    aria-hidden="true"
+                                    data-content="d1c61540"
                                     fill="none"
                                     height="16"
+                                    stroke-width="1"
                                     viewBox="0 0 16 16"
                                     width="16"
                                     xmlns="http://www.w3.org/2000/svg"
@@ -490,9 +512,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                   type="button"
                                 >
                                   <svg
-                                    data-content="97beeac2"
+                                    aria-hidden="true"
+                                    data-content="d1c61540"
                                     fill="none"
                                     height="16"
+                                    stroke-width="1"
                                     viewBox="0 0 16 16"
                                     width="16"
                                     xmlns="http://www.w3.org/2000/svg"
@@ -559,9 +583,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                                   type="button"
                                 >
                                   <svg
-                                    data-content="97beeac2"
+                                    aria-hidden="true"
+                                    data-content="d1c61540"
                                     fill="none"
                                     height="16"
+                                    stroke-width="1"
                                     viewBox="0 0 16 16"
                                     width="16"
                                     xmlns="http://www.w3.org/2000/svg"
@@ -599,10 +625,12 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                   type="button"
                 >
                   <svg
-                    data-content="710b3749"
+                    aria-hidden="true"
+                    data-content="599d85c9"
                     fill="none"
                     height="16"
-                    viewBox="0 0 14 14"
+                    stroke-width="1"
+                    viewBox="0 0 16 16"
                     width="16"
                     xmlns="http://www.w3.org/2000/svg"
                   />
@@ -627,9 +655,11 @@ exports[`Team conversation surfaces > restores persisted Team mode, reconciles a
                 type="button"
               >
                 <svg
-                  data-content="4d654e17"
+                  aria-hidden="true"
+                  data-content="612cfab9"
                   fill="none"
                   height="16"
+                  stroke-width="1"
                   viewBox="0 0 16 16"
                   width="16"
                   xmlns="http://www.w3.org/2000/svg"

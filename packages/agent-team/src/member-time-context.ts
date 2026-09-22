@@ -29,13 +29,24 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { v3RenamedSourceKind } from './context-source.ts'
 import { formatTeamDuration, formatTeamTimestamp } from './time-format.ts'
 import { advanceOwnedSessionEventCursor, type OwnedSessionEventCursor, type SessionEventFold } from './session-event-cursor.ts'
 
 export const name = 'wowyuarm-agent-team-member-time-context'
+
+/** This producer's own attribution. `kind` must be producer-owned (Session format
+ * V4); the second member is the read-time conversion's rename of this
+ * producer's released V3 history (`plugin:` + id, `plugin` key dropped) —
+ * read-side only. */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'wowyuarm-agent-team-member-time-context': { kind: 'wowyuarm-agent-team-member-time-context' } & ContextFormed
+    'plugin:wowyuarm-agent-team-member-time-context': { kind: 'plugin:wowyuarm-agent-team-member-time-context' } & ContextFormed
+  }
+}
 
 /** Default minimum spacing between two snapshots within one turn, in ms. */
 export const CLOCK_REFRESH_INTERVAL_MS = 1_800_000
@@ -76,7 +87,9 @@ export function applyClockEvent(state: ClockBaseline, event: { readonly type: st
       return state.openTurn === -1 ? state : { ...state, lastTurnInjectionTime: null, openTurn: -1 }
     case 'user/message': {
       const source = (event.data as UserMessage).source
-      const injected = source.kind === 'plugin' && source.plugin === name
+      // Both identities are this producer's own: the kind written now and the
+      // read-time conversion's rename of this producer's V3 history.
+      const injected = source.kind === name || source.kind === v3RenamedSourceKind(name)
       const withMessage = state.lastMessageTime === event.time ? state : { ...state, lastMessageTime: event.time }
       if (!injected) return withMessage
       return { ...withMessage, lastInjectionTime: event.time, lastTurnInjectionTime: event.time }
@@ -165,7 +178,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     const text = renderClockSnapshot({ now, turn, step, previous })
     const message = createUserMessage({
       content: [{ type: 'text', text }],
-      source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name, text }] },
+      source: { kind: name, form: 'snapshot', sections: [{ name, text }] },
     })
     return { kind: 'enter', messages: [...decision.messages, message] }
   }, { prepend: true })

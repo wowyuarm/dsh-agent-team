@@ -10,7 +10,8 @@ import Group from '@deepseek-ai/cordis-plugin-group'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import AgentPreset from '@deepseek-ai/dsh-agent-preset'
+import AgentPresetRegistry from '@deepseek-ai/dsh-agent-preset-registry'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -50,22 +51,16 @@ async function memberSkillsHarness(): Promise<{
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-skills-'))
   const project = join(root, 'project')
   const persistence = join(root, 'sessions')
-  const presetRoot = join(root, 'presets')
-  const presetDir = join(presetRoot, 'team-member')
-  await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
+  await Promise.all([mkdir(project), mkdir(persistence)])
   process.env.DSH_HOME = join(root, 'dsh-home')
-  // rc.1 preset health resolves every row from disk: bare internal loader
-  // names are reported broken. Real package rows resolve through the linked
-  // node_modules (the bundle self-link plus harness checkout links).
-  await writeFile(join(presetDir, 'agent.cordis.yml'), [
-    "- id: member-context",
-    "  name: '@wowyuarm/dsh-agent-team/member-context'",
-    "- id: team-tools",
-    "  name: '@wowyuarm/dsh-agent-team/tools'",
-    "- id: tool-skill",
-    "  name: '@deepseek-ai/dsh-tool-skill'",
-    '',
-  ].join('\n'))
+  // The team-member definition as one declarative row; bare internal loader
+  // names resolve through the linked node_modules (the bundle self-link plus
+  // harness checkout links).
+  const teamMemberPlugins = [
+    { id: 'member-context', name: '@wowyuarm/dsh-agent-team/member-context' },
+    { id: 'team-tools', name: '@wowyuarm/dsh-agent-team/tools' },
+    { id: 'tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
+  ]
 
   const ctx = new Context()
   // rc.1: preset health resolves package rows by walking node_modules above
@@ -78,7 +73,7 @@ async function memberSkillsHarness(): Promise<{
   await ctx.plugin(LlmRuntime)
   ctx.llm.registerAdapter(['mock'], new EmptyAdapter())
   await ctx.plugin(SessionStore)
-  // rc.1: AgentPresets injects 'sessionProjections'; the roster stays PENDING without it.
+  // The registry injects 'sessionProjections'; the roster stays PENDING without it.
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -87,7 +82,8 @@ async function memberSkillsHarness(): Promise<{
   await ctx.plugin(AgentLoop, { agents: [] })
   ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'mock', model: 'mock' }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
-  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
+  await ctx.plugin(AgentPresetRegistry, { default: 'team-member' })
+  await ctx.plugin(AgentPreset, { id: 'team-member', plugins: teamMemberPlugins })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })

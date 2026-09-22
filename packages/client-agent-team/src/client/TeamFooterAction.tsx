@@ -1,5 +1,5 @@
 import { useLayoutEffect, useSyncExternalStore } from 'react'
-import { IconAgentPresetOutline16, IconChevronLeftOutline14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineRegular, IconChevronLeftOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamFooterProps } from './slots.ts'
 import css from './team.module.css'
 
@@ -28,7 +28,7 @@ export function TeamFooterAction({ wide, navigation, enterTeam, leaveTeam, t }: 
             data-team-action={inTeam ? 'leave' : 'enter'}
             onClick={inTeam ? leaveTeam : enterTeam}
           >
-            {inTeam ? <IconChevronLeftOutline14 size={wide ? 16 : 18} /> : <IconAgentPresetOutline16 size={wide ? 16 : 18} />}
+            {inTeam ? <IconChevronLeftOutlineRegular size={wide ? 16 : 18} /> : <IconAgentPresetOutlineRegular size={wide ? 16 : 18} />}
             {wide && <span>{label}</span>}
           </button>
         </Tooltip>

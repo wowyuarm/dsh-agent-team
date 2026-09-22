@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamMemberId } from '@wowyuarm/dsh-agent-team/types'
-import { IconChecklistOutline14, IconPaperclipOutline16, IconSendOutline14, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChecklistOutlineRegular, IconPaperclipOutlineRegular, IconSendOutlineRegular, Tooltip, useAnchoredMaxHeight, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftKey, TeamDraftStore } from './drafts.ts'
 import { TeamPresenceDot } from './TeamPresenceDot.tsx'
@@ -367,7 +367,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
             <Tooltip label={t('attachFiles')} side="top" delayMs={500}>
               <button type="button" className={css.attachButton} aria-label={t('attachFiles')}
                 disabled={pending} onClick={() => { fileInputRef.current?.click() }}>
-                <IconPaperclipOutline16 size={14} />
+                <IconPaperclipOutlineRegular size={14} />
               </button>
             </Tooltip>
           </>
@@ -382,7 +382,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
             disabled={pending}
             onClick={() => { onAsTaskChange(asTask !== true) }}
           >
-            <IconChecklistOutline14 size={14} />
+            <IconChecklistOutlineRegular size={14} />
             <span className={css.asTaskLabel}>{t('asTask')}</span>
           </button>
         )}
@@ -397,7 +397,7 @@ export function TeamComposer({ members, followerMemberIds, drafts, draftKey, pen
             inputRef.current?.focus({ preventScroll: true })
           }}
         >
-          <IconSendOutline14 size={16} />
+          <IconSendOutlineRegular size={16} />
         </button>
       </div>
     </div>

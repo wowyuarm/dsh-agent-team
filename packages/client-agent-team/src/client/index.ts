@@ -53,8 +53,29 @@ export { TeamNavigation } from './navigation.ts'
 const NS = 'team'
 
 export const inject = [
-  'slots', 'workspaces', 'locale', 'remote', 'remote.session', 'sessions', 'connection', 'conversation',
+  'slots', 'workspaces', 'locale', 'remote', 'remote.session', 'sessions', 'connection', 'conversation', 'uiWorkspace',
 ]
+
+/**
+ * 0.1.7 moved the conversation selection into the workspace service: the
+ * rendered session is the one holding its `mainView` reference (the shipped
+ * consumers read the same projection), so the Team client reads the selection
+ * through retention instead of a service-owned `current`.
+ */
+function currentMainSessionId(ctx: ClientContext): AgentTeamClientMemberStatus['member']['sessionId'] | undefined {
+  const sessions = ctx.sessions as unknown as ISessions
+  return Object.values(sessions.list.getSnapshot().byId)
+    .find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
+}
+
+/**
+ * Session ids this client opened as Member views, per client instance. The
+ * 0.1.7 workspace service exposes no clear, so a dead return target leaves
+ * the departed Member selection in place; excluding Member sessions from the
+ * next capture keeps that stale selection from becoming a false return
+ * target.
+ */
+const openedMemberSessions = new WeakMap<ClientContext, Set<string>>()
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -87,14 +108,16 @@ function registerModeShadow<T extends object>(
   // views (see registerModeShadow), so the shipped conversation root renders
   // the selected Member Session inside the Team shell.
   const openMemberSessionImpl = (sessionId: AgentTeamClientMemberStatus['member']['sessionId']): void => {
-    const sessions = ctx.sessions as unknown as ISessions
     const snapshot = navigation.getSnapshot()
-    const current = sessions.list.getSnapshot().current
+    const current = currentMainSessionId(ctx)
     // The return target is captured on first entry only — switching between
     // Member Sessions must keep pointing at the Human's original session.
-    const returnTo = snapshot.memberSessionId === undefined && current !== undefined && current !== sessionId ? current : undefined
+    const memberSessions = openedMemberSessions.get(ctx) ?? new Set<string>()
+    openedMemberSessions.set(ctx, memberSessions)
+    memberSessions.add(sessionId)
+    const returnTo = snapshot.memberSessionId === undefined && current !== undefined && current !== sessionId && !memberSessions.has(current) ? current : undefined
     navigation.actions().enterMemberSession(sessionId, returnTo)
-    sessions.open(sessionId)
+    ctx.uiWorkspace.openSession(sessionId)
   }
   // Remote bindings shared by every Team slot; surface-specific entries extend it below.
   const sharedRemotes = {
@@ -192,12 +215,13 @@ function applyUi(ctx: ClientContext): void {
   }, 'agent-team: navigation service')
 
   // The one restore owner: leaving an embedded Member Session view must
-  // rebind the underlying current session, or the stale Member current later
-  // masks to undefined when the Host disposes that session (rollover) and
-  // the conversation seat remounts. Takeover is conditional — only when the
-  // current still IS the departed Member session — so a selection someone
-  // else made in the meantime survives. A dead return target clears instead
-  // of opening an unknown id.
+  // rebind the underlying selection, or the departed Member session stays the
+  // workspace service's `mainView` retention into the next Member entry's
+  // return-target capture. Takeover is conditional — only when the selection
+  // still IS the departed Member session — so a selection someone else made
+  // in the meantime survives. A dead return target keeps the departed
+  // selection: 0.1.7 exposes no public clear, and the retention is inert
+  // behind the Team seat until the next open.
   ctx.effect(() => {
     let previous = navigation.getSnapshot()
     const restore = (): void => {
@@ -206,10 +230,8 @@ function applyUi(ctx: ClientContext): void {
       const returnTo = previous.returnToSessionId
       previous = snapshot
       if (departed === undefined || snapshot.memberSessionId !== undefined) return
-      const sessions = ctx.sessions as unknown as ISessions
-      if (sessions.list.getSnapshot().current !== departed) return
-      if (returnTo !== undefined && sessions.list.getSnapshot().byId[returnTo] !== undefined) sessions.open(returnTo)
-      else sessions.clear()
+      if (currentMainSessionId(ctx) !== departed) return
+      if (returnTo !== undefined && (ctx.sessions as unknown as ISessions).list.getSnapshot().byId[returnTo] !== undefined) ctx.uiWorkspace.openSession(returnTo)
     }
     const unsubscribe = navigation.subscribe(restore)
     return () => {
@@ -248,7 +270,7 @@ function applyUi(ctx: ClientContext): void {
       navigation,
       ...navigation.actions(),
       // The footer is the only surface that leaves Team mode; closing the
-      // embedded Member Session view rebinds the underlying current through
+      // embedded Member Session view rebinds the underlying selection through
       // the same root-scope restore owner, so there is exactly one restore
       // path and no double open.
       leaveTeam: () => {

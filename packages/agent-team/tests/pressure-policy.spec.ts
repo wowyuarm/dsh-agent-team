@@ -100,7 +100,7 @@ describe('Agent Team pressure policy (ticket 03)', () => {
     expect(first.kind).toBe('notice')
     expect(steer.messages).toHaveLength(1)
     const notice = steer.messages[0] as ReturnType<typeof createUserMessage>
-    expect(notice.source).toMatchObject({ kind: 'plugin', form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY })
+    expect(notice.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY })
     expect((notice.content[0] as { text: string }).text).toContain('200000')
     expect((notice.content[0] as { text: string }).text).toContain('claim:a')
     // Later steps in the same generation do not repeat the notice: the
@@ -221,9 +221,9 @@ describe('Agent Team pressure policy (ticket 03)', () => {
     // only ever sees `true` proves nothing about where it latched. This drives
     // the fold from an empty log to the notice and compares against a cold
     // scan at each step, which is the property the production cursor relies on.
-    const notice = { type: 'user/message', seq: 0, data: { source: { plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY } } }
+    const notice = { type: 'user/message', seq: 0, data: { source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY } } }
     const plain = { type: 'tool/result', seq: 1, data: {} }
-    const spliced = { type: 'agent/inbox/spliced', seq: 2, data: { inserted: [{ source: { plugin: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY } }] } }
+    const spliced = { type: 'agent/inbox/spliced', seq: 2, data: { inserted: [{ source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: CONTEXT_PRESSURE_NOTICE_SUMMARY } }] } }
 
     const cold = (events: readonly unknown[]): boolean => events.reduce<boolean>((state, event) => PRESSURE_NOTICE_FOLD.step(state, event as never), PRESSURE_NOTICE_FOLD.start)
     expect(cold([])).toBe(false)

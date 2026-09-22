@@ -10,7 +10,8 @@ import Group from '@deepseek-ai/cordis-plugin-group'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import AgentPresets from '@deepseek-ai/dsh-agent-presets'
+import AgentPreset from '@deepseek-ai/dsh-agent-preset'
+import AgentPresetRegistry from '@deepseek-ai/dsh-agent-preset-registry'
 import LlmRuntime, { ToolCallId, createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -132,21 +133,15 @@ async function policyHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<
   const root = await mkdtemp(join(tmpdir(), 'dsh-agent-team-policy-'))
   const project = join(root, 'project')
   const persistence = join(root, 'sessions')
-  const presetRoot = join(root, 'presets')
-  const presetDir = join(presetRoot, 'team-member')
-  await Promise.all([mkdir(project), mkdir(persistence), mkdir(presetDir, { recursive: true })])
+  await Promise.all([mkdir(project), mkdir(persistence)])
   process.env.DSH_HOME = join(root, 'dsh-home')
-  // rc.1 preset health resolves every row from disk: bare internal loader
-  // names are reported broken. Real package rows resolve through the linked
-  // node_modules; the distinguishable-tool fixture is a real module beside
-  // this spec, where its own imports resolve.
-  await writeFile(join(presetDir, 'agent.cordis.yml'), [
-    "- id: member-context",
-    "  name: '@wowyuarm/dsh-agent-team/member-context'",
-    "- id: team-tools",
-    `  name: ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'helpers', 'team-tools-fixture.mjs')).href)}`,
-    '',
-  ].join('\n'))
+  // The team-member definition as one declarative row; the
+  // distinguishable-tool fixture is a real module beside this spec, where its
+  // own imports resolve.
+  const teamMemberPlugins = [
+    { id: 'member-context', name: '@wowyuarm/dsh-agent-team/member-context' },
+    { id: 'team-tools', name: pathToFileURL(join(import.meta.dirname, 'helpers', 'team-tools-fixture.mjs')).href },
+  ]
 
   const ctx = new Context()
   // rc.1: preset health resolves package rows by walking node_modules above
@@ -159,7 +154,7 @@ async function policyHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<
   await ctx.plugin(LlmRuntime)
   ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SessionStore)
-  // rc.1: AgentPresets injects 'sessionProjections'; the roster stays PENDING without it.
+  // The registry injects 'sessionProjections'; the roster stays PENDING without it.
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -170,7 +165,8 @@ async function policyHarness(adapter: LlmAdapter = new EmptyAdapter()): Promise<
   // these tests exercise tool policy, so a zero-usage fake keeps it quiet.
   ctx.provide('tokenMeter', { measure: () => ({ totalTokens: 0 }) })
   await ctx.plugin(JsonlSessionPersistence, { root: persistence })
-  await ctx.plugin(AgentPresets, { default: 'team-member', roots: [{ path: presetRoot, trust: 'system' }], includeShippedRoot: false, includeUserRoot: false })
+  await ctx.plugin(AgentPresetRegistry, { default: 'team-member' })
+  await ctx.plugin(AgentPreset, { id: 'team-member', plugins: teamMemberPlugins })
   await ctx.plugin(Storage)
   ctx.storage.backend.register('memory', new MemoryStorageBackend())
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })

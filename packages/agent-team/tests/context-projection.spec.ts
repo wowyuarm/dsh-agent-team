@@ -386,10 +386,10 @@ describe('AgentTeam context sources', () => {
       handoffEventSeq: 42,
       relatedFiles: [{ path: 'src/parser.ts', reason: 'rewritten' }],
     })
-    // The envelope rides the admitted `plugin` + `snapshot` slots only: the
-    // released format refuses any bespoke source member, so a passing
-    // migration and a readable envelope are the same assertion.
-    expect(message.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    // The envelope rides the producer-owned `snapshot` source only: format
+    // V4 admits exactly that shape, so a passing admission and a readable
+    // envelope are the same assertion.
+    expect(message.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
     expect(handoffOf(message)).toMatchObject({
       previousSessionId: 'agent-team-old',
       newSessionId: 'agent-team-new',
@@ -404,7 +404,7 @@ describe('AgentTeam context sources', () => {
   it('checkpoint continuation notices recognize themselves regardless of body text', () => {
     const checkpointRef = checkpointRefFor(SID, 'call-cp')
     const message = createCheckpointContinuationMessage(checkpointRef as never)
-    expect(message.source).toMatchObject({ kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
+    expect(message.source).toMatchObject({ kind: AGENT_TEAM_PLUGIN_ID, form: 'snapshot' })
     expect(continuationCheckpointRefOf(message)).toBe(checkpointRef)
   })
 })
@@ -438,8 +438,10 @@ describe('AgentTeam context projection — timeline boundaries', () => {
   })
 
   it('a structured Team notice is a team boundary on its Thread\'s first arrival; a relay DM and a checkpoint continuation are not', () => {
-    const notice = createUserMessage({ content: [{ type: 'text', text: 'Direct Team mention\nThread: thread:4d5e6f70-8b9c-4d5e-0f1a-2b3c4d5e6f70' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' } })
-    const relay = createUserMessage({ content: [{ type: 'text', text: 'dm' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'relay' } })
+    const notice = createUserMessage({ content: [{ type: 'text', text: 'Direct Team mention\nThread: thread:4d5e6f70-8b9c-4d5e-0f1a-2b3c4d5e6f70' }], source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Team Inbox has unread work.' } })
+    // The relay rides the converted shape of released V3 history — the
+    // read-time rename — proving the fold recognizes it identically.
+    const relay = createUserMessage({ content: [{ type: 'text', text: 'dm' }], source: { kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`, form: 'relay' } })
     const continuation = createCheckpointContinuationMessage(checkpointRefFor(SID, 'call-cp'))
     const events = [
       turnStart(1),
@@ -460,7 +462,7 @@ describe('AgentTeam context projection — timeline boundaries', () => {
   it('a structured Team notice without a summary keeps the generic delivery label on first arrival', () => {
     // form: 'instructions' plugin messages carry no summary; they are still
     // Team-owned structured deliveries, so the label falls back generically.
-    const instructions = createUserMessage({ content: [{ type: 'text', text: 'identity\nThread: thread:5e6f7081-9c0d-4e5f-1a2b-3c4d5e6f7081' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'instructions' } })
+    const instructions = createUserMessage({ content: [{ type: 'text', text: 'identity\nThread: thread:5e6f7081-9c0d-4e5f-1a2b-3c4d5e6f7081' }], source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'instructions' } })
     const events = [turnStart(1), userMessageEvent(instructions), turnEnd(1)]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
@@ -468,7 +470,9 @@ describe('AgentTeam context projection — timeline boundaries', () => {
   })
 
   it('a pre-compaction notice is a compaction boundary', () => {
-    const preCompaction = createUserMessage({ content: [{ type: 'text', text: 'persist conclusions' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Compaction is imminent; consider persisting key conclusions.' } })
+    // The converted shape of released V3 history: the compaction boundary must
+    // classify converted history exactly like a fresh write.
+    const preCompaction = createUserMessage({ content: [{ type: 'text', text: 'persist conclusions' }], source: { kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`, form: 'notice', summary: 'Compaction is imminent; consider persisting key conclusions.' } })
     const events = [turnStart(1), userMessageEvent(preCompaction), turnEnd(1)]
     const state = foldContextProjection(events, undefined, SID)
     expect(state.boundaries).toHaveLength(1)
@@ -524,7 +528,7 @@ describe('AgentTeam context projection — timeline boundaries', () => {
       toolResult(2, 'call-live-claim'),
       turnEnd(2),
       turnStart(3),
-      userMessageEvent(createUserMessage({ content: [{ type: 'text', text: 'notice' }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary: 'Team Inbox has unread work.' } })),
+      userMessageEvent(createUserMessage({ content: [{ type: 'text', text: 'notice' }], source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Team Inbox has unread work.' } })),
       turnEnd(3),
     ]
     const cold = foldContextProjection(events, undefined, SID)
@@ -539,7 +543,7 @@ describe('AgentTeam context projection — timeline boundaries', () => {
 describe('AgentTeam context projection — effect-anchored team boundaries', () => {
   /** One structured Team notice user message. */
   function teamNotice(summary: string, body = 'notice body'): UserMessage {
-    return createUserMessage({ content: [{ type: 'text', text: body }], source: { kind: 'plugin', plugin: '@wowyuarm/dsh-agent-team', form: 'notice', summary } })
+    return createUserMessage({ content: [{ type: 'text', text: body }], source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary } })
   }
 
   it('a Thread\'s FIRST delivered notice is a boundary; re-deliveries of the same Thread are not', () => {

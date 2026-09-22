@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { IconChevronDownOutline14, IconFolderOpen16, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineRegular, IconFolderOpenRegular, Menu, type MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import css from './sidebar.module.css'
 
@@ -87,9 +87,9 @@ export function TeamWorkspaceSelector({ workspaces, selectedId, current, onSelec
           title={`${selected.title} · ${selected.path}`}
           onClick={() => { setOpen(value => !value) }}
         >
-          <span className={css.workspaceIcon} aria-hidden="true"><IconFolderOpen16 size={16} /></span>
+          <span className={css.workspaceIcon} aria-hidden="true"><IconFolderOpenRegular size={16} /></span>
           <span className={css.workspaceValue}>{selected.title}</span>
-          <span className={`${css.workspaceChevron!} ${open ? css.workspaceChevronOpen! : ''}`} aria-hidden="true"><IconChevronDownOutline14 /></span>
+          <span className={`${css.workspaceChevron!} ${open ? css.workspaceChevronOpen! : ''}`} aria-hidden="true"><IconChevronDownOutlineRegular /></span>
         </button>
       )}
     />
