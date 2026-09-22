@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
-## [Unreleased]
+## [0.1.14-alpha.2] - 2026-09-22
 
 - The Team sidebar states the current Workspace on one selector line instead of listing every Workspace above the Channels and Agents that belong to it. The cross-Workspace Inbox keeps its own entry above that line, and the selector's menu is fully keyboard-operable.
 - The Inbox row's clock yields when the identity line is too narrow to hold it beside the count: on a phone-width page with the sidebar forced open the row no longer draws past its own edge.
