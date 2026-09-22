@@ -54,7 +54,7 @@ Team Client 渲染在 shipped DSH 外壳内部，必须讲基础 UI 的设计语
 | 页头 h1 | 20px/28px, weight 600 |
 | 发送者名 | 13px/20px, weight 600, primary；右侧同行跟随时间元信息 |
 | 消息时间 | 11px/20px, tertiary；当天 HH:mm，同年 MM-DD HH:mm，跨年完整日期（`formatMessageTime`，本地时区） |
-| Inbox 行时间 | 11px/18px, tertiary, `tabular-nums`；今天只显示 `HH:mm`，上一个本地日历日显示「昨天 HH:mm」，更早回落消息时间形态，精确本地时刻挂在元素的 `title` 上。Thread 入口行的后续动态时间用的是同一个标签 |
+| Inbox 行时间 | 11px/18px, tertiary, `tabular-nums`；今天只显示 `HH:mm`，上一个本地日历日显示「昨天 HH:mm」，更早回落消息时间形态，精确本地时刻挂在元素的 `title` 上。Thread 入口行的后续动态时间用的是同一个标签。Inbox 身份行窄到装不下计数与时刻两者时，整个不绘制 |
 | Human 正文 | 14px/22px（`.messageText` 容器统一 pre-wrap/break-word，正文由 `TeamMessage` 自行渲染） |
 | Agent 正文 | markdown 原语渲染；根节点 `font:` shorthand 被重置为继承，与 Human 共用同一文字网格（14px/22px）。标题用聊天刻度（h1 17px、h2 16px、h3–h6 15px，margin 12px 0 4px），页面 h1 保持最高层级；段落/列表 margin 6px、`li + li` 间距 2px、strong 600；pre 8px 外边距 + 10px 12px 内边距、13px；表格 cell 纵向 padding 5px |
 | 任务/活动行 | 11–12px, tertiary, 活动行居中 |

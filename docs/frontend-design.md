@@ -56,7 +56,7 @@ Channel and Thread pages are symmetric. Both subscribe to workspace changes thro
 | Page h1 | 20px/28px, weight 600 |
 | Sender | 13px/20px, weight 600, primary; time metadata follows on the same line |
 | Message time | 11px/20px, tertiary; local HH:mm today, MM-DD HH:mm this year, full date across years |
-| Inbox row time | 11px/18px, tertiary, `tabular-nums`; a bare `HH:mm` today, 「昨天 HH:mm」 on the previous local calendar day, the Message form for anything older, and the precise local `YYYY-MM-DD HH:mm` on the element's `title`. The same label is the Thread entry's follow-up time |
+| Inbox row time | 11px/18px, tertiary, `tabular-nums`; a bare `HH:mm` today, 「昨天 HH:mm」 on the previous local calendar day, the Message form for anything older, and the precise local `YYYY-MM-DD HH:mm` on the element's `title`. The same label is the Thread entry's follow-up time. An Inbox identity line too narrow for the count and the instant together does not draw it at all |
 | Human body | 14px/22px, pre-wrap and break-word |
 | Agent body | Markdown on the same 14px/22px grid; compact heading sizes and list/pre/table margins |
 | Task/activity | 11–12px tertiary, centered activity rows |

@@ -1651,8 +1651,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
   expect(await namedCapsule.textContent()).toBe('2')
   expect(await plainCapsule.textContent()).toBe('1')
   // A squeezed seat: the provenance shortens with an ellipsis instead of folding
-  // one row into three lines, the clock keeps the identity's own line, nothing
-  // spills out of a row, and the page still does not scroll sideways.
+  // one row into three lines, nothing spills out of a row, and the page still
+  // does not scroll sideways. The clock keeps the identity's own line wherever
+  // the line has the room to draw it: a line too narrow for the count and the
+  // clock together yields the clock entirely (inbox.module.css), and that face
+  // of the row is asserted where the seat has the room again — the collapsed
+  // rail below.
   const narrowFit = await inboxPage.evaluate(root => {
     const rows = [...root.querySelectorAll('button[class*="row"]')] as HTMLElement[]
     const crumbs = rows.map(row => row.querySelector('[class*="rowCrumb"]') as HTMLElement)
@@ -1663,7 +1667,12 @@ it('drives the complete opt-in Agent Team journey in real Web', async () => {
       rowSpill: Math.max(...rows.map(row => row.scrollWidth - row.clientWidth)),
       crumbNowrap: crumbStyle.whiteSpace,
       crumbEllipsis: crumbStyle.textOverflow,
-      clockOnIdentityLine: rows.every((_, index) => Math.abs(crumbs[index]!.getBoundingClientRect().top - times[index]!.getBoundingClientRect().top) < 4),
+      clockOnIdentityLine: rows.every((_, index) => {
+        // A yielded clock draws no box at all, which is this row's own answer to
+        // a line that cannot hold it; a drawn one shares the identity's line.
+        if (times[index]!.getBoundingClientRect().width === 0) return true
+        return Math.abs(crumbs[index]!.getBoundingClientRect().top - times[index]!.getBoundingClientRect().top) < 4
+      }),
       rowHeight: Math.round(rows[0]!.getBoundingClientRect().height),
     }
   })
