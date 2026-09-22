@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 
 // scripts/harness-dir.mjs is the single source of truth for the sibling
@@ -64,8 +65,11 @@ describe('harness checkout pointer', () => {
       if (options.marker !== undefined) await writeFile(join(projectRoot, '.generated-harness'), options.marker)
       const environment: Record<string, string> = { PATH: process.env.PATH ?? '' }
       for (const [key, value] of Object.entries(options.env ?? {})) environment[key] = value
+      // A file URL survives the -e string literal on every platform; a raw
+      // Windows path's backslashes would be read as escapes.
+      const scriptUrl = pathToFileURL(join(projectRoot, 'scripts', 'harness-dir.mjs')).href
       try {
-        const stdout = execFileSync(process.execPath, ['-e', `import(${JSON.stringify(join(projectRoot, 'scripts', 'harness-dir.mjs'))}).then(m => console.log(m.harnessName))`], {
+        const stdout = execFileSync(process.execPath, ['-e', `import(${JSON.stringify(scriptUrl)}).then(m => console.log(m.harnessName))`], {
           env: environment,
           encoding: 'utf8',
         })
