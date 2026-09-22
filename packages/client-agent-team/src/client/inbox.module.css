@@ -88,9 +88,14 @@
 /* The row's first line: the identity, then the count and the instant closing it
    at the right edge. It does not wrap — a squeezed seat shortens the identity
    with an ellipsis instead of folding one row into three lines, and the count
-   and the time keep the columns the reader scans down. */
+   and the time keep the columns the reader scans down. The line is its own size
+   container so the instant can answer the width the line actually gets rather
+   than the viewport's; the container stays anonymous because CSS modules hash
+   container names per sheet, exactly as the composer's row and the settings
+   section leave theirs. */
 .rowLine {
   align-items: baseline;
+  container-type: inline-size;
   display: flex;
   gap: 2px 8px;
   grid-column: 2;
@@ -152,6 +157,21 @@
   font-variant-numeric: tabular-nums;
   line-height: 18px;
   white-space: nowrap;
+}
+/* A line can come in narrower than the count and the instant together need: the
+   capsule's 18px floor, its 8px gap and the instant's 28px are 62px, and a
+   two-digit count makes it 70px. That seat exists in the product — a 390px phone
+   with the sidebar forced open leaves the page 110px, the row 86px and this line
+   44px — and there the instant used to hang 10px past the row's own right edge,
+   outside the surface it belongs to. The count is what the queue is for, so the
+   instant yields: the row keeps its two-line shape, nothing spills, and the
+   element still carries the exact time for the Thread that shows it. The cut
+   sits at the wider of the two counts, so no capsule the queue draws can spill
+   at a seat that has already yielded the instant. */
+@container (max-width: 70px) {
+  .rowTime {
+    display: none;
+  }
 }
 /* The gist is evidence for the identity above it, not the row's subject: it
    starts on the identity's own column and speaks in secondary ink, one line. */
