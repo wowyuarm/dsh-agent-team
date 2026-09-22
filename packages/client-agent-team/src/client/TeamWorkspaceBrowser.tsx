@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { IconAgentPresetOutline16, IconListPenOutline16, IconQueueOutline14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineRegular, IconListPenOutlineRegular, IconQueueOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamAddMemberRequest } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamSidebarProps } from './slots.ts'
 import { TeamWorkspaceSelector } from './TeamWorkspaceSelector.tsx'
@@ -19,7 +19,7 @@ type SidebarSection = 'channels' | 'agents'
  */
 function InboxMark({ unread }: { readonly unread: number }) {
   return <span className={css.inboxMark}>
-    <IconQueueOutline14 size={16} />
+    <IconQueueOutlineRegular size={16} />
     {unread > 0 && <span className={css.inboxDot} data-team-inbox-dot aria-hidden="true" />}
   </span>
 }
@@ -108,12 +108,12 @@ export function TeamWorkspaceBrowser({ wide, expandSidebar, navigation, selectWo
       </Tooltip>
       <Tooltip label={t('channels')} side="right">
         <button type="button" className={css.railButton} aria-label={t('channels')} onClick={() => { setPendingSection('channels'); expandSidebar() }}>
-          <IconListPenOutline16 size={16} />
+          <IconListPenOutlineRegular size={16} />
         </button>
       </Tooltip>
       <Tooltip label={t('agents')} side="right">
         <button type="button" className={css.railButton} aria-label={t('agents')} onClick={() => { setPendingSection('agents'); expandSidebar() }}>
-          <IconAgentPresetOutline16 size={16} />
+          <IconAgentPresetOutlineRegular size={16} />
         </button>
       </Tooltip>
     </nav>

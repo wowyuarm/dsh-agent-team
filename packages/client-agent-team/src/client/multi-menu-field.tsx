@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import createCss from './create.module.css'
 import css from './sidebar.module.css'
@@ -72,7 +72,7 @@ export function MultiMenuField<I extends string>({ label, options, selected, onT
               onClick={() => { setOpen(value => !value) }}
             >
               <span className={createCss.selectValue}>{selected.length === 0 ? triggerEmptyLabel : formatCount(selected.length)}</span>
-              <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
+              <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutlineRegular /></span>
             </button>
           }
         />

@@ -2,12 +2,24 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { v3RenamedSourceKind } from './context-source.ts'
 import type { AgentTeamAgentMember } from './types.ts'
 import { memberMemoryDirectoryPath } from './member-runtime.ts'
 
 export const name = 'wowyuarm-agent-team-member-context'
+
+/** This producer's own attribution. `kind` must be producer-owned (Session format V4);
+ * the second member is the read-time conversion's rename of this producer's
+ * released V3 history (`plugin:` + id, `plugin` key dropped) — read-side only. */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'wowyuarm-agent-team-member-context': { kind: 'wowyuarm-agent-team-member-context' } & ContextFormed
+    'plugin:wowyuarm-agent-team-member-context': { kind: 'plugin:wowyuarm-agent-team-member-context' } & ContextFormed
+  }
+}
+
 const MAX_MEMORY_BYTES = 8 * 1024
 const BEGIN = '<team-member-private-memory>'
 const END = '</team-member-private-memory>'
@@ -43,8 +55,9 @@ export function apply(ctx: Context): void {
       // number domains explicit (the seq = log.length contiguity contract).
       const event = agent.session.snapshotEvents(SessionLogOffset(sequence), SessionLogOffset(sequence + 1))[0]
       return event?.type === 'user/message'
-        && event.data.source.kind === 'plugin'
-        && event.data.source.plugin === name
+        // Both identities are this producer's own: the kind written now and
+        // the read-time conversion's rename of this producer's V3 history.
+        && (event.data.source.kind === name || event.data.source.kind === v3RenamedSourceKind(name))
         && event.data.content[0]?.type === 'text'
         ? [event.data.content[0].text]
         : []
@@ -53,7 +66,7 @@ export function apply(ctx: Context): void {
     if (alreadyVisible) return decision
     const message = createUserMessage({
       content: [{ type: 'text', text }],
-      source: { kind: 'plugin', plugin: name, form: 'instructions' },
+      source: { kind: name, form: 'instructions' },
     })
     return { kind: 'enter', messages: [...decision.messages, message] }
   }, { prepend: true })

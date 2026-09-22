@@ -8,8 +8,7 @@
  * format generation, or Harness error message text.
  *
  * The reader owns reading and classification only — not Member lifecycle,
- * Agent create/resume, UI, ledger, or remediation (which reads raw artifact
- * bytes through its own repair path).
+ * Agent create/resume, UI, or ledger.
  *
  * Classification notes: the shipped JSONL backend throws its
  * `corrupt session log` family as plain `Error`s, so corruption is detected by

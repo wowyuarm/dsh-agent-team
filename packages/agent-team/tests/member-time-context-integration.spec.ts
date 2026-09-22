@@ -80,9 +80,9 @@ describe('Team Member clock composition', () => {
     // Elapsed hangs off the last model-visible event, rendered compact.
     expect(text).toContain('Elapsed since the preceding model-visible event:')
     expect(text).toMatch(/Team collaboration timestamps use UTC\+8\./)
-    // The snapshot is a durable user message with the plugin source.
+    // The snapshot is a durable user message with this producer's own kind.
     const message = first.kind === 'enter' ? first.messages.at(-1) as UserMessage : undefined
-    expect(message?.source).toMatchObject({ kind: 'plugin', plugin: PLUGIN, form: 'snapshot' })
+    expect(message?.source).toMatchObject({ kind: PLUGIN, form: 'snapshot' })
     expect(before).toBeGreaterThan(0)
     await ctx.fiber.dispose()
   })

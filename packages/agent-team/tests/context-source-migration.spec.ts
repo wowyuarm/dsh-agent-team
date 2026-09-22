@@ -1,17 +1,17 @@
 /**
- * Released-format migration fence for Agent Team message sources.
+ * Session format V4 admission and read-time conversion fence for Agent Team
+ * message sources.
  *
- * The Harness validates every durable message source against a closed member
- * list when it migrates a logged Session forward, and refuses the whole
- * Session when a plugin source carries anything outside that list. Nothing
- * else in this repository exercises that contract: the host specs build
- * Sessions natively at the current format version and never migrate one, so an
- * incompatible source is invisible until a real user upgrades with existing
- * history — exactly how the v0.1.5 custom-kind break reached a live install.
+ * Format V4 requires every durable message source to carry its producer's own
+ * kind (non-empty, and not the retired `plugin` wrapper) and refuses the
+ * wrapper at write time. Released V3 history is not rewritten on disk: the
+ * V3→V4 read-time conversion renames one released `plugin` source into
+ * `plugin:<producer>` (dropping the `plugin` key, keeping `form`/`sections`/
+ * `summary`), so the read side must recognize both shapes by exact identity.
  *
- * This spec drives the real migration stage over the messages this package
- * actually writes, with the retired shapes kept as negative controls so the
- * assertions cannot silently stop testing anything.
+ * This spec drives the official admission and conversion functions over the
+ * sources this package actually writes, with the retired shapes kept as
+ * negative controls so the assertions cannot silently stop testing anything.
  *
  * The migration packages resolve through the sibling Harness checkout that
  * `scripts/link-harness-packages.mjs` links, like the other Harness imports in
@@ -19,8 +19,10 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionFormatEventCollector } from '@deepseek-ai/dsh-session-format'
-import { restoreReleasedV3Artifact, sessionFormatV2ToV3 } from '@deepseek-ai/dsh-session-format-v2-to-v3'
+import type {} from '@deepseek-ai/dsh-tool-jobs'
+import type { SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
+import { assertV4RowAdmission } from '@deepseek-ai/dsh-session-format-v3-to-v4'
+import { rewriteV3MessageSource } from '@deepseek-ai/dsh-session-format-v3-to-v4/src/sources.ts'
 import {
   AGENT_TEAM_PLUGIN_ID,
   CHECKPOINT_SECTION_NAME,
@@ -29,40 +31,11 @@ import {
   createCheckpointContinuationMessage,
   createHandoffMessage,
   handoffOf,
+  isAgentTeamSource,
+  isAgentTeamSourceKind,
   isCheckpointContinuationMessage,
   isHandoffMessage,
 } from '../src/context-source.ts'
-
-const header = { version: 2, id: 'context-source-migration', createdAt: 1, isSeeded: false, delegationDepth: 0 }
-
-/** Migrate one v2 user message through the released v2→v3 stage and admit the artifact. */
-function migrateUserMessage(source: unknown): void {
-  const target = sessionFormatV2ToV3.migrateHeader(header)
-  const stage = sessionFormatV2ToV3.createStage({
-    sourceHeader: header,
-    targetHeader: target,
-    sourceInheritedEventCount: 0,
-    sourceKind: 'decoded',
-  })
-  const collector = new SessionFormatEventCollector()
-  const events = [
-    { type: 'turn/start', time: 1, data: { turn: 1 } },
-    { type: 'step/start', time: 1, data: { turn: 1, step: 1 } },
-    {
-      type: 'user/message',
-      time: 1,
-      surfaceOp: 'append',
-      data: { id: 'message', role: 'user', content: [{ type: 'text', text: 'body' }], source },
-    },
-  ] as const
-  for (const [seq, event] of events.entries()) {
-    stage.transformEvent({ ...event, seq } as never, collector)
-  }
-  restoreReleasedV3Artifact(
-    { header: target, inheritedEventCount: stage.finish(collector), events: collector.values },
-    new Set(),
-  )
-}
 
 const handoffInput = {
   handoff: 'objective: finish the parser\nnext step: run tests',
@@ -74,41 +47,116 @@ const handoffInput = {
   relatedFiles: [{ path: 'src/parser.ts', reason: 'rewritten' }],
 }
 
-describe('Agent Team message sources survive released-format migration', () => {
-  it('migrates the rollover handoff this package writes', () => {
-    expect(() => migrateUserMessage(createHandoffMessage(handoffInput).source)).not.toThrow()
+/** One durable user-message row carrying `source`, in the shape the jsonl writer hands the V4 admission. */
+function userRow(source: unknown): unknown {
+  return {
+    type: 'user/message',
+    data: { id: 'message', role: 'user', content: [{ type: 'text', text: 'body' }], source },
+  }
+}
+
+/** The official V3→V4 conversion of one released V3 `plugin` source. */
+function convertV3(source: SessionFormatJsonObject): SessionFormatJsonObject {
+  return rewriteV3MessageSource(source, 1, undefined)
+}
+
+describe('Agent Team message sources satisfy format V4 admission', () => {
+  it('admits every source this package writes', () => {
+    expect(() => assertV4RowAdmission(userRow(createHandoffMessage(handoffInput).source))).not.toThrow()
+    expect(() => assertV4RowAdmission(userRow(createCheckpointContinuationMessage('context-checkpoint-abc').source))).not.toThrow()
+    expect(() => assertV4RowAdmission(userRow({ kind: AGENT_TEAM_PLUGIN_ID, form: 'notice', summary: 'Team Inbox has unread work.' }))).not.toThrow()
+    expect(() => assertV4RowAdmission(userRow({ kind: AGENT_TEAM_PLUGIN_ID, form: 'relay' }))).not.toThrow()
   })
 
-  it('migrates the checkpoint continuation this package writes', () => {
-    expect(() => migrateUserMessage(createCheckpointContinuationMessage('context-checkpoint-abc').source)).not.toThrow()
-  })
-
-  it('refuses the retired custom kinds, so this fence still has teeth', () => {
-    // The shapes this package wrote before the v0.1.5 cut: a plugin-declared
-    // MessageSourceMap kind, and the same payload reopened under the admitted
-    // `plugin` kind while still carrying bespoke envelope members.
-    expect(() => migrateUserMessage({
-      kind: 'agent-team-context-handoff',
-      form: 'snapshot',
-      version: 1,
-      previousSessionId: 'a',
-      newSessionId: 'b',
-      trigger: 'model',
-      handoffEventSeq: 1,
-      sections: [{ name: HANDOFF_SECTION_NAME, text: 'prose' }],
-    })).toThrow(/unclassified message source/)
-    expect(() => migrateUserMessage({
+  it('refuses the retired plugin wrapper at write time, so this fence still has teeth', () => {
+    // The shape every released line before V4 wrote; V4 refuses it at the
+    // write/admission boundary, not at display time.
+    expect(() => assertV4RowAdmission(userRow({
       kind: 'plugin',
       plugin: AGENT_TEAM_PLUGIN_ID,
       form: 'snapshot',
-      version: 1,
       sections: [{ name: HANDOFF_SECTION_NAME, text: 'prose' }],
-    })).toThrow(/unexpected member/)
+    }))).toThrow(/producer-owned source kind/)
+    expect(() => assertV4RowAdmission(userRow({ kind: 'plugin' }))).toThrow(/producer-owned source kind/)
+  })
+})
+
+describe('Released V3 history reads back through the official conversion', () => {
+  it('renames this plugin’s wrapper rows exactly as the read side expects', () => {
+    const handoff = createHandoffMessage(handoffInput)
+    const converted = convertV3({
+      kind: 'plugin',
+      plugin: AGENT_TEAM_PLUGIN_ID,
+      form: 'snapshot',
+      sections: [...handoffOf(handoff)!.sections],
+    })
+    expect(converted['kind']).toBe(`plugin:${AGENT_TEAM_PLUGIN_ID}`)
+    expect(converted).not.toHaveProperty('plugin')
+    expect(converted['form']).toBe('snapshot')
+    // The shape the read side receives: the converted kind with every payload
+    // field preserved, and no `plugin` key.
+    const restored = createUserMessage({
+      content: [...handoff.content],
+      source: {
+        kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`,
+        form: 'snapshot',
+        sections: [...handoffOf(handoff)!.sections],
+      },
+    })
+    expect(isHandoffMessage(restored)).toBe(true)
+    expect(restored.source.kind).toBe(`plugin:${AGENT_TEAM_PLUGIN_ID}`)
+    expect(isAgentTeamSource(restored.source)).toBe(true)
+  })
+
+  it('keeps a two-field wrapper down to exactly its renamed kind', () => {
+    expect(convertV3({ kind: 'plugin', plugin: 'wowyuarm-agent-team-member-context' })).toEqual({
+      kind: 'plugin:wowyuarm-agent-team-member-context',
+    })
+  })
+
+  it('does not claim a third-party producer’s converted row', () => {
+    // A same-name whitelisted third-party producer keeps its own kind; a
+    // fallback-renamed one becomes `plugin:<its own id>`. Exact identity
+    // matching must leave both outside this plugin's attribution.
+    expect(convertV3({ kind: 'plugin', plugin: 'tool-jobs', form: 'notice', summary: 'job done' })['kind']).toBe('tool-jobs')
+    expect(isAgentTeamSourceKind('tool-jobs')).toBe(false)
+    const foreign = createUserMessage({
+      content: [{ type: 'text', text: 'body' }],
+      source: {
+        kind: 'tool-jobs',
+        form: 'snapshot',
+        sections: [{ name: HANDOFF_SECTION_NAME, text: 'looks like a handoff' }],
+      },
+    })
+    expect(isHandoffMessage(foreign)).toBe(false)
+    expect(continuationCheckpointRefOf(foreign)).toBeUndefined()
+  })
+
+  it('reads the checkpoint ref from a converted continuation by exact identity', () => {
+    const ref = 'context-checkpoint-0123456789abcdef'
+    const continuation = createCheckpointContinuationMessage(ref)
+    const restored = createUserMessage({
+      content: [...continuation.content],
+      source: {
+        kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`,
+        form: 'snapshot',
+        sections: [{ name: CHECKPOINT_SECTION_NAME, text: ref }],
+      },
+    })
+    expect(restored.source).toMatchObject({
+      kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`,
+      form: 'snapshot',
+      sections: [{ name: CHECKPOINT_SECTION_NAME, text: ref }],
+    })
+    expect(continuationCheckpointRefOf(restored)).toBe(ref)
+    expect(isCheckpointContinuationMessage(restored)).toBe(true)
+    expect(isCheckpointContinuationMessage(restored, ref)).toBe(true)
+    expect(isCheckpointContinuationMessage(restored, 'context-checkpoint-other')).toBe(false)
   })
 })
 
 describe('Agent Team message sources read back through the admitted slots', () => {
-  it('recovers the whole handoff envelope from its named sections', () => {
+  it('recovers the whole handoff envelope from its named sections, in both shapes', () => {
     const message = createHandoffMessage(handoffInput)
     expect(isHandoffMessage(message)).toBe(true)
     expect(handoffOf(message)).toMatchObject({
@@ -120,6 +168,23 @@ describe('Agent Team message sources read back through the admitted slots', () =
       relatedFiles: ['src/parser.ts'],
     })
     expect(handoffOf(message)?.sections[0]).toEqual({ name: HANDOFF_SECTION_NAME, text: handoffInput.handoff })
+
+    const converted = createUserMessage({
+      content: [...message.content],
+      source: {
+        kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`,
+        form: 'snapshot',
+        sections: [...handoffOf(message)!.sections],
+      },
+    })
+    expect(handoffOf(converted)).toMatchObject({
+      previousSessionId: 'agent-team-previous',
+      newSessionId: 'agent-team-next',
+      trigger: 'model',
+      handoffEventSeq: 42,
+      checkpointRef: 'context-checkpoint-abc',
+      relatedFiles: ['src/parser.ts'],
+    })
   })
 
   it('omits absent optional envelope facts instead of inventing them', () => {
@@ -138,15 +203,16 @@ describe('Agent Team message sources read back through the admitted slots', () =
     })
     expect(handoffOf(message)?.relatedFiles).toEqual(['src/a, b.ts', 'src/parser.ts'])
     // The exact-path encoding still rides the admitted section slot.
-    expect(() => migrateUserMessage(message.source)).not.toThrow()
+    expect(() => assertV4RowAdmission(userRow(message.source))).not.toThrow()
   })
 
   it('still reads the comma-joined related-files section old generations wrote', () => {
+    // The converted shape of a released V3 handoff: renamed kind, no `plugin`
+    // key, legacy comma-joined `Related files` section preserved verbatim.
     const legacy = createUserMessage({
       content: [{ type: 'text', text: 'handoff' }],
       source: {
-        kind: 'plugin',
-        plugin: AGENT_TEAM_PLUGIN_ID,
+        kind: `plugin:${AGENT_TEAM_PLUGIN_ID}`,
         form: 'snapshot',
         sections: [
           { name: HANDOFF_SECTION_NAME, text: 'prose' },
@@ -161,36 +227,17 @@ describe('Agent Team message sources read back through the admitted slots', () =
     expect(handoffOf(legacy)?.relatedFiles).toEqual(['src/parser.ts', 'src/lexer.ts'])
   })
 
-  it('recovers the checkpoint ref from a continuation, exactly and by identity', () => {
-    const ref = 'context-checkpoint-0123456789abcdef'
-    const message = createCheckpointContinuationMessage(ref)
-    expect(continuationCheckpointRefOf(message)).toBe(ref)
-    expect(isCheckpointContinuationMessage(message)).toBe(true)
-    expect(isCheckpointContinuationMessage(message, ref)).toBe(true)
-    expect(isCheckpointContinuationMessage(message, 'context-checkpoint-other')).toBe(false)
-    expect(message.source).toMatchObject({
-      kind: 'plugin',
-      plugin: AGENT_TEAM_PLUGIN_ID,
-      form: 'snapshot',
-      sections: [{ name: CHECKPOINT_SECTION_NAME, text: ref }],
-    })
-  })
-
   it('does not claim another producer’s snapshot or a foreign plugin message', () => {
-    // The shipped system prompt writes the same plugin+snapshot shape.
-    const foreign = {
-      kind: 'plugin' as const,
-      plugin: '@deepseek-ai/dsh-system-prompt',
-      form: 'snapshot' as const,
-      sections: [{ name: 'runtime', text: 'context' }],
-    }
-    const message = createUserMessage({ content: [{ type: 'text', text: 'body' }], source: foreign })
-    expect(isHandoffMessage(message)).toBe(false)
-    expect(continuationCheckpointRefOf(message)).toBeUndefined()
+    const foreign = createUserMessage({
+      content: [{ type: 'text', text: 'body' }],
+      source: { kind: 'tool-jobs', form: 'snapshot', sections: [{ name: 'runtime', text: 'context' }] },
+    })
+    expect(isHandoffMessage(foreign)).toBe(false)
+    expect(continuationCheckpointRefOf(foreign)).toBeUndefined()
     // Our own snapshot without the handoff marker is not a handoff either.
     expect(isHandoffMessage(createUserMessage({
       content: [{ type: 'text', text: 'body' }],
-      source: { kind: 'plugin', plugin: AGENT_TEAM_PLUGIN_ID, form: 'snapshot', sections: [{ name: 'other', text: 'x' }] },
+      source: { kind: AGENT_TEAM_PLUGIN_ID, form: 'snapshot', sections: [{ name: 'other', text: 'x' }] },
     }))).toBe(false)
   })
 })

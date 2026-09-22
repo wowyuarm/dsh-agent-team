@@ -38,9 +38,9 @@
 
 ### 2.2 修改 model-facing tool 或 preset
 
-- 本仓库：`docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`（六个工具及运行时依赖）、`packages/agent-team/preset/team-member/agent.cordis.yml`（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
+- 本仓库：`docs/team-collaboration.zh.md`、`packages/tool-agent-team/src/index.ts`（六个工具及运行时依赖）、`cordis.patch.yml` 中的 `team-member` 声明行（只在 team-enabled scope 中挂载）；历史工具研究仅在需要溯源时查 archive。
 - Harness 文档：`docs/cookbook/adding-a-tool.md`、`docs/subsystems/tools.md`、`docs/subsystems/permission-presets.md`、`docs/subsystems/system-prompt.md`。
-- Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-presets/src`。
+- Harness 源码：`packages/core/tools/src/{index,schema,presentation}.ts`、`packages/preset/agent-preset{,-registry}/src`。
 
 Tool schema、canonical output、execute 与 presentation 是不同层。不要让 Host service 直接变成 global tool；不要把 `output`、`execute`、`timeoutMs` 等 implementation fields 泄漏到 model request。Tool 只在显式 team preset scope 中存在，普通 Session 不应出现 Team tools 或 guidance。
 

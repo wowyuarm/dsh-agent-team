@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as memberTimeContext from '../src/member-time-context.ts'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import { MessageId, type UserMessage } from '@deepseek-ai/dsh-llm'
 
 /**
  * The clock plugin folds its baseline from the Member Session's own events,
@@ -14,12 +14,17 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm'
 const PLUGIN = memberTimeContext.name
 
 function userMessage(source: UserMessage['source'], text = 'x'): UserMessage {
-  return { role: 'user', content: [{ type: 'text', text }], source } as UserMessage
+  return { id: MessageId('message'), role: 'user', content: [{ type: 'text', text }], source } as UserMessage
 }
 
 function clockSnapshot(time: number): { readonly type: string; readonly time: number; readonly data: UserMessage } {
   return { type: 'user/message', time,
-    data: userMessage({ kind: 'plugin', plugin: PLUGIN, form: 'snapshot', sections: [] }) }
+    data: userMessage({ kind: PLUGIN, form: 'snapshot', sections: [] }) }
+}
+
+function convertedClockSnapshot(time: number): { readonly type: string; readonly time: number; readonly data: UserMessage } {
+  return { type: 'user/message', time,
+    data: userMessage({ kind: `plugin:${PLUGIN}`, form: 'snapshot', sections: [] }) }
 }
 
 function ordinaryMessage(time: number): { readonly type: string; readonly time: number; readonly data: UserMessage } {
@@ -46,6 +51,18 @@ describe('foldClockBaseline derives elapsed baselines from session events', () =
     const folded = memberTimeContext.foldClockBaseline([
       ordinaryMessage(1_000),
       clockSnapshot(2_500),
+    ])
+    expect(folded.lastMessageTime).toBe(2_500)
+    expect(folded.lastInjectionTime).toBe(2_500)
+    expect(folded.lastTurnInjectionTime).toBe(2_500)
+  })
+
+  it('recognizes its own snapshots in the converted shape of released V3 history', () => {
+    // The read-time conversion renames this producer's released V3 rows to
+    // `plugin:<name>` (no `plugin` key); the fold must still latch them.
+    const folded = memberTimeContext.foldClockBaseline([
+      ordinaryMessage(1_000),
+      convertedClockSnapshot(2_500),
     ])
     expect(folded.lastMessageTime).toBe(2_500)
     expect(folded.lastInjectionTime).toBe(2_500)

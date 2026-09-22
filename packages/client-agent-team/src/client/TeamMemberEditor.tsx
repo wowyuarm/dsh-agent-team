@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgentTeamClientMemberStatus, AgentTeamModelSelection, AgentTeamUpdateMemberRequest } from '@wowyuarm/dsh-agent-team/types'
 import type { TeamModelEffortOption, TeamModelProviderGroup, TeamSidebarProps } from './slots.ts'
-import { Button, IconChevronDownOutline14, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutlineRegular, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { mintRequestId } from './requests.ts'
 import { useEditDialogSave } from './team-dialog-save.ts'
@@ -95,7 +95,7 @@ export function ModelPickerField({ model, onModelChange, loadModels, disabled, t
             onClick={() => { setModelOpen(value => !value) }}
           >
             <span className={createCss.selectValue}>{triggerLabel}</span>
-            <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
+            <span className={`${createCss.chevron!} ${open ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutlineRegular /></span>
           </button>
         }
       />
@@ -125,7 +125,7 @@ export function ModelPickerField({ model, onModelChange, loadModels, disabled, t
             onClick={() => { setEffortOpen(value => !value) }}
           >
             <span className={createCss.selectValue}>{`${t('reasoningEffort')} · ${effortTriggerLabel}`}</span>
-            <span className={`${createCss.chevron!} ${effortOpen ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
+            <span className={`${createCss.chevron!} ${effortOpen ? createCss.chevronOpen! : ''}`} aria-hidden><IconChevronDownOutlineRegular /></span>
           </button>
         }
       />
