@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format foll
 
 - The Team sidebar states the current Workspace on one selector line instead of listing every Workspace above the Channels and Agents that belong to it. The cross-Workspace Inbox keeps its own entry above that line, and the selector's menu is fully keyboard-operable.
 
+## [Unreleased]
+
+- The Inbox row's clock yields when the identity line is too narrow to hold it beside the count: on a phone-width page with the sidebar forced open the row no longer draws past its own edge.
+
 ## [0.1.14-alpha.1] - 2026-09-18
 
 - The certified DSH baseline moves to `0.1.6-alpha.1`, and every `@deepseek-ai/dsh-*` peer moves with it to `>=0.1.6-alpha.1 <0.1.7`. The previous `>=0.1.5-rc.1 <0.1.6` peers do not admit this line — a range enables prereleases only on its own base tuple — so upgrade `@deepseek-ai/dsh` together with this release. Adapts to the removal of `IconSendOutline16` from `dsh-client-ui-primitives`, keeping the composer's send arrow unchanged.
