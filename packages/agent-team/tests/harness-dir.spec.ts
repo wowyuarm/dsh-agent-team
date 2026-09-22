@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 // scripts/harness-dir.mjs is the single source of truth for the sibling
 // harness checkout. It runs at import time, so each case exercises it in a
@@ -42,15 +44,55 @@ describe('harness checkout pointer', () => {
     expect(result.stderr).toContain('docs/dsh-release-compatibility.md')
   })
 
-  it('prefers the env override over the generated marker', () => {
-    const marker = join(process.cwd(), '.generated-harness')
-    // The committed tree regenerates against the daily default; the marker
-    // (untracked) only exists after a cert-run generation. When both sources
-    // are present, the explicit env wins — verified indirectly: the env value
-    // resolving to a missing directory fails even though the marker names a
-    // valid checkout, proving the marker did not take precedence.
-    const result = run({ DSH_HARNESS_DIR: 'deepseek-harness-does-not-exist' })
-    expect(result.stderr).toContain('DSH_HARNESS_DIR points the harness resolution')
-    void marker
+  describe('generated marker precedence', () => {
+    const roots: string[] = []
+    afterEach(async () => {
+      await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+    })
+
+    // The marker is read at import time against the script's own project
+    // root, so each case runs a copy from a throwaway root with hand-built
+    // sibling checkouts instead of touching the repo's untracked marker
+    // while parallel workers resolve their imports.
+    const runIsolated = async (options: { marker?: string; checkouts?: readonly string[]; env?: Record<string, string> }) => {
+      const root = await mkdtemp(join(tmpdir(), 'harness-dir-'))
+      roots.push(root)
+      const projectRoot = join(root, 'repo')
+      await mkdir(join(projectRoot, 'scripts'), { recursive: true })
+      await copyFile(join(process.cwd(), 'scripts', 'harness-dir.mjs'), join(projectRoot, 'scripts', 'harness-dir.mjs'))
+      for (const name of options.checkouts ?? []) await mkdir(join(root, name))
+      if (options.marker !== undefined) await writeFile(join(projectRoot, '.generated-harness'), options.marker)
+      const environment: Record<string, string> = { PATH: process.env.PATH ?? '' }
+      for (const [key, value] of Object.entries(options.env ?? {})) environment[key] = value
+      try {
+        const stdout = execFileSync(process.execPath, ['-e', `import(${JSON.stringify(join(projectRoot, 'scripts', 'harness-dir.mjs'))}).then(m => console.log(m.harnessName))`], {
+          env: environment,
+          encoding: 'utf8',
+        })
+        return { stdout, stderr: '' }
+      } catch (error) {
+        const failure = error as { stdout?: string; stderr?: string }
+        return { stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' }
+      }
+    }
+
+    it('resolves the checkout the marker names before the daily default', async () => {
+      const result = await runIsolated({ marker: 'checkout-from-marker', checkouts: ['checkout-from-marker'] })
+      expect(result.stdout).toContain('checkout-from-marker')
+    })
+
+    it('prefers the env override over a marker naming an existing checkout', async () => {
+      const result = await runIsolated({
+        marker: 'checkout-from-marker', checkouts: ['checkout-from-marker'],
+        env: { DSH_HARNESS_DIR: 'checkout-from-env-missing' },
+      })
+      expect(result.stderr).toContain('DSH_HARNESS_DIR points the harness resolution')
+      expect(result.stderr).toContain('checkout-from-env-missing')
+    })
+
+    it('fails fast when the marker names a checkout that no longer exists', async () => {
+      const result = await runIsolated({ marker: 'checkout-from-marker-missing' })
+      expect(result.stderr).toContain("The tsconfig facades were generated against 'checkout-from-marker-missing'")
+    })
   })
 })
