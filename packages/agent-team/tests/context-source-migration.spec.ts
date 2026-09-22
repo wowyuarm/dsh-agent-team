@@ -88,7 +88,7 @@ describe('Released V3 history reads back through the official conversion', () =>
       kind: 'plugin',
       plugin: AGENT_TEAM_PLUGIN_ID,
       form: 'snapshot',
-      sections: [...handoffOf(handoff)!.sections],
+      sections: JSON.parse(JSON.stringify([...handoffOf(handoff)!.sections])) as SessionFormatJsonObject,
     })
     expect(converted['kind']).toBe(`plugin:${AGENT_TEAM_PLUGIN_ID}`)
     expect(converted).not.toHaveProperty('plugin')
