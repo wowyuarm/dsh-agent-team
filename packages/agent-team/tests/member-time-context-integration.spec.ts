@@ -72,7 +72,6 @@ describe('Team Member clock composition', () => {
     ctx.provide('agentTeam', { memberForAgent: (subject: Agent) => subject === agent ? { memberId: 'member:clock' } : undefined } as never)
     await mount(ctx)
 
-    const before = Date.now()
     const first = await preStep(ctx, agent, 1, 1)
     const text = snapshotText(first)
     expect(text).toBeDefined()
@@ -83,7 +82,6 @@ describe('Team Member clock composition', () => {
     // The snapshot is a durable user message with the plugin source.
     const message = first.kind === 'enter' ? first.messages.at(-1) as UserMessage : undefined
     expect(message?.source).toMatchObject({ kind: 'plugin', plugin: PLUGIN, form: 'snapshot' })
-    expect(before).toBeGreaterThan(0)
     await ctx.fiber.dispose()
   })
 

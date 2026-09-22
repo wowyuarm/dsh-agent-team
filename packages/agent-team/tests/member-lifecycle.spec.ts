@@ -1064,7 +1064,8 @@ describe('Agent Team Member lifecycle', () => {
     const request = JSON.stringify(adapter.requests[0]!.messages)
     expect(request).toContain('Direct Team mention')
     expect(request).toContain('Please investigate the top-level wake path')
-    expect(request).toContain('human')
+    // The rendered sender line, not the 'member:human' ids elsewhere in the request.
+    expect(request).toContain('From: human')
     expect(request).toContain(committed.task!.taskRef)
     // The notification states the absolute commit instant in UTC+8.
     expect(request).toContain('Occurred at: ')
@@ -1399,7 +1400,7 @@ describe('Agent Team Member lifecycle', () => {
 
   it('keeps a persisted Member session active after switching its model and restarting', async () => {
     const adapter = new ScriptedAdapter()
-    const { ctx, workspaceId } = await realHarness(adapter)
+    const { ctx, workspaceId, teamFiber } = await realHarness(adapter)
     const added = await ctx.agentTeam.addMember({
       requestId: requestId('persisted-model-add'), workspaceId, handle: 'builder',
       description: 'Builds the implementation', presetId: 'team-member', channelRefs: [],
@@ -1417,7 +1418,22 @@ describe('Agent Team Member lifecycle', () => {
     })
     expect(edited.status.availability).toBe('active')
 
-    expect(ctx.agents.get(added.status.member.sessionId)).toBeDefined()
+    // Host restart on the persisted Session: the switched selection, not the
+    // creation-time model, drives the reactivated Agent.
+    await ctx.agentTeam.suspendMember({ requestId: requestId('persisted-model-suspend'), memberId: added.status.member.memberId })
+    await teamFiber.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+    await ctx.plugin(AgentTeam)
+    await ctx.agentTeam.resumeMember({ requestId: requestId('persisted-model-resume'), memberId: added.status.member.memberId })
+    const resumed = await waitFor(() => {
+      const restarted = ctx.agents.get(added.status.member.sessionId)
+      return restarted !== undefined && restarted.status === 'idle' ? restarted : undefined
+    })
+    adapter.enqueue(textResponse('after the restart.'))
+    resumed.followup(createUserMessage({ content: [{ type: 'text', text: 'Use the switched model after the restart.' }], source: { kind: 'user' } }))
+    await resumed.whenIdle()
+    expect(adapter.requests.at(-1)).toMatchObject({ provider: 'mock', model: 'switched-model' })
+    expect(ctx.agentTeam.members().find(entry => entry.member.memberId === added.status.member.memberId)!.availability).toBe('active')
   })
 
   it('applies Member model edits to a live Agent immediately and keeps pinned selections across restarts', async () => {
@@ -2218,8 +2234,6 @@ describe('Agent Team checkpoint selection and return (ticket 02)', () => {
     expect(refs).toContain(checkpointRefFor(sessionId, 'call-tl-cp1'))
     expect(refs).toContain(checkpointRefFor(sessionId, 'call-tl-cp2'))
     // Newest first, head present, every agent checkpoint restorable.
-    const cpIndexes = refs.map(ref => timeline.items.findIndex(item => item.checkpointRef === ref))
-    expect(cpIndexes[cpIndexes.indexOf(refs.indexOf(checkpointRefFor(sessionId, 'call-tl-cp1')))]).toBeLessThanOrEqual(timeline.items.length)
     const first = timeline.items.find(item => item.checkpointRef === checkpointRefFor(sessionId, 'call-tl-cp1'))!
     const second = timeline.items.find(item => item.checkpointRef === checkpointRefFor(sessionId, 'call-tl-cp2'))!
     expect(first.restorable).toBe(true)
@@ -4145,8 +4159,6 @@ describe('Agent Team Member private memory directory sanitization (issue #7)', (
     expect(memberMemoryDirectoryName(memberId)).toBe('member-9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b')
     // No path-segment-forbidden characters remain on any platform.
     expect(memberMemoryDirectoryName(memberId)).not.toContain(':')
-    // The branded ref itself is unchanged by the helper.
-    expect(memberId).toBe('member:9d903b7c-0f9f-4d7c-8be9-3f5c0f8f1a2b')
   })
 
   it('sanitizes only the final segment of a legacy colon path on any platform', async () => {

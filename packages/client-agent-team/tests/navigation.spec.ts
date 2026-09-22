@@ -198,10 +198,4 @@ describe('TeamNavigation', () => {
     expect(navigation.getSnapshot()).toEqual({ mode: 'team', workspaceId: 'workspace:two' })
   })
 
-  it('exposes Member view actions on every actions() instance', () => {
-    const navigation = new TeamNavigation()
-    const actions = navigation.actions()
-    expect(typeof actions.enterMemberSession).toBe('function')
-    expect(typeof actions.exitMemberSession).toBe('function')
-  })
 })
