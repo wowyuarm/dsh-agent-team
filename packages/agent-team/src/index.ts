@@ -27,7 +27,7 @@ import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
-import { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName, parseLegacyHumanProfile, planLegacyAdoption, type HumanProfileSettings, type LegacyHumanProfileFields } from './human-profile.ts'
+import { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName, parseLegacyHumanProfile, planLegacyAdoption, type LegacyHumanProfileFields } from './human-profile.ts'
 import { humanAvatarsRoot, readHumanAvatar, removeHumanAvatar, writeHumanAvatar } from './human-avatar.ts'
 import { createHumanUpdateChecker } from './human-update-check.ts'
 import { PressurePolicyCoordinator } from './pressure-policy.ts'
@@ -544,9 +544,10 @@ export default class AgentTeam extends TypertRemoteService {
    * The two judgements the Config schema cannot make about a Human name: the
    * same non-empty floor as Member handles, plus global uniqueness against live
    * Members. `setHumanProfile` runs it before the write, so a colliding rename
-   * rejects instead of persisting.
+   * rejects instead of persisting. It reads the one field it judges, so the
+   * caller passes the name alone rather than a whole profile shape.
    */
-  private validateHumanProfile(value: HumanProfileSettings): void {
+  private validateHumanProfile(value: { readonly name: string }): void {
     const name = assertValidHumanName(value.name)
     const ledger = this.ledger
     if (ledger === undefined) return

@@ -22,13 +22,10 @@ export function diagnosticText(status: Pick<AgentTeamClientMemberStatus, 'diagno
 /**
  * Whether the restart action can help an unavailable Member: it heals
  * transient and repairable failures, but not a transient rollover window
- * (which resolves on its own) or a refusal already proven non-remediable.
+ * (which resolves on its own).
  */
 export function restartOffered(status: AgentTeamClientMemberStatus): boolean {
-  const diagnostic = status.diagnostic
-  if (diagnostic === undefined) return true
-  if (diagnostic.class === 'rollover') return false
-  return !(diagnostic.class === 'session-refused' && diagnostic.remediable === false)
+  return status.diagnostic?.class !== 'rollover'
 }
 
 /** Shared presence → indicator mapping for dots and avatar badges. */

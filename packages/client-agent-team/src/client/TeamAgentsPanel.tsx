@@ -320,11 +320,6 @@ function AgentRow({ workspaceId, leaveWorkspace, status, current, updateMember, 
         return
       }
       if (result.value.status.availability === 'unavailable') {
-        const diagnostic = result.value.status.diagnostic
-        if (diagnostic?.class === 'session-refused' && diagnostic.remediable === false) {
-          setRowAlert(t('restartRefusedNoRestart', { detail: diagnosticText(result.value.status) }))
-          return
-        }
         setRowAlert(t('restartStillUnavailable', { diagnostic: diagnosticText(result.value.status) || t('statusUnavailable') }))
         return
       }

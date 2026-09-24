@@ -18,6 +18,12 @@ import { parse } from 'yaml'
  * - avatar bytes live under a persistent directory below; the profile holds
  *   only the reference, never a data URL. The composer attachment cache is
  *   TTL-bound and must not hold avatar bytes.
+ *
+ * The legacy-section adoption below is transitional: it exists for installs
+ * upgraded from a pre-rc.1 profile document, and retires — with
+ * `LEGACY_HUMAN_PROFILE_SECTION`, `parseLegacyHumanProfile`, and
+ * `planLegacyAdoption` — once such installs are no longer supported. Nothing
+ * else in the Host reads that document.
  */
 
 /**
@@ -66,17 +72,6 @@ function readInstalledBundleVersion(): string {
     // reporting 'unknown' says so more honestly than a stale number.
   }
   return 'unknown'
-}
-
-export interface HumanProfile {
-  readonly name: string
-  readonly avatarRef?: string
-}
-
-/** Settings document shape: name with schema default, avatarRef as a plain reference. */
-export interface HumanProfileSettings {
-  readonly name: string
-  readonly avatarRef?: string
 }
 
 /**
@@ -160,12 +155,12 @@ export function parseLegacyHumanProfile(yamlText: string): LegacyHumanProfileFie
  * Decide what adoption may write: nothing unless the stored profile is still
  * the pristine default, so a value the Human re-entered after the upgrade
  * always wins, and never the legacy default name itself. The current profile
- * carries explicit `undefined` on `avatarRef` — the Host getter spreads a
- * settings read — and so is not `HumanProfile` under
- * exactOptionalPropertyTypes; taking that shape directly keeps the Host call
- * cast-free. The returned fields are exactly the ops the profile page would
- * have written; byte existence for `avatarRef` is the caller's I/O and must
- * already hold.
+ * carries explicit `undefined` on `avatarRef` — the Host getter spreads the
+ * live Config read — and that shape does not satisfy the optional-property
+ * form under exactOptionalPropertyTypes; taking it directly keeps the Host
+ * call cast-free. The returned fields are exactly the ops the profile page
+ * would have written; byte existence for `avatarRef` is the caller's I/O and
+ * must already hold.
  */
 export function planLegacyAdoption(
   current: { readonly name: string; readonly avatarRef?: string | undefined },

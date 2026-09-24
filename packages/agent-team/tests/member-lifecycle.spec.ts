@@ -3562,7 +3562,6 @@ describe('Agent Team recovery hardening (ticket 04)', () => {
     const recovered = await ctx.agentTeam.recoverMember({ requestId: requestId('ref-recover'), workspaceId, memberId })
     expect(recovered.status.availability).toBe('unavailable')
     expect(recovered.status.diagnostic).toMatchObject({ class: 'session-refused', sessionId, detail: 'cannot safely transform unclassified message source (test seam)' })
-    expect(recovered.status.diagnostic?.remediable).toBeUndefined()
     expect(ctx.agents.get(sessionId)).toBeUndefined()
   })
 

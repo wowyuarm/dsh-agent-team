@@ -133,8 +133,7 @@ export interface AgentTeamCapabilityWarning {
  * Host projection combining durable intent with process-local availability.
  * The optional diagnostic is structured: `class` routes which action actually
  * helps (restart heals, restart is useless, transient), `detail` is the
- * human-readable reason, and a refused session carries its artifact location
- * plus whether a repair attempt proved anything remediable.
+ * human-readable reason, and a refused session carries its artifact location.
  */
 export interface AgentTeamAgentMemberStatus {
   readonly member: AgentTeamAgentMember
@@ -165,12 +164,6 @@ export interface AgentTeamMemberDiagnostic {
   readonly location?: { readonly kind: string; readonly path: string }
   /** The Session the failure is about, when it is about one. */
   readonly sessionId?: SessionId
-  /**
-   * `session-refused` only: `false` marks a refusal the surface must not
-   * offer restart for. Part of the rendered wire contract the Client reads;
-   * the Host currently never sets it, since no write-side repair pass exists.
-   */
-  readonly remediable?: boolean
 }
 
 /** Browser-safe Member identity with Host-only paths removed. */

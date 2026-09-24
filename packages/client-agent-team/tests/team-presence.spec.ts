@@ -31,12 +31,10 @@ describe('Member restart affordance', () => {
     expect(restartOffered(unavailable({ class: 'rollover', detail: 'rolling over' }))).toBe(false)
   })
 
-  it('withholds restart only for a refusal the Host proved non-remediable', () => {
-    // A fresh refusal keeps the action: the restart heal may still repair it.
+  it('keeps offering restart for a refused session, whose heal may still repair it', () => {
+    // No write-side repair pass exists, so a restart re-runs the activation;
+    // it is never withheld because a refusal looked deterministic.
     expect(restartOffered(unavailable({ class: 'session-refused', detail: 'cannot safely transform unclassified message source' }))).toBe(true)
-    expect(restartOffered(unavailable({ class: 'session-refused', detail: 'refused', remediable: true }))).toBe(true)
-    // A walk that settled the lineage with nothing Team-written hides it.
-    expect(restartOffered(unavailable({ class: 'session-refused', detail: 'refused', remediable: false }))).toBe(false)
     // No other class suppresses the action.
     for (const failureClass of ['session-unreadable', 'preset-composition', 'runtime', 'activation'] as const) {
       expect(restartOffered(unavailable({ class: failureClass, detail: 'failed' }))).toBe(true)
@@ -48,7 +46,6 @@ describe('Member restart affordance', () => {
       class: 'session-refused',
       detail: 'cannot safely transform unclassified message source',
       location: { kind: 'jsonl', path: '/tmp/sessions/x/session.v0.jsonl.zstd' },
-      remediable: false,
     })
     expect(diagnosticText(refused)).toBe('cannot safely transform unclassified message source (/tmp/sessions/x/session.v0.jsonl.zstd)')
     expect(diagnosticText(unavailable({ class: 'runtime', detail: 'boom' }))).toBe('boom')
