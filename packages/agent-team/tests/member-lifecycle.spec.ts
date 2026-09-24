@@ -1608,12 +1608,14 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     const sessionId = added.status.member.sessionId
 
     // A well-formed ref that resolves to no checkpoint in the Member's
-    // lineage rejects at the tool boundary: existence prevalidation makes the
-    // failure model-visible as an error result instead of a fake `scheduled`
-    // whose async swap always fails. No pending intent, no turn conclusion,
-    // and the Member stays bound — recoverable by construction.
+    // lineage rejects at the tool boundary: the engine's gate answers from the
+    // timeline the Member can read and refuses before any Host call, so the
+    // failure is model-visible as an error result instead of a fake
+    // `scheduled` whose async swap always fails. No pending intent, no turn
+    // conclusion, and the Member stays bound — recoverable by construction.
+    const vanishedRef = checkpointRefFor(sessionId, 'call-that-never-recorded')
     const live = ctx.agents.get(sessionId)!
-    adapter.enqueue(toolCallResponse('call-cp-ref', 'context_rollover', { handoff: 'attempted checkpoint return', checkpointRef: checkpointRefFor(sessionId, 'call-that-never-recorded') }))
+    adapter.enqueue(toolCallResponse('call-cp-ref', 'context_rollover', { handoff: 'attempted checkpoint return', checkpointRef: vanishedRef }))
     adapter.enqueue(textResponse('the anchor does not resolve; picking another path.'))
     live.followup(createUserMessage({ content: [{ type: 'text', text: 'try returning to a checkpoint' }], source: { kind: 'user' } }))
     await waitForIdle(ctx, live)
@@ -1623,13 +1625,14 @@ describe('Agent Team fresh context_rollover rollover (ticket 01)', () => {
     expect(current.member.sessionId).toBe(sessionId)
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
     // The rejection is durable and model-visible, and no pending intent was
-    // recorded from the refused call.
-    const results = live.session.ownEvents().filter(event => event.type === 'tool/result')
-    const rejection = results.find(event => {
+    // recorded from the refused call. The sentence belongs to the engine; what
+    // the contract needs is an error result that names the ref the model cited,
+    // which is what lets the next attempt drop it.
+    const refused = live.session.ownEvents().find(event => {
       if (event.type !== 'tool/result') return false
-      return JSON.stringify(event.data.message.content).includes('does not resolve in this Member\'s lineage')
+      return event.data.message.isError === true && JSON.stringify(event.data.message.content).includes(vanishedRef)
     })
-    expect(rejection).toBeDefined()
+    expect(refused).toBeDefined()
     const poisoned = foldTeamContextProjection(live.session.ownEvents(), { sessionId: live.session.id, inheritedEventCount: live.session.inheritedEventCount })
     expect(poisoned.pending).toBeNull()
 
