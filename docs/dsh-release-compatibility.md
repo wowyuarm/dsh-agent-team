@@ -206,3 +206,15 @@ Two upstream contract changes drove the round, and both required source adaptati
 The startup repair pass (`session-remediation.ts`) was removed in the same change, with Human approval: what it published was precisely the wrapper V4 refuses at write time, so keeping it would manufacture unreadable files, and the pre-0.1.5 kinds it targeted are refused by the released v2→v3 chain before the read-time conversion runs. A deterministic `session-refused` activation now reports the same failure on every restart instead of healing it.
 
 One further change stopped at the test fixtures: rc.1 redrew `IconUserOutlineArtwork` onto a half-pixel grid without renaming the symbol or changing its wrapper, so the `settingsAction` icon's `data-content` fingerprint moved `612cfab9` → `68b4b343` and one committed snapshot line was refreshed. No bundle source changed.
+
+### DSH 0.1.7-rc.2
+
+DSH `0.1.7-rc.2` is certified on the same peers with no manifest change. The candidate falls inside `>=0.1.7-rc.1 <0.1.8`, so section 4 records a baseline instead of a peer move, and every version spot keeps naming the range's lower bound. Tag `477b4f42` (2026-09-24) was certified before npm carried it: at certification time `next` still pointed at `0.1.7-rc.1`.
+
+No symbol this bundle imports was removed or renamed. Inside the peered packages the delta is 213 non-documentation files, concentrated in the shipped Client surface the bundle composes into (`ui-primitives` 55, `ui-conversation` 22, `ui-workspace` 15); `session-format-catalog`, `session-persistence`, and the Typert protocol changed only their manifests, so section 3.6 is not re-triggered.
+
+Two upstream changes stopped at the test fixtures, and neither moved bundle source. The shipped layout and sidebar now inject a `shortcuts` service, so the takeover bench provides the empty catalog and no-op registrer both parents require.
+
+The sidebar's own markup also moved: `data-window-drag` on the logo row, and the new-session icon and label rewrapped in a mask/content pair. The container snapshot folds those two details onto one shape, because a committed snapshot must hold on every cut inside the certified range, not on the newest one alone.
+
+Evidence on the certified tree: `npm run typecheck`, `npm test` (741 passed, 1 skipped), `npm run lint`, `npm run build`, `npm pack --dry-run` (251 files), and `npm run test:browser` (4 journeys).

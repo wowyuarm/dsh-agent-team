@@ -269,3 +269,15 @@ DSH `0.1.7-rc.1` 已认证，并推动基线前移。全部 `@deepseek-ai/dsh-*`
 它针对的 0.1.5 前自定义 kind 在读时转换之前就被 released v2→v3 迁移链拒绝；确定性的 `session-refused` 激活失败现在在每次重启重试中报告同一失败，而不再被修复。
 
 还有一处变化止步于测试 fixture：rc.1 把 `IconUserOutlineArtwork` 的路径重画到半像素网格上，没有改名、没有改 wrapper，因此 `settingsAction` 图标的 `data-content` 指纹从 `612cfab9` 变为 `68b4b343`，一行已提交快照随之刷新。源码无改动。
+
+### DSH 0.1.7-rc.2
+
+DSH `0.1.7-rc.2` 在同一 peer 区间上认证通过，manifest 无改动。候选版本落在 `>=0.1.7-rc.1 <0.1.8` 之内，因此按 §4 记录基线而不移动 peer，所有版本位仍指向该区间下界。tag `477b4f42`（2026-09-24）在 npm 尚未发布它时就完成认证：当时 `next` 仍指向 `0.1.7-rc.1`。
+
+本 bundle 引入的符号没有被删除或改名。peer 包内的差异是 213 个非文档文件，集中在 bundle 组合进去的随包 Client 界面（`ui-primitives` 55、`ui-conversation` 22、`ui-workspace` 15）；`session-format-catalog`、`session-persistence` 与 Typert 协议只改了 manifest，因此不重新触发 §3.6。
+
+两处上游变化止步于测试 fixture，都没有改动 bundle 源码。随包 layout 与 sidebar 现在 inject `shortcuts` 服务，接管测试台因此提供两个父级都需要的空 catalog 与空注册器。
+
+sidebar 自身的标记也变了：logo 行多了 `data-window-drag`，新会话图标与文字被重新包进 mask/content 结构。容器快照因此把这两处细节折叠成同一形状，因为已提交的快照必须对认证区间内每个切点成立，而不只是对最新的那个。
+
+认证树上的证据：`npm run typecheck`、`npm test`（741 通过、1 跳过）、`npm run lint`、`npm run build`、`npm pack --dry-run`（251 文件）、`npm run test:browser`（4 条 journey）。
