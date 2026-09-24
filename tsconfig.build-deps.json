@@ -41,6 +41,12 @@
       "@wowyuarm/dsh-agent-team/member-context": [
         "./packages/agent-team/lib/types/member-context.d.ts"
       ],
+      "@wowyuarm/dsh-agent-team/member-time-context": [
+        "./packages/agent-team/lib/types/member-time-context.d.ts"
+      ],
+      "@wowyuarm/dsh-agent-team/time-format": [
+        "./packages/agent-team/lib/types/time-format.d.ts"
+      ],
       "@wowyuarm/dsh-agent-team/mentions": [
         "./packages/agent-team/lib/types/mentions.d.ts"
       ],
