@@ -61,6 +61,14 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   runtime.ctx.provide('locale', locale)
   runtime.slots.installLocale(locale)
   runtime.ctx.provide('layout', { toggleSidebar: vi.fn() })
+  // rc.2: the shipped layout and sidebar inject 'shortcuts'. The takeover bench
+  // mounts both, so it provides an empty command catalog for the sidebar's
+  // keycap reads and a registrer that only reports success — no keyboard
+  // adapter exists behind either.
+  runtime.ctx.provide('shortcuts', {
+    catalog: createSnapshotStore<readonly never[]>([]),
+    register: () => () => {},
+  } as never)
   // rc.1: the shipped sidebar injects 'uiWorkspace'; the takeover bench
   // provides a minimal navigation double whose openSession mirrors the
   // shipped selection contract — retire the previous `mainView` reference,
