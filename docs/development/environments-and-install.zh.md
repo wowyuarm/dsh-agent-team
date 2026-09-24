@@ -17,7 +17,7 @@
 2. 工作流需要 `test:browser` 时，用 `corepack pnpm build:web` 构建 Harness `apps/web` dist；workspace install 已备好其依赖。
 3. 在本仓库内用 `corepack pnpm install` 安装依赖。绝不能运行 `npm install`：它会静默破坏指向相邻 checkout vendor 包的 workspace 符号链接，故障随后才以误导性的 `Cannot find module 'zod'` 暴露。
 4. 用 `node scripts/link-harness-packages.mjs` 把 Harness 的 workspace、其 vendor 包与相邻的 context-continuity 引擎链接进本仓库 `node_modules`，再 `npm run build` 构建 bundle。引擎按 `scripts/continuity-dir.mjs` 的解析结果提供：相邻 checkout（日常开发对引擎工作树）会被链接进 `node_modules`，此时该 checkout 必须已构建（`npm run build`）；干净 checkout/CI 则直接用根 `dependencies` 从 registry 装好的那份，不再链接；`DSH_CONTEXT_CONTINUITY_DIR` 可把解析指向另一个 checkout。宿主测试从本仓库根按真实 `node_modules` 查找解析 preset row 与 bundle 自身的未发布 row（如 `@wowyuarm/dsh-agent-team/member-context`）——与已发布 bundle 的 profile 安装布局一致。
-5. 用 `node scripts/sync-paths.mjs` 对准全新 checkout 重新生成 TypeScript path facades。全新 clone 不能信任仓库里已提交的 facades：`sync-paths` 不属于任何 npm script，跳过它 facades 指向的仍是生成时固化的旧路径。`sync-paths` 同时生成测试 harness 需要的 `@deepseek-ai/dsh-client-locale/src/*` 通配映射。
+5. 用 `node scripts/sync-paths.mjs` 对准全新 checkout 重新生成 TypeScript path facades。全新 clone 不能信任仓库里已提交的 facades：没有任何 npm script 会重写它们，跳过这一步 facades 指向的仍是生成时固化的旧路径——`npm test` 里那道只读门 `check:facades` 正是对这种不一致报错。`sync-paths` 同时生成测试 harness 需要的 `@deepseek-ai/dsh-client-locale/src/*` 通配映射。
 6. 冒烟验证：`npm run typecheck && npm test`。全绿 = 环境正确；大面积假挂（见下）= 环境不对——先修环境，再查 diff。
 
 **环境变量：**

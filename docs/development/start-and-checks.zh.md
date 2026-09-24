@@ -32,6 +32,7 @@ npm run check:docs
 npm run check:core-skills
 npm run check:boundaries
 npm run check:versions
+npm run check:facades
 npm test
 npm run build
 npm run lint
@@ -50,7 +51,8 @@ git diff --check
 - `npm run check:core-skills`：把随包 skill 的出厂契约变成机械检查——front matter 的 `name` 与目录同名、`description` 说明真实触发场景、整个 skill 不超过 `scripts/check-core-skills.mjs` 中的审定字符预算、所有相对链接都不越出 skill 目录（安装器只复制该目录）、`references/` 下的每个文件都被 `SKILL.md` 链接。
 - `npm run check:boundaries`：把下文的 package 接缝变成机械检查——`packages/*/src/` 下的文件不得用相对 specifier 跨越自己所在的 package 目录去引用另一个 package。`import type` 豁免（运行时已被擦除），测试文件不在范围内（它们本就要把目录接起来）。跨接缝的正确方式是用声明的 subpath，例如 `@wowyuarm/dsh-agent-team/remote`。
 - `npm run check:versions`：把已认证版本一致性变成机械检查——CI tag、setup tag、开发指南、README、架构文档、兼容性基线、bug 报告占位符必须声明同一个 DSH 基线（双语都要），且该基线必须是每个 `@deepseek-ai/dsh-*` peer 区间的下界。它只断言互相一致，从不写死版本号，因此在任何 release lane 上都不用改门。动过任何版本字符串后单独跑它。
-- `npm test`：先生成 Typert、跑 `check:docs`、`check:core-skills`、`check:boundaries` 与 `check:versions`，再运行 Vitest。Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一个一次性的 `DSH_HOME`，隔离 Member activation 创建或复用的 `$DSH_HOME/agent-team/members/member:*` 私有 memory。需要特定 home 的测试自行设置并保存/恢复该变量（见 `member-lifecycle.spec.ts`）。启动不会自动清理账本不认识的 Member 目录；显式 Member remove 才删除该 Member 的私有 memory，因此介质重置后如需清理旧目录，由操作者手动删除对应 `member:` 目录。
+- `npm run check:facades`：只比不写——按相邻 Harness checkout 重算 path facades，已提交的 `tsconfig*.json` 或 `.generated-harness` 标记只要与生成结果不同就报错，因此给 `scripts/sync-paths.mjs` 加了 subpath 就不可能不带上重新生成的 facades。它由 `npm test` 捆绑执行，所以全新 clone 必须先重新生成 facades（见 [`environments-and-install.zh.md`](./environments-and-install.zh.md)）。
+- `npm test`：先生成 Typert、跑 `check:facades`、`check:docs`、`check:core-skills`、`check:boundaries` 与 `check:versions`，再运行 Vitest。Vitest 通过 `scripts/isolate-dsh-home.setup.ts` 给每个测试文件一次性 `DSH_HOME`，隔离各 Member activation 的 `$DSH_HOME/agent-team/members/member:*` 私有 memory。需要特定 home 的测试自行保存/恢复该变量（见 `member-lifecycle.spec.ts`）。启动不会自动清理账本不认识的 Member 目录；显式 Member remove 才删除该 Member 的私有 memory；介质重置后的旧目录须由操作者手动删除 `member:` 目录。
 - `npm run build`：先由受限 Node cleaner 清空 Host、tools 与 Client 三个 package 的 `lib/`，再生成 Typert、构建三个源码目录，并用 Harness 的 `tsdown` 构建 Client bundle；这样删除源码后遗留的旧产物不会进入 pack。最终发布物仍是一个根 npm 包。
 - `npm run lint`：运行 oxlint。
 - `npm run duplication`：用 `.jscpd.json` 对 `packages` 与 `scripts` 跑 jscpd。它的输出只是"值得看一眼的地方"，不是结论——移动或重构过的代码同样会被报成重复。

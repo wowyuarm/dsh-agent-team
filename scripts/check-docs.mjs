@@ -92,7 +92,7 @@ const BLOCK_CHARACTER_CEILINGS = {
   'development/README.md': [105, 64],
   'development/environments-and-install.md': [595, 571],
   'development/generated-and-seams.md': [515, 362],
-  'development/start-and-checks.md': [595, 416],
+  'development/start-and-checks.md': [595, 415],
   'development/storage-and-delivery.md': [585, 583],
   'domain-model.md': [593, 580],
   'dsh-release-compatibility.md': [475, 235],
