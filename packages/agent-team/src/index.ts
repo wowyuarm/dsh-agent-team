@@ -172,7 +172,8 @@ class PresetCompositionError extends Error {
 const MAX_CHECKPOINT_NAME_CHARS = 120
 /** Default and maximum number of timeline items one query returns. */
 const DEFAULT_TIMELINE_LIMIT = 12
-const MAX_TIMELINE_LIMIT = 24
+/** The widest timeline window there is; the ref gate reads at this width so no printed ref is unreachable. */
+export const MAX_TIMELINE_LIMIT = 24
 /**
  * Archived generations the timeline and seed resolution walk: the timeline
  * reads this many ancestors behind the current generation, and the seed guard

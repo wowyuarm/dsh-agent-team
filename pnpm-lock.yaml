@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@wowyuarm/dsh-context-continuity':
-        specifier: ^0.1.4
-        version: 0.1.4
+        specifier: ^0.1.5
+        version: 0.1.5
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -531,8 +531,8 @@ packages:
   '@vitest/utils@4.1.10':
     resolution: {integrity: sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==}
 
-  '@wowyuarm/dsh-context-continuity@0.1.4':
-    resolution: {integrity: sha512-bkKfYW+k4V7IrZQDkgB25Bo5XNpVH+DVZtFJBNdU3IfYIQmhVhBmOD6m/tEz5V1FJdhZhzJqpi7CJL3kcxVO4Q==}
+  '@wowyuarm/dsh-context-continuity@0.1.5':
+    resolution: {integrity: sha512-4U0qxiSwI9p3Dd1pkoVajrN62n0eXm5c6bbyakvOXatB0GA6vpqkibNSKtLI3gTG6/lqTNnT/w31zmVBYCbZ1A==}
     peerDependencies:
       '@deepseek-ai/cordis': ^4.0.1
       '@deepseek-ai/dsh-agent': '>=0.1.7-rc.1 <0.1.8'
@@ -1304,7 +1304,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
 
-  '@wowyuarm/dsh-context-continuity@0.1.4':
+  '@wowyuarm/dsh-context-continuity@0.1.5':
     dependencies:
       zod: 4.6.5
 

@@ -19,6 +19,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { CONTEXT_WINDOW_EXCEEDED_CODE } from '@deepseek-ai/dsh-llm'
 import type { CompactionEngine, CompactionResult } from '@deepseek-ai/dsh-compaction'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { contextPressureNoticeText as engineContextPressureNoticeText } from '@wowyuarm/dsh-context-continuity'
 import type { AgentTeamMemberId } from './types.ts'
 import { AGENT_TEAM_PLUGIN_ID, isAgentTeamSourceKind } from './context-source.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -48,7 +49,11 @@ export const PRESSURE_NOTICE_FOLD: SessionEventFold<boolean, SessionEvent> = {
   },
 }
 
-/** One pressure-notice text; concise, structured, and inside the reserve. */
+/**
+ * One pressure-notice text. The wording is the engine's — the same sentence a
+ * fresh-context handoff is asked for through — so the notice and the rollover
+ * tool cannot drift apart; Team supplies only its own labels and input shape.
+ */
 export function contextPressureNoticeText(input: {
   readonly usageTokens: number
   readonly handoffAt: number
@@ -56,13 +61,16 @@ export function contextPressureNoticeText(input: {
   readonly activeClaims: readonly string[]
   readonly runningJobs: readonly string[]
 }): string {
-  const claims = input.activeClaims.length === 0 ? 'none' : input.activeClaims.join(', ')
-  const jobs = input.runningJobs.length === 0 ? 'none' : `${input.runningJobs.length} running (collect or stop them before switching)`
-  return [
-    `Context pressure: ${input.usageTokens} tokens measured; the handoff budget is ${input.handoffAt} and the hard limit is ${input.hardLimit}.`,
-    `Active Claims: ${claims}. Owner jobs: ${jobs}.`,
-    'Finish the current atomic action, then call context_rollover with a handoff covering your objective, verified facts, and external side effects — a fresh context is the default path. Record anything durable in your private memory/notes first.',
-  ].join(' ')
+  return engineContextPressureNoticeText(
+    {
+      usageTokens: input.usageTokens,
+      handoffAt: input.handoffAt,
+      hardLimit: input.hardLimit,
+      inHand: input.activeClaims,
+      jobs: input.runningJobs,
+    },
+    { inHandLabel: 'Active Claims', jobsLabel: 'Owner jobs' },
+  )
 }
 
 export interface PressurePolicyOptions {

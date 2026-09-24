@@ -251,6 +251,12 @@ describe('Agent Team pressure policy (ticket 03)', () => {
     expect(text).toContain('claim:a (unify forms)')
     expect(text).toContain('1 running')
     expect(text).toContain('context_rollover')
+    // The wording is the engine's, so the notice and the rollover tool ask for
+    // the same thing; Team only labels the two lists its own way.
+    expect(text).toContain('Active Claims')
+    expect(text).toContain('Owner jobs')
+    expect(text).toContain('the action in flight')
+    expect(text).toContain('write only what a fresh generation could not reconstruct on its own')
     expect(text.length).toBeLessThan(1200)
   })
 })

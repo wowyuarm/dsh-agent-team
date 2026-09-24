@@ -8,6 +8,8 @@
 
 Member 上下文自主管理在这些 preset 之上由 Host 编排。`context_rollover` 与 `context_checkpoint` 工具只做校验并结束/锚定 turn：带 `checkpointRef` 的回返在 tool 时经过与换窗同一 seed resolver 校验，当下不可能成功的 ref 以 model-visible 的 error result 拒绝，而不是返回假 `scheduled`；可变 guard 集（jobs、route limits）在 commit seam 复查。
 
+三个 context 工具里有两个用的是引擎自己的定义：`context-tools.ts` 通过引擎的 `createContinuityTools` 构造 `context_rollover` 与 `context_checkpoint`，只提供 Team 词汇与 host adapter，不再自带文案与校验。`context_timeline` 仍是 Team 自己的实现——它的渲染对不可返回的行绝不打印可引用的 ref。
+
 单一 context-continuity coordinator（`ContextContinuityCoordinator`，来自 `@wowyuarm/dsh-context-continuity`）由 `context-continuity-host.ts` 绑定到 Member lifecycle，后者还用 Team 的 plugin id 与冻结的 handoff 文案构造引擎的 message codec。它监听各 Member Session 的事件，从 durable 的 `tool/call`+`tool/result` 对折出 rollover 与 checkpoint 意图，再经串行 lifecycle queue 执行换窗。
 
 该折叠即引擎自身的 `contextContinuity` projection unit，在 Team service init 时按 host 注册一次。`context-projection.ts` 只提供 Team 的那一半：

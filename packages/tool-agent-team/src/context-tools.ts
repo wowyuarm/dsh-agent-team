@@ -1,21 +1,35 @@
 /**
- * Model-facing context-management tools for Team Members. Thin adapters
- * only: validation runs in the Host adapter, the successful result is the
- * durable intent, and every lifecycle side effect — generation swap, Session
- * creation, inbox handling — happens in the Host coordinator after the
- * result is durably appended. `concludeTurn()` rides the success result of
- * `context_rollover` and `context_checkpoint`, so sibling calls settle in model
- * order before the turn closes.
+ * Model-facing context-management tools for Team Members.
+ *
+ * `context_rollover` and `context_checkpoint` are the published engine's tools,
+ * built by `createContinuityTools`: the engine owns their argument contract, the
+ * anti-forgery gate on a cited ref, the `concludeTurn()` timing, and the render
+ * shapes, while the Team supplies its own vocabulary (`TEAM_CONTINUITY_TEXT`)
+ * and the mechanism behind `ContinuityToolAdapter`. Hand-written copies of those
+ * two descriptions used to live here and drifted from the engine's defaults, so
+ * the Team's guidance now travels only through the engine's text seams.
+ *
+ * `context_timeline` deliberately stays Team-owned. Its render never prints a
+ * ref-shaped string for a non-restorable row — a short digest names the row
+ * instead, because a printed ref is exactly what a model copies into
+ * `checkpointRef` — and the engine's render has no switch for that. The
+ * adapter's own `timeline` member is still implemented: the engine's contract
+ * requires it, and the shape it returns is the one the engine's render reads.
  * @module @wowyuarm/dsh-agent-team/context-tools
  */
 
 import { createHash } from 'node:crypto'
+import {
+  createContinuityTools,
+  type CheckpointToolRequest,
+  type ContinuityToolAdapter,
+  type ContinuityToolText,
+  type RolloverToolRequest,
+} from '@wowyuarm/dsh-context-continuity'
 import type { AgentTeamContextCheckpointRef } from '@wowyuarm/dsh-agent-team/types'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { MAX_TIMELINE_LIMIT } from '@wowyuarm/dsh-agent-team/host'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { member, service } from './host-access.ts'
-
-const MAX_HANDOFF_CHARS = 32 * 1024
-const MAX_RELATED_FILES = 32
 
 /**
  * Short stable identifier for one timeline row: a digest of the anchor's own
@@ -29,93 +43,103 @@ function anchorId(checkpointRef: string): string {
   return createHash('sha256').update(checkpointRef).digest('hex').slice(0, 6)
 }
 
-const contextRollover = defineTool({
-  name: 'context_rollover',
-  description: 'context_rollover: end this context generation and continue as the same Team Member in a new one. Without checkpointRef the context starts fresh and empty, seeded only by your handoff — this is the default, cheapest path at context pressure, and the right choice for ordinary generation changes and pressure-driven handoffs. Omit checkpointRef unless you are deliberately returning to a restorable anchor you just selected from a context_timeline result: supply a checkpointRef only when that timeline listed it as restorable and you are citing its exact ref — never synthesize, guess, or reconstruct one; a fabricated ref rejects as a model-visible error. Write the handoff as one prose string covering: current objective and every active Thread/Claim; verified facts and evidence; inferences and unresolved conflicts; current external side effects and their verification state (files, git, jobs, browser state, remote calls); one explicit next step. A context change never rolls back any external effect — describe current state so the next generation can re-verify. Record anything worth keeping in your private memory/notes first. Collect or stop your background jobs before calling: a rollover is refused while jobs this Member owns are still running.',
-  parameters: {
-    handoff: { type: 'string', required: true, description: 'Prose handoff for the next context generation: objective, active Threads/Claims, verified facts, inferences, external side effects and their verification state, next step.' },
-    checkpointRef: { type: 'string', description: 'Optional. Omit for the default fresh rollover — ordinary generation changes and pressure-driven handoffs must not supply this. Provide it only to resume from a restorable anchor you just selected in a context_timeline result, citing that exact ref; never synthesize or guess a ref.' },
-    relatedFiles: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { path: { type: 'string', required: true }, reason: { type: 'string', required: true } } }, description: 'Workspace paths the next generation should look at first, each with one reason.' },
-  },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      mode: { type: 'string', required: true }, status: { type: 'string', required: true },
-    } },
-    render: (_args, value) => [{ type: 'text', text: `Context rollover scheduled (${value.mode}). Finish this turn; the Host switches you to the next context generation afterward.` }],
-  },
-  async execute(args, exec) {
-    const agent = exec.agent
-    if (agent === undefined) throw new Error('context_rollover requires an Agent session')
-    const current = member(agent)
-    const host = service(agent)
-    const handoff = typeof args.handoff === 'string' ? args.handoff : ''
-    if (handoff.trim() === '') throw new Error('context_rollover requires a non-empty handoff')
-    if (handoff.length > MAX_HANDOFF_CHARS) throw new Error(`context_rollover handoff exceeds ${MAX_HANDOFF_CHARS} characters`)
-    const relatedFilesInput = Array.isArray(args.relatedFiles) ? args.relatedFiles : []
-    if (relatedFilesInput.length > MAX_RELATED_FILES) throw new Error(`context_rollover accepts at most ${MAX_RELATED_FILES} related files`)
-    // Tool argument validation is layered: the Harness schema (required and
-    // type checks) rejects at the execute boundary, and this body adds the
-    // checks the schema cannot express — each related file is validated
-    // here, so a blank path/reason rejects instead of seeding the handoff
-    // envelope with empty fields.
-    const relatedFiles: Array<{ path: string; reason: string }> = []
-    for (const [index, entry] of relatedFilesInput.entries()) {
-      if (typeof entry !== 'object' || entry === null) throw new Error(`context_rollover relatedFiles[${index}] must be an object with path and reason`)
-      const candidate = entry as { path?: unknown; reason?: unknown }
-      if (typeof candidate.path !== 'string' || candidate.path.trim() === '') throw new Error(`context_rollover relatedFiles[${index}].path must be a non-empty string`)
-      if (typeof candidate.reason !== 'string' || candidate.reason.trim() === '') throw new Error(`context_rollover relatedFiles[${index}].reason must be a non-empty string`)
-      relatedFiles.push({ path: candidate.path, reason: candidate.reason })
-    }
-    // Tool schemas are open at the root (Harness parameter specs set no
-    // `additionalProperties: false`), so an undeclared shape can still reach
-    // the body. Any supplied value that is not a non-empty string rejects
-    // here rather than being treated as absent — an absent ref means fresh,
-    // which is not what the model asked for.
-    const raw = args as { checkpointRef?: unknown }
-    const suppliedRef = Object.hasOwn(raw, 'checkpointRef') ? raw.checkpointRef : undefined
-    if (suppliedRef !== undefined && (typeof suppliedRef !== 'string' || suppliedRef.trim() === '')) {
-      throw new Error('context_rollover checkpointRef must be a non-empty string when supplied')
-    }
-    const checkpointRef = typeof suppliedRef === 'string' ? suppliedRef.trim() : undefined
-    const outcome = await host.requestNewContext(agent, {
-      memberId: current.memberId,
-      ...(checkpointRef === undefined || checkpointRef === '' ? {} : { checkpointRef: checkpointRef as AgentTeamContextCheckpointRef }),
-      ...(relatedFiles.length === 0 ? {} : { relatedFiles }),
-    })
-    exec.concludeTurn()
-    return { mode: outcome.mode, status: 'scheduled' }
-  },
-})
+/** The calling Agent, or a model-visible rejection — these tools only exist in a Member Session. */
+function agentOf(exec: ToolRunContext) {
+  const agent = exec.agent
+  if (agent === undefined) throw new Error('context tool requires an Agent session')
+  return agent
+}
 
-const contextCheckpoint = defineTool({
-  name: 'context_checkpoint',
-  description: 'Record a named checkpoint at the end of the current turn: an opaque, private, restorable anchor for this Member\'s context lineage. Use it before a noisy or risky phase — a broad refactor, an experiment whose value is unproven — when returning to the current completed state may later be useful. The checkpoint resolves only when this turn completes; the Host continues work in the next turn automatically. A checkpoint never snapshots files, git, jobs, or any external state: returning to one (via context_rollover with its checkpointRef) resumes the conversation prefix and nothing else. Checkpoints are private context structure, not Team facts, and are never visible to other Members.',
-  parameters: {
-    name: { type: 'string', required: true, description: 'Short semantic label for this checkpoint, shown in context_timeline.' },
-  },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      checkpointRef: { type: 'string', required: true }, name: { type: 'string', required: true },
-    } },
-    // The ref is the selection surface for `context_rollover`: rendering only the
-    // name left the model with no legitimate way to cite the anchor it just
-    // recorded. Renders are the only channel results reach the model through.
-    render: (_args, value) => [{ type: 'text', text: `Checkpoint recorded: ${value.name} (ref: ${value.checkpointRef}). Work continues in the next turn; the Host will continue automatically.` }],
-  },
-  async execute(args, exec) {
-    const agent = exec.agent
-    if (agent === undefined) throw new Error('context_checkpoint requires an Agent session')
+/**
+ * Team's half of the engine's contract: resolve the calling execution to its
+ * Member and Host, answer the ref gate from the one policy that owns it, and run
+ * the effects. Every method resolves its own caller, because one adapter serves
+ * all three tools.
+ */
+const adapter: ContinuityToolAdapter = {
+  /**
+   * One policy, two readers: a ref is restorable exactly when the Team timeline
+   * — the same list the model picked from — offers it as such. The walk is asked
+   * for the widest window the timeline tool can show, so any ref a timeline read
+   * could have printed is answered here.
+   */
+  async isRestorableRef(checkpointRef, exec) {
+    const agent = agentOf(exec)
     const current = member(agent)
-    const host = service(agent)
-    const name = typeof args.name === 'string' ? args.name : ''
+    const timeline = await service(agent).contextTimelineForAgent(agent, { memberId: current.memberId, limit: MAX_TIMELINE_LIMIT })
+    return timeline.items.some(item => item.checkpointRef === checkpointRef && item.restorable)
+  },
+  async requestRollover(request: RolloverToolRequest, exec) {
+    const agent = agentOf(exec)
+    const current = member(agent)
+    // The engine already validated the argument shape and the cited ref; the
+    // Host owns the durable intent and the generation swap that follows it at
+    // the idle boundary.
+    const outcome = await service(agent).requestNewContext(agent, {
+      memberId: current.memberId,
+      ...(request.checkpointRef === undefined ? {} : { checkpointRef: request.checkpointRef as AgentTeamContextCheckpointRef }),
+      ...(request.relatedFiles.length === 0 ? {} : { relatedFiles: [...request.relatedFiles] }),
+    })
+    return { mode: outcome.mode }
+  },
+  async recordCheckpoint(request: CheckpointToolRequest, exec) {
+    const agent = agentOf(exec)
+    const current = member(agent)
     // The Host validates binding, running-turn fencing, and the name budget;
     // the durable checkpoint is the successful call/result pair the Session
     // projection folds, and the ref derives from the tool call id.
-    const outcome = host.recordCheckpointForAgent(agent, { memberId: current.memberId, callId: exec.callId, name })
-    exec.concludeTurn()
+    const outcome = service(agent).recordCheckpointForAgent(agent, { memberId: current.memberId, callId: request.callId, name: request.name })
     return { checkpointRef: outcome.checkpointRef, name: outcome.name }
   },
-})
+  async timeline(request, exec) {
+    const agent = agentOf(exec)
+    const current = member(agent)
+    const result = await service(agent).contextTimelineForAgent(agent, {
+      memberId: current.memberId,
+      ...(request.limit === undefined ? {} : { limit: request.limit }),
+    })
+    // Team's item vocabulary is its own (`agent` / `team-boundary` / `handoff` /
+    // `compaction` / `head`); the engine names the same anchors in its terms —
+    // four Team sources collapse onto the engine's three kinds, and the two that
+    // say something a reader needs (`handoff`, `compaction`) ride its opaque
+    // `kind` field rather than being flattened silently.
+    return {
+      usageTokens: result.usageTokens,
+      handoffAt: result.handoffAt,
+      hardLimit: result.hardLimit,
+      items: result.items.map(item => ({
+        ref: item.checkpointRef,
+        label: item.name,
+        source: item.source === 'agent' ? 'checkpoint' as const : item.source === 'head' ? 'head' as const : 'boundary' as const,
+        ...(item.source === 'handoff' || item.source === 'compaction' ? { kind: item.source } : {}),
+        retainedTokens: item.retainedTokens,
+        discardedTokens: item.discardedTokens,
+        affectedTopics: [...item.affectedThreads],
+        restorable: item.restorable,
+        ...(item.reason === undefined ? {} : { reason: item.reason }),
+      })),
+      ...(result.incompleteFrom === undefined ? {} : { incompleteFrom: result.incompleteFrom }),
+    }
+  },
+}
+
+/**
+ * Team vocabulary for the engine's tools. `carriedContext` names the channels a
+ * fresh generation already receives — without it the engine's "seeded only by
+ * your handoff" sentence reads as "everything must be restated", which is what
+ * our own corpus showed members doing. The checklist carries the one item the
+ * engine's default does not ask for and the corpus showed missing: which facts
+ * were verified and which were only trusted.
+ */
+const TEAM_CONTINUITY_TEXT: ContinuityToolText = {
+  subjectNoun: 'Team Member',
+  carriedContext: 'You stay the same Team Member: your @handle and role, your private memory index, your skills catalog, and the Team and Workspace instructions carry across a rollover — they are re-injected at birth — and the Team ledger (Threads, Tasks, Claims, your inbox, your owner jobs) is one query away (team_view, team_inbox). Do not restate any of it.',
+  rolloverChecklist: 'the objective and the atomic action in flight; facts and evidence not already recorded elsewhere; which items you verified and which you only trusted; inferences and unresolved conflicts; current external side effects and their verification state (files, git, jobs, browser state, remote calls); one explicit next step',
+  topicNoun: 'Thread',
+  topicNounPlural: 'Threads',
+}
+
+const engineTools = createContinuityTools(adapter, TEAM_CONTINUITY_TEXT)
 
 const contextTimeline = defineTool({
   name: 'context_timeline',
@@ -190,7 +214,9 @@ const contextTimeline = defineTool({
 })
 
 export function registerContextTools(ctx: { readonly tools: { register(tool: unknown): void } }): void {
-  ctx.tools.register(contextRollover)
-  ctx.tools.register(contextCheckpoint)
+  // The engine's two, then the Team's own timeline: one registration each, and
+  // the roster the Host validates against stays the same three names.
+  ctx.tools.register(engineTools.rollover)
+  ctx.tools.register(engineTools.checkpoint)
   ctx.tools.register(contextTimeline)
 }

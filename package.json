@@ -61,7 +61,7 @@
     }
   },
   "dependencies": {
-    "@wowyuarm/dsh-context-continuity": "^0.1.4",
+    "@wowyuarm/dsh-context-continuity": "^0.1.5",
     "yaml": "^2.9.1",
     "zod": "^4.4.3"
   },

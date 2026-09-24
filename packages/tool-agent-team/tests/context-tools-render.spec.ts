@@ -169,6 +169,29 @@ describe('context tools render the model-facing decision surface', () => {
     expect(description.toLowerCase()).toContain('checkpointref')
   })
 
+  it('rollover guidance names what a fresh generation already carries, and asks for the unverified delta', () => {
+    const tools = contextTools()
+    const description = tools.get('context_rollover')!.description
+    // The engine's own sentence "seeded only by your handoff" is true of the
+    // conversation history and false of the prompt context: identity, the
+    // memory index, the skills catalog and the ledger arrive on their own. Team
+    // supplies that counterweight as the engine's `carriedContext`, so the
+    // description cannot be read as "restate everything" — our corpus showed
+    // exactly that reading (44% restated standing state).
+    expect(description).toContain('the same Team Member')
+    expect(description).toContain('your @handle and role')
+    expect(description).toContain('Team ledger')
+    expect(description).toContain('Do not restate any of it')
+    // The delta framing is the engine's; the checklist is Team's, and it keeps
+    // the one item our own measurement found missing — only 10.5% of handoffs
+    // said which facts were unverified, against 70% that named side effects.
+    expect(description).toContain('could not reconstruct on its own')
+    expect(description).toContain('which items you verified and which you only trusted')
+    // The Team keeps its own timeline prose: the engine's render has no switch
+    // for "never print a ref-shaped string on a non-restorable row".
+    expect(tools.get('context_timeline')!.description).toContain('Every row carries a short `anchor` id')
+  })
+
   it('hardens the checkpointRef copy against fabricated refs (the seq-7709 misuse)', () => {
     const tools = contextTools()
     const rollover = tools.get('context_rollover')!
