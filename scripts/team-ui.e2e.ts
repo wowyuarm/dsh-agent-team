@@ -2539,3 +2539,63 @@ it('configures the Human profile from Settings in real Web', async () => {
   await page.screenshot({ path: join(UI09_SHOTS, 'human-identity-in-inbox-stack.png'), fullPage: true })
   expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
 }, 180_000)
+
+/**
+ * The environment check above the version footnote. The versions it prints are
+ * the whole point: `0.1.15` comes from the installed manifest and `0.1.7-rc.1`
+ * from the lower bound of the declared DSH peer range, so this journey proves
+ * the Host's own version readers resolved against the real staged install
+ * rather than against a fixture. Only the `ok` tier is reachable in a browser —
+ * the other two describe an environment this run does not have (a different DSH
+ * cut, or unreadable facts) and are pinned by the Host and component suites.
+ * It also rides the settled 0.1.7-rc.2 baseline: rc.2 is certified inside the
+ * same peer range, which is exactly why the range's lower bound is what the
+ * page states.
+ */
+it('states the local environment check on the Human profile page', async () => {
+  await installLocalBundle(false)
+  scaffold = await launchWebScaffold({ harnessHome: HOME, profile: { packages: [{ dir: STAGED_BUNDLE, enabled: true }] } })
+  browser = await chromium.launch({ headless: true, executablePath: CHROME })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: 'zh-CN' })
+  const consoleWatch = watchConsole(page)
+  await page.goto(scaffold.authenticatedUrl)
+  await connectFreshWorkspaceZh(page, scaffold.workspaceCwd, 'team-workspace')
+
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  const panel = page.getByRole('dialog')
+  await panel.getByRole('button', { name: '我的资料' }).click()
+  const block = panel.locator('[data-environment]')
+  await block.waitFor()
+  await expect.poll(async () => await block.getAttribute('data-environment')).toBe('ok')
+  // Only the range's lower bound is named, and only in words: the running
+  // version is stated as a fact, and no raw semver range appears anywhere.
+  expect(await block.textContent()).toContain('在支持范围内')
+  expect(await block.textContent()).toContain('正在运行的 DSH 0.1.7-rc.1 在我们声明的支持范围内。')
+  expect(await block.textContent()).not.toContain('>=0.1.7-rc.1')
+  expect(await block.textContent()).not.toContain('我们实测认证的组合')
+  expect(await block.locator('a').count()).toBe(0)
+  // Reading both versions is what proves the Host reached its own manifests:
+  // the bundle version resolves from the staged install, and the DSH version
+  // from the app-boot package the running host ships.
+  expect(await block.textContent()).not.toContain('unknown')
+  await page.screenshot({ path: join(UI09_SHOTS, 'environment-check-ok.png'), fullPage: true })
+
+  // 390×844: the shipped panel keeps its 188px nav rail, so the block has to
+  // survive a column far narrower than its sentence. It must stay inside the
+  // panel and add no horizontal overflow of its own.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await settleLayout(page)
+  await page.screenshot({ path: join(UI09_SHOTS, 'environment-check-narrow.png'), fullPage: true })
+  const narrow = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }))
+  expect(narrow.scrollWidth).toBeLessThanOrEqual(narrow.clientWidth)
+  const blockBox = (await block.boundingBox())!
+  const panelBox = (await panel.boundingBox())!
+  expect(blockBox.x + blockBox.width).toBeLessThanOrEqual(panelBox.x + panelBox.width + 1)
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await settleLayout(page)
+
+  expect(consoleWatch).toEqual({ warnings: [], pageErrors: [] })
+}, 180_000)

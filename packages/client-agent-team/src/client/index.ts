@@ -42,6 +42,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { HumanSettingsSection } from './HumanSettingsSection.tsx'
 import { TeamHumanIdentity } from './human-identity.ts'
+import { TeamEnvironmentCheck } from './environment-check.ts'
 import { bytesToBase64 } from './attachment-preview.ts'
 import { TeamNavigation } from './navigation.ts'
 import { TeamChangeStream, TeamReadStream, type TeamChangeListener, type TeamChangeScope } from './team-changes.ts'
@@ -231,10 +232,17 @@ function applyUi(ctx: ClientContext): void {
       return `data:${result.value.mediaType};base64,${result.value.bytesBase64}`
     },
   })
+  // The local environment check: a fact about this installation rather than
+  // about the Human, so it is its own projection and never a field of the
+  // identity above. Read once, on the first subscriber, and never written back.
+  const environment = new TeamEnvironmentCheck({
+    loadEnvironment: () => ctx.remote.agentTeam.environment({}),
+  })
   ctx.effect(() => () => {
     navigation.dispose()
     drafts.dispose()
     humanIdentity.dispose()
+    environment.dispose()
     void disposeNavigation()
     void disposeDrafts()
   }, 'agent-team: navigation service')
@@ -323,6 +331,7 @@ function applyUi(ctx: ClientContext): void {
     locale: NS,
     inject: () => ({
       identity: humanIdentity,
+      environment,
       saveName: async (name: string) => {
         const saved = await ctx.remote.agentTeam.setHumanProfile({ name })
         if (!saved.ok) return saved.error.message

@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and Semantic Versioning. Team bundle versions evolve independently of DeepSeek Harness versions; DeepSeek Harness compatibility is expressed through `peerDependencies` and [`docs/dsh-release-compatibility.md`](docs/dsh-release-compatibility.md).
 
+## [Unreleased]
+
+- Settings now says whether the DSH you are running is one this bundle supports. It sits above the version footnote, states the running version and the supported range in words rather than as a version expression, names the certified combination only when both versions are actually known, and when the running DSH is outside the range it says so plainly and links the release notes instead of warning about a failure it cannot see. A version it cannot read is reported as not determined rather than as unsupported, and a newer DSH certified inside the same range keeps reading as supported.
+
 ## [0.1.15] - 2026-09-24
 
 - Upgrades carry your profile across: the name and avatar saved under the old settings section land in the Team Host row on the first boot after upgrading, and anything you re-entered yourself wins.

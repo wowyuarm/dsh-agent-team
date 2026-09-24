@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { AgentTeamHumanProfileResult } from '@wowyuarm/dsh-agent-team/types'
 import { TeamHumanIdentity, type TeamHumanIdentityLoader } from '../src/client/human-identity.ts'
+import { TeamEnvironmentCheck, type TeamEnvironmentLoader } from '../src/client/environment-check.ts'
 import { zh } from '../src/client/locales.ts'
 import { HumanSettingsSection } from '../src/client/HumanSettingsSection.tsx'
 
@@ -31,6 +32,13 @@ function identityWith(overrides: Record<string, unknown> = {}) {
   return { identity: new TeamHumanIdentity({ loadProfile, loadAvatarUrl } as unknown as TeamHumanIdentityLoader), loadProfile, loadAvatarUrl }
 }
 
+/** An environment projection that never settles; the reference must be stable, as React requires of a store. */
+const INERT_ENVIRONMENT = { status: 'loading' as const }
+const INERT_ENVIRONMENT_SOURCE = {
+  getSnapshot: () => INERT_ENVIRONMENT,
+  subscribe: () => () => {},
+}
+
 /** Render the page with the faces a test cares about; the rest stay inert. */
 function renderSection(injected: Record<string, unknown> = {}) {
   const { identity } = identityWith()
@@ -38,6 +46,10 @@ function renderSection(injected: Record<string, unknown> = {}) {
     close: () => {},
     t,
     identity,
+    // The environment block is a separate projection; an inert one keeps these
+    // profile-page tests about the profile page. The block's own behaviour is
+    // covered in environment-check.client.spec.tsx.
+    environment: INERT_ENVIRONMENT_SOURCE,
     saveName: vi.fn(async () => undefined),
     uploadAvatar: vi.fn(async () => undefined),
     removeAvatar: vi.fn(async () => undefined),
@@ -173,5 +185,29 @@ describe('Human profile page', () => {
     await waitFor(() => { expect(screen.getByText('Z')).not.toBeNull() })
     expect(document.querySelector('img')).toBeNull()
     expect(screen.getByRole('button', { name: '移除头像' })).not.toBeNull()
+  })
+
+  it('carries the environment check for the installation it runs in', async () => {
+    // The block is a separate projection fed through the section's injected
+    // face; this pins the wiring between the two, so a page that stopped
+    // passing the face would fail here rather than silently render nothing.
+    const environment = new TeamEnvironmentCheck({
+      loadEnvironment: async () => ({
+        ok: true,
+        value: {
+          verdict: 'out-of-range',
+          bundleVersion: '0.1.15',
+          dshVersion: '0.1.6',
+          certifiedDshVersion: '0.1.7-rc.1',
+          supportRange: { lower: '0.1.7-rc.1', upper: '0.1.8' },
+        },
+      }),
+    } as unknown as TeamEnvironmentLoader)
+    renderSection({ environment })
+    await waitFor(() => { expect(screen.getByText(zh.environmentOutOfRangeTitle)).not.toBeNull() })
+    // Above the version footnote, which is the page's other version fact.
+    const footnote = screen.getByText('版本 0.1.13')
+    expect(screen.getByText(zh.environmentOutOfRangeTitle).compareDocumentPosition(footnote))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 })

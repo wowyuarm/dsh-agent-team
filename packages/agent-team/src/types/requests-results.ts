@@ -350,6 +350,38 @@ export interface AgentTeamHumanProfileResult {
   readonly latestVersion?: string | undefined
 }
 
+/** Local environment read: how the running DSH compares to the declared support line. */
+export interface AgentTeamEnvironmentRequest {
+}
+
+export interface AgentTeamEnvironmentResult {
+  /**
+   * The one of three shapes the page renders. `undetermined` is the answer for
+   * every fact this Host cannot establish — an unreadable runtime version, a
+   * support range the manifest does not state — and never a guessed verdict.
+   */
+  readonly verdict: 'ok' | 'out-of-range' | 'undetermined'
+  /** Host-side diagnostic behind an `undetermined` verdict; not rendered as user copy. */
+  readonly reason?: string | undefined
+  // Every fact below is optional by contract: a missing one is never a
+  // mismatch, it only withholds the line that would have stated it.
+  /** Version of the bundle this Host runs from. */
+  readonly bundleVersion?: string | undefined
+  /**
+   * The running DSH version, which is what the page states it is running.
+   * Distinct from `certifiedDshVersion`: one is the environment, the other is
+   * the line this bundle declares support for.
+   */
+  readonly dshVersion?: string | undefined
+  /** Lower bound of the declared range: the certified, actually-tested DSH line. */
+  readonly certifiedDshVersion?: string | undefined
+  /** Declared DSH support line, stated in words by the page rather than as a range string. */
+  readonly supportRange?: {
+    readonly lower: string
+    readonly upper: string
+  } | undefined
+}
+
 /**
  * Human profile write: the fields the Client supplies, each one optional and
  * independent of the others.

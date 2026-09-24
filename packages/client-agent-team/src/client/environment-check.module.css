@@ -1,0 +1,80 @@
+/* The environment check: one line while the installation is inside the declared
+ * support range, a warning surface when it is not, and a neutral line when the
+ * fact could not be established. Only the out-of-range verdict takes a surface
+ * — it is the one state a reader is expected to act on. Every verdict states
+ * itself in text and an icon, never by color alone.
+ *
+ * Radius follows the tier for a row-sized surface (12px, the same tier the
+ * settings rows and sidebar rows use); the colors are the shipped warn/success
+ * aliases, never literal values. */
+
+.block {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.icon {
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+  height: 16px;
+  margin-top: 2px;
+  width: 16px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.title {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0;
+}
+
+.detail {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  margin: 0;
+}
+
+.action {
+  font-size: 12px;
+  line-height: 18px;
+  margin: 2px 0 0;
+}
+
+.link {
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-primary);
+  outline-offset: 2px;
+}
+
+.block[data-environment='ok'] .icon {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.block[data-environment='out-of-range'] {
+  background: var(--dsw-alias-state-warn-tertiary);
+  border-radius: 12px;
+  gap: 10px;
+  padding: 12px;
+}
+
+.block[data-environment='out-of-range'] .icon,
+.block[data-environment='out-of-range'] .title {
+  color: var(--dsw-alias-state-warn-label);
+}

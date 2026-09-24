@@ -27,6 +27,7 @@ import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, newAttachmentId, readAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, writeAttachment } from './attachments.ts'
+import { reportEnvironment } from './environment-check.ts'
 import { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName, parseLegacyHumanProfile, planLegacyAdoption, type LegacyHumanProfileFields } from './human-profile.ts'
 import { humanAvatarsRoot, readHumanAvatar, removeHumanAvatar, writeHumanAvatar } from './human-avatar.ts'
 import { createHumanUpdateChecker } from './human-update-check.ts'
@@ -64,6 +65,8 @@ import type {
   AgentTeamModelSelection,
   AgentTeamCreateChannelRequest,
   AgentTeamCreateChannelResult,
+  AgentTeamEnvironmentRequest,
+  AgentTeamEnvironmentResult,
   AgentTeamGetAttachmentRequest,
   AgentTeamGetAttachmentResult,
   AgentTeamGetHumanAvatarRequest,
@@ -1410,6 +1413,21 @@ export default class AgentTeam extends TypertRemoteService {
    * `updateAvailable` is false until a background refresh actually observes a
    * newer published release.
    */
+  /**
+   * Local environment check for the settings page: which DSH line this Host
+   * runs against, and whether that line is inside the range this bundle
+   * declares. Human-scoped and read-only — the Client renders the verdict and
+   * states the range in words, and nothing here is written back.
+   *
+   * Synchronous like `humanProfile`: reading two manifests settles immediately,
+   * and the verdict comes from the Harness's own compatibility evaluator rather
+   * than a second version comparison written here.
+   */
+  @Remote('environment')
+  environmentForClient(_request: AgentTeamEnvironmentRequest): AgentTeamEnvironmentResult {
+    return Object.freeze(reportEnvironment())
+  }
+
   @Remote('humanProfile')
   humanProfileForClient(_request: AgentTeamHumanProfileRequest): AgentTeamHumanProfileResult {
     const profile = this.humanProfile()

@@ -70,6 +70,23 @@ The Client's namespace constant is pinned by a test against the Host's own, so t
 
 At 390×844 the shipped panel keeps its 188px nav rail — it has no media query — which leaves the content column about 106px wide. The section therefore carries its own `@container (max-width: 420px)` rule that stacks each row's copy over its controls, drops the 48px right padding wide rows reserve for controls, and lets the field and buttons take the full column; the browser acceptance asserts no horizontal overflow at that width.
 
+## Environment check
+Above the version footnote the page states one fact about the installation rather than about the Human: which DSH line this bundle runs against, and whether that line is inside the range the bundle declares. It is a second projection (`environment-check.ts`, `TeamEnvironmentCheck`), deliberately not a field of the identity store — it is read once, never written back, and the settings page is its only renderer.
+
+Three verdicts, never a fourth, and never a guess. A fact the Host cannot establish is `undetermined`, which is a settled answer rather than a failed request: the block has no retry, and an unreachable Host renders nothing at all rather than borrowing that word.
+
+The verdict order is the contract. An unreadable running version is `undetermined`; a running version that violates any declared `@deepseek-ai/dsh-*` peer is `out-of-range`, and a real violation is never downgraded to `undetermined` merely because the peer set then yields no single line to print; only when nothing is violated does the question become whether the declared range admits the version.
+
+One range is stated, so every DSH peer must declare the same one: the prefix is `@deepseek-ai/dsh-` (`@deepseek-ai/cordis` shares the scope but is not on the DSH version line), and a drifted or empty set withholds the line rather than picking one peer to speak for the rest.
+
+The `out-of-range` verdict is the only tier that takes a surface — `--dsw-alias-state-warn-tertiary` under `--dsw-alias-state-warn-label`, at the 12px radius of a row-sized surface — because it is the one state a reader may act on; the other two stay lines. Every tier states itself as text plus an icon, so the state survives a reader who cannot tell the colors apart.
+
+The range is written in words, never as a bare semver range, because a range string is what a reader cannot check and a phrase is what they can. The certified combination (`Agent Team <bundle> × DSH <certified>`) prints only when both versions were derived: the installed manifest's own version, and the range's lower bound, which is what the repository gates pin as the certified baseline. A version that could not be read withholds the whole line rather than inviting a hand-written one onto the page.
+
+Two versions a reader could reasonably confuse are therefore kept apart: the running DSH version is the environment, and the certified version is the declared line. They are the same string only while the installation sits on the baseline.
+
+The block carries `data-environment` with its verdict, so an acceptance journey waits on a state rather than on prose.
+
 ## Failure surfaces
 A failed projection renders one of two shapes, and the choice is a claim about what is still on screen. When nothing was ever loaded, the failure replaces the whole surface as `errorState`: it rides the same free space as the loading and empty surfaces it stands in for (`margin: auto`, `padding: 32px 0`), keeps to the 880px reading column, takes the 12px/18px error scale in `--dsw-alias-state-error-primary`, and carries the Host's message plus one `重试` that re-issues the read — message and retry inside a single `role="alert"`.
 

@@ -2,17 +2,21 @@ import { useRef, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useHumanIdentity, type TeamHumanIdentityFace } from './human-identity.ts'
+import { EnvironmentCheck } from './EnvironmentCheck.tsx'
+import type { TeamEnvironmentSource } from './environment-check.ts'
 import { useAvatarImage } from './avatar-image.ts'
 import css from './human-settings.module.css'
 
 /**
- * The Human's own settings page: display name, avatar, and the version
- * footnote.
+ * The Human's own settings page: display name, avatar, the local environment
+ * check, and the version footnote.
  *
  * The page owns no durable fact and no copy of one. Name, avatar, and version
  * all arrive from the shared identity projection, so a save here moves the
  * message rows and member refs at the same moment; a failed write keeps the
- * typed name in the field and reports the Host's own reason.
+ * typed name in the field and reports the Host's own reason. The environment
+ * check is a separate projection, read only, and belongs to the installation
+ * rather than to the Human.
  */
 
 /** Host-side avatar ceiling (`ATTACHMENT_MAX_BYTES`): the settings page refuses larger files before the round trip. */
@@ -27,6 +31,8 @@ export interface HumanSettingsSectionInjected {
   uploadAvatar: (file: File) => Promise<string | undefined>
   /** Clear the avatar; the identity falls back to the initial. */
   removeAvatar: () => Promise<string | undefined>
+  /** The local environment check, a read-only projection of the installation. */
+  environment: TeamEnvironmentSource
 }
 
 export type HumanSettingsSectionProps =
@@ -198,6 +204,7 @@ export function HumanSettingsSection(props: HumanSettingsSectionProps) {
           </div>
         </div>
       </div>
+      <EnvironmentCheck t={t} environment={props.environment} />
       <div className={css.footnote}>
         <span>{t('humanSettingsVersion', { version: profile.version ?? '' })}</span>
         <span aria-hidden="true">·</span>

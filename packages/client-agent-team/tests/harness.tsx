@@ -43,6 +43,15 @@ interface HumanProfileSeed {
   readonly latestVersion?: string
 }
 
+interface EnvironmentSeed {
+  readonly verdict?: 'ok' | 'out-of-range' | 'undetermined'
+  readonly reason?: string
+  readonly bundleVersion?: string
+  readonly dshVersion?: string
+  readonly certifiedDshVersion?: string
+  readonly supportRange?: { readonly lower: string; readonly upper: string }
+}
+
 interface SeededMessage {
   readonly body: string
   readonly occurredAt: string
@@ -50,7 +59,7 @@ interface SeededMessage {
   readonly mentions?: readonly string[]
 }
 
-export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string }) {
+export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: string; initialChannels?: boolean; remainingUnreadCounts?: readonly number[]; seededMessages?: readonly SeededMessage[]; seedTaskRef?: string; seedThreadRef?: string; seedTaskStatus?: AgentTeamTask['status']; seedFollowers?: readonly string[]; humanProfile?: HumanProfileSeed; humanProfileFailure?: string; environment?: EnvironmentSeed; environmentFailure?: string }) {
   if (options?.mode !== undefined) {
     localStorage.setItem('dsh.agent-team.navigation', JSON.stringify({ mode: options.mode, ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }) }))
   }
@@ -485,6 +494,35 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const failHumanProfileWrite = (message?: string): void => {
     humanProfileWriteFailure = message
   }
+  // The environment check double: one read, no write, seeded before the Team
+  // Client mounts because its projection reads on the first subscriber.
+  let environmentValue: {
+    verdict: 'ok' | 'out-of-range' | 'undetermined'
+    reason?: string
+    bundleVersion?: string
+    dshVersion?: string
+    certifiedDshVersion?: string
+    supportRange?: { lower: string; upper: string }
+  } = {
+    verdict: 'ok',
+    bundleVersion: '0.1.15',
+    dshVersion: '0.1.7-rc.1',
+    certifiedDshVersion: '0.1.7-rc.1',
+    supportRange: { lower: '0.1.7-rc.1', upper: '0.1.8' },
+    ...options?.environment,
+  }
+  let environmentFailure: string | undefined = options?.environmentFailure
+  const environment = vi.fn(async () => environmentFailure === undefined
+    ? { ok: true as const, value: { ...environmentValue } }
+    : { ok: false as const, error: { message: environmentFailure } })
+  /** Seed the environment report every check read answers with. */
+  const seedEnvironment = (next: Partial<typeof environmentValue>): void => {
+    environmentValue = { ...environmentValue, ...next }
+  }
+  /** Make the next environment reads fail, or clear the failure. */
+  const failEnvironment = (message?: string): void => {
+    environmentFailure = message
+  }
 
   // rc.1: the runtime owns one TestRemote; the bench scripts the namespaces
   // the mounted features reach (remote.<name> injects included) and attaches
@@ -492,7 +530,7 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   // refuses by contract.
   runtime.remote.provideNamespaces({
     session: { modelCatalog },
-    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar },
+    agentTeam: { members, joinWorkspace, leaveWorkspace, addMember, view: viewChannels, inbox, readThread, threadHistory: loadThreadHistory, threadObservations, putAttachment, getAttachment, createChannel, updateChannel, archiveChannel, updateMember, recoverMember, clearMemberContext, archiveMember, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, changes, environment, humanProfile, setHumanProfile, putHumanAvatar, getHumanAvatar, removeHumanAvatar },
   })
   Object.assign(runtime.remote, {
     $stream: <T,>(options: ConstructorParameters<typeof RemoteStream<T>>[1]) => new RemoteStream(connection, options),
@@ -524,5 +562,5 @@ export async function runtimeWithTeam(options?: { mode?: 'team'; workspaceId?: s
   const disposeSettings = runtime.slots.register({ name: 'sidebar.settings', priority: 0 }, BaselineSettings as never)
   const team = await runtime.mount({ inject: [...inject], apply })
   const view = runtime.renderRoot()
-  return { runtime, team, view, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession }
+  return { runtime, team, view, disposeWorkspace, disposeSettings, members, humanProfile, setHumanProfile, getHumanAvatar, putHumanAvatar, removeHumanAvatar, seedHumanProfile, failHumanProfile, failHumanProfileWrite, environment, seedEnvironment, failEnvironment, joinWorkspace, leaveWorkspace, addMember, status, viewChannels, createChannel, updateChannel, archiveChannel, putAttachment, getAttachment, updateMember, recoverMember, clearMemberContext, archiveMember, modelCatalog, joinChannel, removeChannelMember, sendMessage, reply, changeTask, promoteThread, resolveTaskRefs, publishAgentReply, publishPresence, seedChannel, publishChannelUpdate, failChanges, recoverChanges, readThread, loadThreadHistory, threadObservations, changes, inbox, seedInbox, openSession }
 }
