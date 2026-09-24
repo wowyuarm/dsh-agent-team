@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ContextFormed } from '@deepseek-ai/dsh-llm'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
-import { v3RenamedSourceKind } from './context-source.ts'
+import { matchesProducerKind } from './context-source.ts'
 import type { AgentTeamAgentMember } from './types.ts'
 import { memberMemoryDirectoryPath } from './member-runtime.ts'
 
@@ -55,9 +55,7 @@ export function apply(ctx: Context): void {
       // number domains explicit (the seq = log.length contiguity contract).
       const event = agent.session.snapshotEvents(SessionLogOffset(sequence), SessionLogOffset(sequence + 1))[0]
       return event?.type === 'user/message'
-        // Both identities are this producer's own: the kind written now and
-        // the read-time conversion's rename of this producer's V3 history.
-        && (event.data.source.kind === name || event.data.source.kind === v3RenamedSourceKind(name))
+        && matchesProducerKind(event.data.source.kind, name)
         && event.data.content[0]?.type === 'text'
         ? [event.data.content[0].text]
         : []

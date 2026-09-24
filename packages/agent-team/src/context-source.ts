@@ -52,20 +52,26 @@ export type AgentTeamMessageSource = Extract<MessageSource, { kind: typeof AGENT
 export const v3RenamedSourceKind = <const P extends string>(producer: P): `plugin:${P}` => `plugin:${producer}`
 
 /**
- * Whether one message source carries this plugin's own attribution. Both
- * identities are matched by exact kind equality — never by a `plugin:`
- * prefix test, which would claim third-party producers' rows as Team facts.
+ * Whether one source kind is a producer's own: the kind it writes now and the
+ * read-time conversion of its released V3 history. Both identities are matched
+ * by exact kind equality — never by a `plugin:` prefix test, which would claim
+ * third-party producers' rows as that producer's facts.
  */
+export function matchesProducerKind(kind: string | undefined, producer: string): boolean {
+  return kind === producer || kind === v3RenamedSourceKind(producer)
+}
+
+/** Whether one message source carries this plugin's own attribution. */
 export function isAgentTeamSource(source: MessageSource): source is AgentTeamMessageSource {
-  return source.kind === AGENT_TEAM_PLUGIN_ID || source.kind === AGENT_TEAM_V3_RENAMED_KIND
+  return matchesProducerKind(source.kind, AGENT_TEAM_PLUGIN_ID)
 }
 
 /**
  * Whether one source kind carries this plugin's attribution, for call sites
- * whose sources arrive untyped. Exact identities only, never a prefix test.
+ * whose sources arrive untyped.
  */
 export function isAgentTeamSourceKind(kind: string | undefined): boolean {
-  return kind === AGENT_TEAM_PLUGIN_ID || kind === AGENT_TEAM_V3_RENAMED_KIND
+  return matchesProducerKind(kind, AGENT_TEAM_PLUGIN_ID)
 }
 
 /** Handoff snapshot section name carrying the model-authored prose. */

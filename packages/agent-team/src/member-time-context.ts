@@ -31,7 +31,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { v3RenamedSourceKind } from './context-source.ts'
+import { matchesProducerKind } from './context-source.ts'
 import { formatTeamDuration, formatTeamTimestamp } from './time-format.ts'
 import { advanceOwnedSessionEventCursor, type OwnedSessionEventCursor, type SessionEventFold } from './session-event-cursor.ts'
 
@@ -87,9 +87,7 @@ export function applyClockEvent(state: ClockBaseline, event: { readonly type: st
       return state.openTurn === -1 ? state : { ...state, lastTurnInjectionTime: null, openTurn: -1 }
     case 'user/message': {
       const source = (event.data as UserMessage).source
-      // Both identities are this producer's own: the kind written now and the
-      // read-time conversion's rename of this producer's V3 history.
-      const injected = source.kind === name || source.kind === v3RenamedSourceKind(name)
+      const injected = matchesProducerKind(source.kind, name)
       const withMessage = state.lastMessageTime === event.time ? state : { ...state, lastMessageTime: event.time }
       if (!injected) return withMessage
       return { ...withMessage, lastInjectionTime: event.time, lastTurnInjectionTime: event.time }

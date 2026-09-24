@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest'
 import { applyEntryPatches } from '@deepseek-ai/cordis-plugin-include'
 import { loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import { HUMAN_PROFILE_SETTINGS_NAMESPACE, HUMAN_PROFILE_SETTINGS_SCHEMA } from '../src/human-profile.ts'
+// @ts-expect-error untyped shared resolution module
+import { dshPeerRanges } from '../../../scripts/dsh-peers.mjs'
 
 const root = resolve(import.meta.dirname, '../../../')
 
@@ -184,10 +186,7 @@ describe('Agent Team shipping contract', () => {
     // The certified baseline moves as one cut: every DSH peer carries the same
     // range, or an install resolves two DSH generations at once. No host-scope
     // package may sit in `dependencies` (see the host-scope gate below).
-    const dshPeerRanges = new Set(Object.entries(bundleManifest.peerDependencies)
-      .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
-      .map(([, range]) => range))
-    expect([...dshPeerRanges]).toEqual(['>=0.1.7-rc.1 <0.1.8'])
+    expect([...dshPeerRanges(bundleManifest)]).toEqual(['>=0.1.7-rc.1 <0.1.8'])
     expect(preset).toContain('compaction: true')
     expect(preset).toContain('toolResultPruner: true')
     expect(preset).toContain('team_inbox, team_thread, team_message, team_claim, and team_view')

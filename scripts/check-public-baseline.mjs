@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { dshPeerRanges } from './dsh-peers.mjs'
 
 const args = process.argv.slice(2)
 const offline = args.includes('--offline')
@@ -36,16 +37,8 @@ const fail = (surface, message) => failures.push(`${surface}: ${message}`)
 const note = message => noted.push(message)
 
 // ---- 1. Source of truth -----------------------------------------------------
-// The predicate is copied from `packages/agent-team/tests/shipping.spec.ts`: it
-// must stay identical, or this script and the test can disagree about what "the
-// DSH peers" are. Note `@deepseek-ai/dsh-` rather than the bare scope — the bare
-// scope also holds `cordis`, which is not a DSH version line.
 const manifest = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
-const ranges = new Set(
-  Object.entries(manifest.peerDependencies ?? {})
-    .filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
-    .map(([, range]) => range),
-)
+const ranges = dshPeerRanges(manifest)
 if (ranges.size !== 1) {
   fail('package.json', `expected exactly ONE @deepseek-ai/dsh-* peer range, found ${ranges.size}: ${[...ranges].join(' | ')}`)
 }
