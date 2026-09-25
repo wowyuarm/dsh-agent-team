@@ -50,8 +50,10 @@ npx @deepseek-ai/dsh web
 Stop it, then install Agent Team into the `web` profile:
 
 ```sh
-dsh plugin --profile web add @wowyuarm/dsh-agent-team
+dsh plugin --profile web add @wowyuarm/dsh-agent-team@0.1.15
 ```
+
+The version is pinned deliberately: pnpm skips releases published less than 24 hours ago, so an unpinned `@latest` install resolves to the previous release on release day.
 
 ### 2. Start the Web UI
 
