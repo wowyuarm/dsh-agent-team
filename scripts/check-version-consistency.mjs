@@ -128,6 +128,23 @@ for (const [name, range] of peerRanges) {
   }
 }
 
+// (c) Both READMEs name the released version in the install command. The pin is
+// deliberate — pnpm skips releases younger than a day, so an unpinned `@latest`
+// resolves to the previous release on release day — which means the line moves
+// with every release. This gate is what makes forgetting it fail loudly.
+const installSpots = [
+  { file: 'README.md', pattern: /dsh plugin --profile web add @wowyuarm\/dsh-agent-team@(\d+\.\d+\.\d+)/u },
+  { file: 'README.zh.md', pattern: /dsh plugin --profile web add @wowyuarm\/dsh-agent-team@(\d+\.\d+\.\d+)/u },
+]
+for (const { file, pattern } of installSpots) {
+  const installVersion = extract(file, pattern)
+  if (installVersion === undefined) {
+    failures.push(`${file}: install command names no version (the pinned release must stay visible — update the pattern with the command)`)
+  } else if (installVersion !== manifest.version) {
+    failures.push(`${file} installs ${installVersion} but package.json publishes ${manifest.version}`)
+  }
+}
+
 if (failures.length > 0) {
   console.error(`Version consistency check failed (${failures.length}):`)
   for (const failure of failures) console.error(`- ${failure}`)
@@ -135,5 +152,6 @@ if (failures.length > 0) {
 }
 console.log(
   `Version consistency check OK: ${stated.length + 1} version spots agree on ${reference}, `
-    + `${peerRanges.length} DSH ranges admit from it, plugin ${manifest.version}.`,
+    + `${peerRanges.length} DSH ranges admit from it, plugin ${manifest.version} `
+    + `(named by ${installSpots.length} install commands).`,
 )
