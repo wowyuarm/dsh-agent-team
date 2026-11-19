@@ -26,14 +26,15 @@ Generated Remote methods resolve a `RemoteResult`: `{ ok: true, value }` carries
 - The attachment preview caches successful image bytes. A confirmed miss shows the expired state for that mount without a negative cache, so a later mount can reread the same id. Other read failures and browser decode failures keep the file name, expose an explicit retry, and never open an empty preview.
 
 ## Client plugin and slot composition
-The external Client plugin leaves the shipped Shell as outer-layout owner. Team adds one global panel and shadows three seats:
+The external Client plugin leaves the shipped Shell as outer-layout owner. Team adds one global panel and a settings page, and shadows two seats while Team mode stands:
 
 ```text
 sidebar.panellist           additive Team row, order 20
 main (key agent-team)       Team panel, priority -100
 sidebar.workspaces          Team shadow, priority -100
 main (key conversation)     Team shadow, priority -100
-sidebar.settings            Team shadow, priority -100
+settings.section            additive Team settings page, order 5
+settings.section.icon       Team mark on that page's nav row
 ```
 
 Activation mounts `agentTeamRemote`, waits for `remote.agentTeam`, then registers the Team panel, its rail row, and the mode shadows. `dsh.client.inject` describes the module graph but does not guarantee apply order or service readiness; use `ctx.slots.inject()` when a declaration may appear later.
