@@ -41,6 +41,7 @@ For new cross-session work, use one `.scratch/active/<work>/` directory. Archive
 - Update the affected maintained document, package README, and tests when a non-trivial change alters a public contract or workflow. Do not update archived `.scratch/` material merely to make it agree with new code.
 - Follow [`docs/AGENTS.md`](docs/AGENTS.md) when editing or adding maintained documents — routing branches and the maintenance discipline live there.
 - Write each commit message as one Conventional Commits subject line: `type: lowercase imperative summary` (`feat`, `fix`, `chore`, `refactor`, `test`, `perf`, `docs`), with no body. Match the existing `git log` style.
+- Land each work item as one commit: fix the original commit by amending it while the range is unpushed rather than adding a fixup, and squash a work item's several commits before pushing. Never rewrite history that is already pushed or merged.
 - Do not commit credentials, temporary profiles, browser overlays, generated test files, browser artifacts, or build residue.
 
 ## Choose checks for the change

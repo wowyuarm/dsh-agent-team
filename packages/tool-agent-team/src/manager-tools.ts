@@ -219,12 +219,11 @@ export const memberCreate = defineTool({
  */
 export const projectCreate = defineTool({
   name: 'project_create',
-  description: "Create one Project in an existing Workspace as the Team manager, recording its shared goal as the description. A Project is a durable Team record addressed from now on by its projectRef; the same handle in two Workspaces is two different Members, so bring Members in by the memberRef team_overview returned, never by handle. Only Members that are already active in this Workspace may join at creation; a Member whose activation failed is refused here with its reason, so create the Project without it or fix that Member first. An empty shared goal is refused: a Project exists for a continuing result someone answers for. Every write carries a requestId with the same replay rule as member_create — the same id and parameters answer with the original receipt, a changed parameter under a reused id is a collision. A refusal names its reason and wrote nothing. Only the live Team manager Session holds this tool.",
+  description: "Create one Project in an existing Workspace as the Team manager, recording its shared goal as the description. A Project is a durable Team record addressed from now on by its projectRef; any Member that participates in the Workspace can already read and write in it, so owners are granted afterwards with project_owner. An empty shared goal is refused: a Project exists for a continuing result someone answers for. Every write carries a requestId with the same replay rule as member_create — the same id and parameters answer with the original receipt, a changed parameter under a reused id is a collision. A refusal names its reason and wrote nothing. Only the live Team manager Session holds this tool.",
   parameters: {
     workspaceId: { type: 'string', required: true, description: "Target Workspace id exactly as team_overview listed it. The Project is created in this Workspace." },
     name: { type: 'string', required: true, description: 'Short display name for the Project.' },
     description: { type: 'string', required: true, description: "The Project's shared goal — the continuing result its owners answer for. Required here; an empty goal is refused." },
-    memberIds: { type: 'array', items: { type: 'string' }, description: 'memberRefs of already-active Members of this Workspace to bring in at creation. Omit or pass none to create the Project empty and grant owners afterwards.' },
     requestId: { type: 'string', description: 'Your own idempotency key for this write, with the same replay rule as member_create.' },
   },
   output: projectCreateOutput,
@@ -232,18 +231,17 @@ export const projectCreate = defineTool({
     const agent = exec.agent
     if (agent === undefined) throw new Error('project_create requires an Agent session')
     const host = service(agent)
-    const args = blankToAbsent(rawArgs, ['requestId', 'memberIds'])
+    const args = blankToAbsent(rawArgs, ['requestId'])
     const result = await host.managerCreateProjectForAgent(agent, {
       requestId: (args.requestId as AgentTeamRequestId | undefined) ?? requestId(agent.id, exec.callId),
       workspaceId: args.workspaceId as WorkspaceId,
       name: args.name,
       description: args.description,
-      ...(args.memberIds === undefined ? {} : { memberIds: args.memberIds as AgentTeamMemberId[] }),
     })
     return {
       requestId: result.requestId, outcome: result.outcome,
       receipt: { operationId: result.receipt.operationId, requestId: result.receipt.requestId, sequence: result.receipt.sequence, occurredAt: result.receipt.occurredAt },
-      projectRef: result.projectRef, memberIds: [...result.memberIds],
+      projectRef: result.projectRef,
     }
   },
 })
@@ -460,7 +458,7 @@ export const memberState = defineTool({
  */
 export const memberWorkspace = defineTool({
   name: 'member_workspace',
-  description: "Change one Agent Member's Workspace participation as the Team manager. 'join' grants participation in another Workspace as a pure relation — the Member's Session is not created, copied, or moved, and it keeps working from its original checkout; the grant itself is what lets the Member be addressed there. 'leave' withdraws one non-default Workspace: its active Claims there release, its Attention and markers on those Threads clear, and its Project memberships there end, while identity, Session, and remaining participations stay. The creation Workspace cannot be left — archive the Member instead — and a Member that is inactive or archived is refused with its reason. Every write carries a requestId with the same replay rule as member_create. Only the live Team manager Session holds this tool.",
+  description: "Change one Agent Member's Workspace participation as the Team manager. 'join' grants participation in another Workspace as a pure relation — the Member's Session is not created, copied, or moved, and it keeps working from its original checkout; the grant itself is what lets the Member be addressed there. 'leave' withdraws one non-default Workspace: its active Claims there release, its Attention and markers on those Threads clear, while identity, Session, and remaining participations stay. The creation Workspace cannot be left — archive the Member instead — and a Member that is inactive or archived is refused with its reason. Every write carries a requestId with the same replay rule as member_create. Only the live Team manager Session holds this tool.",
   parameters: {
     action: { type: 'string', required: true, enum: ['join', 'leave'], description: "The participation change to make: 'join' adds a Workspace, 'leave' withdraws one." },
     workspaceId: { type: 'string', required: true, description: "The Workspace id to join or leave, exactly as team_overview listed it. Leaving the Member's creation Workspace is refused." },

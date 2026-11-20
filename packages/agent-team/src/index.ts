@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type { CompactionEngine } from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-app-boot'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import { canOpenNativePath, nativeFileApplications, openNativeFileApplication, openNativePath, revealNativePath } from '@deepseek-ai/dsh-native-command'
 import { scopeOf, scopeParentOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId, SessionLogOffset, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
@@ -115,6 +116,8 @@ import type {
   AgentTeamClaimResult,
   AgentTeamClientMemberStatus,
   AgentTeamActor,
+  AgentTeamAttachmentApplication,
+  AgentTeamAttachmentApplicationsRequest,
   AgentTeamAttachmentId,
   AgentTeamBaselineSubscriptionRequest,
   AgentTeamCreateSubscriptionRequest,
@@ -128,6 +131,8 @@ import type {
   AgentTeamToolCatalogResult,
   AgentTeamGetAttachmentRequest,
   AgentTeamGetAttachmentResult,
+  AgentTeamOpenAttachmentRequest,
+  AgentTeamOpenAttachmentResult,
   AgentTeamGetHumanAvatarRequest,
   AgentTeamGetHumanAvatarResult,
   AgentTeamHumanProfileRequest,
@@ -1714,7 +1719,6 @@ export default class AgentTeam extends TypertRemoteService {
     this.requireAccepting()
     this.requireWorkspace(request.workspaceId)
     const ledger = this.requireLedger()
-    if (!ledger.hasCommitted(request.requestId)) this.assertProjectMembersAvailable(request.memberIds)
     const result = await ledger.createProject({ ...request, actor: agentTeamHumanActor() },
       options.authorize === undefined ? {} : { authorize: options.authorize })
     if (result.committed) this.emitCommitted(result.value.receipt)
@@ -2649,6 +2653,47 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
+   * Resolve one cached attachment's absolute payload path without exposing the cache root to the Client.
+   * @param attachmentId - cached attachment identity.
+   * @returns the verified payload path.
+   * @throws RemoteError when the entry is absent.
+   */
+  private async attachmentPayloadForRead(attachmentId: AgentTeamAttachmentId): Promise<string> {
+    const outcome = await readAttachment(attachmentsRoot(), attachmentId)
+    if (outcome.kind === 'missing') throw new RemoteError('team/attachment-not-found', `attachment '${attachmentId}' is no longer cached`, { attachmentId })
+    return attachmentPayloadPath(attachmentId, outcome.attachment.name)
+  }
+
+  /**
+   * Open or reveal one cached attachment through the serving desktop's own file associations.
+   * The path comes from the verified cache entry, never from the caller, so this cannot open an arbitrary Host file.
+   * @param request - attachment identity plus the native action and optional handler id.
+   * @returns whether a desktop opener was available; a failed open rejects.
+   */
+  @Remote('openAttachment')
+  async openAttachment(request: AgentTeamOpenAttachmentRequest): Promise<AgentTeamOpenAttachmentResult> {
+    const path = await this.attachmentPayloadForRead(request.attachmentId)
+    if (!canOpenNativePath()) return { opened: false }
+    const signal = AbortSignal.timeout(30_000)
+    if (request.action === 'reveal') await revealNativePath(path, signal)
+    else if (request.application === undefined) await openNativePath(path, signal)
+    else await openNativeFileApplication(path, request.application, signal)
+    return { opened: true }
+  }
+
+  /**
+   * List the handlers the serving desktop currently registers for one cached attachment.
+   * @param request - attachment identity.
+   * @returns handler metadata in OS preference order; empty when no desktop is reachable.
+   */
+  @Remote('attachmentApplications')
+  async attachmentApplications(request: AgentTeamAttachmentApplicationsRequest): Promise<readonly AgentTeamAttachmentApplication[]> {
+    const path = await this.attachmentPayloadForRead(request.attachmentId)
+    if (!canOpenNativePath()) return []
+    return await nativeFileApplications(path, AbortSignal.timeout(30_000))
+  }
+
+  /**
    * Local environment check for the settings page: which DSH line this Host runs against and whether it is inside this bundle's declared range.
    * Human-scoped and read-only; the verdict comes from the Harness's own compatibility evaluator.
    *
@@ -3522,7 +3567,6 @@ export default class AgentTeam extends TypertRemoteService {
       workspaceId: request.workspaceId,
       name: request.name,
       description,
-      ...(request.memberIds === undefined ? {} : { memberIds: request.memberIds }),
     }, { authorize }))
     return Object.freeze({
       requestId: written.requestId,
@@ -3935,14 +3979,6 @@ export default class AgentTeam extends TypertRemoteService {
     result: { readonly committed: boolean; readonly value: T },
   ): void {
     if (result.committed && result.value.kind === 'committed' && result.value.receipt !== undefined) this.emitCommitted(result.value.receipt)
-  }
-
-  private assertProjectMembersAvailable(memberIds: readonly AgentTeamMemberId[] | undefined): void {
-    for (const memberId of memberIds ?? []) {
-      const member = this.requireLedger().getMember(memberId)
-      if (member === undefined) throw new Error(`unknown Agent Member '${memberId}'`)
-      if (this.memberStatus(member).availability !== 'active') throw new Error(`Agent Member '${memberId}' is not available for Project membership`)
-    }
   }
 
   /**
@@ -7163,6 +7199,7 @@ export default class AgentTeam extends TypertRemoteService {
       surface: visibleTeamSurface(agent), lookup: {
         printableSender: memberId => this.printableSender(memberId),
         isProjectOwner: (reader, projectRef) => this.requireLedger().projectOwnerIds(projectRef).includes(reader),
+        isFollowingMain: (reader, projectRef) => this.requireLedger().isFollowingMain(reader, projectRef),
         repliesToLine: (message, workspaceId) => this.repliesToLine(message, workspaceId),
         claimOwner: claimRef => this.requireLedger().getClaim(claimRef)?.owner,
       } })

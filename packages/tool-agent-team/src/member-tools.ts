@@ -319,7 +319,7 @@ export const teamDm = defineTool({
 
 export const teamMessage = markAgentTeamPreset(defineTool({
   name: 'team_message',
-  description: 'Post to a Project\'s Main stream, start a Thread, or reply to one. post speaks in the Project\'s Main stream — the conversation outside every Thread — and any Project member may: pass projectRef and body, mention with `@Handle`, and optionally replyToMessageRef (a Main stream Message of the same Project, whose author is delivered to). Pending Main stream entries must be complete in the current context; use team_thread read with projectRef for missing facts and acknowledgement. post has no write token. start opens a discussion or a Task (kind) and only a Project owner may — a Thread starts from a standing question or piece of work, not from conversation. Understand the Thread before replying; a write needs a current token from a drained read, your own commit, or a complete rejection that provides one. Complete Message and Activity facts in context can satisfy reading, but never acknowledge unread; every write rechecks new facts, revision, permissions and Task state. A mention supplies its Message, not earlier discussion; read missing background first. start takes kind discussion (default) or task. A mention in a start or a reply delivers its Message to that Member once and never makes them follow; `@all` is plain text under version 2 and reaches no one. A private note to one Member is team_dm, not a reply.',
+  description: 'Post to a Project\'s Main stream, start a Thread, or reply to one. post speaks in the Project\'s Main stream — the conversation outside every Thread — and any enabled Member who participates in the Project\'s Workspace may: pass projectRef and body, mention with `@Handle`, and optionally replyToMessageRef (a Main stream Message of the same Project, whose author is delivered to). Pending Main stream entries must be complete in the current context; use team_thread read with projectRef for missing facts and acknowledgement. post has no write token. start opens a discussion or a Task (kind) and only a Project owner may — a Thread starts from a standing question or piece of work, not from conversation. Understand the Thread before replying; a write needs a current token from a drained read, your own commit, or a complete rejection that provides one. Complete Message and Activity facts in context can satisfy reading, but never acknowledge unread; every write rechecks new facts, revision, permissions and Task state. A mention supplies its Message, not earlier discussion; read missing background first. start takes kind discussion (default) or task. A mention in a start or a reply delivers its Message to that Member once and never makes them follow; `@all` is plain text under version 2 and reaches no one. A private note to one Member is team_dm, not a reply.',
   parameters: {
     action: { type: 'string', required: true, enum: ['start', 'reply', 'post'] },
     projectRef: { type: 'string', description: "Full branded Project ref exactly as returned by Team tools, including the 'project:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves. Required by start and post." },
@@ -353,7 +353,9 @@ export const teamMessage = markAgentTeamPreset(defineTool({
         projectRef: projectRefOf(args.projectRef) as never,
         ...(args.replyToMessageRef === undefined ? {} : { replyToMessageRef: args.replyToMessageRef as AgentTeamMessageRef }), body: args.body, ...paths })
       if (result.kind === 'committed') {
-        return { kind: result.kind, action: 'post', projectRef: result.message.projectRef, messageRef: result.message.messageRef, occurredAt: result.receipt.occurredAt }
+        const attention = host.mainAttentionStatusForAgent(agent, { workspaceId: workspaceOf(args, agent), projectRef: result.message.projectRef })
+        return { kind: result.kind, action: 'post', projectRef: result.message.projectRef, messageRef: result.message.messageRef, occurredAt: result.receipt.occurredAt,
+          following: attention.attention !== undefined }
       }
       return { kind: result.kind, projectRef: result.projectRef, unreadCount: result.unreadCount, directCount: result.directCount, entries: result.entries.map(mainEntryView) }
     }
@@ -389,7 +391,12 @@ export const teamMessage = markAgentTeamPreset(defineTool({
       ...(args.taskRef === undefined ? {} : { taskRef: args.taskRef as AgentTeamTaskRef }),
       ...(args.replyToMessageRef === undefined ? {} : { replyToMessageRef: args.replyToMessageRef as AgentTeamMessageRef }),
       body: args.body, baseRevision, ...paths })
-    return messageOutcome(result, 'reply')
+    const outcome = messageOutcome(result, 'reply')
+    if (result.kind === 'committed') {
+      const status = host.attentionStatusForAgent(agent, { workspaceId: workspaceOf(args, agent), threadRef: result.thread.threadRef })
+      return { ...outcome, following: status.attention !== undefined }
+    }
+    return outcome
   },
 }))
 
@@ -438,7 +445,7 @@ function withTaskAuthorityHint(error: unknown, host: AgentTeam, agent: Parameter
 
 export const teamTask = defineTool({
   name: 'team_task',
-  description: 'Work with Tasks. board lists the Task board of the Projects you can see — every open Task with its status, who is accountable for it, and the Members on it, plus each Project\'s newest finished Tasks — filtered by projectRef or to your own responsibility with mine; it is current state, not unread, so check it before you claim or when a Workspace change surprises you. promote turns a discussion Thread into a Task (Project owners only) and takes accountable to name the owner responsible for it; a Task started with team_message start takes the same field. list, claim, done and release manage your Direction Claims. Every Task has one accountable: the Human or an Agent Member. accept finishes a Task as verified work; close ends it without acceptance; reopen returns it to open work; transfer hands accountability to another enabled Project member or back to the Human, and the new accountable starts following the Thread. Who may do which is the Host\'s call, not yours to reason around: accept belongs to the Human, to a Project owner, or to the Task\'s own accountable, and never to a Member that held any Claim on it (an Agent may accept only an in_review Task); close, reopen and transfer belong to the Human or the current accountable. Finishing your own Claim is not acceptance, and an Agent that executed a Task cannot verify it. transfer moves responsibility only — Claims and their owners stay where they are. Mutations need a current token from a drained read, your own commit, or a complete rejection that provides one. Reconsider the facts first; each attempt rechecks them and Task permissions. list only refreshes active Claims.',
+  description: 'Work with Tasks. board lists the Task board of the Projects you can see — every open Task with its status, who is accountable for it, and the Members on it, plus each Project\'s newest finished Tasks — filtered by projectRef or to your own responsibility with mine; it is current state, not unread, so check it before you claim or when a Workspace change surprises you. promote turns a discussion Thread into a Task (Project owners only) and takes accountable to name the owner responsible for it; a Task started with team_message start takes the same field. list, claim, done and release manage your Direction Claims. Every Task has one accountable: the Human or an Agent Member. accept finishes a Task as verified work; close ends it without acceptance; reopen returns it to open work; transfer hands accountability to another enabled Member of this Workspace or back to the Human, and the new accountable starts following the Thread. Who may do which is the Host\'s call, not yours to reason around: accept belongs to the Human, to a Project owner, or to the Task\'s own accountable, and never to a Member that held any Claim on it (an Agent may accept only an in_review Task); close, reopen and transfer belong to the Human or the current accountable. Finishing your own Claim is not acceptance, and an Agent that executed a Task cannot verify it. transfer moves responsibility only — Claims and their owners stay where they are. Mutations need a current token from a drained read, your own commit, or a complete rejection that provides one. Reconsider the facts first; each attempt rechecks them and Task permissions. list only refreshes active Claims.',
   parameters: {
     action: { type: 'string', required: true, enum: ['board', 'list', 'claim', 'done', 'release', 'promote', 'accept', 'close', 'reopen', 'transfer'] },
     projectRef: { type: 'string', description: 'board only: limit the board to one Project.' },
@@ -504,7 +511,7 @@ export const teamTask = defineTool({
     if (typeof baseRevision !== 'number' || !Number.isSafeInteger(baseRevision) || baseRevision < 1) throw new Error(recoveryFor('missing_write_token').sentence({}))
     if (args.action === 'transfer') {
       if (args.direction !== undefined || args.claimRef !== undefined) throw new Error(recoveryFor('action_only_arguments').sentence({ action: 'transfer', parameter: args.direction === undefined ? 'claimRef' : 'direction', owner: args.direction === undefined ? 'done' : 'claim' }))
-      if (args.target === undefined || args.target.trim() === '') throw new Error('transfer needs target — the enabled Project member who becomes accountable for this Task, or human.')
+      if (args.target === undefined || args.target.trim() === '') throw new Error('transfer needs target — the enabled Member of this Workspace who becomes accountable for this Task, or human.')
       const target = memberTarget(host, args.target)
       let transferred: Awaited<ReturnType<AgentTeam['transferTaskForAgent']>>
       try {
@@ -574,7 +581,7 @@ function taskRejection(
 
 export const teamView = defineTool({
   name: 'team_view',
-  description: 'Discover your authorized Team addresses: every active Project in the Workspace (with owners, your owner/member/directory-only relation, and subscription counts), a newest-first page of top-level Threads from your Project memberships (each with its bounded anchor subject; Task standing inline on taskful rows), and current Workspace Members. Directory visibility grants no Project content or write access. This is an address book, not a work queue: unread work lives in team_inbox, work in flight on team_task board, and a Thread is read with team_thread read. The cursor pages Thread rows only.',
+  description: 'Discover your authorized Team addresses: every active Project in the Workspace (with owners, your owner/following/none relation, and subscription counts), a newest-first page of top-level Threads in the Workspace (each with its bounded anchor subject; Task standing inline on taskful rows), and current Workspace Members. This is an address book, not a work queue: unread work lives in team_inbox, work in flight on team_task board, and a Thread is read with team_thread read. The cursor pages Thread rows only.',
   parameters: {
     projectRef: { type: 'string', description: "Full branded Project ref exactly as returned by Team tools, including the 'project:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     limit: { type: 'number' }, cursor: { type: 'number' }, workspace: workspaceParam,
@@ -598,10 +605,15 @@ export const teamView = defineTool({
       workspaces: view.workspaces.map(participation => ({ workspaceId: participation.workspaceId,
         ...(participation.title === undefined ? {} : { title: participation.title }), default: participation.default })),
       projects: view.directory.projects.map(entry => {
-        const { project, ownerIds, participating, subscriptions } = entry
+        const { project, ownerIds, participating, followingMain, subscriptions } = entry
         if (!ownership) return { projectRef: project.projectRef, name: project.name, subscriptions,
           role: participating ? 'member' : 'directory only' }
         const projectOwners = view.owners.filter(owner => owner.projectRef === project.projectRef)
+        // Rules version 9 keeps only what an owner owns and what a follower
+        // follows: the role is the grant, the Main stream Attention, or none.
+        const role = view.rulesVersion >= 9
+          ? (self !== undefined && ownerIds.includes(self.memberId) ? 'owner' : followingMain === true ? 'following' : 'none')
+          : participating ? (self !== undefined && ownerIds.includes(self.memberId) ? 'owner' : 'member') : 'directory only'
         return { projectRef: project.projectRef, name: project.name, subscriptions,
           owners: [host.humanHandle(), ...ownerIds.map(memberId => handles.get(memberId) ?? memberId)],
           // Only when at least one owner recorded text: a Project whose every grant
@@ -610,9 +622,8 @@ export const teamView = defineTool({
           // owner without text reads `unspecified` rather than being left out.
           ...(projectOwners.every(owner => owner.responsibility === undefined) ? {} : { ownerResponsibilities: projectOwners
             .map(owner => ({ handle: handles.get(owner.memberId) ?? owner.memberId, responsibility: owner.responsibility ?? 'unspecified' })) }),
-          role: participating ? (self !== undefined && ownerIds.includes(self.memberId) ? 'owner' : 'member') : 'directory only' }
+          role }
       }),
-      directoryOnly: args.projectRef !== undefined && view.directory.projects.length === 1 && !view.directory.projects[0]!.participating,
       members: [
         { memberId: view.humanMemberId, kind: 'human', handle: host.humanHandle(), description: 'Human Team Member', presence: 'available' },
         ...host.members().filter(status => visibleMemberIds.has(status.member.memberId)).map(status => ({ memberId: status.member.memberId,

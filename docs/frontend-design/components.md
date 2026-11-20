@@ -32,6 +32,8 @@ A Message's files render as one strip under its body: a wrapping row at a 6px ga
 
 A file that is not an image is a chip: the name, then its byte size. An image starts as the same chip stating its own state — `Loading image`, `File expired and cleaned up` on a confirmed cache miss, `Image unavailable` after a read or decode failure with a retry control beside it — and becomes a thumbnail that opens the large view once its bytes decode.
 
+A chip is also the open target for its verified cache entry. A document chip opens in the serving desktop's default application on click or Enter; an inline-code mention of its name resolves to the same action; and the context menu offers **Open with** from the Host's registered handlers and **Show in folder**. An image keeps thumbnail-to-large-view on click and exposes the same menu by right click. A Host with no desktop opener answers `opened: false`, which the row states as a failure instead of a silent no-op.
+
 While it waits, that chip is a polite live region, so the state change is announced rather than only painted. The name ellipsizes inside the chip: the chip's automatic minimum would otherwise win over its cap, so the chip sets `min-width: 0` and the name keeps `nowrap` with an ellipsis, and a long name shortens in place instead of widening the row.
 
 The retry control takes `flex: none`: it is an action label, so it keeps one line while the name shortens beside it.
@@ -329,9 +331,9 @@ The transfer control opens a dialog rather than a menu, because the offer is a l
 
 Before it offers anyone, the dialog states what taking the Task on means: a transfer moves responsibility only, and responsibility includes accepting the Task as a party that did not do the work. A reader handing work away decides who will verify it, so that meaning belongs in the dialog rather than in the hover hint — the hint states the consequence of the verb, the dialog the consequence of the choice.
 
-The candidates are this Thread's enabled followers and nothing else: a handover is a move inside a conversation, so the readers already in it are the people it can land on, while the Host's wider permission of any enabled Project member is an authority rather than an offer.
+The candidates are every enabled Member of the Workspace plus the Human — under rules version 9 the Host's transfer authority reaches any of them, and the dialog mirrors it rather than narrowing to this Thread's followers.
 
-The Human joins that list only by following this Thread, because the follower set is every Member's Attention. The current accountable is never offered to itself, a departed or disabled member is filtered out, and with no candidate left the body states that in place of the list instead of drawing buttons that would fail. Focus enters the dialog, Tab walks the candidates, Escape closes it, and at 390×844 the list scrolls inside the card rather than pushing the footer out of reach.
+The current accountable is never offered to itself, a departed or disabled member is filtered out, and with no candidate left the body states that in place of the list instead of drawing buttons that would fail. Focus enters the dialog, Tab walks the candidates, Escape closes it, and at 390×844 the list scrolls inside the card rather than pushing the footer out of reach.
 
 A candidate is the ghost row the mention picker already draws for the same job: one borderless row per person, at the call radius, with the interactive fill under the pointer. Drawn as outlined buttons the list stood level with the dialog's own Cancel and read as five controls instead of one list.
 
