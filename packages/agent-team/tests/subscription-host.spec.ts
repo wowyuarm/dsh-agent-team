@@ -5,6 +5,7 @@
  * so this spec proves the Host's own decisions; what a real executor does with
  * the policy it is handed is the cross-platform enforcement probe's job.
  */
+import { subscriptionTickInterval } from './helpers/subscription-clock.ts'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -15,7 +16,6 @@ import type { ShellExecSpec, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { harness } from './helpers/host-harness.ts'
 import { openTestTable } from './helpers/ledger-harness.ts'
 import { MemoryMediaPool } from './helpers/memory-backend.ts'
-import { subscriptionTickInterval } from './helpers/subscription-clock.ts'
 import { admissionKey } from '../src/subscription-admissions.ts'
 import { subscriptionDomainSpec } from '../src/subscription-store.ts'
 import type { SubscriptionCheckpoint, SubscriptionScheduler } from '../src/subscription-runtime.ts'
@@ -128,8 +128,8 @@ function gatedShell(stdout: string): GatedShell {
 const credentialValues: Record<string, string> = { GH_TOKEN: 'secret-value' }
 
 async function boot(pool: MemoryMediaPool, shell: Pick<FakeShell, 'service'>, workspaceRoot = process.cwd(),
-  config?: Readonly<Record<string, unknown>>) {
-  subscriptionTickInterval(config === undefined ? 1 : 1_000)
+  config?: Readonly<Record<string, unknown>>, tickIntervalMs = 1_000) {
+  subscriptionTickInterval(tickIntervalMs)
   return harness({
     pool,
     workspaceIds: [workspaceId],
@@ -322,7 +322,7 @@ describe('a timer run', () => {
     // The plugin opens the domain itself at boot; a seeded row must not hold it.
     await domain.close()
     await close()
-    const { ctx, fiber } = await boot(pool, runShell)
+    const { ctx, fiber } = await boot(pool, runShell, process.cwd(), undefined, 1)
     live.push({ dispose: async () => { await fiber.dispose() } })
 
     const published = await waitFor(() => {
@@ -485,7 +485,7 @@ describe('the terminal barrier a run in flight obeys', () => {
     await seedDomain.close()
 
     const shell = gatedShell('{"id":"c","title":"C"}\n')
-    const second = await boot(pool, shell)
+    const second = await boot(pool, shell, process.cwd(), undefined, 1)
     live.push({ dispose: async () => { await second.fiber.dispose() } })
     const seam = second.ctx.agentTeam as unknown as {
       subscriptionTable?: { get(ref: unknown): Promise<unknown> }
@@ -557,7 +557,7 @@ describe('the scheduler checkpoint and Host shutdown', () => {
       { subscriptionRef, dueAt: Date.now() - 1, consecutiveFailures: 0, publishedInWindow: 0 })
     await seedDomain.close()
     const shell = gatedShell('{"id":"c","title":"C"}\n')
-    const second = await boot(pool, shell)
+    const second = await boot(pool, shell, process.cwd(), undefined, 1)
     const seam = second.ctx.agentTeam as unknown as { checkpointFor(ref: unknown): { dueAt?: number } }
     expect(seam.checkpointFor(subscriptionRef).dueAt).toBeLessThan(Date.now())
     await waitFor(() => shell.running() === 1 ? true : undefined)

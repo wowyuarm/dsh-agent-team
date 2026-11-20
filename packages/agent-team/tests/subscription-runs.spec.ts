@@ -7,6 +7,7 @@
  * and reads the storage domain directly only to prove what was written or
  * dropped.
  */
+import './helpers/subscription-clock.ts'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +18,6 @@ import type { ShellExecSpec, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { MemoryMediaPool, type MemoryWriteFault } from './helpers/memory-backend.ts'
 import { addLedgerMember, harness, ledgerAtBoot, makeOwner, requestId } from './helpers/host-harness.ts'
 import { openTestTable } from './helpers/ledger-harness.ts'
-import './helpers/subscription-clock.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, agentTeamHumanActor } from '../src/ledger.ts'
 import { admissionKey, type SubscriptionAdmissionRecord } from '../src/subscription-admissions.ts'
 import { subscriptionDomainSpec } from '../src/subscription-store.ts'
