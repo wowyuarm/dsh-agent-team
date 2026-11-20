@@ -51,6 +51,8 @@ interface TeamThreadPageProps {
   readonly loadMembers: TeamConversationProps['loadMembers']
   readonly drafts: TeamDraftStore
   readonly getAttachment: TeamConversationProps['getAttachment']
+  readonly openAttachment?: TeamConversationProps['openAttachment']
+  readonly loadAttachmentApplications?: TeamConversationProps['loadAttachmentApplications']
   readonly reply: TeamConversationProps['reply']
   readonly changeAttention: TeamConversationProps['changeAttention']
   readonly transferTask: TeamConversationProps['transferTask']
@@ -75,7 +77,7 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const {
     workspaceId, humanName, humanAvatarUrl, projectRef, taskRef, threadRef, taskNumber, backToWorkspace, selectProject, selectThread, selectDiscussion, resolveTaskRefs, resolveThreadRefs, openMemberSession, putAttachment,
     loadProjects, readThread, loadThreadHistory, threadObservations,
-    subscribeChanges, loadMembers, drafts, getAttachment, reply, changeAttention, transferTask, changeTask, promoteThread, resolveMessageRefs, t,
+    subscribeChanges, loadMembers, drafts, getAttachment, openAttachment, loadAttachmentApplications, reply, changeAttention, transferTask, changeTask, promoteThread, resolveMessageRefs, t,
   } = props
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projectView, setProjectView] = useState<AgentTeamView>()
@@ -215,21 +217,18 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const messageSender = (fact: AgentTeamThreadFact): AgentTeamMemberId | undefined =>
     fact.kind === 'message' ? fact.message.sender : undefined
 
-  // The dialog offers this Thread's enabled followers, and nothing else: a handover is a move inside a
-  // conversation, so the readers already in it are the people it can land on. The Host accepts any enabled
-  // Project member, so this is the Client's narrower offer rather than a second authority — it reads the same
-  // follower set the composer and the follow control use. The Human is a candidate only by following, because
-  // that set is every Member's Attention and the Human's own follow writes its row. The current accountable is
-  // never offered: a transfer it already holds is refused as a no-op.
+  // The dialog offers every enabled Member of this Workspace plus the Human: under rules version 9 a
+  // handover lands on any enabled Workspace Member, so the offer reads the same roster the workspace
+  // directory lists rather than this Thread's follower set. The current accountable is never offered:
+  // a transfer it already holds is refused as a no-op.
   const transferCandidates = useMemo(() => {
     if (task === undefined) return []
     const human = projectView?.humanMemberId
-    return [...followerIds]
-      .filter(memberId => memberId !== task.accountable
-        // The Human is not a row of the Agent roster, so its own id is enabled by definition.
-        && (memberId === human || members.some(status => status.member.memberId === memberId && status.member.state === 'enabled')))
+    const candidates = members.filter(status => status.member.state === 'enabled').map(status => status.member.memberId)
+    return [human, ...candidates]
+      .filter((memberId): memberId is AgentTeamMemberId => memberId !== undefined && memberId !== task.accountable)
       .sort((left, right) => memberName(left).localeCompare(memberName(right)))
-  }, [followerIds, members, projectView?.humanMemberId, task?.accountable])
+  }, [members, projectView?.humanMemberId, task?.accountable])
 
   // Identity-stable: `openRef` feeds every row's props, so a fresh destination per render would re-render the timeline. The
   // resolved ref carries its own Project, so a cross-Project discussion opens beside that Project's feed — this page's
@@ -319,6 +318,8 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
         body={fact.message.body}
         attachments={fact.message.attachments}
         loadAttachment={getAttachment}
+        {...(openAttachment === undefined ? {} : { openAttachment })}
+        {...(loadAttachmentApplications === undefined ? {} : { loadAttachmentApplications })}
         t={t}
         occurredAt={fact.message.occurredAt}
         mentionNames={stableMentionNames(fact.mentions, mentionHandlesMap, humanName)}

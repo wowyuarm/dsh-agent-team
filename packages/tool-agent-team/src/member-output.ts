@@ -269,6 +269,7 @@ export const teamDmOutput = {
 const TEAM_MESSAGE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   kind: { type: 'string', required: true }, action: { type: 'string' }, taskRef: { type: 'string' }, threadRef: { type: 'string' }, revision: { type: 'number' }, accountable: { type: 'string' }, sourceThreadRefs: { type: 'array', items: { type: 'string' } },
   expectedRevision: { type: 'number' }, messageRef: { type: 'string' }, memberIds: { type: 'array', items: { type: 'string' } }, unreadCount: { type: 'number' }, directCount: { type: 'number' },
+  following: { type: 'boolean' },
   projectRef: { type: 'string' }, entries: { type: 'array', items: MAIN_ENTRY_SCHEMA },
   facts: { type: 'array', items: FACT_SCHEMA },
   occurredAt: { type: 'string' }, staleTokenKind: { type: 'string', enum: ['unknown', 'unrecognized'] },
@@ -282,6 +283,7 @@ export const teamMessageOutput = {
       return [{ type: 'text', text: [
         'Committed — Main stream message posted.',
         [value.messageRef, ...(value.projectRef === undefined ? [] : [value.projectRef])].join(' · '),
+        ...(value.following === false ? [`You do not follow this Main stream: later ordinary updates will not wake you; to keep participating, team_attention follow with projectRef ${value.projectRef ?? ''}`] : []),
         ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
       ].join('\n') }]
     }
@@ -297,6 +299,7 @@ export const teamMessageOutput = {
         // A start follows its author, so the result states the Attention it
         // just acquired: ordinary updates from this Thread will now interrupt.
         ...(value.action !== 'start' || value.source === undefined ? [] : [`You now follow this Thread ${causeOf(value.source)}. Ordinary updates from here will interrupt you; team_attention unfollow with threadRef stops them.`]),
+        ...(value.action === 'reply' && value.following === false ? [`You do not follow this Thread: later ordinary updates will not wake you; to keep participating, team_attention follow with threadRef ${value.threadRef}`] : []),
         ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
         nextWriteLine(value.revision),
       ].join('\n') }]
@@ -410,7 +413,6 @@ const TEAM_VIEW_SCHEMA = { type: 'object', additionalProperties: false, properti
       active: { type: 'number', required: true }, paused: { type: 'number', required: true },
     } },
   } } },
-  directoryOnly: { type: 'boolean' },
   workspaceId: { type: 'string', required: true },
   workspaces: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { workspaceId: { type: 'string', required: true }, title: { type: 'string' }, default: { type: 'boolean', required: true } } } },
   members: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
@@ -442,9 +444,8 @@ export const teamViewOutput = {
       }))
       lines.push('')
     }
-    lines.push('Threads — your Project memberships')
-    if (value.directoryOnly === true) lines.push('Directory only: Thread rows require Project membership.')
-    else if (value.threads.length === 0) lines.push('No top-level Threads in your Project memberships at this cursor.')
+    lines.push('Threads — this Workspace')
+    if (value.threads.length === 0) lines.push('No top-level Threads in this Workspace at this cursor.')
     else lines.push(...value.threads.map(thread => `${thread.threadRef} · ${thread.projectRef}${thread.taskRef === undefined ? ' · taskless' : ` · ${taskStanding(thread)}`} — ${thread.subject}${thread.lastActivityAt === undefined ? '' : ` · last activity ${formatTeamTimestamp(thread.lastActivityAt)}`}`))
     lines.push(`Thread cursor ${value.cursor}; hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — older Thread anchors exist; page again with this cursor.' : ' — no older Threads remain.'}`)
     if (!continuation && value.workspaces.length > 1) {
