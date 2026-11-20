@@ -50,7 +50,7 @@ The published artifact is one root npm package, `@contexera/dsh-agent-team`, dec
 
 Consumers therefore reach a package through a declared subpath (`@contexera/dsh-agent-team/host`, `/remote`, `/types`, `/tools`, `/client`), never through a relative path into another directory's `lib/`. The generated `tsconfig*.json` facades and the Client bundler both map those subpaths, so a source-level relative import across seams bypasses the contract that keeps generated artifacts swappable. `scripts/harness-dir.mjs` is the single pointer those mappings resolve the adjacent Harness checkout through.
 
-Host source is deliberately flat. `packages/agent-team/src/` separates authority from seams by file, with three structural anchors — `index.ts` is the composition root and Remote adapter, `ledger.ts` is the durable authority, and `spec.ts` plus the `types.ts` barrel own the record schema and the public types. Every other file is one earned seam; [`architecture/README.md`](../architecture/README.md) names them and what each owns.
+Host source is deliberately flat. `packages/agent-team/src/` separates authority from seams by file, with three structural anchors — `index.ts` is the composition root and Remote adapter, `ledger.ts` is the durable authority, and `spec.ts` plus the `types.ts` barrel own the record schema and the public types. Each additional file is an earned seam; [`architecture/package-ownership.md`](../architecture/package-ownership.md) names them and what each owns.
 
 Two consequences follow, and both are cheaper to obey than to repair: what earns a seam, and why a thin rename is deleted rather than kept. Both are stated with the ownership rules in [`architecture/package-ownership.md`](../architecture/package-ownership.md).
 

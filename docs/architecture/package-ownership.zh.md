@@ -24,7 +24,22 @@ agent-team       → neither tool nor Client implementation
 
 工具在执行时取得当前 Host service，既不另建 service，也不直接写入投影。浏览器通过 typed Remote 读取 Host 投影，并使用 Harness 的公开 slot 渲染。各边界之间不得用相对路径访问对方生成的 `lib/`。
 
-构建机制、Host 模块分工与新增 operation 的清单统一维护在 [生成文件与模块边界](../development/generated-and-seams.zh.md)。
+构建机制与新增 operation 的清单统一维护在 [生成文件与模块边界](../development/generated-and-seams.zh.md)。
+
+## Host 模块分工
+
+`packages/agent-team/src/` 中的主要职责如下：
+
+| 模块 | 职责 |
+| --- | --- |
+| `index.ts` | Host 组合、生命周期编排与 typed Remote 适配。 |
+| `member-runtime.ts` | 每个 Member 的工具限制、skill 挂载、能力警告与私有记忆目录准备。 |
+| `ledger.ts` | 持久提交、授权、重放校验与投影。 |
+| `spec.ts` | 已存 operation 的 schema 与 Team 存储 domain 定义。 |
+| `types.ts` | 公开类型入口，重新导出 `types/entities.ts`（id 与实体）、`types/operations.ts`（ledger 记录）和 `types/requests-results.ts`（请求、结果、回执与视图）。 |
+| `invariant.ts` | companion 插件，在挂载时校验 ledger，并在提交后复查。 |
+
+`MemberRuntimeDeps` 将运行时边界限定为三项依赖：Host `ctx`、`liveMemberContext` 解析函数，以及共享的只读 `runningAgents` 集合。ledger、Agent handle、通知与恢复编排仍由 Host 持有。
 
 ## 何时引入新边界
 
