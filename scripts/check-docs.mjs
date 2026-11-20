@@ -54,12 +54,12 @@ const PAGE_SETS = [
 // Chinese, divergent only on astral characters, and never used to slice, so no surrogate splits.
 // Every maintained document needs a row.
 const BLOCK_CHARACTER_CEILINGS = {
-  'architecture/README.md': [342, 174],
-  'architecture/client-and-remote.md': [499, 586],
-  'architecture/host-authority.md': [593, 465],
-  'architecture/package-ownership.md': [552, 339],
-  'architecture/tools-and-preset.md': [605, 458],
-  'architecture/workspace-session-storage.md': [576, 584],
+  'architecture/README.md': [282, 141],
+  'architecture/client-and-remote.md': [487, 199],
+  'architecture/host-authority.md': [583, 460],
+  'architecture/package-ownership.md': [302, 144],
+  'architecture/tools-and-preset.md': [586, 376],
+  'architecture/workspace-session-storage.md': [509, 236],
   'development/README.md': [105, 64],
   'development/e2e-lanes.md': [350, 220],
   'development/environments-and-install.md': [597, 569],

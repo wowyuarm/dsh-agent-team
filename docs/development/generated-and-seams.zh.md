@@ -50,7 +50,7 @@ node scripts/sync-paths.mjs
 
 因此消费方一律通过声明的 subpath（`@contexera/dsh-agent-team/host`、`/remote`、`/types`、`/tools`、`/client`）访问，而不是用相对路径进入另一个目录的 `lib/`。生成的 `tsconfig*.json` facades 与 Client bundler 都映射这些 subpath；源码层跨接缝写相对导入，等于绕过"让生成产物可替换"的那份契约本身。`scripts/harness-dir.mjs` 是这些映射解析相邻 Harness checkout 的唯一指针。
 
-Host 源码刻意保持扁平。`packages/agent-team/src/` 按文件划分 authority 与接缝，有三个结构锚点——`index.ts` 是 composition root 与 Remote adapter，`ledger.ts` 是 durable authority，`spec.ts` 与 `types.ts` barrel 持有 record schema 与公开类型。其余每个文件都是一个 earned seam；它们各自的归属见 [`architecture/README.zh.md`](../architecture/README.zh.md)。
+Host 源码刻意保持扁平。`packages/agent-team/src/` 按文件划分 authority 与接缝，有三个结构锚点——`index.ts` 是 composition root 与 Remote adapter，`ledger.ts` 是 durable authority，`spec.ts` 与 `types.ts` barrel 持有 record schema 与公开类型。其余每个文件都是一个 earned seam；它们各自的归属见 [`architecture/package-ownership.zh.md`](../architecture/package-ownership.zh.md)。
 
 由此有两条机械结论，遵守它们比事后修复便宜：什么算 earned seam，以及为什么薄改名要删掉而不是留作接缝。两条都随归属规则写在 [`architecture/package-ownership.zh.md`](../architecture/package-ownership.zh.md) 里。
 
