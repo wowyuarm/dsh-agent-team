@@ -1230,9 +1230,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: project.workspaceId, execution,
           ...(activity === undefined ? {} : { activity }) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.workerStartedRecorded(operation))
+      return this.commitOperation(operation, () => this.workerStartedRecorded(operation))
     })
   }
 
@@ -1272,9 +1270,7 @@ export class AgentTeamLedger {
           ...(activity === undefined ? {} : { activity }),
           inbox: this.inboxDelta([], [], [], [], marker === undefined ? [] : [marker], []) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.workerSettledRecorded(operation))
+      return this.commitOperation(operation, () => this.workerSettledRecorded(operation))
     })
   }
 
@@ -1333,9 +1329,7 @@ export class AgentTeamLedger {
           ...(request.aliasOf === undefined ? {} : { aliasOf: request.aliasOf }),
         }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.workerSteerAdmissionOf(operation))
+      return this.commitOperation(operation, () => this.workerSteerAdmissionOf(operation))
     })
   }
 
@@ -1374,9 +1368,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ admissionRequestId: request.admissionRequestId,
           outcome: this.freezeWorkerSteerOutcome(request.outcome) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed({ receipt: this.receipt(operation), outcome: operation.data.outcome })
+      return this.commitOperation(operation, () => ({ receipt: this.receipt(operation), outcome: operation.data.outcome }))
     })
   }
 
@@ -1926,9 +1918,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, subscription, activity, baselineIds: Object.freeze([...request.baselineIds]),
           ...(requestIntent === undefined ? {} : { request: Object.freeze({ ...requestIntent,
             scriptSource: Object.freeze({ ...requestIntent.scriptSource }) }) }) }) })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.subscriptionChangeOf(operation, armed.token))
+      return this.commitOperation(operation, () => this.subscriptionChangeOf(operation, armed.token))
     })
   }
 
@@ -1945,8 +1935,7 @@ export class AgentTeamLedger {
         this.assertSameSubscriptionWrite(existing, request)
         return this.resolved(this.subscriptionChangeOf(existing))
       }
-      const prior = this.ownedSubscription(request, request.subscriptionRef)
-      if (prior.revision !== request.expectedRevision) throw new Error(this.subscriptionStaleRevision(prior, request.expectedRevision))
+      const prior = this.ownedSubscriptionAtRevision(request)
       const problem = subscriptionDefinitionProblem(request)
       if (problem !== undefined) throw new Error(`this update cannot be stored: ${problem}`)
       const notifyProblem = request.notify === undefined
@@ -1971,9 +1960,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, subscription, previousRevision: prior.revision, activity,
           ...(requestIntent === undefined ? {} : { request: Object.freeze({ ...requestIntent,
             scriptSource: Object.freeze({ ...requestIntent.scriptSource }) }) }) }) })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.subscriptionChangeOf(operation, armed.token))
+      return this.commitOperation(operation, () => this.subscriptionChangeOf(operation, armed.token))
     })
   }
 
@@ -1985,8 +1972,7 @@ export class AgentTeamLedger {
         return this.resolved(this.subscriptionChangeOf(existing))
       }
       if (request.actor.kind === 'host' && request.reason !== 'failures') throw new Error('only the failures a run reported may pause a subscription without an owner')
-      const prior = this.ownedSubscription(request, request.subscriptionRef, { hostMayPause: true })
-      if (prior.revision !== request.expectedRevision) throw new Error(this.subscriptionStaleRevision(prior, request.expectedRevision))
+      const prior = this.ownedSubscriptionAtRevision(request, { hostMayPause: true })
       if (prior.state !== 'active') throw new Error(`subscription '${prior.subscriptionRef}' is already ${prior.state === 'deleted' ? 'deleted' : 'paused'}`)
       const subscription: AgentTeamSubscription = Object.freeze({ ...prior, state: 'paused', pausedReason: request.reason })
       return this.commitSubscriptionState('team/subscription-paused', request, subscription, 'subscription-paused', request.reason)
@@ -2000,8 +1986,7 @@ export class AgentTeamLedger {
         this.assertSameSubscriptionWrite(existing, request)
         return this.resolved(this.subscriptionChangeOf(existing))
       }
-      const prior = this.ownedSubscription(request, request.subscriptionRef)
-      if (prior.revision !== request.expectedRevision) throw new Error(this.subscriptionStaleRevision(prior, request.expectedRevision))
+      const prior = this.ownedSubscriptionAtRevision(request)
       if (prior.state !== 'paused') throw new Error(`subscription '${prior.subscriptionRef}' is not paused`)
       const subscription: AgentTeamSubscription = Object.freeze({ ...prior, state: 'active', pausedReason: undefined })
       return this.commitSubscriptionState('team/subscription-resumed', request, subscription, 'subscription-resumed')
@@ -2015,8 +2000,7 @@ export class AgentTeamLedger {
         this.assertSameSubscriptionWrite(existing, request)
         return this.resolved(this.subscriptionChangeOf(existing))
       }
-      const prior = this.ownedSubscription(request, request.subscriptionRef)
-      if (prior.revision !== request.expectedRevision) throw new Error(this.subscriptionStaleRevision(prior, request.expectedRevision))
+      const prior = this.ownedSubscriptionAtRevision(request)
       const subscription: AgentTeamSubscription = Object.freeze({ ...prior, state: 'deleted', pausedReason: undefined })
       return this.commitSubscriptionState('team/subscription-deleted', request, subscription, 'subscription-deleted')
     })
@@ -2034,8 +2018,7 @@ export class AgentTeamLedger {
         this.assertSameSubscriptionWrite(existing, request)
         return this.resolved(this.subscriptionChangeOf(existing))
       }
-      const prior = this.ownedSubscription(request, request.subscriptionRef)
-      if (prior.revision !== request.expectedRevision) throw new Error(this.subscriptionStaleRevision(prior, request.expectedRevision))
+      const prior = this.ownedSubscriptionAtRevision(request)
       const armed = prior.webhook
       if (armed === undefined) {
         throw new Error(`subscription '${prior.subscriptionRef}' has no webhook address to reset; enable the webhook trigger first`)
@@ -2048,9 +2031,7 @@ export class AgentTeamLedger {
       const activity = this.subscriptionActivity(subscription, 'subscription-webhook-reset', request.actor, sequence, base.occurredAt)
       const operation: AgentTeamSubscriptionWebhookResetOperation = Object.freeze({ ...base, kind: 'team/subscription-webhook-reset',
         data: Object.freeze({ workspaceId: request.workspaceId, subscription, previousGeneration: armed.generation, activity }) })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.subscriptionChangeOf(operation, token))
+      return this.commitOperation(operation, () => this.subscriptionChangeOf(operation, token))
     })
   }
 
@@ -2075,9 +2056,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, projectRef: prior.projectRef,
           subscriptionRef: prior.subscriptionRef, ids: Object.freeze([...request.ids]) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.receipt(operation))
+      return this.commitOperation(operation, () => this.receipt(operation))
     })
   }
 
@@ -2121,9 +2100,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, projectRef: request.projectRef, subscriptionRef: subscription.subscriptionRef,
           subscriptionRevision: request.subscriptionRevision, scriptHash: request.scriptHash, events: Object.freeze(request.events.map(event => Object.freeze({ ...event }))) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.subscriptionAcceptOf(operation))
+      return this.commitOperation(operation, () => this.subscriptionAcceptOf(operation))
     })
   }
 
@@ -2166,13 +2143,10 @@ export class AgentTeamLedger {
           acceptedSequence: accepted.acceptedSequence, eventId: accepted.event.id,
           inbox: this.inboxDelta([], [], [], [], [], [], markers) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.subscriptionPublishOf(operation))
+      return this.commitOperation(operation, () => this.subscriptionPublishOf(operation))
     })
   }
 
-  /** Commit one non-deleting lifecycle transition with its Main stream line. */
   private async commitSubscriptionState<K extends 'team/subscription-paused' | 'team/subscription-resumed' | 'team/subscription-deleted'>(
     kind: K,
     request: AgentTeamAuthorizedPauseSubscriptionRequest | AgentTeamAuthorizedSubscriptionStateRequest,
@@ -2193,9 +2167,7 @@ export class AgentTeamLedger {
     const operation = Object.freeze({ ...base, kind,
       data: Object.freeze({ workspaceId: request.workspaceId, subscription, activity, ...(inbox === undefined ? {} : { inbox }) }) }) as AgentTeamSubscriptionPausedOperation
       | AgentTeamSubscriptionResumedOperation | AgentTeamSubscriptionDeletedOperation
-    await this.table.put(operation.operationId, operation)
-    this.applyAndAdvanceProjectionVersion(operation)
-    return this.committed(this.subscriptionChangeOf(operation))
+    return this.commitOperation(operation, () => this.subscriptionChangeOf(operation))
   }
 
   private subscriptionActivity(subscription: AgentTeamSubscription, kind: AgentTeamSubscriptionActivity['kind'],
@@ -2245,6 +2217,13 @@ export class AgentTeamLedger {
     const live = subscription.notify.filter(memberId => this.notifyRecipientIsLive(subscription.projectRef, memberId))
     if (live.length === subscription.notify.length) return subscription
     return Object.freeze({ ...subscription, notify: Object.freeze(live) })
+  }
+
+  private ownedSubscriptionAtRevision(request: AgentTeamAuthorizedSubscriptionStateRequest,
+    options?: { readonly hostMayPause?: boolean }): AgentTeamSubscription {
+    const prior = this.ownedSubscription(request, request.subscriptionRef, options)
+    if (prior.revision !== request.expectedRevision) throw new Error(this.subscriptionStaleRevision(prior, request.expectedRevision))
+    return prior
   }
 
   private subscriptionStaleRevision(prior: AgentTeamSubscription, expected: number): string {
@@ -2608,9 +2587,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-reminder-created',
         data: Object.freeze({ workspaceId: request.workspaceId, reminder }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed({ receipt: this.receipt(operation), workspaceId: request.workspaceId, reminder, activeCount: activeCount + 1 })
+      return this.commitOperation(operation, () => ({ receipt: this.receipt(operation), workspaceId: request.workspaceId, reminder, activeCount: activeCount + 1 }))
     })
   }
 
@@ -2645,9 +2622,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, memberId: current.memberId, reminderRef: request.reminderRef, reminder,
           inbox: this.memberReminderInboxDelta([], marker === undefined ? [] : [marker]) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed({ receipt: this.receipt(operation), workspaceId: request.workspaceId, reminder })
+      return this.commitOperation(operation, () => ({ receipt: this.receipt(operation), workspaceId: request.workspaceId, reminder }))
     })
   }
 
@@ -2824,9 +2799,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, sequence), kind: 'team/project-created',
         data: Object.freeze({ workspaceId: request.workspaceId, project, memberIds }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.projectResult(operation))
+      return this.commitOperation(operation, () => this.projectResult(operation))
     })
   }
 
@@ -2852,9 +2825,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, this.nextSequence()), kind: 'team/project-updated',
         data: Object.freeze({ workspaceId: request.workspaceId, project }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.projectUpdateResult(operation))
+      return this.commitOperation(operation, () => this.projectUpdateResult(operation))
     })
   }
 
@@ -2905,9 +2876,7 @@ export class AgentTeamLedger {
         ...envelope, kind: 'team/project-owner-responsibility-updated',
         data: Object.freeze({ ...base, responsibility, activity, inbox: this.ownerActivityInboxDelta(activity) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.projectOwnerResult(operation))
+      return this.commitOperation(operation, () => this.projectOwnerResult(operation))
     })
   }
 
@@ -2965,9 +2934,7 @@ export class AgentTeamLedger {
       const operation: AgentTeamProjectOwnerAddedOperation | AgentTeamProjectOwnerRemovedOperation = Object.freeze({
         ...envelope, kind, data,
       }) as AgentTeamProjectOwnerAddedOperation | AgentTeamProjectOwnerRemovedOperation
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.projectOwnerResult(operation))
+      return this.commitOperation(operation, () => this.projectOwnerResult(operation))
     })
   }
 
@@ -3044,9 +3011,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-added',
         data: Object.freeze({ member, projectRefs }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.memberResult(operation))
+      return this.commitOperation(operation, () => this.memberResult(operation))
     })
   }
 
@@ -3089,9 +3054,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-updated',
         data: Object.freeze({ member }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.memberResult(operation))
+      return this.commitOperation(operation, () => this.memberResult(operation))
     })
   }
 
@@ -3124,9 +3087,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ member, previousSessionId: request.previousSessionId, newSessionId: request.newSessionId,
           ...(request.inputFromSeq === undefined ? {} : { inputFromSeq: request.inputFromSeq }) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.memberResult(operation))
+      return this.commitOperation(operation, () => this.memberResult(operation))
     })
   }
 
@@ -3187,9 +3148,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, this.nextSequence()), kind: 'team/member-workspace-joined',
         data: Object.freeze({ workspaceId: request.workspaceId, memberId: member.memberId }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.workspaceJoinResult(operation))
+      return this.commitOperation(operation, () => this.workspaceJoinResult(operation))
     })
   }
 
@@ -3233,9 +3192,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, sequence), kind: 'team/member-workspace-left',
         data: Object.freeze({ workspaceId: request.workspaceId, memberId: member.memberId, ...snapshot }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.workspaceLeaveResult(operation))
+      return this.commitOperation(operation, () => this.workspaceLeaveResult(operation))
     })
   }
 
@@ -3279,9 +3236,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, sequence), kind: 'team/project-archived',
         data: Object.freeze({ workspaceId: request.workspaceId, project: nextProject, ...snapshot }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.projectArchivalResult(operation))
+      return this.commitOperation(operation, () => this.projectArchivalResult(operation))
     })
   }
 
@@ -3335,9 +3290,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
           mentions: delivered, message, ...(task === undefined ? {} : { task }), thread: nextThread, inbox }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.replyResult(operation, undelivered))
+      return this.commitOperation(operation, () => this.replyResult(operation, undelivered))
     })
   }
 
@@ -3379,9 +3332,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, mentions: recipients, message,
           inbox: this.mainMessageInboxDelta(message, recipients) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.mainPostResult(operation))
+      return this.commitOperation(operation, () => this.mainPostResult(operation))
     })
   }
 
@@ -3415,9 +3366,7 @@ export class AgentTeamLedger {
       })
       // The picture shows what the reader saw before this read, so it is taken ahead of the commit.
       const picture = this.mainReadPage(actor.memberId, project.projectRef, consumed, readThrough)
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(Object.freeze({ receipt: this.receipt(operation), projectRef: project.projectRef, readThroughSequence: readThrough,
+      return this.commitOperation(operation, () => Object.freeze({ receipt: this.receipt(operation), projectRef: project.projectRef, readThroughSequence: readThrough,
         entries: picture, consumedMarkers: consumed, standing: this.mainStandingFrom(this.state, actor.memberId, project.projectRef) }))
     })
   }
@@ -3509,9 +3458,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, projectRef: project.projectRef, kind: request.kind, mentions: recipients,
           anchor, ...(task === undefined ? {} : { task }), ...(taskActivity === undefined ? {} : { activity: taskActivity }), thread, inbox }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.startThreadResult(operation))
+      return this.commitOperation(operation, () => this.startThreadResult(operation))
     })
   }
 
@@ -3583,9 +3530,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
           activity, task, thread: nextThread, inbox }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.promotionResult(operation))
+      return this.commitOperation(operation, () => this.promotionResult(operation))
     })
   }
 
@@ -3649,9 +3594,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
           activity, claim, task: nextTask, thread: nextThread, inbox }),
       }) as AgentTeamClaimChangedOperation
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.claimResult(operation))
+      return this.commitOperation(operation, () => this.claimResult(operation))
     })
   }
 
@@ -3686,9 +3629,7 @@ export class AgentTeamLedger {
       const inbox = this.inboxDelta(attention, [], [], [], [{ memberId: target, threadRef: thread.threadRef, activityRef: activity.activityRef, sequence }])
       const operation: AgentTeamTaskAccountableChangedOperation = Object.freeze({ ...this.operationBase(request, sequence), kind: 'team/task-accountable-changed',
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision, activity, task: nextTask, thread: nextThread, inbox }) })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.transferTaskResult(operation))
+      return this.commitOperation(operation, () => this.transferTaskResult(operation))
     })
   }
 
@@ -3770,9 +3711,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, baseRevision: request.baseRevision,
           activity, task: nextTask, thread: nextThread, claims: Object.freeze(claims), inbox }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.taskResult(operation))
+      return this.commitOperation(operation, () => this.taskResult(operation))
     })
   }
 
@@ -3802,9 +3741,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, sequence), kind: 'team/member-removed',
         data: Object.freeze({ member: nextMember, ...snapshot }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.removalResult(operation))
+      return this.commitOperation(operation, () => this.removalResult(operation))
     })
   }
 
@@ -3842,9 +3779,7 @@ export class AgentTeamLedger {
         ...this.operationBase(request, sequence), kind: 'team/member-archived',
         data: Object.freeze({ member: nextMember, ...snapshot }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.archivalResult(operation))
+      return this.commitOperation(operation, () => this.archivalResult(operation))
     })
   }
 
@@ -3884,9 +3819,7 @@ export class AgentTeamLedger {
           data: Object.freeze({ workspaceId: request.workspaceId, action: 'follow', memberId: actor.memberId,
             ...(task === undefined ? {} : { task }), thread, inbox: this.inboxDelta([attention]) }),
         })
-        await this.table.put(operation.operationId, operation)
-        this.applyAndAdvanceProjectionVersion(operation)
-        return this.committed(this.attentionResult(operation))
+        return this.commitOperation(operation, () => this.attentionResult(operation))
       }
       if (current === undefined) throw new Error(`Member is already unfollowed from Thread '${thread.threadRef}'`)
       if (task !== undefined && this.hasActiveClaim(actor.memberId, task.taskRef)) throw new Error(`Member cannot unfollow Thread '${thread.threadRef}' while owning an active Claim on Task '${task.taskRef}'; finish the work or release the Claim first`)
@@ -3895,9 +3828,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, action: 'unfollow', memberId: actor.memberId,
           ...(task === undefined ? {} : { task }), thread, inbox: this.inboxDelta([], [{ memberId: actor.memberId, threadRef: thread.threadRef }], [], this.directMarkersFor(actor.memberId, thread.threadRef)) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.attentionResult(operation))
+      return this.commitOperation(operation, () => this.attentionResult(operation))
     })
   }
 
@@ -3925,9 +3856,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, action: 'follow', memberId: actor.memberId, project: project,
           inbox: this.inboxDelta([], [], [], [], [], [], [], [], [], [], [attention], []) }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.mainAttentionResult(operation, attention))
+      return this.commitOperation(operation, () => this.mainAttentionResult(operation, attention))
     }
     if (current === undefined) throw new Error(`Member is already unfollowed from the Main stream of Project '${projectRef}'`)
     // The Human's Attention is derived from owning the Project, so it cannot
@@ -3944,9 +3873,7 @@ export class AgentTeamLedger {
         inbox: this.inboxDelta([], [], [], [], [], [], [], [], [], [], [],
           stored === undefined ? [] : [{ memberId: actor.memberId, projectRef }]) }),
     })
-    await this.table.put(operation.operationId, operation)
-    this.applyAndAdvanceProjectionVersion(operation)
-    return this.committed(this.mainAttentionResult(operation, undefined))
+    return this.commitOperation(operation, () => this.mainAttentionResult(operation, undefined))
   }
 
   /**
@@ -3977,9 +3904,7 @@ export class AgentTeamLedger {
         data: Object.freeze({ workspaceId: request.workspaceId, senderMemberId: sender.memberId,
           recipientMemberId: recipient.memberId, body }),
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.dmResult(operation))
+      return this.commitOperation(operation, () => this.dmResult(operation))
     })
   }
 
@@ -4389,9 +4314,7 @@ export class AgentTeamLedger {
       const operation: AgentTeamThreadReadOperation = Object.freeze({
         ...this.operationBase(request, this.nextSequence()), kind: 'team/thread-read', data,
       })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return Object.freeze({ value: Object.freeze({ receipt: this.receipt(operation), ...this.readPicture(prepared) }), committed: true })
+      return this.commitOperation(operation, () => Object.freeze({ receipt: this.receipt(operation), ...this.readPicture(prepared) }))
     })
   }
 
@@ -9058,9 +8981,7 @@ export class AgentTeamLedger {
       const operation: AgentTeamMemberSuspendedOperation | AgentTeamMemberResumedOperation = state === 'suspended'
         ? Object.freeze({ ...this.operationBase(request, this.nextSequence()), kind: 'team/member-suspended', data: Object.freeze({ member: next }) })
         : Object.freeze({ ...this.operationBase(request, this.nextSequence()), kind: 'team/member-resumed', data: Object.freeze({ member: next }) })
-      await this.table.put(operation.operationId, operation)
-      this.applyAndAdvanceProjectionVersion(operation)
-      return this.committed(this.memberResult(operation))
+      return this.commitOperation(operation, () => this.memberResult(operation))
     })
   }
 
@@ -9923,6 +9844,12 @@ export class AgentTeamLedger {
   private operationBase(request: { readonly requestId: AgentTeamRequestId; readonly actor: AgentTeamActor }, sequence: number) {
     return { sequence, operationId: this.createOperationId(), requestId: request.requestId, occurredAt: this.createOccurredAt(),
       actor: freezeActor(request.actor), previousOperationId: this.state.ordered.at(-1)?.operationId ?? null }
+  }
+
+  private async commitOperation<T>(operation: AgentTeamOperation, resultOf: () => T): Promise<AgentTeamLedgerResult<T>> {
+    await this.table.put(operation.operationId, operation)
+    this.applyAndAdvanceProjectionVersion(operation)
+    return this.committed(resultOf())
   }
 
   private nextSequence(): number {
