@@ -680,6 +680,32 @@ export interface WorkerResumeAnchor {
 }
 
 
+interface ViewPageArguments {
+  readonly limit: number
+  readonly direction: 'before' | 'after'
+  readonly cursor: number
+}
+
+interface ViewAccess {
+  readonly projectRefFilter: AgentTeamProjectRef | undefined
+  readonly threadRefFilter: AgentTeamThreadRef | undefined
+  readonly directoryRequested: boolean
+  readonly projects: AgentTeamProject[]
+  readonly projectRefs: Set<AgentTeamProjectRef>
+}
+
+interface ViewSelection {
+  readonly selected: AgentTeamThreadFact[]
+  readonly hasMore: boolean
+}
+
+interface ViewCatalog {
+  readonly catalogThreads: AgentTeamThread[]
+  readonly catalogTasks: AgentTeamTask[]
+  readonly taskNumbers: ReadonlyMap<AgentTeamTaskRef, number>
+  readonly items: AgentTeamView['items']
+}
+
 /**
  * Everything one Thread read durably claims, plus the projection state the
  * picture derivation needs. `unread` and `attentionBefore` are derivation
@@ -4530,12 +4556,24 @@ export class AgentTeamLedger {
   }
 
   view(request: AgentTeamViewRequest, memberId?: AgentTeamMemberId): AgentTeamView {
+    const page = this.viewPageArguments(request)
+    const access = this.resolveViewAccess(request, memberId)
+    const selection = this.selectViewFacts(request, page, access)
+    const catalog = this.enrichViewCatalog(request, access, selection.selected)
+    return this.assembleView(request, memberId, page, access, selection, catalog)
+  }
+
+  private viewPageArguments(request: AgentTeamViewRequest): ViewPageArguments {
     const limit = request.limit ?? 20
     const direction = request.direction ?? 'after'
     const cursor = request.cursor ?? 0
     if (direction !== 'after' && direction !== 'before') throw new Error('direction must be after or before')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('limit must be an integer between 1 and 100')
     if (!Number.isInteger(cursor) || cursor < 0) throw new Error('cursor must be a non-negative integer sequence')
+    return { limit, direction, cursor }
+  }
+
+  private resolveViewAccess(request: AgentTeamViewRequest, memberId: AgentTeamMemberId | undefined): ViewAccess {
     if (memberId !== undefined) {
       const member = this.requireMember(memberId)
       if (!this.participatesIn(member.memberId, request.workspaceId)) throw new Error('Member cannot view another Workspace')
@@ -4562,6 +4600,11 @@ export class AgentTeamLedger {
       && this.visibleProject(project) !== undefined
       && (memberId === undefined || this.canReadProjectFrom(this.state, project.projectRef, memberId)))
     const projectRefs = new Set(projects.map(project => project.projectRef))
+    return { projectRefFilter, threadRefFilter, directoryRequested, projects, projectRefs }
+  }
+
+  private selectViewFacts(request: AgentTeamViewRequest, { limit, direction, cursor }: ViewPageArguments,
+    { projectRefs, projectRefFilter, threadRefFilter }: ViewAccess): ViewSelection {
     const before = request.cursor ?? this.state.ordered.length + 1
     const matches = (fact: AgentTeamThreadFact): boolean => {
       const threadRef = fact.kind === 'message' ? fact.message.threadRef : fact.activity.threadRef
@@ -4575,47 +4618,37 @@ export class AgentTeamLedger {
     }
     const selected: AgentTeamThreadFact[] = []
     let hasMore = false
-    // A cursor is a sequence bound, but one operation can append two facts
-    // under the same sequence (a Task's anchor Message and its promote
-    // activity). A page boundary must never split such a run: the next page
-    // would address it by the same sequence and silently drop the half left
-    // behind. So a full page absorbs the rest of its boundary sequence.
-    if (direction === 'before') {
-      for (let index = this.state.orderedFacts.length - 1; index >= 0; index -= 1) {
-        const fact = this.state.orderedFacts[index]!
-        if (!matches(fact)) continue
-        if (selected.length < limit) selected.push(fact)
-        else {
-          hasMore = true
-          let run = index
-          while (run >= 0) {
-            const candidate = this.state.orderedFacts[run]!
-            if (!matches(candidate) || candidate.sequence !== fact.sequence) break
-            selected.push(candidate)
-            run -= 1
-          }
-          break
+    // One operation can append two facts under one sequence (a Task's anchor
+    // Message and its promote activity), and a cursor addresses sequences, so
+    // a page must not end inside such a run: the next page would skip the
+    // facts left behind. Once `limit` facts match, the next match and the rest
+    // of its same-sequence run are absorbed as well; when that match starts a
+    // new sequence the page just carries one extra run. `hasMore` reports that
+    // absorption, not that the next page is nonempty.
+    const step = direction === 'before' ? -1 : 1
+    const start = direction === 'before' ? this.state.orderedFacts.length - 1 : 0
+    for (let index = start; index >= 0 && index < this.state.orderedFacts.length; index += step) {
+      const fact = this.state.orderedFacts[index]!
+      if (!matches(fact)) continue
+      if (selected.length < limit) selected.push(fact)
+      else {
+        hasMore = true
+        let run = index
+        while (run >= 0 && run < this.state.orderedFacts.length) {
+          const candidate = this.state.orderedFacts[run]!
+          if (!matches(candidate) || candidate.sequence !== fact.sequence) break
+          selected.push(candidate)
+          run += step
         }
-      }
-      selected.reverse()
-    } else {
-      for (let index = 0; index < this.state.orderedFacts.length; index += 1) {
-        const fact = this.state.orderedFacts[index]!
-        if (!matches(fact)) continue
-        if (selected.length < limit) selected.push(fact)
-        else {
-          hasMore = true
-          let run = index
-          while (run < this.state.orderedFacts.length) {
-            const candidate = this.state.orderedFacts[run]!
-            if (!matches(candidate) || candidate.sequence !== fact.sequence) break
-            selected.push(candidate)
-            run += 1
-          }
-          break
-        }
+        break
       }
     }
+    if (direction === 'before') selected.reverse()
+    return { selected, hasMore }
+  }
+
+  private enrichViewCatalog(request: AgentTeamViewRequest,
+    { projectRefs, projectRefFilter, threadRefFilter }: ViewAccess, selected: readonly AgentTeamThreadFact[]): ViewCatalog {
     // What this response's catalog describes. A caller that asked for the
     // catalog wants the whole request scope (the address-book radar). Every
     // other read describes its own facts: the Threads this page's facts
@@ -4657,9 +4690,12 @@ export class AgentTeamLedger {
         messageCount: this.state.messageCountByThread.get(thread.threadRef) ?? 0,
         lastActivityAt: facts.at(-1)?.occurredAt ?? '' })
     })
-    const initialization = this.initialization()
-    const nextCursor = selected.length === 0 ? cursor : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
-    const directory = !directoryRequested ? undefined : Object.freeze({
+    return { catalogThreads, catalogTasks, taskNumbers, items }
+  }
+
+  private assembleViewDirectory(request: AgentTeamViewRequest, memberId: AgentTeamMemberId | undefined,
+    { directoryRequested, projectRefFilter }: ViewAccess): AgentTeamView['directory'] {
+    return !directoryRequested ? undefined : Object.freeze({
       projects: Object.freeze([...this.state.projects.values()].filter(project => project.workspaceId === request.workspaceId
         && this.visibleProject(project) !== undefined
         && (projectRefFilter === undefined || project.projectRef === projectRefFilter)).map(project => {
@@ -4678,6 +4714,15 @@ export class AgentTeamLedger {
       memberIds: Object.freeze([...this.state.members.values()].filter(member => member.state !== 'inactive' && member.state !== 'archived'
         && this.participatesIn(member.memberId, request.workspaceId)).map(member => member.memberId)),
     })
+  }
+
+  private assembleView(request: AgentTeamViewRequest, memberId: AgentTeamMemberId | undefined,
+    { cursor, direction }: ViewPageArguments, access: ViewAccess, { selected, hasMore }: ViewSelection,
+    { catalogThreads, catalogTasks, taskNumbers, items }: ViewCatalog): AgentTeamView {
+    const { projects, projectRefs } = access
+    const initialization = this.initialization()
+    const nextCursor = selected.length === 0 ? cursor : direction === 'before' ? selected[0]!.sequence : selected.at(-1)!.sequence
+    const directory = this.assembleViewDirectory(request, memberId, access)
     return Object.freeze({
       humanMemberId: initialization.data.humanMemberId,
       workspaces: Object.freeze(memberId === undefined ? [] : this.workspacesOfFrom(this.state, memberId)
