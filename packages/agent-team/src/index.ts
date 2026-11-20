@@ -543,6 +543,17 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+interface MemberActivationOptions {
+  readonly knownWorkspacePath?: string
+  readonly knownSessions?: ReadonlySet<SessionId>
+  readonly forkedFrom?: SessionId
+  readonly deferNotify?: boolean
+  readonly signal?: AbortSignal
+  readonly skipColdRecycle?: boolean
+}
+
+const ACTIVATION_SUCCESS_FAILURE_SLOTS = ['activation', 'preTurnCancellation', 'capabilityApply', 'modelApply'] as const
+
 export default class AgentTeam extends TypertRemoteService {
   static Config = TEAM_HOST_ROW_SETTINGS_SCHEMA
   static inject = [
@@ -1476,7 +1487,8 @@ export default class AgentTeam extends TypertRemoteService {
           // the transition above may have moved the Member to its successor.
           const latest = this.requireLedger().getMember(current.memberId)
           if (latest !== undefined && latest.state === 'enabled' && !this.handles.has(latest.memberId)) {
-            await this.activateMember(latest, undefined, knownSessions, undefined, {
+            await this.activateMember(latest, {
+              ...(knownSessions === undefined ? {} : { knownSessions }),
               signal: this.shutdownController.signal,
               skipColdRecycle: true,
             })
@@ -1514,7 +1526,7 @@ export default class AgentTeam extends TypertRemoteService {
       })
       const latest = this.requireLedger().getMember(memberId)
       if (latest !== undefined && latest.state === 'enabled' && !this.handles.has(memberId)) {
-        await this.activateMember(latest, undefined, undefined, undefined, {
+        await this.activateMember(latest, {
           signal: this.shutdownController.signal,
           skipColdRecycle: true,
         })
@@ -1894,7 +1906,7 @@ export default class AgentTeam extends TypertRemoteService {
         options.authorize === undefined ? {} : { authorize: options.authorize })
       if (result.committed) this.emitCommitted(result.value.receipt)
       const stored = result.value.member
-      if (!this.handles.has(stored.memberId)) await this.activateMember(stored, workspace.path)
+      if (!this.handles.has(stored.memberId)) await this.activateMember(stored, { knownWorkspacePath: workspace.path })
       // Report the Member as it stands after activation, not as the write saw
       // it: an archive that landed mid-activation is the row the caller must
       // read, and the re-read also drops the handle the guard refused to seed.
@@ -1953,7 +1965,7 @@ export default class AgentTeam extends TypertRemoteService {
       this.dropInboxCoverage(current.memberId)
       // The suspended Session's log is durable once its retirement completes, and agents.resume() waits for exactly that.
       // Re-listing the persistence tree would race the retirement on Windows (transient staging entries surface as ENOENT), so pass the known session.
-      await this.activateMember(current, undefined, new Set([current.sessionId]))
+      await this.activateMember(current, { knownSessions: new Set([current.sessionId]) })
       return Object.freeze({ receipt: result.value.receipt, status: this.memberStatus(current) })
     })
   }
@@ -2053,7 +2065,9 @@ export default class AgentTeam extends TypertRemoteService {
     }
     await this.archiveRetiredSession(transition.previousSessionId)
     if (this.handles.get(memberId) === undefined) {
-      await this.activateMember(member, undefined, options?.knownSessions, options?.forkedFrom, {
+      await this.activateMember(member, {
+        ...(options?.knownSessions === undefined ? {} : { knownSessions: options.knownSessions }),
+        ...(options?.forkedFrom === undefined ? {} : { forkedFrom: options.forkedFrom }),
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
         ...(options?.skipColdRecycle === true ? { skipColdRecycle: true } : {}),
       })
@@ -2165,7 +2179,7 @@ export default class AgentTeam extends TypertRemoteService {
       else await this.retireMemberGeneration(memberId, active, plan.previousSessionId)
       // Linear succession: the new Session's lineage parent is the one it
       // replaces. Activation defers the Inbox wake until input replay completes.
-      await this.activateMember(recycled.value.member, undefined, undefined, plan.previousSessionId, { deferNotify: true })
+      await this.activateMember(recycled.value.member, { forkedFrom: plan.previousSessionId, deferNotify: true })
       const reactivated = this.handles.get(memberId)
       if (reactivated === undefined) {
         throw new Error(`Agent Member '${stored.handle}' failed to activate its next context: ${this.memberFailures.get(memberId)?.activation ?? 'unknown error'}`)
@@ -2408,8 +2422,7 @@ export default class AgentTeam extends TypertRemoteService {
       sessionId: active.agent.session.id,
       detail: `requestId=${requestId} operationId=${receipt.operationId} stage=${stage} error=${message}`,
     })
-    if (stage === 'model-apply') this.setModelApplyDiagnostic(memberId, diagnostic)
-    else this.setCapabilityApplyDiagnostic(memberId, diagnostic)
+    this.setMemberFailure(memberId, stage === 'model-apply' ? 'modelApply' : 'capabilityApply', diagnostic)
     this.ctx.logger.warn(`agent-team: ${stage} failed for member '${this.memberLabel(memberId)}' session '${active.agent.session.id}' requestId '${requestId}' operationId '${receipt.operationId}': ${message}`)
   }
 
@@ -4197,179 +4210,227 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  private async activateMember(member: AgentTeamAgentMember, knownWorkspacePath?: string, knownSessions?: ReadonlySet<SessionId>, forkedFrom?: SessionId, options?: { readonly deferNotify?: boolean; readonly signal?: AbortSignal; readonly skipColdRecycle?: boolean }): Promise<void> {
+  /**
+   * Idempotent while a handle exists; activation failures become diagnostics rather than escaping.
+   * An archive or shutdown racing activation leaves no live handle.
+   */
+  private async activateMember(member: AgentTeamAgentMember, options: MemberActivationOptions = {}): Promise<void> {
     if (this.handles.has(member.memberId)) return
     this.sessionOwnershipBlocked.delete(member.memberId)
     let created: AgentHandle | undefined
     try {
-      const workspace = this.requireWorkspace(member.workspaceId)
-      const workspacePath = knownWorkspacePath ?? workspace.path
-      // Existing Members carry the pre-sanitization ledger path; activation
-      // migrates it onto the sanitized directory before provisioning.
-      const sanitizedMemoryPath = dshHomePath('agent-team', 'members', memberMemoryDirectoryName(member.memberId))
-      await this.memberRuntime.initializePrivateMemory(sanitizedMemoryPath, member.privateMemoryPath)
-      const persisted = knownSessions !== undefined ? knownSessions.has(member.sessionId)
-        : await this.sessionPersisted(member.sessionId)
-      // Explicit resume and ordinary wake paths may replace a cold stored
-      // generation before it receives input. Host startup passes
-      // `skipColdRecycle` so restarting preserves the current visible Session.
-      // A planned activation of a successor (`forkedFrom`) never re-decides;
-      // the swap that built it already did.
-      if (forkedFrom === undefined && persisted && options?.skipColdRecycle !== true) {
-        const plan = await this.planWakeForMember(member, undefined)
-        if (plan.action === 'recycle') {
-          this.ctx.logger.info(`agent-team: activating ${this.memberScope(member.memberId, member.sessionId)} swaps its cold generation: idle ${plan.idleMs}ms over ${plan.thresholds.idleMs}ms, context ${plan.contextTokens} over ${plan.thresholds.minContextTokens}`)
-          await this.contextManagement.requestRecycle(member.memberId, member)
-          return
-        }
-      }
+      const { workspace, workspacePath, persisted } = await this.resolveMemberActivation(member, options)
+      if (await this.recycleColdMemberActivation(member, persisted, options)) return
       // AgentOptions carries the whole configured route, so a fresh Session records its effort on the first request instead of through a synthetic selection event.
       const selection = member.model ?? this.ctx.agentDefaultModel.currentSelection()
       const agentOptions = { ...selection }
-      const setup = async (agentCtx: Context, agent: Agent) => {
-        try {
-          await this.ctx.agentPresets.mount(agentCtx, member.presetId)
-          this.memberRuntime.applyMemberToolPolicy(agentCtx, member, this.workerEnabled(), this.extraToolGrants())
-          this.validateMemberPreset(agentCtx)
-        } catch (error) {
-          // Tag composition failures with their own class: the activation
-          // diagnostic routes preset-composition (install/runtime split)
-          // failures by type, not by matching message text.
-          throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
-        }
-        // Only a resumed Session records the configured route, and it inherits the effort its own log recorded for that route; a fresh Session's route rides AgentOptions, exactly as the driver's own resume does.
-        if (persisted) this.applyConfiguredRoute(agent, selection)
-        installModelSelection(agentCtx)
-        this.installProjectOwnerGuidance(agentCtx, member)
-        this.installToolAvailabilityGuidance(agentCtx, member)
-        this.memberRuntime.observeMemberToolPolicyTurns(agentCtx, agent, member.memberId, () => {
-          const current = this.requireLedger().getMember(member.memberId)
-          if (current === undefined) throw new Error(`Member '${member.memberId}' is no longer in the Team ledger`)
-          return { member: current, workerEnabled: this.workerEnabled(), grants: this.extraToolGrants() }
-        })
-        agentCtx.on('session/event', (session, event) => {
-          if (session !== agent.session || event.type !== 'request/header') return
-          this.adoptMemberRouteFromRequest(member.memberId, agent, session.id, event)
-        })
-        installMemberCompaction(
-          agentCtx, agent, () => this.memberCompactionConfig(),
-          () => this.compactionEngineFor(agent), () => this.retiringAgents.has(agent),
-        )
-        agentCtx.on('agent/pre-step', async ({ agent }, next) => {
-          // The original inbox insertion is the durable replay source even if
-          // this driver already claimed it; requeueing can reorder later input.
-          if (this.retiringAgents.has(agent)) return { kind: 'reject' as const }
-          // The Harness resolves tools and assembles the prompt before this
-          // waterfall. Refresh here so a failed baseline is still rejected
-          // before the model request; a late registration reaches the next
-          // step's resolution without ever running after this gate.
-          this.memberRuntime.refreshMemberToolPolicyForStep(agentCtx, member.memberId)
-          const policyFailure = this.memberRuntime.turnToolPolicyFailure(member.memberId)
-          if (policyFailure !== undefined) {
-            this.ctx.logger.warn(`agent-team: refusing a Member turn before any model request: ${policyFailure}`)
-            return { kind: 'reject' as const }
-          }
-          return next()
-        })
-        return {
-          commit: () => {
-            // The member scope composes no sandbox-policy service, so read the last logged mode from the session log (`sandbox/mode` is log-only).
-            // Re-appending only when the effective mode differs keeps resumed members from growing redundant events.
-            const logged = agent.session.ownEvents().toReversed().find(event => event.type === 'sandbox/mode')
-            if (logged?.data.mode !== 'danger-full-access') setSandboxMode(agent.session, 'danger-full-access')
-          },
-        }
-      }
+      const setup = this.memberSessionSetup(member, persisted, selection)
       // The Session this generation replaces, read from the ledger's transition record when the caller names none:
       // a crash between the durable swap commit and this activation recreates the Session from the ledger binding alone.
       // The Host session header does NOT carry it: a rollover's lineage is the ledger's own transition, and `parentSession`
       // now names a subagent's creator, so writing it here would misreport the relation to every reader of the header.
-      const lineageParent = forkedFrom ?? (!persisted ? this.requireLedger().previousSessionForMember(member.memberId) : undefined)
-      let recoveryCarried = 0
-      created = persisted
-        ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup, ...(options?.signal === undefined ? {} : { signal: options.signal }) })
-        : await this.ctx.agents.create({
-            sessionId: member.sessionId,
-            meta: {
-              cwd: workspacePath,
-              agentPreset: member.presetId,
-            },
-            agentOptions,
-            setup,
-            ...(options?.signal === undefined ? {} : { signal: options.signal }),
-          })
-      this.memberRuntime.mountMemberSkillProvider(member, created.agent.ctx, member.capabilities?.skills?.allow)
-      // Both capability effects are now live: record the intent the surface reflects so a later edit or retry compares against reality.
-      this.memberRuntime.recordAppliedCapabilities(member.memberId, member.capabilities)
-      await workspace.attachSession(member.sessionId)
-      // Re-read the durable state before seeding the live handle: an archive
-      // that landed while this activation ran must not leave a live handle
-      // behind, because that handle is what every surface reads as "present".
-      const current = this.requireLedger().getMember(member.memberId)
-      if (!this.accepting) {
-        await this.disposeWithWakeGuard(created)
-        this.memberRuntime.forgetMember(member.memberId)
-        return
-      }
-      if (current === undefined || current.state !== 'enabled') {
-        await this.disposeWithWakeGuard(created)
-        this.memberRuntime.forgetMember(member.memberId)
-        this.ctx.logger.warn(`agent-team: activation of ${this.memberLabel(member.memberId)} finished after the Member was ${current === undefined ? 'removed' : current.state}; no live handle was kept`)
-        return
-      }
-      this.handles.set(member.memberId, created)
-      this.sessionOwnershipBlocked.delete(member.memberId)
-      this.memberIdle.status(member.memberId, created.agent.status, Date.now())
-      this.clearMemberFailure(member.memberId, 'activation')
-      this.clearMemberFailure(member.memberId, 'preTurnCancellation')
-      this.clearMemberFailure(member.memberId, 'capabilityApply')
-      this.clearMemberFailure(member.memberId, 'modelApply')
-      this.nameMemberSession(member, created.agent)
-      const generationStarted = created.agent.session.ownEvents().some(event => event.type === 'turn/start')
-      // A restart between a durable rollover intent and its swap replays the
-      // old Session; the projection still carries the intent, so finish the
-      // transition (or keep waiting for the containing turn) from here.
-      if (persisted) {
-        const inheritedEventCount = created.agent.session.inheritedEventCount
-        const state = foldTeamContextProjection(
-          created.agent.session.ownEvents(),
-          { sessionId: created.agent.session.id, inheritedEventCount },
-        )
-        if (state.pending !== null) this.contextManagement.recoverPendingTransition(member.memberId, created.agent, member.sessionId)
-        // A restart between a checkpoint's durable result and its quiet follow-up delivery repairs exactly once.
-        this.contextManagement.repairContinuations(created.agent, state)
-        // Carried input redelivery binds to the committed transition target (this Session), so a crash after the binding flipped still replays here.
-        recoveryCarried = await this.replayCarriedInput(member, created.agent, generationStarted)
-      } else if (lineageParent !== undefined) {
-        recoveryCarried = await this.replayCarriedInput(member, created.agent, generationStarted)
-      }
-      // Give carried input its own turn before the rederived Inbox notice;
-      // steering the notice could otherwise overtake that input.
-      if (options?.deferNotify !== true) {
-        this.notifyMember(created.agent, {
-          kind: 'activation',
-          ...(lineageParent === undefined ? {} : { previousSessionId: lineageParent }),
-        }, recoveryCarried > 0)
-      }
-      this.scheduleTaskReminderEvaluation()
+      const lineageParent = options.forkedFrom ?? (!persisted ? this.requireLedger().previousSessionForMember(member.memberId) : undefined)
+      created = await this.openMemberSession(member, workspacePath, persisted, agentOptions, setup, options)
+      await this.attachMemberSession(member, created, workspace)
+      if (!await this.publishMemberHandle(member, created)) return
+      const recoveryCarried = await this.recoverMemberGenerationInput(member, created, persisted, lineageParent)
+      this.notifyActivatedMember(created, lineageParent, recoveryCarried, options)
     } catch (error) {
-      if (created !== undefined) {
-        await this.disposeWithWakeGuard(created)
-        if (this.handles.get(member.memberId) === created) this.handles.delete(member.memberId)
-      }
-      this.memberRuntime.forgetMember(member.memberId)
-      const message = error instanceof Error ? error.message : String(error)
-      // The class name is the stable cross-module error category: development
-      // compositions can load two copies of the persistence package, making an
-      // `instanceof` check miss the very ownership failure this retry serves.
-      if (error instanceof Error && error.name === 'SessionAlreadyOwnedError') {
-        this.sessionOwnershipBlocked.add(member.memberId)
-      }
-      this.ctx.logger.warn(`agent-team: activation failed for member '${this.memberLabel(member.memberId)}': ${message}`)
-      this.setActivationDiagnostic(member.memberId, this.activationDiagnosticOf(error, member.sessionId))
+      await this.cleanupMemberActivationFailure(member, created, error)
     } finally {
       this.emitMemberPresenceChanged(member)
     }
+  }
+
+  private async resolveMemberActivation(member: AgentTeamAgentMember, options: MemberActivationOptions) {
+    const workspace = this.requireWorkspace(member.workspaceId)
+    const workspacePath = options.knownWorkspacePath ?? workspace.path
+    // Existing Members carry the pre-sanitization ledger path; activation
+    // migrates it onto the sanitized directory before provisioning.
+    const sanitizedMemoryPath = dshHomePath('agent-team', 'members', memberMemoryDirectoryName(member.memberId))
+    await this.memberRuntime.initializePrivateMemory(sanitizedMemoryPath, member.privateMemoryPath)
+    const persisted = options.knownSessions !== undefined ? options.knownSessions.has(member.sessionId)
+      : await this.sessionPersisted(member.sessionId)
+    return { workspace, workspacePath, persisted }
+  }
+
+  private async recycleColdMemberActivation(member: AgentTeamAgentMember, persisted: boolean, options: MemberActivationOptions): Promise<boolean> {
+    // Explicit resume and ordinary wake paths may replace a cold stored
+    // generation before it receives input. Host startup passes
+    // `skipColdRecycle` so restarting preserves the current visible Session.
+    // A planned activation of a successor (`forkedFrom`) never re-decides;
+    // the swap that built it already did.
+    if (options.forkedFrom === undefined && persisted && options.skipColdRecycle !== true) {
+      const plan = await this.planWakeForMember(member, undefined)
+      if (plan.action === 'recycle') {
+        this.ctx.logger.info(`agent-team: activating ${this.memberScope(member.memberId, member.sessionId)} swaps its cold generation: idle ${plan.idleMs}ms over ${plan.thresholds.idleMs}ms, context ${plan.contextTokens} over ${plan.thresholds.minContextTokens}`)
+        await this.contextManagement.requestRecycle(member.memberId, member)
+        return true
+      }
+    }
+    return false
+  }
+
+  private memberSessionSetup(member: AgentTeamAgentMember, persisted: boolean, selection: AgentTeamModelSelection) {
+    return async (agentCtx: Context, agent: Agent) => {
+      try {
+        await this.ctx.agentPresets.mount(agentCtx, member.presetId)
+        this.memberRuntime.applyMemberToolPolicy(agentCtx, member, this.workerEnabled(), this.extraToolGrants())
+        this.validateMemberPreset(agentCtx)
+      } catch (error) {
+        // Tag composition failures with their own class: the activation
+        // diagnostic routes preset-composition (install/runtime split)
+        // failures by type, not by matching message text.
+        throw new PresetCompositionError(error instanceof Error ? error.message : String(error), { cause: error })
+      }
+      // Only a resumed Session records the configured route, and it inherits the effort its own log recorded for that route; a fresh Session's route rides AgentOptions, exactly as the driver's own resume does.
+      if (persisted) this.applyConfiguredRoute(agent, selection)
+      installModelSelection(agentCtx)
+      this.installProjectOwnerGuidance(agentCtx, member)
+      this.installToolAvailabilityGuidance(agentCtx, member)
+      this.memberRuntime.observeMemberToolPolicyTurns(agentCtx, agent, member.memberId, () => {
+        const current = this.requireLedger().getMember(member.memberId)
+        if (current === undefined) throw new Error(`Member '${member.memberId}' is no longer in the Team ledger`)
+        return { member: current, workerEnabled: this.workerEnabled(), grants: this.extraToolGrants() }
+      })
+      agentCtx.on('session/event', (session, event) => {
+        if (session !== agent.session || event.type !== 'request/header') return
+        this.adoptMemberRouteFromRequest(member.memberId, agent, session.id, event)
+      })
+      installMemberCompaction(
+        agentCtx, agent, () => this.memberCompactionConfig(),
+        () => this.compactionEngineFor(agent), () => this.retiringAgents.has(agent),
+      )
+      agentCtx.on('agent/pre-step', async ({ agent }, next) => {
+        // The original inbox insertion is the durable replay source even if
+        // this driver already claimed it; requeueing can reorder later input.
+        if (this.retiringAgents.has(agent)) return { kind: 'reject' as const }
+        // The Harness resolves tools and assembles the prompt before this
+        // waterfall. Refresh here so a failed baseline is still rejected
+        // before the model request; a late registration reaches the next
+        // step's resolution without ever running after this gate.
+        this.memberRuntime.refreshMemberToolPolicyForStep(agentCtx, member.memberId)
+        const policyFailure = this.memberRuntime.turnToolPolicyFailure(member.memberId)
+        if (policyFailure !== undefined) {
+          this.ctx.logger.warn(`agent-team: refusing a Member turn before any model request: ${policyFailure}`)
+          return { kind: 'reject' as const }
+        }
+        return next()
+      })
+      return {
+        commit: () => {
+          // The member scope composes no sandbox-policy service, so read the last logged mode from the session log (`sandbox/mode` is log-only).
+          // Re-appending only when the effective mode differs keeps resumed members from growing redundant events.
+          const logged = agent.session.ownEvents().toReversed().find(event => event.type === 'sandbox/mode')
+          if (logged?.data.mode !== 'danger-full-access') setSandboxMode(agent.session, 'danger-full-access')
+        },
+      }
+    }
+  }
+
+  private async openMemberSession(
+    member: AgentTeamAgentMember,
+    workspacePath: string,
+    persisted: boolean,
+    agentOptions: AgentTeamModelSelection,
+    setup: ReturnType<AgentTeam['memberSessionSetup']>,
+    options: MemberActivationOptions,
+  ): Promise<AgentHandle> {
+    return persisted
+      ? await this.ctx.agents.resume({ resumeSessionId: member.sessionId, agentOptions, setup, ...(options.signal === undefined ? {} : { signal: options.signal }) })
+      : await this.ctx.agents.create({
+          sessionId: member.sessionId,
+          meta: {
+            cwd: workspacePath,
+            agentPreset: member.presetId,
+          },
+          agentOptions,
+          setup,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        })
+  }
+
+  private async attachMemberSession(member: AgentTeamAgentMember, created: AgentHandle, workspace: ReturnType<AgentTeam['requireWorkspace']>): Promise<void> {
+    this.memberRuntime.mountMemberSkillProvider(member, created.agent.ctx, member.capabilities?.skills?.allow)
+    // Both capability effects are now live: record the intent the surface reflects so a later edit or retry compares against reality.
+    this.memberRuntime.recordAppliedCapabilities(member.memberId, member.capabilities)
+    await workspace.attachSession(member.sessionId)
+  }
+
+  private async publishMemberHandle(member: AgentTeamAgentMember, created: AgentHandle): Promise<boolean> {
+    // Re-read the durable state before seeding the live handle: an archive
+    // that landed while this activation ran must not leave a live handle
+    // behind, because that handle is what every surface reads as "present".
+    const current = this.requireLedger().getMember(member.memberId)
+    if (!this.accepting) {
+      await this.disposeWithWakeGuard(created)
+      this.memberRuntime.forgetMember(member.memberId)
+      return false
+    }
+    if (current === undefined || current.state !== 'enabled') {
+      await this.disposeWithWakeGuard(created)
+      this.memberRuntime.forgetMember(member.memberId)
+      this.ctx.logger.warn(`agent-team: activation of ${this.memberLabel(member.memberId)} finished after the Member was ${current === undefined ? 'removed' : current.state}; no live handle was kept`)
+      return false
+    }
+    this.handles.set(member.memberId, created)
+    this.sessionOwnershipBlocked.delete(member.memberId)
+    this.memberIdle.status(member.memberId, created.agent.status, Date.now())
+    for (const slot of ACTIVATION_SUCCESS_FAILURE_SLOTS) this.clearMemberFailure(member.memberId, slot)
+    this.nameMemberSession(member, created.agent)
+    return true
+  }
+
+  private async recoverMemberGenerationInput(member: AgentTeamAgentMember, created: AgentHandle, persisted: boolean, lineageParent: SessionId | undefined): Promise<number> {
+    let recoveryCarried = 0
+    const generationStarted = created.agent.session.ownEvents().some(event => event.type === 'turn/start')
+    // A restart between a durable rollover intent and its swap replays the
+    // old Session; the projection still carries the intent, so finish the
+    // transition (or keep waiting for the containing turn) from here.
+    if (persisted) {
+      const inheritedEventCount = created.agent.session.inheritedEventCount
+      const state = foldTeamContextProjection(
+        created.agent.session.ownEvents(),
+        { sessionId: created.agent.session.id, inheritedEventCount },
+      )
+      if (state.pending !== null) this.contextManagement.recoverPendingTransition(member.memberId, created.agent, member.sessionId)
+      // A restart between a checkpoint's durable result and its quiet follow-up delivery repairs exactly once.
+      this.contextManagement.repairContinuations(created.agent, state)
+      // Carried input redelivery binds to the committed transition target (this Session), so a crash after the binding flipped still replays here.
+      recoveryCarried = await this.replayCarriedInput(member, created.agent, generationStarted)
+    } else if (lineageParent !== undefined) {
+      recoveryCarried = await this.replayCarriedInput(member, created.agent, generationStarted)
+    }
+    return recoveryCarried
+  }
+
+  private notifyActivatedMember(created: AgentHandle, lineageParent: SessionId | undefined, recoveryCarried: number, options: MemberActivationOptions): void {
+    // Give carried input its own turn before the rederived Inbox notice;
+    // steering the notice could otherwise overtake that input.
+    if (options.deferNotify !== true) {
+      this.notifyMember(created.agent, {
+        kind: 'activation',
+        ...(lineageParent === undefined ? {} : { previousSessionId: lineageParent }),
+      }, recoveryCarried > 0)
+    }
+    this.scheduleTaskReminderEvaluation()
+  }
+
+  private async cleanupMemberActivationFailure(member: AgentTeamAgentMember, created: AgentHandle | undefined, error: unknown): Promise<void> {
+    if (created !== undefined) {
+      await this.disposeWithWakeGuard(created)
+      if (this.handles.get(member.memberId) === created) this.handles.delete(member.memberId)
+    }
+    this.memberRuntime.forgetMember(member.memberId)
+    const message = error instanceof Error ? error.message : String(error)
+    // The class name is the stable cross-module error category: development
+    // compositions can load two copies of the persistence package, making an
+    // `instanceof` check miss the very ownership failure this retry serves.
+    if (error instanceof Error && error.name === 'SessionAlreadyOwnedError') {
+      this.sessionOwnershipBlocked.add(member.memberId)
+    }
+    this.ctx.logger.warn(`agent-team: activation failed for member '${this.memberLabel(member.memberId)}': ${message}`)
+    this.setMemberFailure(member.memberId, 'activation', this.activationDiagnosticOf(error, member.sessionId))
   }
 
 
@@ -4475,29 +4536,13 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  private setMemberFailure(memberId: AgentTeamMemberId, slot: 'runtime', message: string): void {
+  private setMemberFailure(memberId: AgentTeamMemberId, ...[slot, value]:
+    | [slot: 'runtime', value: string]
+    | [slot: 'activation' | 'preTurnCancellation' | 'modelApply' | 'capabilityApply', value: AgentTeamMemberDiagnostic]
+  ): void {
     const failures = this.memberFailures.get(memberId) ?? {}
-    failures[slot] = message
-    this.memberFailures.set(memberId, failures)
-  }
-
-  private setActivationDiagnostic(memberId: AgentTeamMemberId, diagnostic: AgentTeamMemberDiagnostic): void {
-    const failures = this.memberFailures.get(memberId) ?? {}
-    failures.activation = Object.freeze(diagnostic)
-    this.memberFailures.set(memberId, failures)
-  }
-
-  /** Store the post-commit model-route apply failure; cleared when the effect lands or a later activation succeeds. */
-  private setModelApplyDiagnostic(memberId: AgentTeamMemberId, diagnostic: AgentTeamMemberDiagnostic): void {
-    const failures = this.memberFailures.get(memberId) ?? {}
-    failures.modelApply = Object.freeze(diagnostic)
-    this.memberFailures.set(memberId, failures)
-  }
-
-  /** Store the post-commit capability apply failure; cleared when the effect lands or a later activation succeeds. */
-  private setCapabilityApplyDiagnostic(memberId: AgentTeamMemberId, diagnostic: AgentTeamMemberDiagnostic): void {
-    const failures = this.memberFailures.get(memberId) ?? {}
-    failures.capabilityApply = Object.freeze(diagnostic)
+    if (slot === 'runtime') failures[slot] = value
+    else failures[slot] = Object.freeze(value)
     this.memberFailures.set(memberId, failures)
   }
 
