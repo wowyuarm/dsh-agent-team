@@ -17,6 +17,7 @@ import type { ShellExecSpec, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { MemoryMediaPool, type MemoryWriteFault } from './helpers/memory-backend.ts'
 import { addLedgerMember, harness, ledgerAtBoot, makeOwner, requestId } from './helpers/host-harness.ts'
 import { openTestTable } from './helpers/ledger-harness.ts'
+import './helpers/subscription-clock.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, agentTeamHumanActor } from '../src/ledger.ts'
 import { admissionKey, type SubscriptionAdmissionRecord } from '../src/subscription-admissions.ts'
 import { subscriptionDomainSpec } from '../src/subscription-store.ts'
@@ -1410,7 +1411,7 @@ describe('replay', () => {
       subscriptionRef: subscription.subscriptionRef, expectedRevision: 1 })
     let settled = false
     void deleted.then(() => { settled = true }, () => { settled = true })
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitFor(() => [...operationsTable(booted).entries()].some(([, operation]) => operation.kind === 'team/subscription-deleted') ? true : undefined)
     // The tombstone is already on the medium; the cleanup waits for the segment
     // that owns it instead of deleting around a write it cannot see.
     expect(settled).toBe(false)
@@ -1446,7 +1447,7 @@ describe('replay', () => {
       subscriptionRef: subscription.subscriptionRef, expectedRevision: 1 })
     let settled = false
     void deleted.then(() => { settled = true }, () => { settled = true })
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitFor(() => [...operationsTable(booted).entries()].some(([, operation]) => operation.kind === 'team/subscription-deleted') ? true : undefined)
     expect(settled).toBe(false)
     release.resolve()
     await holding
@@ -1480,7 +1481,7 @@ describe('replay', () => {
       subscriptionRef: subscription.subscriptionRef, expectedRevision: 1 })
     let settled = false
     void deleted.then(() => { settled = true }, () => { settled = true })
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitFor(() => [...operationsTable(booted).entries()].some(([, operation]) => operation.kind === 'team/subscription-deleted') ? true : undefined)
     // The cleanup waits for the segment that is writing this subscription's
     // private state, so the record cannot land behind it.
     expect(settled).toBe(false)
