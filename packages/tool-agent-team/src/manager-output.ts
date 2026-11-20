@@ -210,7 +210,6 @@ const PROJECT_CREATE_SCHEMA = { type: 'object', additionalProperties: false, pro
   requestId: { type: 'string', required: true }, outcome: { type: 'string', required: true },
   receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
   projectRef: { type: 'string', required: true },
-  memberIds: { type: 'array', required: true, items: { type: 'string' } },
 } } as const
 
 const PROJECT_OWNER_SCHEMA = { type: 'object', additionalProperties: false, properties: {
@@ -354,7 +353,7 @@ export const projectCreateOutput = { schema: PROJECT_CREATE_SCHEMA,
   render: (_args, value) => [
     { type: 'text', text: [
       `Project created — ${value.projectRef}`,
-      `Members ${value.memberIds.length === 0 ? 'none yet' : value.memberIds.join(', ')} · receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`,
+      `receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`,
     ].join('\n') },
   ],
 } satisfies DefineToolOptions<{}, typeof PROJECT_CREATE_SCHEMA>['output']

@@ -18,8 +18,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     const backendProject = await b.view.findByRole('button', { name: '# backend' })
     fireEvent.click(backendProject)
@@ -283,8 +281,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'review' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# review' }))
     expect(await b.view.findByRole('heading', { name: '# review' })).toBeTruthy()
@@ -490,6 +486,76 @@ describe('Team conversation surfaces', () => {
     expect(b.getAttachment).toHaveBeenCalledTimes(3)
   })
 
+  it('opens a document attachment from its chip and from inline prose, with a reveal menu', async () => {
+    const occurredAt = '2026-08-21T09:00:00.000Z'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialProjects: true,
+      mainStreamEntries: [{
+        kind: 'message', sequence: 1, occurredAt,
+        message: {
+          messageRef: 'message:attachment-open', projectRef: 'project:engineering', scope: 'main', sender: 'member:builder',
+          body: '交付见 `spec.pdf`', sequence: 1, occurredAt,
+          attachments: [{ attachmentId: 'attachment:pdf', name: 'spec.pdf', byteSize: 3, mediaType: 'application/pdf' }],
+        },
+        mentions: [],
+      }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    expect(await b.view.findByText('交付见')).toBeTruthy()
+
+    // The document chip is the open target; the inline-code mention resolves against the same attachment.
+    const chip = await waitFor(() => {
+      const candidate = [...b.view.container.querySelectorAll<HTMLButtonElement>('button[class*="attachmentChip"]')]
+        .find(button => button.getAttribute('aria-label') === '打开 spec.pdf')
+      expect(candidate).toBeTruthy()
+      return candidate!
+    })
+    fireEvent.click(chip)
+    await waitFor(() => { expect(b.openAttachment).toHaveBeenCalledWith({ attachmentId: 'attachment:pdf', action: 'open' }) })
+    const mention = b.view.container.querySelector('[class*="messageMarkdown"] button[class*="fileMention"]') as HTMLButtonElement
+    expect(mention).toBeTruthy()
+    fireEvent.click(mention)
+    await waitFor(() => { expect(b.openAttachment).toHaveBeenCalledTimes(2) })
+
+    // Right click seats the shared context menu; reveal asks the Host for the file manager instead of an application.
+    fireEvent.contextMenu(chip, { clientX: 120, clientY: 80 })
+    fireEvent.click(await b.view.findByRole('menuitem', { name: '在文件夹中显示' }))
+    await waitFor(() => { expect(b.openAttachment).toHaveBeenCalledWith({ attachmentId: 'attachment:pdf', action: 'reveal' }) })
+  })
+
+  it('lists native handlers under the attachment Open with submenu', async () => {
+    const occurredAt = '2026-08-21T09:00:00.000Z'
+    const b = await runtimeWithTeam({
+      mode: 'team', workspaceId: 'w1', initialProjects: true,
+      mainStreamEntries: [{
+        kind: 'message', sequence: 1, occurredAt,
+        message: {
+          messageRef: 'message:attachment-open-with', projectRef: 'project:engineering', scope: 'main', sender: 'member:builder',
+          body: '规格', sequence: 1, occurredAt,
+          attachments: [{ attachmentId: 'attachment:pdf', name: 'spec.pdf', byteSize: 3, mediaType: 'application/pdf' }],
+        },
+        mentions: [],
+      }],
+    })
+    b.attachmentApplications.mockResolvedValue({
+      ok: true,
+      value: [{ id: '/Applications/Preview.app', name: 'Preview', default: true, icon: null }],
+    })
+    fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
+    const chip = await waitFor(() => {
+      const candidate = [...b.view.container.querySelectorAll<HTMLButtonElement>('button[class*="attachmentChip"]')]
+        .find(button => button.getAttribute('aria-label') === '打开 spec.pdf')
+      expect(candidate).toBeTruthy()
+      return candidate!
+    })
+    fireEvent.contextMenu(chip, { clientX: 120, clientY: 80 })
+    fireEvent.click(await b.view.findByRole('menuitem', { name: '打开方式' }))
+    fireEvent.click(await b.view.findByRole('menuitem', { name: 'Preview' }))
+    await waitFor(() => {
+      expect(b.openAttachment).toHaveBeenCalledWith({ attachmentId: 'attachment:pdf', action: 'open', application: '/Applications/Preview.app' })
+    })
+  })
+
   it('uploads thread reply attachments and passes their ids to reply', async () => {
     const b = await runtimeWithTeam({ initialProjects: true, remainingUnreadCounts: [1], seededMessages: [{ body: '开个任务', occurredAt: '2026-08-21T09:00:00.000Z' }] })
     fireEvent.click(b.view.getByRole('button', { name: '团队' }))
@@ -580,8 +646,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# engineering' }))
     expect(await b.view.findByRole('heading', { name: '# engineering' })).toBeTruthy()
@@ -627,8 +691,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(b.view.getByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
@@ -661,8 +723,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
@@ -879,8 +939,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
@@ -928,8 +986,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
@@ -1042,8 +1098,6 @@ describe('Team conversation surfaces', () => {
     fireEvent.click(await b.view.findByRole('button', { name: '新建项目' }))
     fireEvent.change(b.view.getByLabelText('名称'), { target: { value: 'backend' } })
     fireEvent.change(b.view.getByLabelText(/说明/), { target: { value: 'API' } })
-    fireEvent.click(b.view.getByRole('button', { name: /初始成员/ }))
-    fireEvent.click(await within(document.body).findByRole('menuitem', { name: /builder/ }))
     fireEvent.click(b.view.getByRole('button', { name: '创建项目' }))
     fireEvent.click(await b.view.findByRole('button', { name: '# backend' }))
     expect(await b.view.findByRole('heading', { name: '# backend' })).toBeTruthy()
