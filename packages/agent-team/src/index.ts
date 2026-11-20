@@ -3480,13 +3480,11 @@ export default class AgentTeam extends TypertRemoteService {
    * never fails on a catalog that moved since.
    */
   async managerCreateMemberForAgent(agent: Agent, request: AgentTeamManagerMemberCreateRequest): Promise<AgentTeamManagerMemberCreateResult> {
-    this.requireManagerAgent(agent)
+    const write = this.authorizeManagerWrite(agent, request.requestId)
     const description = request.description.trim()
     if (description === '') throw new Error('a Member the manager creates needs a description of its standing')
-    const ledger = this.requireLedger()
-    if (!ledger.hasCommitted(request.requestId)) await this.assertManagerModelRoute(agent, request.model)
-    const authorize = () => this.requireManagerAgent(agent)
-    const written = await this.commitManagerWrite(agent.id, request.requestId, () => this.addMemberInternal({
+    await this.assertNewManagerModelRoute(agent, request.requestId, request.model)
+    const written = await write.commit(authorize => this.addMemberInternal({
       requestId: request.requestId,
       workspaceId: request.workspaceId,
       handle: request.handle,
@@ -3513,11 +3511,10 @@ export default class AgentTeam extends TypertRemoteService {
    * its own receipt instead of silently joining the Project.
    */
   async managerCreateProjectForAgent(agent: Agent, request: AgentTeamManagerProjectCreateRequest): Promise<AgentTeamManagerProjectCreateResult> {
-    this.requireManagerAgent(agent)
+    const write = this.authorizeManagerWrite(agent, request.requestId)
     const description = request.description.trim()
     if (description === '') throw new Error('a Project the manager creates needs its shared goal as the description')
-    const authorize = () => this.requireManagerAgent(agent)
-    const written = await this.commitManagerWrite(agent.id, request.requestId, () => this.createProjectInternal({
+    const written = await write.commit(authorize => this.createProjectInternal({
       requestId: request.requestId,
       workspaceId: request.workspaceId,
       name: request.name,
@@ -3543,9 +3540,8 @@ export default class AgentTeam extends TypertRemoteService {
    * attention and its history across the change.
    */
   async managerChangeProjectOwnerForAgent(agent: Agent, request: AgentTeamManagerProjectOwnerRequest): Promise<AgentTeamManagerProjectOwnerResult> {
-    this.requireManagerAgent(agent)
+    const write = this.authorizeManagerWrite(agent, request.requestId)
     this.requireWorkspace(request.workspaceId)
-    const authorize = () => this.requireManagerAgent(agent)
     // `add` names what the owner answers for; `update` replaces it and an empty
     // one records "unspecified"; `remove` describes nothing.
     const responsibility = request.action === 'remove' ? undefined : (request.responsibility ?? '').trim()
@@ -3555,7 +3551,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (request.action === 'update' && request.responsibility === undefined) {
       throw new Error('an owner responsibility update needs the new responsibility; an empty one records that it is unspecified')
     }
-    const written = await this.commitManagerWrite(agent.id, request.requestId, async () => {
+    const written = await write.commit(async authorize => {
       const base = { requestId: request.requestId, workspaceId: request.workspaceId, projectRef: request.projectRef, memberId: request.memberRef }
       if (request.action === 'add') {
         const result = await this.addProjectOwnerInternal({ ...base, responsibility: responsibility ?? '' }, { authorize })
@@ -3590,8 +3586,14 @@ export default class AgentTeam extends TypertRemoteService {
    * rejection.
    */
   async managerUpdateProjectForAgent(agent: Agent, request: AgentTeamManagerProjectUpdateRequest): Promise<AgentTeamManagerProjectUpdateResult> {
-    this.requireManagerAgent(agent)
+    const write = this.authorizeManagerWrite(agent, request.requestId)
     this.requireWorkspace(request.workspaceId)
+    const name = this.validateManagerProjectUpdate(request)
+    if (request.action === 'update') return this.updateManagerProject(request, name, write)
+    return this.archiveManagerProject(request, write)
+  }
+
+  private validateManagerProjectUpdate(request: AgentTeamManagerProjectUpdateRequest): string | undefined {
     const name = request.name?.trim()
     if (request.action === 'update' && name === '') throw new Error('a Project the manager renames needs a non-empty name')
     if (request.action === 'update' && request.name === undefined && request.description === undefined) {
@@ -3600,35 +3602,39 @@ export default class AgentTeam extends TypertRemoteService {
     if (request.action === 'archive' && (request.name !== undefined || request.description !== undefined)) {
       throw new Error('project_update archives a Project by ref alone; a name or goal belongs to the update action')
     }
-    const authorize = () => this.requireManagerAgent(agent)
-    if (request.action === 'update') {
-      const written = await this.commitManagerWrite(agent.id, request.requestId, async () => {
-        const result = await this.updateProjectInternal({
-          requestId: request.requestId,
-          workspaceId: request.workspaceId,
-          projectRef: request.projectRef,
-          ...(name === undefined ? {} : { name }),
-          ...(request.description === undefined ? {} : { description: request.description }),
-        }, { authorize })
-        return { receipt: result.receipt }
-      })
-      // A replay resolves to the Project as it was at its own commit; the answer
-      // reads the row as it stands, so a retry never reports a name or goal a
-      // later edit already replaced.
-      const project = this.requireLedger().getProject(request.projectRef)
-      if (project === undefined) throw new Error(`unknown Project '${request.projectRef}'`)
-      return Object.freeze({
-        requestId: written.requestId,
-        action: request.action,
-        outcome: 'committed' as const,
-        receipt: written.receipt,
-        projectRef: project.projectRef,
-        name: project.name,
-        description: project.description,
-        state: project.state,
-      })
-    }
-    const written = await this.commitManagerWrite(agent.id, request.requestId, async () => {
+    return name
+  }
+
+  private async updateManagerProject(request: AgentTeamManagerProjectUpdateRequest, name: string | undefined, write: ReturnType<AgentTeam['authorizeManagerWrite']>): Promise<AgentTeamManagerProjectUpdateResult> {
+    const written = await write.commit(async authorize => {
+      const result = await this.updateProjectInternal({
+        requestId: request.requestId,
+        workspaceId: request.workspaceId,
+        projectRef: request.projectRef,
+        ...(name === undefined ? {} : { name }),
+        ...(request.description === undefined ? {} : { description: request.description }),
+      }, { authorize })
+      return { receipt: result.receipt }
+    })
+    // A replay resolves to the Project as it was at its own commit; the answer
+    // reads the row as it stands, so a retry never reports a name or goal a
+    // later edit already replaced.
+    const project = this.requireLedger().getProject(request.projectRef)
+    if (project === undefined) throw new Error(`unknown Project '${request.projectRef}'`)
+    return Object.freeze({
+      requestId: written.requestId,
+      action: request.action,
+      outcome: 'committed' as const,
+      receipt: written.receipt,
+      projectRef: project.projectRef,
+      name: project.name,
+      description: project.description,
+      state: project.state,
+    })
+  }
+
+  private async archiveManagerProject(request: AgentTeamManagerProjectUpdateRequest, write: ReturnType<AgentTeam['authorizeManagerWrite']>): Promise<AgentTeamManagerProjectUpdateResult> {
+    const written = await write.commit(async authorize => {
       const result = await this.archiveProjectInternal({
         requestId: request.requestId, workspaceId: request.workspaceId, projectRef: request.projectRef,
       }, { authorize })
@@ -3663,13 +3669,11 @@ export default class AgentTeam extends TypertRemoteService {
    * original receipt even when the catalog moved since.
    */
   async managerUpdateMemberForAgent(agent: Agent, request: AgentTeamManagerMemberUpdateRequest): Promise<AgentTeamManagerMemberUpdateResult> {
-    this.requireManagerAgent(agent)
+    const write = this.authorizeManagerWrite(agent, request.requestId)
     const description = request.description?.trim()
     if (description === '') throw new Error('a Member the manager edits needs a non-empty description of its standing')
-    const ledger = this.requireLedger()
-    if (!ledger.hasCommitted(request.requestId) && request.model !== undefined) await this.assertManagerModelRoute(agent, request.model)
-    const authorize = () => this.requireManagerAgent(agent)
-    const written = await this.commitManagerWrite(agent.id, request.requestId, () => this.updateMemberInternal({
+    await this.assertNewManagerModelRoute(agent, request.requestId, request.model)
+    const written = await write.commit(authorize => this.updateMemberInternal({
       requestId: request.requestId,
       memberId: request.memberRef,
       ...(description === undefined ? {} : { description }),
@@ -3694,26 +3698,9 @@ export default class AgentTeam extends TypertRemoteService {
    * Workspace whose participation the Host verifies.
    */
   async managerSetMemberStateForAgent(agent: Agent, request: AgentTeamManagerMemberStateRequest): Promise<AgentTeamManagerMemberStateResult> {
-    this.requireManagerAgent(agent)
-    const authorize = () => this.requireManagerAgent(agent)
-    if (request.action === 'recover') {
-      if (request.workspaceId === undefined) throw new Error('member_state recover needs the Workspace id the Member participates in')
-      const workspaceId = request.workspaceId
-      // A recovery has no ledger section of its own: this queue entry is the
-      // critical section, so the manager is re-checked inside it (by the
-      // internal path, which owns the one authorize call) and not only at the
-      // tool entry.
-      const recovered = await this.enqueueLifecycle(request.memberRef, async () =>
-        this.recoverMemberInternal({ requestId: request.requestId, workspaceId, memberId: request.memberRef }, { authorize }))
-      return Object.freeze({
-        requestId: request.requestId,
-        action: request.action,
-        outcome: 'runtime-only' as const,
-        memberRef: request.memberRef,
-        status: recovered.status,
-      })
-    }
-    const written = await this.commitManagerWrite(agent.id, request.requestId, async () => {
+    const write = this.authorizeManagerWrite(agent, request.requestId)
+    if (request.action === 'recover') return this.recoverManagerMember(request, write)
+    const written = await write.commit(async authorize => {
       if (request.action === 'suspend') {
         const result = await this.suspendMemberInternal({ requestId: request.requestId, memberId: request.memberRef }, { authorize })
         return { receipt: result.receipt, status: result.status }
@@ -3748,10 +3735,9 @@ export default class AgentTeam extends TypertRemoteService {
    * Workspace stays refused by the ledger, which points at archival instead.
    */
   async managerChangeMemberWorkspaceForAgent(agent: Agent, request: AgentTeamManagerMemberWorkspaceRequest): Promise<AgentTeamManagerMemberWorkspaceResult> {
-    this.requireManagerAgent(agent)
+    const write = this.authorizeManagerWrite(agent, request.requestId)
     this.requireWorkspace(request.workspaceId)
-    const authorize = () => this.requireManagerAgent(agent)
-    const written = await this.commitManagerWrite(agent.id, request.requestId, async () => {
+    const written = await write.commit(async authorize => {
       if (request.action === 'join') {
         const result = await this.joinWorkspaceInternal({ requestId: request.requestId, workspaceId: request.workspaceId, memberId: request.memberRef }, { authorize })
         return { receipt: result.receipt }
@@ -3769,6 +3755,16 @@ export default class AgentTeam extends TypertRemoteService {
       ...(written.releasedClaims === undefined ? {} : { releasedClaims: written.releasedClaims }),
       ...(written.removedAttention === undefined ? {} : { removedAttention: written.removedAttention }),
     })
+  }
+
+  private authorizeManagerWrite(agent: Agent, requestId: AgentTeamRequestId) {
+    this.requireManagerAgent(agent)
+    const authorize = () => this.requireManagerAgent(agent)
+    return {
+      authorize,
+      commit: <R extends { readonly receipt: AgentTeamOperationReceipt }>(write: (authorize: () => void) => Promise<R>) =>
+        this.commitManagerWrite(agent.id, requestId, () => write(authorize)),
+    }
   }
 
   /**
@@ -3795,6 +3791,24 @@ export default class AgentTeam extends TypertRemoteService {
       this.ctx.logger.info(`agent-team: manager write replayed sessionId=${sessionId} requestId=${requestId} operationId=${result.receipt.operationId}`)
       return result
     }
+  }
+
+  private async recoverManagerMember(request: AgentTeamManagerMemberStateRequest, write: ReturnType<AgentTeam['authorizeManagerWrite']>): Promise<AgentTeamManagerMemberStateResult> {
+    if (request.workspaceId === undefined) throw new Error('member_state recover needs the Workspace id the Member participates in')
+    const workspaceId = request.workspaceId
+    // A recovery has no ledger section of its own: this queue entry is the
+    // critical section, so the manager is re-checked inside it (by the
+    // internal path, which owns the one authorize call) and not only at the
+    // tool entry.
+    const recovered = await this.enqueueLifecycle(request.memberRef, async () =>
+      this.recoverMemberInternal({ requestId: request.requestId, workspaceId, memberId: request.memberRef }, { authorize: write.authorize }))
+    return Object.freeze({
+      requestId: request.requestId,
+      action: request.action,
+      outcome: 'runtime-only' as const,
+      memberRef: request.memberRef,
+      status: recovered.status,
+    })
   }
 
   /** One Member's standing for the manager overview: runtime state from the Host, ownership from the ledger. */
@@ -4067,15 +4081,21 @@ export default class AgentTeam extends TypertRemoteService {
     // metadata when the LLM service is reachable; unknown routes defer to the
     // LLM layer's runtime check at call time.
     if (model.reasoningEffort === undefined || llm === undefined) return
+    let resolved: Awaited<ReturnType<typeof llm.resolveModelInfo>>
     try {
-      const resolved = await llm.resolveModelInfo(model.provider, model.model)
-      const efforts = resolved.reasoning?.efforts ?? []
-      if (efforts.length > 0 && !efforts.some(effort => effort.id === model.reasoningEffort)) {
-        throw new Error(`reasoning effort '${model.reasoningEffort}' is not supported by ${model.provider}/${model.model}`)
-      }
+      resolved = await llm.resolveModelInfo(model.provider, model.model)
     } catch (error) {
       if (error instanceof Error && error.message.includes('is not supported by')) throw error
+      return
     }
+    const efforts = resolved.reasoning?.efforts ?? []
+    if (efforts.length > 0 && !efforts.some(effort => effort.id === model.reasoningEffort)) {
+      throw new Error(`reasoning effort '${model.reasoningEffort}' is not supported by ${model.provider}/${model.model}`)
+    }
+  }
+
+  private async assertNewManagerModelRoute(agent: Agent, requestId: AgentTeamRequestId, model: AgentTeamModelSelection | null | undefined): Promise<void> {
+    if (!this.requireLedger().hasCommitted(requestId)) await this.assertManagerModelRoute(agent, model)
   }
 
   /**
