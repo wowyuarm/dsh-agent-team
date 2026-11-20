@@ -2387,7 +2387,11 @@ export class AgentTeamLedger {
         : { kind: 'content' as const }) })
   }
 
-  /** Old creates carry no source or baseline intent; compare every fact their operation did retain. */
+  /**
+   * Before subscription request intent was persisted, creates kept triggers and
+   * baseline ids, not the script path or baseline mode. Compare retained effects
+   * so those request ids can still replay without inventing missing intent.
+   */
   private sameLegacyCreateReplay(existing: Extract<AgentTeamOperation, { kind: 'team/subscription-created' }>,
     request: Extract<AgentTeamSubscriptionWriteReplayRequest, { readonly kind: 'create' }>): boolean {
     const triggers = Object.freeze({ ...(request.intervalMinutes === undefined ? {} : { interval: Object.freeze({ minutes: request.intervalMinutes }) }),
@@ -2396,7 +2400,11 @@ export class AgentTeamLedger {
     return !(request.baseline === 'ignore-history' && existing.data.baselineIds.length > 0)
   }
 
-  /** Old updates lack the caller's omitted-or-explicit trigger intent, so compare the effects they did record. */
+  /**
+   * Before subscription request intent was persisted, updates kept resulting
+   * triggers, not whether webhook was omitted. Compare those effects so old
+   * retries need not supply intent their records cannot prove.
+   */
   private sameLegacyUpdateReplay(existing: Extract<AgentTeamOperation, { kind: 'team/subscription-updated' }>,
     request: Extract<AgentTeamSubscriptionWriteReplayRequest, { readonly kind: 'update' }>): boolean {
     const stored = existing.data.subscription
@@ -4923,10 +4931,9 @@ export class AgentTeamLedger {
   }
 
   /**
-   * A stored subscription as the projection should hold it. Records written
-   * before events were addressed carry no `notify`; they read back as the
-   * Creating Member alone, so replay of an old ledger never routes an event to
-   * someone the subscription never named.
+   * Before addressed subscription events, snapshots omitted `notify`. Default
+   * them to the Creating Member alone so old records still load without
+   * silently granting additional recipients access to their events.
    */
   private subscriptionWithNotify(subscription: AgentTeamSubscription): AgentTeamSubscription {
     if (Array.isArray((subscription as { readonly notify?: unknown }).notify)) return subscription
@@ -9954,24 +9961,26 @@ export class AgentTeamLedger {
         occurrences.set(operation.data.message.messageRef, operation.data.message.occurredAt ?? operation.occurredAt)
       }
     }
-    // Replay against a scratch projection while normalizing, so a legacy
-    // cleanup repair sees the same state its validator will.
+    // Every stage sees prior repaired records, as validation will. Sources must
+    // precede exact inbox matching, and missing grant rows must be restored
+    // before obsolete overwrites are removed. Apply only after all repairs.
     const projection = emptyProjection()
     return records.map(([id, operation]) => {
-      const normalized = this.repairLegacyProjectCleanup(this.repairLegacyMainStreamRead(this.repairLegacyMainAttentionGrantOverwrite(this.repairLegacyMainAttentionGrant(this.repairLegacyAttentionSource(this.normalizeOperation(operation, occurrences, instants), projection), projection), projection), projection), projection)
+      const stamped = this.normalizeOperation(operation, occurrences, instants)
+      const withSources = this.repairLegacyAttentionSource(stamped, projection)
+      const withMainGrant = this.repairLegacyMainAttentionGrant(withSources, projection)
+      const withPreservedMainFollow = this.repairLegacyMainAttentionGrantOverwrite(withMainGrant, projection)
+      const withMainRead = this.repairLegacyMainStreamRead(withPreservedMainFollow, projection)
+      const normalized = this.repairLegacyProjectCleanup(withMainRead, projection)
       this.applyTo(projection, normalized)
       return [id, normalized]
     })
   }
 
   /**
-   * Attention rows written before the source field existed carry none, and a
-   * replay validator re-derives the row it expects from the projection — which
-   * always has one. The missing source is supplied in memory, so an old record
-   * validates against the same row the projection holds. `self` is the only
-   * source that claims a cause the stored bytes never had, so it is the honest
-   * default: a row whose origin the ledger cannot know is treated as the
-   * Member's own choice.
+   * Before Attention recorded its cause, inbox rows omitted `source`. Backfill
+   * only missing sources in memory so these records still match the rows replay
+   * validation derives; already-recorded causes must not be overwritten.
    */
   private repairLegacyAttentionSource(operation: AgentTeamOperation, projection: Projection): AgentTeamOperation {
     const inbox = 'inbox' in operation.data ? operation.data.inbox : undefined
@@ -9979,11 +9988,6 @@ export class AgentTeamLedger {
     const threadRows = inbox.attention.set.filter(attention => attention.source === undefined)
     const mainRows = (inbox.mainAttention?.set ?? []).filter(attention => attention.source === undefined)
     if (threadRows.length === 0 && mainRows.length === 0) return operation
-    // The cause is derived from the operation, not guessed from a version: the
-    // validator re-derives the same row, so a repair that guessed would leave
-    // the record failing against it. Every kind that establishes Attention
-    // names its own cause, and the one that cannot is the Member's own choice —
-    // the only source that claims nothing.
     const fallback = this.legacyAttentionSourceOf(operation, projection)
     const withThread = (attention: AgentTeamThreadAttention): AgentTeamThreadAttention => (
       attention.source === undefined ? { ...attention, source: fallback } : attention)
@@ -9997,7 +10001,11 @@ export class AgentTeamLedger {
     return { ...operation, data: { ...operation.data, inbox: repaired } } as typeof operation
   }
 
-  /** What an operation whose Attention rows carry no source established them by. */
+  /**
+   * Pre-source rows need the cause implied by their operation and prior follow.
+   * Rules 1 Messages could establish mention Attention; rules 2 Messages cannot.
+   * The `self` fallback avoids inventing a grant or mention for an unknown cause.
+   */
   private legacyAttentionSourceOf(operation: AgentTeamOperation, projection: Projection): AgentTeamAttentionSource {
     switch (operation.kind) {
       case 'team/project-owner-added':
@@ -10032,36 +10040,24 @@ export class AgentTeamLedger {
   }
 
   /**
-   * An owner grant written before Main stream Attention existed carries the
-   * era's inbox: a Main marker alone, with no `mainAttention` row. That grant
-   * still started its Member's default attention, so the missing row is
-   * re-minted from the grant's own sequence and the record is repaired in
-   * memory. Any other shape — a row already present, or a delta that differs
-   * from the era's in some other way — is left alone, so it still fails
-   * validation and a forgery is not silently accepted.
+   * Pre-Main-Attention owner grants stored a Main marker without a follow row.
+   * Restore the implicit owner follow so these grants still validate. Only the
+   * exact marker-only delta qualifies; other omissions must still fail validation.
    */
   private repairLegacyMainAttentionGrant(operation: AgentTeamOperation, projection: Projection): AgentTeamOperation {
     if (operation.kind !== 'team/project-owner-added') return operation
     const { inbox, memberId, projectRef } = operation.data
     if (inbox.mainAttention !== undefined) return operation
     const granted = [this.startMainAttention(memberId, projectRef, operation.sequence, 'project-owner')]
-    // The era's delta: the owner-added Main marker and nothing else. A delta
-    // that differs in any other way is a shape this build never wrote, so it
-    // is left alone and still fails validation.
     const legacy = this.inboxDelta([], [], [], [], [], [], inbox.mainMarkers?.added ?? [])
     if (!isDeepStrictEqual(inbox, legacy)) return operation
     return { ...operation, data: { ...operation.data, inbox: this.inboxDelta([], [], [], [], [], [], inbox.mainMarkers?.added ?? [], [], [], [], granted) } }
   }
 
   /**
-   * An owner grant written before the grant learned to leave an existing follow
-   * alone overwrote the Member's Main stream Attention with a fresh row anchored
-   * at the grant, discarding the read watermark its own follow had earned. The
-   * Member was already following, so the correct durable result of that grant is
-   * no row at all: the existing one stands. The overwriting row is dropped in
-   * memory, which restores the progress the write destroyed. Only that exact
-   * shape is repaired — a grant that minted a row for a Member not yet following
-   * is what this build writes and is left alone.
+   * Early Main-Attention grants reset an existing follow to the grant sequence,
+   * losing its read watermark. Drop only that exact reset row so replay keeps
+   * the prior follow's progress; a first grant must still establish its own row.
    */
   private repairLegacyMainAttentionGrantOverwrite(operation: AgentTeamOperation, projection: Projection): AgentTeamOperation {
     if (operation.kind !== 'team/project-owner-added') return operation
@@ -10076,13 +10072,9 @@ export class AgentTeamLedger {
   }
 
   /**
-   * An Agent's Main stream read written before Main stream Attention existed
-   * carried only the markers it consumed: its watermark lived in a projection
-   * field that no longer exists, so replay alone would lose every byte of read
-   * progress and hand the reader its whole history as unread. The row is
-   * re-minted from the read's own `readThroughSequence`, so the era's progress
-   * survives. Only the era's shape is repaired — a receipt that differs in any
-   * other way is a shape this build never wrote and still fails validation.
+   * Pre-Main-Attention reads stored consumed markers and `readThroughSequence`,
+   * not a follow row. Restore that row for advancing Agent reads so their read
+   * progress survives; only the exact old marker-only receipt qualifies.
    */
   private repairLegacyMainStreamRead(operation: AgentTeamOperation, projection: Projection): AgentTeamOperation {
     if (operation.kind !== 'team/main-stream-read') return operation
@@ -10090,7 +10082,6 @@ export class AgentTeamLedger {
     if (memberId === AGENT_TEAM_HUMAN_MEMBER_ID || inbox.mainAttention !== undefined) return operation
     const attention = this.mainAttentionForFrom(projection, memberId, projectRef)
     if (attention === undefined) return operation
-    // The era's receipt: the markers it consumed and nothing else.
     if (!isDeepStrictEqual(inbox, this.inboxDelta([], [], [], [], [], [], [], inbox.mainMarkers?.removed ?? []))) return operation
     // A read that advanced nothing is a shape this build still writes: a read
     // consuming only markers leaves the watermark alone, so repairing it would
@@ -10102,12 +10093,9 @@ export class AgentTeamLedger {
   }
 
   /**
-   * Records written by releases that scoped Project archival and Project
-   * member-removal inbox cleanup to taskful Threads only (the collector read
-   * the Task projection) carry an incomplete inbox when the Project holds a
-   * taskless Thread with Attention or markers. They are repaired in memory
-   * the same way pre-envelope Thread reads are; any other inbox still fails
-   * validation, so a forgery is not silently accepted.
+   * Before taskless-Thread cleanup, Project archival and member removal used
+   * only Task-backed Threads. Expand only that exact old inbox so these records
+   * still validate without accepting arbitrary missing cleanup as legacy data.
    */
   private repairLegacyProjectCleanup(operation: AgentTeamOperation, projection: Projection): AgentTeamOperation {
     if (operation.kind === 'team/project-archived') {
@@ -10131,17 +10119,16 @@ export class AgentTeamLedger {
     return operation
   }
 
-  /** The legacy Project Thread scope: only Threads carrying a Task. */
+  /** Reproduce the Task-only cleanup era's scope to distinguish old omissions from forged inboxes. */
   private legacyProjectThreadRefs(projection: Projection, projectRef: AgentTeamProjectRef): Set<AgentTeamThreadRef> {
     return new Set([...projection.tasks.values()].filter(task => task.projectRef === projectRef).map(task => task.threadRef))
   }
 
   /**
-   * Ledgers written before message occurredAt existed store bare messages;
-   * snapshot-shaped Thread reads resolve instants from the originating
-   * operations. A receipt-shaped read carries no message at all, so it passes
-   * through untouched — the load path must never touch a shape it does not
-   * have, and it never writes either form back.
+   * Before Message/fact timestamps, Thread-read snapshots stored bare anchors
+   * and facts. Resolve their instants from originating operations so old reads
+   * still validate. Slim receipts carry no snapshots and must pass through;
+   * normalization never writes either stored format back.
    */
   private normalizeOperation(operation: AgentTeamOperation, occurrences: Map<AgentTeamMessageRef, string>, instants: Map<number, string>): AgentTeamOperation {
     if (operation.kind !== 'team/thread-read' || !isThreadReadSnapshot(operation.data)) return operation

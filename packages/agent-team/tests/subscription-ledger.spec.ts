@@ -602,6 +602,26 @@ describe('the Workspace directory', () => {
 })
 
 describe('a request id means one payload', () => {
+  it('replays a pre-intent update after reload and rejects changed retained triggers', async () => {
+    const team = await seed()
+    const subscriptionRef = subscriptionRefOf(await team.create(team.owner.actor))
+    const id = requestId('legacy-update')
+    const updated = await team.ledger.updateSubscription({ requestId: id, actor: team.owner.actor, workspaceId: alpha,
+      projectRef: team.projectRef, subscriptionRef, expectedRevision: 1, name: 'edited',
+      triggers: { interval: { minutes: 5 }, webhook: true }, script, credentials: [] })
+    const ledger = replayed(team.table)
+    const common = { requestId: id, actor: team.owner.actor, workspaceId: alpha, projectRef: team.projectRef,
+      subscriptionRef, expectedRevision: 1, name: 'edited', intervalMinutes: 5, script: { scriptContent: script.content } }
+    expect(ledger.subscriptionWriteReplay({ kind: 'update', ...common })?.value.receipt).toEqual(updated.value.receipt)
+    expect(ledger.subscriptionWriteReplay({ kind: 'update', ...common, webhook: true })?.value.receipt).toEqual(updated.value.receipt)
+    for (const change of [{ intervalMinutes: 10 }, { webhook: false }]) {
+      expect(() => ledger.subscriptionWriteReplay({ kind: 'update', ...common, ...change }))
+        .toThrow(/reused with a different operation or payload/)
+    }
+    expect(() => ledger.subscriptionWriteReplay({ kind: 'update', ...common, script: { scriptPath: 'unrecorded.sh' } }))
+      .toThrow(/cannot verify a legacy script path/)
+  })
+
   it('replays a legacy create with a pasted script and refuses a path it cannot verify', async () => {
     const team = await seed()
     const legacyRequestId = requestId('legacy-create')
