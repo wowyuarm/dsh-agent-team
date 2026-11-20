@@ -4,7 +4,7 @@
  * recipient markers it freezes. Every case also proves replay still validates
  * the bytes it just wrote.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
@@ -98,6 +98,40 @@ function poolOf(records: Array<[string, unknown]>): MemoryMediaPool {
 }
 
 describe('the subscription lifecycle', () => {
+  it('leaves durable and projected state unchanged after a failed append, then commits and replays the retry', async () => {
+    const team = await seed()
+    const subscriptionRef = subscriptionRefOf(await team.create(team.owner.actor))
+    const id = requestId('pause-failed-append')
+    const pause = () => team.ledger.pauseSubscription({ requestId: id, actor: team.owner.actor, workspaceId: alpha,
+      projectRef: team.projectRef, subscriptionRef, expectedRevision: 1, reason: 'manual' })
+    const subscription = team.ledger.subscription(subscriptionRef)
+    const status = team.ledger.status()
+    const projectionSequence = team.ledger.projectionSequence()
+    const records = [...team.table.entries()]
+    const failure = new Error('subscription append failed')
+    const put = vi.spyOn(team.table, 'put').mockRejectedValueOnce(failure)
+
+    await expect(pause()).rejects.toBe(failure)
+    expect(team.ledger.subscription(subscriptionRef)).toBe(subscription)
+    expect(team.ledger.status()).toEqual(status)
+    expect(team.ledger.projectionSequence()).toBe(projectionSequence)
+    expect(team.ledger.hasCommitted(id)).toBe(false)
+    expect([...team.table.entries()]).toEqual(records)
+    expect(() => team.ledger.validate()).not.toThrow()
+
+    const committed = await pause()
+    expect(committed.committed).toBe(true)
+    expect(Object.isFrozen(committed)).toBe(true)
+    expect(team.ledger.subscription(subscriptionRef)).toMatchObject({ state: 'paused', revision: 1 })
+    expect(team.ledger.projectionSequence()).toBe(committed.value.receipt.sequence)
+    const retried = await pause()
+    expect(retried.committed).toBe(false)
+    expect(retried.value).toEqual(committed.value)
+    expect(put).toHaveBeenCalledTimes(2)
+    put.mockRestore()
+    expect(() => replayed(team.table)).not.toThrow()
+  })
+
   it('creates, pauses, resumes, edits, and deletes through durable records a replay still accepts', async () => {
     const team = await seed()
     const created = await team.create(team.owner.actor)
