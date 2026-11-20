@@ -1,11 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
-import AgentTeam, { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamDmDeliveryError, markAgentTeamPreset, reminderRefForCallId, teamMessageSurface, activityText } from '@contexera/dsh-agent-team/host'
-import { formatTeamTimestamp } from '@contexera/dsh-agent-team/time-format'
+import type AgentTeam from '@contexera/dsh-agent-team/host'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamDmDeliveryError, markAgentTeamPreset, reminderRefForCallId } from '@contexera/dsh-agent-team/host'
 import { projectRefOf, service, workspaceOf, workspaceParam } from './host-access.ts'
 import { memberTarget } from './member-target.ts'
 import { recoveryFor } from '@contexera/dsh-agent-team/recovery-hints'
 import type {
-  AgentTeamActivity,
   AgentTeamAttentionSource,
   AgentTeamClaimRef,
   AgentTeamInboxReminder,
@@ -23,213 +22,26 @@ import type {
   AgentTeamMessageRef,
   AgentTeamProjectRef,
   AgentTeamTaskRef,
-  AgentTeamTaskBoardItem,
   AgentTeamThreadFact,
   AgentTeamThreadRef,
-  AgentTeamThreadTaskCard,
 } from '@contexera/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { MAIN_ENTRY_SCHEMA, MAIN_STANDING_SCHEMA, mainEntryLine, mainEntryView, standingView } from './main-stream.ts'
-import { budgetReading, readingCapacity, messagePartText, MESSAGE_PART_SCHEMA, type MessagePart } from './reading-budget.ts'
-import type { MainEntryView } from './main-stream.ts'
-import { activityFromView } from './activity-view.ts'
+import { mainEntryView, standingView } from './main-stream.ts'
+import { budgetReading, readingCapacity } from './reading-budget.ts'
 import { teamSubscription } from './subscription.ts'
-
-/** The complete Activity facts a rendered surface binds; an omitted identity is already bound by its original output. */
-function activityBindings(views: readonly { readonly kind?: string; readonly activityOmitted?: boolean }[], projectRef?: string) {
-  return views.flatMap(view => {
-    if (view.kind !== 'activity' || view.activityOmitted === true) return []
-    const complete = activityFromView(view as Parameters<typeof activityFromView>[0], projectRef)
-    return complete === undefined ? [] : [complete]
-  })
-}
+import { boundedSubject } from './subject.ts'
+import { activityFactView, claimView, mainStreamLines, readFactView, taskCardView, teamThreadOutput,
+  type ClaimView, type FactView, type ReplyContextView, type TaskCardView } from './thread-output.ts'
+import { boardItemView, reminderScheduleText, teamAttentionOutput, teamDmOutput, teamInboxOutput,
+  teamMessageOutput, teamReminderOutput, teamTaskOutput, teamViewOutput } from './member-output.ts'
+import { memberCreateOutput, memberStateOutput, memberUpdateOutput, memberWorkspaceOutput, projectCreateOutput,
+  projectOwnerOutput, projectUpdateOutput, teamModelsOutput, teamOverviewOutput } from './manager-output.ts'
+import { teamWorkerOutput } from './worker-output.ts'
 
 export const name = 'contexera-agent-team-tools'
+
 export const inject = ['tools']
-
-/** One shared bound for every bounded anchor subject a render shows. */
-const SUBJECT_BOUND = 80
-
-/** Model-facing view of one structured Thread activity fact, shared by read, history and rejections. */
-interface ActivityFactView {
-  readonly sequence: number
-  readonly kind: 'activity'
-  readonly activity: string
-  readonly activityRef: string
-  readonly actor: string
-  /** Absent on a Worker run bound to a discussion Thread, which holds no Task. */
-  readonly taskRef?: string
-  readonly threadRef: string
-  readonly projectRef?: string
-  readonly workerRef?: string
-  readonly engine?: string
-  readonly state?: string
-  readonly reason?: string
-  readonly occurredAt?: string
-  readonly claimRef?: string
-  readonly claimRefs?: string[]
-  readonly completedClaimRefs?: string[]
-  readonly acceptedClaimRefs?: string[]
-  readonly releasedClaimRefs?: string[]
-  readonly from?: string
-  readonly to?: string
-  readonly refollowedMembers?: string[]
-  readonly unread?: boolean
-  readonly direct?: boolean
-  /** The complete event is already in the current context, so only its identity is repeated. */
-  readonly activityOmitted?: boolean
-}
-
-/** Model-facing view of one message fact. */
-interface MessageFactView {
-  readonly sequence: number
-  readonly kind: 'message'
-  readonly messageRef: string
-  readonly body: string
-  readonly bodyOmitted?: boolean
-  readonly sender: string
-  readonly occurredAt?: string
-  readonly mentions: string[]
-  readonly unread?: boolean
-  readonly direct?: boolean
-  /** The Message this one answers, when it is a reply. */
-  readonly replyToMessageRef?: string
-  /** The same target resolved for reading: who wrote it and its first line. Separate from `replyToMessageRef` (the ref you pass back to `team_message.reply`) because one field carrying both meanings would be wrong half the time. */
-  readonly replyTo?: ReplyContextView
-}
-
-/** One Message's answer target, as the Agent surfaces print it. */
-interface ReplyContextView {
-  readonly sender: string
-  readonly excerpt: string
-}
-
-type FactView = MessageFactView | ActivityFactView
-
-/** Model-facing view of one Claim, shared by the read collision surface and claim outcomes. */
-interface ClaimView {
-  readonly claimRef: string
-  readonly direction: string
-  readonly state: string
-  readonly owner: string
-}
-
-function claimView(claim: { readonly claimRef: AgentTeamClaimRef; readonly direction: string; readonly state: string; readonly owner: string }): ClaimView {
-  return { claimRef: claim.claimRef, direction: claim.direction, state: claim.state, owner: claim.owner }
-}
-
-/** The one Activity → view projection: every immutable field, so the view can rebuild the exact fact the Host bound. */
-function activityFactView(
-  activity: AgentTeamActivity,
-  markers?: { readonly unread: boolean; readonly direct: boolean } | undefined,
-  occurredAt?: string | undefined,
-): ActivityFactView {
-  return {
-    sequence: activity.sequence, kind: 'activity', activity: activity.kind, activityRef: activity.activityRef,
-    actor: activity.actor, threadRef: activity.threadRef,
-    ...(activity.taskRef === undefined ? {} : { taskRef: activity.taskRef }),
-    ...(occurredAt === undefined ? {} : { occurredAt }),
-    ...('workerRef' in activity ? { workerRef: activity.workerRef, projectRef: activity.projectRef, engine: activity.engine } : {}),
-    ...('state' in activity ? { state: activity.state } : {}),
-    ...('reason' in activity && activity.reason !== undefined ? { reason: activity.reason } : {}),
-    ...('claimRef' in activity ? { claimRef: activity.claimRef } : {}),
-    ...('claimRefs' in activity ? { claimRefs: [...activity.claimRefs] } : {}),
-    ...('completedClaimRefs' in activity && (activity.completedClaimRefs?.length ?? 0) > 0 ? { completedClaimRefs: [...activity.completedClaimRefs!] } : {}),
-    ...('acceptedClaimRefs' in activity && (activity.acceptedClaimRefs?.length ?? 0) > 0 ? { acceptedClaimRefs: [...activity.acceptedClaimRefs!] } : {}),
-    ...('releasedClaimRefs' in activity && (activity.releasedClaimRefs?.length ?? 0) > 0 ? { releasedClaimRefs: [...activity.releasedClaimRefs!] } : {}),
-    ...('from' in activity && activity.from !== undefined ? { from: activity.from } : {}),
-    ...('to' in activity && activity.to !== undefined ? { to: activity.to } : {}),
-    ...('refollowedMembers' in activity && (activity.refollowedMembers?.length ?? 0) > 0 ? { refollowedMembers: [...activity.refollowedMembers!] } : {}),
-    ...(markers === undefined ? {} : { unread: markers.unread, direct: markers.direct }),
-  }
-}
-
-/** The one deterministic bounded subject for directory rows and Thread orientation: whitespace collapses to one line, then one bounded cut with an explicit truncation mark, so surfaces never disagree about what a Thread is about. */
-function boundedSubject(body: string): string {
-  const collapsed = body.replaceAll(/\s+/gu, ' ').trim()
-  return collapsed.length <= SUBJECT_BOUND ? collapsed : `${collapsed.slice(0, SUBJECT_BOUND - 1)}…`
-}
-
-/** Unread/direct markers sit on the fact line itself; a fact carrying neither renders neither. */
-function factMarkers(fact: FactView): string {
-  if (fact.unread === undefined) return ''
-  if (fact.direct === true) return ' [direct]'
-  if (fact.unread === true) return ' [unread]'
-  return ''
-}
-
-/** One complete Activity fact's line; the Host's shared formatter is the only Activity rendering. */
-function activityLine(fact: ActivityFactView): string {
-  const complete = activityFromView(fact)
-  if (complete === undefined) throw new Error(`Activity view at sequence ${fact.sequence} lacks its immutable identity`)
-  return activityText(complete)
-}
-
-/** The single explicit hand-off of a usable write token. */
-function nextWriteLine(revision: number): string {
-  return `Next write — baseRevision: ${revision} (copy exactly; never derive or cite).`
-}
-
-/** Task standing inline on a Thread identity line; absent on taskless Threads. Accountability rides along whenever the result carries it, because who is responsible for the Task changes what the reader may do next. */
-function taskStanding(value: { taskRef?: string; status?: string; resolution?: string; taskNumber?: number; accountable?: string }): string {
-  if (value.taskRef === undefined) return ''
-  return `${value.taskRef}${value.taskNumber === undefined ? '' : ` (#${value.taskNumber})`}${value.status === undefined ? '' : `, ${value.status}${value.resolution === undefined ? '' : `/${value.resolution}`}`}${value.accountable === undefined ? '' : ` · accountable ${value.accountable}`}`
-}
-
-/** One Task a discussion spawned, as the card its Thread renders at the creation point: current state, never a fact, never unread. */
-interface TaskCardView {
-  readonly taskRef: string
-  readonly taskNumber: number
-  readonly threadRef: string
-  readonly sequence: number
-  readonly occurredAt: string
-  readonly subject: string
-  readonly status: string
-  readonly resolution: string
-  readonly accountable: string
-}
-
-const TASK_CARD_SCHEMA = {
-  type: 'object', additionalProperties: false, properties: {
-    taskRef: { type: 'string', required: true }, taskNumber: { type: 'number', required: true }, threadRef: { type: 'string', required: true },
-    sequence: { type: 'number', required: true }, occurredAt: { type: 'string', required: true }, subject: { type: 'string', required: true },
-    status: { type: 'string', required: true }, resolution: { type: 'string', required: true }, accountable: { type: 'string', required: true },
-  },
-} as const
-
-function taskCardView(entry: AgentTeamThreadTaskCard): TaskCardView {
-  // Flattened from the shared card: the model-facing view keeps its own stable field set, so the Host projection can
-  // grow without changing what a tool result declares.
-  const card = entry.card
-  return { taskRef: card.task.taskRef, taskNumber: card.task.taskNumber, threadRef: card.threadRef, sequence: entry.sequence,
-    occurredAt: card.anchor.occurredAt, subject: card.anchor.preview, status: card.task.status, resolution: card.task.resolution,
-    accountable: card.task.accountable }
-}
-
-/** One card line, marked as a projection so it never reads as a fact: where the Task was created, its current state, and the Thread to open it on. */
-function taskCardLine(card: TaskCardView): string {
-  return `${card.sequence} ${formatTeamTimestamp(card.occurredAt)} [task card] Task ${card.taskRef} (#${card.taskNumber}), ${card.status}/${card.resolution} · accountable ${card.accountable} — ${card.subject} · ${card.threadRef}`
-}
-
-/** Facts and the cards their discussion spawned in one chronological order: a card sits at its creation sequence and breaks a fact run, the way the Client timeline draws it. */
-function factTimelineLines(facts: readonly FactView[], cards: readonly TaskCardView[]): string[] {
-  const lines: string[] = []
-  let next = 0
-  for (const fact of facts) {
-    while (next < cards.length && cards[next]!.sequence < fact.sequence) lines.push(taskCardLine(cards[next++]!))
-    lines.push(factLine(fact))
-  }
-  while (next < cards.length) lines.push(taskCardLine(cards[next++]!))
-  return lines
-}
-
-/** The one model-facing schema for a Thread fact, shared by the read result and by the facts a rejected write carries back. */
-const FACT_SCHEMA = {
-  type: 'object', additionalProperties: false, properties: {
-    sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, messageRef: { type: 'string' }, body: { type: 'string' }, bodyOmitted: { type: 'boolean' }, sender: { type: 'string' }, occurredAt: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, replyToMessageRef: { type: 'string' }, replyTo: { type: 'object', additionalProperties: false, properties: { sender: { type: 'string', required: true }, excerpt: { type: 'string', required: true } } }, activity: { type: 'string' }, activityRef: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, threadRef: { type: 'string' }, projectRef: { type: 'string' }, workerRef: { type: 'string' }, engine: { type: 'string' }, state: { type: 'string' }, reason: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, from: { type: 'string' }, to: { type: 'string' }, refollowedMembers: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' }, activityOmitted: { type: 'boolean' },
-  },
-} as const
 
 function requestId(agentId: string, callId: string): AgentTeamRequestId {
   return `agent-team:tool:${agentId}:${callId}` as AgentTeamRequestId
@@ -281,172 +93,11 @@ function refuseNonDefaultScheduleKind(action: 'cancel' | 'list', scheduleKind: s
   throw new Error(recoveryFor('action_only_arguments').sentence({ action, parameter: 'scheduleKind', owner: 'create' }))
 }
 
-/** One fact as a rejection render receives it: the read fields with tag fields widened to plain strings, because the tool's output schema types `kind` as a string rather than a literal union. */
-type RejectedFact = {
-  readonly sequence: number
-  readonly kind: string
-  readonly messageRef?: string
-  readonly body?: string
-  readonly sender?: string
-  readonly occurredAt?: string
-  readonly mentions?: readonly string[]
-  readonly replyToMessageRef?: string
-  readonly replyTo?: ReplyContextView
-  readonly activity?: string
-  readonly actor?: string
-  readonly taskRef?: string
-  readonly claimRef?: string
-  readonly claimRefs?: readonly string[]
-  readonly completedClaimRefs?: readonly string[]
-  readonly acceptedClaimRefs?: readonly string[]
-  readonly releasedClaimRefs?: readonly string[]
-  readonly unread?: boolean
-  readonly direct?: boolean
-}
-
-const REJECTION_FACT_LIMIT = 20
-const REJECTION_BODY_MAX_CHARACTERS = 8 * 1024
-const REJECTION_MAX_CHARACTERS = 16 * 1024
-const REJECTION_BODY_TRUNCATION_MARKER = '[Message body truncated; the full change is not shown here.]'
-
-function messageIdentities(threadRef: string | undefined, facts: readonly RejectedFact[]) {
-  return threadRef === undefined ? [] : facts.flatMap(fact => fact.kind === 'message' && fact.messageRef !== undefined && fact.body !== undefined
-    ? [{ threadRef, messageRef: fact.messageRef, body: fact.body }]
-    : [])
-}
-
-interface ThreadRejection {
-  readonly kind: string
-  readonly threadRef?: string
-  readonly taskRef?: string
-  readonly unreadCount?: number
-  readonly directCount?: number
-  readonly revision?: number
-  readonly staleTokenKind?: 'unknown' | 'unrecognized'
-  readonly facts?: readonly RejectedFact[]
-}
-
-/** Selection, recovery guidance and the surface binding describe the same bounded result. */
-function renderRejection(value: ThreadRejection) {
-  const identity = [value.threadRef, value.taskRef].filter(part => part !== undefined).join(' · ')
-  if (value.kind !== 'unread_required' && value.kind !== 'stale_revision') {
-    return { text: [`Not committed — ${value.kind}.`, identity === '' ? 'No message was added.' : `${identity} — no message was added.`].join('\n'), messages: [] }
-  }
-  const facts = value.facts ?? []
-  const unrecognized = value.staleTokenKind === 'unrecognized'
-  const shown: RejectedFact[] = []
-  const completeFacts: RejectedFact[] = []
-  let truncated = false
-  const lines = () => {
-    const allShown = !unrecognized && !truncated && shown.length === facts.length
-      && (value.kind !== 'unread_required' || facts.length === value.unreadCount)
-    const canReconsider = allShown && value.staleTokenKind === undefined
-      && facts.every(fact => fact.kind === 'message' ? fact.messageRef !== undefined : activityFromView(fact) !== undefined)
-    const headline = value.kind === 'unread_required' ? 'Not committed — unread_required.'
-      : unrecognized ? 'Not committed — that write token was never a revision this Thread reached (stale_revision).'
-        : value.staleTokenKind === 'unknown' ? 'Not committed — the write token does not establish a known Thread baseline (stale_revision).'
-          : 'Not committed — the Thread changed after your last read (stale_revision).'
-    return [headline,
-      value.kind === 'unread_required' ? `${identity} · ${value.unreadCount ?? 0} unread, ${value.directCount ?? 0} direct` : identity,
-      ...(unrecognized || facts.length === 0 ? [] : ['', allShown
-        ? `${facts.length} pending fact(s), shown in full:`
-        : `${shown.length} of ${facts.length} pending fact(s) included; some content is truncated or omitted:`,
-      ...shown.map(fact => factLine(fact as FactView))]),
-      recoveryFor(unrecognized ? 'stale_revision_token_unrecognized' : value.kind)
-        .sentence({ threadRef: value.threadRef, taskRef: value.taskRef, completeFacts: canReconsider }),
-      ...(canReconsider && value.revision !== undefined ? [nextWriteLine(value.revision)]
-        : ['No write token is provided; the required reading is not satisfied by this result.']),
-    ]
-  }
-  if (!unrecognized) {
-    for (const fact of facts.slice(0, REJECTION_FACT_LIMIT)) {
-      const cut = fact.kind === 'message' && (fact.body?.length ?? 0) > REJECTION_BODY_MAX_CHARACTERS
-      const rendered = cut ? { ...fact, body: `${fact.body!.slice(0, REJECTION_BODY_MAX_CHARACTERS)}\n${REJECTION_BODY_TRUNCATION_MARKER}` } : fact
-      shown.push(rendered)
-      truncated ||= cut
-      if (lines().join('\n').length > REJECTION_MAX_CHARACTERS) {
-        shown.pop()
-        break
-      }
-      if (!cut && (fact.kind === 'message' || activityFromView(fact) !== undefined)) completeFacts.push(fact)
-    }
-  }
-  return { text: lines().join('\n'), messages: messageIdentities(value.threadRef, completeFacts),
-    activities: activityBindings(completeFacts) }
-}
-
-function renderMainRejection(value: { projectRef?: string; unreadCount?: number; directCount?: number; entries?: readonly MainEntryView[] }) {
-  const entries = value.entries ?? []
-  const shown: MainEntryView[] = []
-  const complete: MainEntryView[] = []
-  let truncated = false
-  const lines = () => {
-    const canReconsider = !truncated && shown.length === entries.length && entries.length === value.unreadCount
-      && entries.every(entry => entry.kind === 'message' ? entry.messageRef !== undefined && entry.body !== undefined
-        : activityFromView(entry, value.projectRef) !== undefined)
-    return ['Not committed — main_unread_required.', `${value.projectRef ?? ''} · ${value.unreadCount ?? 0} unread, ${value.directCount ?? 0} direct`,
-      ...(entries.length === 0 ? [] : ['', canReconsider ? `${shown.length} pending Main stream entries, shown in full:`
-        : `${shown.length} of ${entries.length} Main stream entries included; some content is truncated or omitted:`, ...shown.map(mainEntryLine)]),
-      recoveryFor('main_unread_required').sentence({ projectRef: value.projectRef, completeFacts: canReconsider })]
-  }
-  for (const entry of entries.slice(0, REJECTION_FACT_LIMIT)) {
-    const cut = entry.kind === 'message' && (entry.body?.length ?? 0) > REJECTION_BODY_MAX_CHARACTERS
-    shown.push(cut ? { ...entry, body: `${entry.body!.slice(0, REJECTION_BODY_MAX_CHARACTERS)}\n${REJECTION_BODY_TRUNCATION_MARKER}` } : entry)
-    truncated ||= cut
-    if (lines().join('\n').length > REJECTION_MAX_CHARACTERS) { shown.pop(); break }
-    if (!cut) complete.push(entry)
-  }
-  return { text: lines().join('\n'), messages: complete.flatMap(entry => value.projectRef === undefined || entry.kind !== 'message' || entry.messageRef === undefined || entry.body === undefined
-    ? [] : [{ projectRef: value.projectRef, messageRef: entry.messageRef, body: entry.body }]),
-    activities: complete.flatMap(entry => { const fact = activityFromView(entry, value.projectRef); return fact === undefined ? [] : [fact] }) }
-}
-
-/** One rejection's meta: its outcome kind plus the facts its rendered text carries, bound so a reconsidered write needs no second read. */
-function rejectionMeta(value: { kind: string }, rendered: { text: string; messages: Parameters<typeof teamMessageSurface>[1]; activities?: Parameters<typeof teamMessageSurface>[2] }) {
-  return { kind: value.kind, teamFacts: teamMessageSurface(rendered.text, rendered.messages, rendered.activities ?? []) }
-}
-
-const REMINDER_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  taskRef: { type: 'string', required: true }, kind: { type: 'string', required: true }, recipient: { type: 'string', required: true },
-  baselineSequence: { type: 'number', required: true }, sequence: { type: 'number', required: true }, occurredAt: { type: 'string', required: true },
-} } as const
-
 const teamInbox = defineTool({
   name: 'team_inbox',
   description: 'List your bounded Team Inbox across all joined Workspaces for triage: unread Thread summaries and one row per Project Main stream with unread for you, with counts, without message bodies and without marking anything read. Read a selected Thread with team_thread read; the inbox itself authorizes no mutation. This is your own unread queue; to see work in flight (whether or not you have unread on it), use team_task board.',
   parameters: { limit: { type: 'number' }, workspace: workspaceParam },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      totalUnreadCount: { type: 'number', required: true }, totalDirectCount: { type: 'number', required: true },
-      hasMore: { type: 'boolean', required: true },
-      items: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        workspaceId: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, projectRef: { type: 'string', required: true },
-        taskRef: { type: 'string' }, status: { type: 'string' }, accountable: { type: 'string' }, revision: { type: 'number', required: true }, unreadCount: { type: 'number', required: true }, directCount: { type: 'number', required: true },
-        taskNumber: { type: 'number' }, newestOccurredAt: { type: 'string' }, reminders: { type: 'array', items: REMINDER_SCHEMA },
-      } } },
-      main: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        workspaceId: { type: 'string', required: true }, projectRef: { type: 'string', required: true }, projectName: { type: 'string', required: true },
-        unreadCount: { type: 'number', required: true }, directCount: { type: 'number', required: true }, newestOccurredAt: { type: 'string', required: true },
-      } } },
-    } },
-        // Triage surface only: totals, both counters per row (direct renders even when zero), a bounded-list conclusion so truncation never reads as drained, and one route to the tool that acknowledges work. No subject, body, revision label, or write token: the required current read supplies the write basis.
-    render: (_args, value) => {
-      if (value.items.length === 0 && value.main.length === 0) {
-        return [{ type: 'text', text: value.totalUnreadCount > 0
-          ? `Inbox — ${value.totalUnreadCount} unread update(s) on Threads beyond this bounded page — read these Threads to drain the queue.`
-          : 'Inbox empty — no unread Team work.' }]
-      }
-      const more = value.hasMore
-        ? '; the unread queue is bounded and more Threads sit beyond this page — read these to drain it, or ask for up to 100 rows.'
-        : '.'
-      return [{ type: 'text', text: [
-        `Inbox — ${value.totalUnreadCount} unread update(s) total, ${value.totalDirectCount} direct, across ${value.main.length === 0 ? '' : `${value.main.length} Main stream(s) and `}${value.items.length} Thread(s) shown${more}`,
-        ...value.main.map(row => `${row.workspaceId} · ${row.projectRef} Main stream (${row.projectName}) · ${row.unreadCount} unread, ${row.directCount} direct · newest ${formatTeamTimestamp(row.newestOccurredAt)}`),
-        ...value.items.map(item => `${item.workspaceId} · ${item.threadRef}${item.projectRef === undefined ? '' : ` · ${item.projectRef}`}${item.taskRef === undefined ? '' : ` · ${taskStanding(item)}`} · ${item.unreadCount} unread, ${item.directCount} direct${(item.reminders?.length ?? 0) > 0 ? ` · reminder ${(item.reminders ?? []).map(reminder => reminder.kind).join(', ')}` : ''}${item.newestOccurredAt === undefined ? '' : ` · newest ${formatTeamTimestamp(item.newestOccurredAt)}`}`),
-        `Read a selected ${value.main.length === 0 ? 'Thread with team_thread read' : 'Thread or Main stream with team_thread read (threadRef or projectRef)'}. Listing changes no read state and supplies no write token.`,
-      ].join('\n') }]
-    },
-  },
+  output: teamInboxOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, OPTIONAL_ADDRESS_KEYS)
     const agent = exec.agent
@@ -468,27 +119,6 @@ const teamInbox = defineTool({
   },
 })
 
-/** What each Attention source means to the reader, in the words the result uses. */
-const CAUSE_OF_SOURCE: Record<AgentTeamAttentionSource, string> = {
-  'thread-author': 'because you started it',
-  claim: 'because you claimed its Task',
-  accountable: 'because you are accountable for its Task',
-  'project-owner': 'because you own the Project',
-  mention: 'because you were named in it',
-  self: 'because you chose to follow',
-}
-
-/**
- * The phrase for one source, or an empty string when the value is absent or is
- * not a source this build writes: a render never prints a raw enum value or the
- * word `undefined`, and a source added later cannot silently render as nothing.
- */
-function causeOf(source: string | undefined): string {
-  if (source === undefined) return ''
-  const phrase = CAUSE_OF_SOURCE[source as AgentTeamAttentionSource]
-  return phrase === undefined ? '' : `(${phrase})`
-}
-
 /** Attention (following a Thread) is a different question from reading one. `status`, `follow`, and `unfollow` take one Thread address or the Main stream address, plus the routing Workspace; sharing a parameter pocket with read would put `messageRef`, `beforeSequence`, and `limit` in front of actions that never accept them. */
 const teamAttention = defineTool({
   name: 'team_attention',
@@ -500,36 +130,7 @@ const teamAttention = defineTool({
     projectRef: { type: 'string', description: "Full branded Project ref: addresses that Project's Main stream instead of a Thread. Never with threadRef or taskRef." },
     workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      workspaceId: { type: 'string', required: true }, projectRef: { type: 'string', required: true },
-      kind: { type: 'string', required: true }, threadRef: { type: 'string' }, taskRef: { type: 'string' },
-      revision: { type: 'number' }, status: { type: 'string' }, resolution: { type: 'string' }, taskNumber: { type: 'number' }, accountable: { type: 'string' },
-      following: { type: 'boolean', required: true }, scope: { type: 'string' }, source: { type: 'string' },
-    } },
-        // Renders are the only channel a tool result reaches the model through. One outcome line, what established the Attention, and the one consequence the model cannot infer from the verb alone.
-    render: (_args, value) => {
-      const source = `Workspace: ${value.workspaceId} · Project: ${value.projectRef}`
-      const subject = value.scope === 'main' ? 'the Main stream' : `Thread ${value.threadRef}`
-      const standing = value.scope === 'main' ? '' : taskStanding(value)
-      const consequence = value.following
-        ? value.kind === 'follow'
-          ? 'Ordinary updates from there will interrupt you from now on; earlier content remains available through team_thread read or history. Mentions, replies and responsibility events already did.'
-          : 'Ordinary updates from there will interrupt you; mentions, replies and responsibility events already did.'
-        : value.kind === 'unfollow'
-          ? 'Ordinary updates will no longer interrupt you. Mentions, replies and responsibility events still will; follow again to resume.'
-          : 'Ordinary updates do not interrupt you. Mentions, replies and responsibility events still will; follow to resume them.'
-      // Why the reader follows, stated only once the standing is there to support
-      // it: a Member that never followed has no cause to name, and a row the
-      // ledger cannot attribute is reported as the reader's own choice rather
-      // than guessed at.
-      const cause = value.following === false ? '' : causeOf(value.source)
-      if (value.kind === 'follow' || value.kind === 'unfollow') {
-        return [{ type: 'text', text: `${source}\nAttention changed — ${value.following ? 'now following' : 'no longer following'} ${subject}${standing === '' ? '' : ` · ${standing}`}${cause}.\n${consequence}` }]
-      }
-      return [{ type: 'text', text: `${source}\nAttention status — ${value.following ? 'following' : 'not following'} ${subject}${standing === '' ? '' : ` · ${standing}`}${cause}.\n${consequence}` }]
-    },
-  },
+  output: teamAttentionOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, OPTIONAL_ADDRESS_KEYS)
     const agent = exec.agent
@@ -608,140 +209,7 @@ const teamThread = defineTool({
     messageRef: { type: 'string', description: "For action `message`: the full branded Message ref to read back, exactly as rendered by this tool or by an inbox notice — including the `message:` prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     beforeSequence: { type: 'number', description: 'history only: the oldest fact sequence to page before (exclusive). message rejects it; read ignores it, since a read batch is bounded by design.' }, limit: { type: 'number', description: 'history only: max older facts to return, 1–100, default 20. message rejects it; read ignores it, since a read batch is bounded by design.' }, workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      workspaceId: { type: 'string', required: true }, projectRef: { type: 'string', required: true },
-      kind: { type: 'string', required: true }, scope: { type: 'string' }, threadRef: { type: 'string' }, taskRef: { type: 'string' },
-      entries: { type: 'array', items: MAIN_ENTRY_SCHEMA }, standing: MAIN_STANDING_SCHEMA,
-      messageParts: { type: 'array', items: MESSAGE_PART_SCHEMA }, continuation: { type: 'string' },
-      message: { type: 'object', additionalProperties: false, properties: {
-        messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, sequence: { type: 'number', required: true }, occurredAt: { type: 'string' }, body: { type: 'string', required: true }, bodyOmitted: { type: 'boolean' },
-      } },
-      revision: { type: 'number' }, status: { type: 'string' }, resolution: { type: 'string' }, taskNumber: { type: 'number' }, accountable: { type: 'string' },
-      following: { type: 'boolean' }, readThroughSequence: { type: 'number' }, remainingUnreadCount: { type: 'number' }, earlierFactCount: { type: 'number' }, cursor: { type: 'number' }, hasMore: { type: 'boolean' },
-      taskCards: { type: 'array', items: TASK_CARD_SCHEMA },
-      reminders: { type: 'array', items: REMINDER_SCHEMA },
-      anchor: { type: 'object', additionalProperties: false, properties: {
-        messageRef: { type: 'string', required: true }, sender: { type: 'string', required: true }, body: { type: 'string', required: true }, sequence: { type: 'number', required: true }, occurredAt: { type: 'string' },
-        replyToMessageRef: { type: 'string' },
-        replyTo: { type: 'object', additionalProperties: false, properties: { sender: { type: 'string', required: true }, excerpt: { type: 'string', required: true } } },
-      } },
-      claims: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-        claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
-      } } },
-      facts: { type: 'array', items: FACT_SCHEMA },
-    } },
-        // Renders are the only channel a tool result reaches the model through. read renders outcome → context → orientation → active collision surface → facts → watermark, handing off the next-write token only when no unread remains. history renders deep orientation and never the collision surface or a write token.
-    render: (args, raw) => {
-      if (raw.scope === 'main') return [{ type: 'text', text: mainStreamLines(args.action, raw).join('\n') }]
-      const value = asThreadValue(raw)
-      const standing = taskStanding(value)
-      const source = `Workspace: ${value.workspaceId} · Project: ${value.projectRef}`
-      if (value.kind === 'message') {
-                // Verbatim, and the only action that is: the reader asked for this Message to answer it.
-        const message = value.message!
-        const at = message.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(message.occurredAt)}`
-        return [{ type: 'text', text: [
-          source,
-          `Message ${message.messageRef}`,
-          `${message.sequence}${at} [${message.sender}]`,
-          '',
-          message.bodyOmitted === true
-            ? `${message.messageRef} — body already in current context; omitted.`
-            : messagePartText(message.body, value.messageParts?.find(part => part.messageRef === message.messageRef)),
-          ...(value.continuation === undefined ? [] : [value.continuation]),
-        ].join('\n') }]
-      }
-      if (value.kind === 'history') {
-        const facts = value.facts as FactView[]
-        const lines = [source, `History for ${value.threadRef}${standing === '' ? '' : ` · ${standing}`}`]
-                // First page orients on the full anchor; a continuation on the shared bounded subject. An anchor already selected as a fact never repeats.
-        if (!facts.some(fact => fact.sequence === value.anchor.sequence)) {
-          if (args.beforeSequence === undefined) lines.push('', `Anchor ${value.anchor.sequence}${value.anchor.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(value.anchor.occurredAt)}`} [${value.anchor.sender}]${repliesToClause(value.anchor.replyToMessageRef, value.anchor.replyTo)}`, value.anchor.body)
-          else lines.push(`  — ${boundedSubject(value.anchor.body)}`)
-        }
-        lines.push('', 'Facts')
-        if (facts.length === 0) lines.push('No facts before this cursor.')
-        // A card belongs to the page whose sequence window holds its creation point, so paging never repeats one.
-        const windowStart = facts[0]?.sequence ?? Number.POSITIVE_INFINITY
-        const windowEnd = args.beforeSequence ?? Number.POSITIVE_INFINITY
-        lines.push(...factTimelineLines(facts, (value.taskCards ?? []).filter(card => card.sequence >= windowStart && card.sequence < windowEnd)))
-        lines.push('', `History cursor ${value.cursor}; hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — older facts exist; page again with beforeSequence set to the cursor.' : ' — no older facts remain.'}`)
-        return [{ type: 'text', text: lines.join('\n') }]
-      }
-            // kind === 'read': outcome → context → orientation → collision surface → facts → watermark → token (iff nothing unread remains).
-      const facts = value.facts as FactView[]
-      const reminders = value.reminders ?? []
-      const incomplete = (fact: FactView) => fact.kind === 'message' && value.messageParts?.some(part => part.messageRef === fact.messageRef && !part.complete)
-      const renderedFact = (fact: FactView) => factLine(fact.kind === 'message'
-        ? { ...fact, body: messagePartText(fact.body, value.messageParts?.find(part => part.messageRef === fact.messageRef)) } : fact)
-      const acknowledged = facts.filter(fact => fact.unread === true && !incomplete(fact)).length + reminders.length
-      const remaining = value.remainingUnreadCount ?? 0
-            // A read with nothing unread writes no durable operation, so the opening line claims a commit only when unread facts were acknowledged.
-      const lines = [
-        source,
-        acknowledged === 0
-          ? remaining === 0 ? `Read — no unread updates on ${value.threadRef}; nothing remains.` : `Read — no facts acknowledged; ${remaining} unread update(s) remain.`
-          : `Read committed — acknowledged ${acknowledged} unread update(s) on ${value.threadRef}; ${remaining} remain.`,
-        `${value.threadRef}${standing === '' ? '' : ` · ${standing}`} · ${value.following ? 'following' : 'not following'}`,
-        // Reading is not following: the one consequence a reader cannot infer
-        // from the verb, stated where it can act on it.
-        ...(value.following ? [] : ['Not following — ordinary updates here will not interrupt you. team_attention follow with threadRef starts them.']),
-      ]
-      // The Host includes a missing anchor as background; the subject alone is enough when it is already visible.
-      const anchorInFacts = facts.some(fact => fact.sequence === value.anchor.sequence)
-      if (!anchorInFacts) lines.push(`  — ${boundedSubject(value.anchor.body)}`)
-      const activeClaims = value.claims.filter(claim => claim.state === 'active')
-      if (activeClaims.length > 0) {
-        lines.push('', 'Active Claims')
-        for (const claim of activeClaims) lines.push(claimLine(claim))
-      }
-      if (reminders.length > 0) {
-        lines.push('', 'Acknowledged Task reminders')
-        for (const reminder of reminders) lines.push(`${reminder.kind === 'review-backlog' ? 'Review backlog' : 'Stalled Task'} · ${reminder.taskRef} · baseline ${reminder.baselineSequence} · raised ${formatTeamTimestamp(reminder.occurredAt)}`)
-      }
-      const background = facts.filter(fact => fact.unread === false)
-      if (background.length > 0) lines.push('', 'Background — not newly acknowledged', ...background.map(renderedFact),
-        'Background is bounded; use team_thread history for older facts or message with messageRef for an original reply target.')
-      const acknowledgedFacts = facts.filter(fact => fact.unread !== false && !incomplete(fact))
-      lines.push('', 'Acknowledged facts')
-      if (acknowledgedFacts.length === 0) lines.push('No new facts to acknowledge.')
-      lines.push(...acknowledgedFacts.map(renderedFact))
-      const partial = facts.filter(fact => fact.unread === true && incomplete(fact))
-      if (partial.length > 0) lines.push('', 'Incomplete Message — not acknowledged', ...partial.map(renderedFact))
-      if (value.continuation !== undefined) lines.push('', value.continuation)
-      if ((value.taskCards?.length ?? 0) > 0) lines.push('', 'Current Task cards — not Thread reading', ...value.taskCards!.map(taskCardLine))
-      lines.push('', `Read through sequence ${value.readThroughSequence}; ${remaining} unread update(s) remaining${remaining > 0 ? ` — ${recoveryFor('unread_remaining').sentence({})}` : '.'}`)
-            // The bounded read answered with the newest batch; the span before the watermark is orientation it did not supply, and rendering its count shows the returning reader the size of that span.
-      const earlier = value.earlierFactCount ?? 0
-      if (earlier > 0) lines.push(`Earlier facts: ${earlier} — read older ones with team_thread.history.`)
-      if (remaining === 0) lines.push('', nextWriteLine(value.revision))
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-    presentationMeta: (args, value): { teamFacts: ReturnType<typeof teamMessageSurface> } => {
-      const text = teamThread.output.render(args, value).flatMap(part => part.type === 'text' ? [part.text] : []).join('\n')
-      if (value.scope === 'main') {
-        const messages = value.kind === 'message' ? value.message === undefined || value.message.bodyOmitted === true ? [] : [value.message]
-          : (value.entries ?? []).filter(entry => entry.kind === 'message' && !entry.bodyOmitted)
-        return { teamFacts: teamMessageSurface(text, messages.flatMap(message => message.messageRef === undefined || message.body === undefined
-          ? [] : [{ projectRef: value.projectRef, messageRef: message.messageRef, body: message.body,
-            ...(value.messageParts?.find(part => part.messageRef === message.messageRef) === undefined ? {}
-              : { part: value.messageParts!.find(part => part.messageRef === message.messageRef)! }) }]),
-          activityBindings(value.entries ?? [], value.projectRef)) }
-      }
-      const facts = value.kind === 'message'
-        ? value.message === undefined ? [] : [{ ...value.message, kind: 'message' as const }]
-        : [...value.facts ?? []]
-      const anchorInFacts = facts.some(fact => fact.sequence === value.anchor?.sequence)
-      const fullAnchor = value.kind === 'history' && args.beforeSequence === undefined
-      if (value.kind !== 'message' && !anchorInFacts && fullAnchor && value.anchor !== undefined) {
-        facts.push({ ...value.anchor, kind: 'message' })
-      }
-      return { teamFacts: teamMessageSurface(text, messageIdentities(value.threadRef, facts.filter(fact => !('bodyOmitted' in fact && fact.bodyOmitted)))
-        .map(message => { const part = value.messageParts?.find(part => part.messageRef === message.messageRef)
-          return { ...message, ...(part === undefined ? {} : { part: { start: part.start, end: part.end } }) } }), activityBindings(facts)) }
-    },
-  },
+  output: teamThreadOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, OPTIONAL_ADDRESS_KEYS)
     const agent = exec.agent
@@ -813,62 +281,6 @@ const teamThread = defineTool({
   },
 })
 
-/** A Thread-scoped result always carries the Thread fields the shared schema leaves optional for the Main stream. */
-function asThreadValue<V extends { anchor?: unknown; claims?: unknown; facts?: unknown; revision?: number | undefined; threadRef?: string | undefined; following?: boolean | undefined }>(value: V): V & {
-  anchor: NonNullable<V['anchor']>; claims: NonNullable<V['claims']>; facts: NonNullable<V['facts']>; revision: number; threadRef: string; following: boolean
-} {
-  return value as never
-}
-
-/** The Main stream reads of `team_thread`, rendered from the Host's timeline entries. */
-function mainStreamLines(action: string, value: {
-  readonly workspaceId: string; readonly projectRef: string; readonly kind: string
-  readonly entries?: readonly MainEntryView[] | undefined; readonly cursor?: number | undefined; readonly hasMore?: boolean | undefined
-  readonly readThroughSequence?: number | undefined; readonly remainingUnreadCount?: number | undefined
-  readonly messageParts?: readonly MessagePart[] | undefined; readonly continuation?: string | undefined
-  readonly standing?: { following: boolean } | undefined
-  readonly message?: { readonly messageRef: string; readonly sender: string; readonly sequence: number; readonly occurredAt?: string | undefined; readonly body: string; readonly bodyOmitted?: boolean } | undefined
-}): string[] {
-  const source = `Workspace: ${value.workspaceId} · Project: ${value.projectRef} · Main stream`
-  // The standing names the reader's own Attention, which is the one fact this
-  // read cannot show: reading is not following, and neither changes the other.
-  const attention = value.standing === undefined ? [] : [value.standing.following
-    ? 'Attention: following — ordinary updates here will interrupt you.'
-    : 'Attention: not following — ordinary updates here will not interrupt you. team_attention follow with projectRef starts them.']
-  if (value.kind === 'message') {
-    const message = value.message!
-    const body = message.bodyOmitted === true
-      ? `${message.messageRef} — body already in current context; omitted.`
-      : messagePartText(message.body, value.messageParts?.find(part => part.messageRef === message.messageRef))
-    return [source, `Message ${message.messageRef}`, `${message.sequence}${message.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(message.occurredAt)}`} [${message.sender}]`, '', body,
-      ...(value.continuation === undefined ? [] : [value.continuation])]
-  }
-  const entries = value.entries ?? []
-  if (value.kind === 'history') {
-    return [source, `History for ${value.projectRef}`, '', 'Entries', ...(entries.length === 0 ? ['No entries before this cursor.'] : entries.map(mainEntryLine)), '',
-      `History cursor ${value.cursor}; hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — older entries exist; page again with beforeSequence set to the cursor.' : ' — no older entries remain.'}`]
-  }
-  const incomplete = (entry: MainEntryView) => value.messageParts?.some(part => part.messageRef === entry.messageRef && !part.complete)
-  const renderedEntry = (entry: MainEntryView) => mainEntryLine(entry.body === undefined ? entry
-    : { ...entry, body: messagePartText(entry.body, value.messageParts?.find(part => part.messageRef === entry.messageRef)) })
-  const acknowledged = entries.filter(entry => entry.unread && !incomplete(entry)).length
-  const remaining = value.remainingUnreadCount ?? 0
-  const background = entries.filter(entry => !entry.unread && entry.kind !== 'thread-card')
-  const facts = entries.filter(entry => entry.unread && entry.kind !== 'thread-card' && !incomplete(entry))
-  const partial = entries.filter(entry => entry.unread && incomplete(entry))
-  const cards = entries.filter(entry => entry.kind === 'thread-card')
-  return [source, ...attention,
-    acknowledged === 0 ? remaining === 0 ? `Read — no unread updates on the Main stream of ${value.projectRef}.` : `Read — no facts acknowledged; ${remaining} unread update(s) remain.`
-      : `Read committed — acknowledged ${acknowledged} unread update(s) on the Main stream of ${value.projectRef}; ${remaining} remain.`,
-    ...(background.length === 0 ? [] : ['', 'Background — not newly acknowledged', ...background.map(renderedEntry),
-      'Background is bounded; use team_thread history for older entries or message with messageRef for an original reply target.']),
-    '', 'Acknowledged facts', ...(facts.length === 0 ? ['No new Message or Activity facts to acknowledge.'] : facts.map(renderedEntry)),
-    ...(partial.length === 0 ? [] : ['', 'Incomplete Message — not acknowledged', ...partial.map(renderedEntry)]),
-    ...(value.continuation === undefined ? [] : ['', value.continuation]),
-    ...(cards.length === 0 ? [] : ['', 'Thread cards — Main entry acknowledged, not its Thread', ...cards.map(mainEntryLine)]), '',
-    `Read through sequence ${value.readThroughSequence}; ${remaining} unread update(s) remaining${remaining > 0 ? ' — read again for the next page before you post.' : '.'} Speak here with team_message post; read a Thread card's Thread with team_thread read.`]
-}
-
 async function mainStreamOutcome(
   host: AgentTeam,
   agent: Parameters<typeof workspaceOf>[1],
@@ -914,46 +326,6 @@ async function mainStreamOutcome(
     : { ...selected, readThroughSequence: read.readThroughSequence, remainingUnreadCount: read.standing.unreadCount, standing: standingView(read.standing) }
 }
 
-/** What a Message answers, as one bracketed clause: resolved context when the reader's window reaches it, otherwise the bare ref, which the reader can hand to `team_thread message` for the original text. */
-function repliesToClause(replyToMessageRef: string | undefined, replyTo: ReplyContextView | undefined): string {
-  if (replyToMessageRef === undefined) return ''
-  return replyTo === undefined
-    ? ` (replies to ${replyToMessageRef})`
-    : ` (replies to @${replyTo.sender} — "${replyTo.excerpt}")`
-}
-
-/** The one Host-read-fact → view projection, shared by a Thread read and by the facts a rejected write carries back, so the two surfaces cannot drift. */
-function readFactView(entry: {
-  readonly fact: AgentTeamThreadFact
-  readonly unread: boolean
-  readonly direct: boolean
-}, bodyOmitted = false, activityOmitted = false): FactView {
-  return entry.fact.kind === 'message'
-    ? { sequence: entry.fact.sequence, kind: 'message', messageRef: entry.fact.message.messageRef, body: entry.fact.message.body, sender: entry.fact.message.sender,
-      ...(bodyOmitted ? { bodyOmitted: true } : {}),
-      mentions: [...entry.fact.mentions],
-      ...(entry.fact.message.replyToMessageRef === undefined ? {} : { replyToMessageRef: entry.fact.message.replyToMessageRef }),
-      ...(entry.fact.replyTo === undefined ? {} : { replyTo: entry.fact.replyTo }),
-      unread: entry.unread, direct: entry.direct, occurredAt: entry.fact.occurredAt }
-    : { ...activityFactView(entry.fact.activity, { unread: entry.unread, direct: entry.direct }, entry.fact.occurredAt),
-      ...(activityOmitted ? { activityOmitted: true } : {}) }
-}
-
-/** One rendered fact line; markers are inline, never a separate ellipsis line. */
-function factLine(fact: FactView): string {
-  const at = fact.occurredAt === undefined ? '' : ` ${formatTeamTimestamp(fact.occurredAt)}`
-  return fact.kind === 'message'
-    ? `${fact.sequence}${at} [${fact.sender ?? 'unknown sender'}]${factMarkers(fact)}${repliesToClause(fact.replyToMessageRef, fact.replyTo)} ${fact.bodyOmitted ? `${fact.messageRef} — body already in current context; omitted.` : fact.body}`
-    : fact.activityOmitted === true
-      ? `${fact.sequence}${at} Activity ${fact.activityRef}${factMarkers(fact)} — complete event already in current context; omitted.`
-      : `${activityLine(fact)}${at}${factMarkers(fact)}`
-}
-
-/** One collision-surface Claim line, shared by read and history-free listing. */
-function claimLine(claim: { claimRef: string; owner: string; direction: string }): string {
-  return `${claim.claimRef} — ${claim.owner}: ${claim.direction}`
-}
-
 function threadResult(
   kind: 'read' | 'history' | 'message',
   workspaceId: string,
@@ -985,22 +357,7 @@ const teamDm = defineTool({
     body: { type: 'string', required: true, description: "Markdown body. Lead with the conclusion or state; keep it the shortest useful message for the recipient. Only the named Member receives it: @mentions in the text do not notify the Human or anyone else. Use team_message when a decision or shared work needs their attention." },
     workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      kind: { type: 'string', required: true },
-      recipientMemberId: { type: 'string', required: true }, recipientHandle: { type: 'string', required: true },
-      delivered: { type: 'boolean', required: true }, deliveryNote: { type: 'string' }, occurredAt: { type: 'string' },
-    } },
-        // Renders are the only channel a tool result reaches the model through. A DM is recorded either way, so the first line says whether it was delivered or recorded without a live session to wake.
-    render: (_args, value) => {
-      if (value.delivered === false) return [{ type: 'text', text: [
-        `Recorded, not delivered — DM to @${value.recipientHandle} (${value.recipientMemberId}).`,
-        'No automatic redelivery will occur; do not blindly send a duplicate.',
-        `Reason: ${value.deliveryNote ?? 'the recipient session could not be woken'}`,
-      ].join('\n') }]
-      return [{ type: 'text', text: `Delivered — DM to @${value.recipientHandle} (${value.recipientMemberId})${value.occurredAt === undefined ? '' : ` at ${formatTeamTimestamp(value.occurredAt)}`}.` }]
-    },
-  },
+  output: teamDmOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, OPTIONAL_ADDRESS_KEYS)
     const agent = exec.agent
@@ -1039,58 +396,7 @@ const teamMessage = markAgentTeamPreset(defineTool({
     attachments: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths to share, e.g. screenshots or generated artifacts; images render as thumbnails for recipients. The Host validates each path and copies the file into the attachment cache, and members also receive one cached path per attachment; if any path fails validation the whole send is rejected.' },
     workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      kind: { type: 'string', required: true }, action: { type: 'string' }, taskRef: { type: 'string' }, threadRef: { type: 'string' }, revision: { type: 'number' }, accountable: { type: 'string' }, sourceThreadRefs: { type: 'array', items: { type: 'string' } },
-      expectedRevision: { type: 'number' }, messageRef: { type: 'string' }, memberIds: { type: 'array', items: { type: 'string' } }, unreadCount: { type: 'number' }, directCount: { type: 'number' },
-      following: { type: 'boolean' },
-      projectRef: { type: 'string' }, entries: { type: 'array', items: MAIN_ENTRY_SCHEMA },
-      facts: { type: 'array', items: FACT_SCHEMA },
-      occurredAt: { type: 'string' }, staleTokenKind: { type: 'string', enum: ['unknown', 'unrecognized'] },
-      source: { type: 'string' },
-    } },
-    render: (_args, value) => {
-      if (value.kind === 'committed' && value.action === 'post' && value.messageRef !== undefined) {
-        return [{ type: 'text', text: [
-          'Committed — Main stream message posted.',
-          [value.messageRef, ...(value.projectRef === undefined ? [] : [value.projectRef])].join(' · '),
-          ...(value.following === false ? [`You do not follow this Main stream: later ordinary updates will not wake you; to keep participating, team_attention follow with projectRef ${value.projectRef ?? ''}`] : []),
-          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
-        ].join('\n') }]
-      }
-      if (value.kind === 'main_unread_required') {
-        return [{ type: 'text', text: renderMainRejection(value).text }]
-      }
-      if (value.kind === 'committed' && value.messageRef !== undefined && value.threadRef !== undefined && value.revision !== undefined) {
-        return [{ type: 'text', text: [
-          value.action === 'start' ? 'Committed — Thread created.' : 'Committed — reply added.',
-          [value.messageRef, value.threadRef, ...(value.taskRef === undefined ? [] : [value.taskRef])].join(' · '),
-          ...(value.accountable === undefined ? [] : [`Accountable for ${value.taskRef}: ${value.accountable}.`]),
-          ...(value.sourceThreadRefs === undefined || value.sourceThreadRefs.length === 0 ? [] : [`Derived from ${value.sourceThreadRefs.join(', ')} — its card renders there, not in the Main stream.`]),
-          // A start follows its author, so the result states the Attention it
-          // just acquired: ordinary updates from this Thread will now interrupt.
-          ...(value.action !== 'start' || value.source === undefined ? [] : [`You now follow this Thread ${causeOf(value.source)}. Ordinary updates from here will interrupt you; team_attention unfollow with threadRef stops them.`]),
-          ...(value.action === 'reply' && value.following === false ? [`You do not follow this Thread: later ordinary updates will not wake you; to keep participating, team_attention follow with threadRef ${value.threadRef}`] : []),
-          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
-          nextWriteLine(value.revision),
-        ].join('\n') }]
-      }
-      return [{ type: 'text', text: renderRejection(value).text }]
-    },
-        // Minimal durable projection for the Host's context timeline: the structured outcome identity, never render text. The effect-anchor fold reads `kind === 'committed'` + threadRef from the persisted tool/result meta; a start's Thread is born in the result.
-    presentationMeta: (_args, value): { kind: string; threadRef?: string; taskRef?: string; teamFacts?: ReturnType<typeof teamMessageSurface> } => {
-      if (value.kind === 'committed' && value.threadRef !== undefined) {
-        return { kind: value.kind, threadRef: value.threadRef, ...(value.taskRef === undefined ? {} : { taskRef: value.taskRef }) }
-      }
-      if (value.kind === 'unread_required' || value.kind === 'stale_revision') {
-        return rejectionMeta(value, renderRejection(value))
-      }
-      if (value.kind === 'main_unread_required') {
-        return rejectionMeta(value, renderMainRejection(value))
-      }
-      return { kind: value.kind }
-    },
-  },
+  output: teamMessageOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, [...OPTIONAL_ADDRESS_KEYS, ...OPTIONAL_COLLECTION_KEYS])
     const agent = exec.agent
@@ -1178,56 +484,6 @@ function messageOutcome(result: Awaited<ReturnType<AgentTeam['startThreadForAgen
   throw new Error(`Agents cannot receive a ${result.kind} message outcome`)
 }
 
-const BOARD_ITEM_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  workspaceId: { type: 'string', required: true }, projectRef: { type: 'string', required: true }, projectName: { type: 'string', required: true },
-  taskRef: { type: 'string', required: true }, taskNumber: { type: 'number', required: true }, threadRef: { type: 'string', required: true },
-  status: { type: 'string', required: true }, subject: { type: 'string', required: true }, members: { type: 'array', required: true, items: { type: 'string' } },
-  lastActivityAt: { type: 'string', required: true }, relation: { type: 'string', required: true },
-  accountable: { type: 'string', required: true }, needsAcceptance: { type: 'boolean', required: true },
-} } as const
-
-interface BoardItemView {
-  readonly workspaceId: string
-  readonly projectRef: string
-  readonly projectName: string
-  readonly taskRef: string
-  readonly taskNumber: number
-  readonly threadRef: string
-  readonly status: string
-  readonly subject: string
-  readonly members: string[]
-  readonly lastActivityAt: string
-  readonly relation: string
-  readonly accountable: string
-  readonly needsAcceptance: boolean
-}
-
-function boardItemView(item: AgentTeamTaskBoardItem): BoardItemView {
-  return { workspaceId: item.workspaceId, projectRef: item.projectRef, projectName: item.projectName, taskRef: item.task.taskRef, taskNumber: item.taskNumber,
-    threadRef: item.threadRef, status: item.task.status, subject: item.subject, members: item.liveClaimOwners.map(owner => owner.name),
-    lastActivityAt: item.lastActivityAt, relation: item.relation, accountable: item.task.accountable, needsAcceptance: item.needsAcceptance }
-}
-
-function boardLines(open: readonly BoardItemView[], finished: readonly BoardItemView[], finishedTruncated: boolean): string[] {
-  const line = (item: BoardItemView) => [`${item.taskRef} (#${item.taskNumber})`, `${item.projectName} ${item.projectRef}`, item.threadRef,
-    ...(item.members.length === 0 ? [] : [item.members.map(name => `@${name}`).join(', ')]),
-    ...(item.relation === 'none' ? [] : [`you: ${item.relation}`]),
-    `accountable ${item.accountable}`,
-    ...(item.needsAcceptance ? ['needs your acceptance'] : []),
-  ].join(' · ') + ` — ${item.subject} · last activity ${formatTeamTimestamp(item.lastActivityAt)}`
-  const column = (title: string, status: string) => {
-    const items = open.filter(item => item.status === status)
-    return [`${title} (${items.length})`, ...(items.length === 0 ? ['—'] : items.map(line))]
-  }
-  return ['Task board — current state; reading it changes no read state and supplies no write token.',
-    ...column('To do', 'todo'), ...column('In progress', 'in_progress'), ...column('In review', 'in_review'),
-    // The page is not the column: without this conclusion the reader takes the
-    // page size for the Project's whole resolved history.
-    `Recently finished (${finished.length}${finishedTruncated ? ' shown, more exist' : ''})`,
-    ...(finished.length === 0 ? ['—'] : finished.map(item => `${line(item)} · ${item.status}`)),
-    'Read a Task\'s Thread with team_thread read before you claim or reply.']
-}
-
 /** Who a Task refusal should name: the Human by their role, an Agent by its stable ref, so the reader can address a transfer. */
 function accountableLabel(host: AgentTeam, memberId: string): string {
   if (memberId === AGENT_TEAM_HUMAN_MEMBER_ID) return 'the Human'
@@ -1266,84 +522,7 @@ const teamTask = defineTool({
     target: { type: 'string', description: "transfer only: the Member who becomes accountable — any enabled member of this Task's Project, as a memberRef, @Handle, or a unique 6+ hex prefix, or 'human' to return responsibility to the Human. Following the Thread is not required." },
     workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      kind: { type: 'string', required: true }, action: { type: 'string' }, taskRef: { type: 'string' }, threadRef: { type: 'string' },
-      revision: { type: 'number' }, expectedRevision: { type: 'number' }, status: { type: 'string' }, resolution: { type: 'string' },
-      accountable: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
-      releasedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } },
-      open: { type: 'array', items: BOARD_ITEM_SCHEMA }, finished: { type: 'array', items: BOARD_ITEM_SCHEMA }, finishedTruncated: { type: 'boolean' },
-      unreadCount: { type: 'number' }, directCount: { type: 'number' }, occurredAt: { type: 'string' },
-      claim: { type: 'object', additionalProperties: false, properties: {
-        claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true },
-      } },
-      claims: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { claimRef: { type: 'string', required: true }, direction: { type: 'string', required: true }, state: { type: 'string', required: true }, owner: { type: 'string', required: true } } } },
-      facts: { type: 'array', items: FACT_SCHEMA }, staleTokenKind: { type: 'string', enum: ['unknown', 'unrecognized'] },
-      // Present when the action started the caller's own Attention, which is the
-      // one cause a result can state without asking the projection again.
-      source: { type: 'string' },
-    } },
-        // A committed mutation renders the authoritative affected Claim first; the full archive is never appended. list renders the collision surface and no write token (a current Thread read remains the mutation basis). Rejections share the outcome-first recovery form and carry the gating facts plus the current revision as the next write token.
-    render: (_args, value) => {
-      if (value.kind === 'board') return [{ type: 'text', text: boardLines(value.open ?? [], value.finished ?? [], value.finishedTruncated === true).join('\n') }]
-      if (value.kind === 'committed' && value.action === 'promote') {
-        return [{ type: 'text', text: [
-          `Committed — Thread promoted to Task ${value.taskRef} (${value.status}).`,
-          `${value.threadRef} · ${value.taskRef}${value.accountable === undefined ? '' : ` · accountable ${value.accountable}`}`,
-          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
-          nextWriteLine(value.revision!),
-        ].join('\n') }]
-      }
-      if (value.kind === 'listed') {
-        const active = (value.claims ?? []).filter(claim => claim.state === 'active')
-        return [{ type: 'text', text: [
-          `Claims for ${value.taskRef} · ${value.threadRef} · ${value.status}${value.accountable === undefined ? '' : ` · accountable ${value.accountable}`}`,
-          'Active Claims',
-          ...(active.length === 0 ? ['No active Claims.'] : active.map(claim => claimLine(claim))),
-        ].join('\n') }]
-      }
-      if (value.kind === 'committed' && value.claim !== undefined) {
-        // A new Claim follows the Thread it executes, so the result says so: the
-        // reader now holds Attention it did not ask for.
-        const follows = value.source === undefined ? [] : [`You now follow this Thread ${causeOf(value.source)}. Ordinary updates from here will interrupt you; team_attention unfollow with threadRef stops them and releases no Claim.`]
-        return [{ type: 'text', text: [
-          `Committed — Claim ${value.action === 'claim' ? 'created' : value.action === 'done' ? 'completed' : 'released'}.`,
-          `${value.claim.claimRef} · ${value.claim.state} — ${value.claim.owner}: ${value.claim.direction}`,
-          `${value.threadRef} · ${value.taskRef} · ${value.status}${value.accountable === undefined ? '' : ` · accountable ${value.accountable}`}`,
-          ...follows,
-          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
-          nextWriteLine(value.revision!),
-        ].join('\n') }]
-      }
-      if (value.kind === 'committed' && (value.action === 'accept' || value.action === 'close' || value.action === 'reopen')) {
-        return [{ type: 'text', text: [
-          `Committed — Task ${value.action === 'accept' ? 'accepted' : value.action === 'close' ? 'closed' : 'reopened'}.`,
-          `${value.threadRef} · ${value.taskRef} · ${value.status}${value.resolution === undefined ? '' : `/${value.resolution}`}${value.accountable === undefined ? '' : ` · accountable ${value.accountable}`}`,
-          ...(value.acceptedClaimRefs === undefined || value.acceptedClaimRefs.length === 0 ? [] : [`accepted claims ${value.acceptedClaimRefs.join(', ')}`]),
-          ...(value.releasedClaimRefs === undefined || value.releasedClaimRefs.length === 0 ? [] : [`released claims ${value.releasedClaimRefs.join(', ')}`]),
-          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
-          nextWriteLine(value.revision!),
-        ].join('\n') }]
-      }
-      if (value.kind === 'committed' && value.action === 'transfer') {
-        return [{ type: 'text', text: [
-          'Committed — Task transferred.',
-          `${value.threadRef} · ${value.taskRef} · ${value.status}${value.accountable === undefined ? '' : ` · accountable ${value.accountable}`}`,
-          ...(value.from === undefined || value.to === undefined ? [] : [`responsibility ${value.from} → ${value.to}; Claims stay with their owners.`]),
-          ...(value.occurredAt === undefined ? [] : [`Committed at ${formatTeamTimestamp(value.occurredAt)}`]),
-          nextWriteLine(value.revision!),
-        ].join('\n') }]
-      }
-      return [{ type: 'text', text: renderRejection(value).text }]
-    },
-    // A Claim or Task rejection can carry the same complete Thread facts; binding them lets a reconsidered write pass without a second read. Non-rejection results carry only the outcome kind.
-    presentationMeta: (_args, value): { kind: string; threadRef?: string; taskRef?: string; teamFacts?: ReturnType<typeof teamMessageSurface> } => {
-      if ((value.kind === 'unread_required' || value.kind === 'stale_revision') && value.threadRef !== undefined) {
-        return rejectionMeta(value, renderRejection(value))
-      }
-      return { kind: value.kind }
-    },
-  },
+  output: teamTaskOutput,
   async execute(rawArgs, exec) {
     // `direction` is meaningful only for `claim`; a model that fills every slot
     // sends `direction: ""` on board/list/resolution actions too. Treat that empty
@@ -1471,68 +650,7 @@ const teamView = defineTool({
     projectRef: { type: 'string', description: "Full branded Project ref exactly as returned by Team tools, including the 'project:' prefix. An unambiguous abbreviation of the first 6+ UUID hex characters also resolves." },
     limit: { type: 'number' }, cursor: { type: 'number' }, workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      projects: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        projectRef: { type: 'string', required: true }, name: { type: 'string', required: true },
-        // Present only once the ledger has Project owners (rules version 2).
-        owners: { type: 'array', items: { type: 'string' } },
-        // What each Agent owner answers for here; `unspecified` is a neutral
-        // statement about the grant, not a fault to report.
-        ownerResponsibilities: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-          handle: { type: 'string', required: true }, responsibility: { type: 'string', required: true },
-        } } },
-        role: { type: 'string' },
-        subscriptions: { type: 'object', additionalProperties: false, properties: {
-          active: { type: 'number', required: true }, paused: { type: 'number', required: true },
-        } },
-      } } },
-      workspaceId: { type: 'string', required: true },
-      workspaces: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { workspaceId: { type: 'string', required: true }, title: { type: 'string' }, default: { type: 'boolean', required: true } } } },
-      members: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        memberId: { type: 'string', required: true }, kind: { type: 'string', required: true }, handle: { type: 'string', required: true }, description: { type: 'string', required: true }, presence: { type: 'string', required: true },
-      } } },
-      threads: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-        threadRef: { type: 'string', required: true }, projectRef: { type: 'string', required: true }, revision: { type: 'number', required: true }, messageCount: { type: 'number', required: true }, subject: { type: 'string', required: true },
-        taskRef: { type: 'string' }, status: { type: 'string' }, taskNumber: { type: 'number' }, accountable: { type: 'string' }, lastActivityAt: { type: 'string' },
-      } } },
-      tasks: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: { taskRef: { type: 'string', required: true }, threadRef: { type: 'string', required: true }, projectRef: { type: 'string', required: true }, status: { type: 'string', required: true }, revision: { type: 'number' } } } },
-      cursor: { type: 'number', required: true }, hasMore: { type: 'boolean', required: true }, page: { type: 'string' },
-    } },
-        // Address book, newest Thread first: labelled sections, one bounded subject per Thread row, Task standing inline (no second Task index), and a footer naming the value a Thread cursor. Continuation pages repeat only Threads. No message count or revision label: neither changes the next legal action, which is reading, never writing from a directory snapshot.
-    render: (_args, value) => {
-      const continuation = value.page === 'threads'
-      const lines: string[] = [`Workspace: ${value.workspaceId}`]
-      if (!continuation) {
-        lines.push('Team directory', '', 'Projects — Workspace directory')
-        if (value.projects.length === 0) lines.push('No active Projects in this Workspace.')
-        else lines.push(...value.projects.map(project => {
-          const counts = project.subscriptions === undefined ? '' : project.subscriptions.active === 0 && project.subscriptions.paused === 0
-            ? ' · subscriptions 0'
-            : ` · subscriptions ${project.subscriptions.active === 0 ? '' : `${project.subscriptions.active} active`}${project.subscriptions.active > 0 && project.subscriptions.paused > 0 ? ', ' : ''}${project.subscriptions.paused === 0 ? '' : `${project.subscriptions.paused} paused`}`
-          const responsibilities = project.ownerResponsibilities === undefined || project.ownerResponsibilities.length === 0 ? ''
-            : ` · responsibility ${project.ownerResponsibilities.map(owner => `@${owner.handle}: ${owner.responsibility}`).join('; ')}`
-          return `${project.projectRef} · ${project.name}${project.owners === undefined ? '' : ` · owners ${project.owners.map(handle => `@${handle}`).join(', ')} · you: ${project.role}`}${responsibilities}${counts}`
-        }))
-        lines.push('')
-      }
-      lines.push('Threads — this Workspace')
-      if (value.threads.length === 0) lines.push('No top-level Threads in this Workspace at this cursor.')
-      else lines.push(...value.threads.map(thread => `${thread.threadRef} · ${thread.projectRef}${thread.taskRef === undefined ? ' · taskless' : ` · ${taskStanding(thread)}`} — ${thread.subject}${thread.lastActivityAt === undefined ? '' : ` · last activity ${formatTeamTimestamp(thread.lastActivityAt)}`}`))
-      lines.push(`Thread cursor ${value.cursor}; hasMore=${value.hasMore ? 'true' : 'false'}${value.hasMore ? ' — older Thread anchors exist; page again with this cursor.' : ' — no older Threads remain.'}`)
-      if (!continuation && value.workspaces.length > 1) {
-        lines.push('', 'Workspaces — you participate in')
-        lines.push(...value.workspaces.map(workspace => `${workspace.workspaceId}${workspace.title === undefined ? '' : ` · ${workspace.title}`}${workspace.default ? ' · default — your Session and cwd live here' : ' — address it with the workspace argument; file work needs absolute paths'}`))
-      }
-      if (!continuation) {
-        lines.push('', 'Members — current')
-        if (value.members.length === 0) lines.push('No visible Members.')
-        else lines.push(...value.members.map(m => `${m.memberId} · @${m.handle} (${m.kind}, ${m.presence})${m.description === '' ? '' : ` — ${m.description}`}`))
-        lines.push('', 'Subscription details: team_subscription list. Work in flight: team_task board.')
-      }
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: teamViewOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, OPTIONAL_ADDRESS_KEYS)
     const agent = exec.agent
@@ -1611,173 +729,6 @@ function reminderScheduleOf(args: { readonly scheduleKind?: string | undefined; 
   throw new Error(`team_reminder create needs scheduleKind as 'once', 'every' or 'cron' — ${recoveryFor('reminder_schedule_incomplete').sentence({})}`)
 }
 
-/** One schedule as the result renders it: the stored form, with cron naming the zone it is read in. */
-function reminderScheduleText(schedule: AgentTeamReminderSchedule): string {
-  if (schedule.kind === 'once') return `once at ${formatTeamTimestamp(schedule.at)}`
-  if (schedule.kind === 'every') return `every ${schedule.minutes} minutes`
-  return `cron '${schedule.expression}' read in UTC+8`
-}
-
-/** One Project's board summary as the overview renders it; the full board stays a `team_task board` read. */
-function managerBoardText(board: { readonly open: number; readonly inReview: number }): string {
-  const parts: string[] = []
-  if (board.open > 0) parts.push(`${board.open} open`)
-  if (board.inReview > 0) parts.push(`${board.inReview} awaiting acceptance`)
-  return parts.length === 0 ? 'board clear' : parts.join(', ')
-}
-
-/**
- * One ownership grant's responsibility as the overview renders it. A grant that
- * recorded none reads `unspecified` — the same word `team_view` and the Project
- * dialog use — because the render is the only channel that reaches the model,
- * so an absent field that prints nothing would leave the promise in the
- * description unfulfillable. It is a fact about the grant, never a defect.
- */
-function managerResponsibilityText(responsibility: string | undefined): string {
-  return responsibility === undefined ? ' (unspecified)' : ` (${responsibility})`
-}
-
-/** One Member's runtime standing as the overview renders it: the diagnostic is the only part a reader acts on. */
-function managerStandingText(member: { readonly availability: string; readonly presence: string; readonly diagnostic?: { readonly class: string; readonly detail: string } }): string {
-  const base = `${member.availability}/${member.presence}`
-  return member.diagnostic === undefined ? base : `${base} · ${member.diagnostic.class}: ${member.diagnostic.detail}`
-}
-
-/**
- * One capability warning in the model's words. The runtime drops a name it does
- * not know instead of failing the write, so the warning is the only fact that
- * tells the manager its stored list is narrower than it reads — and the names
- * the Member can actually hold are the only way to correct it, because no
- * manager tool enumerates them. Bounded here: the digest is a whole surface.
- */
-function managerCapabilityWarningText(warning: { readonly name: string; readonly knownNames?: readonly string[] | undefined }): string {
-  const known = warning.knownNames ?? []
-  const digest = known.length === 0 ? '' : ` — names it can hold: ${known.slice(0, 24).join(', ')}${known.length > 24 ? ', …' : ''}`
-  return `'${warning.name}' is not a name this Member can hold, so the runtime ignores it${digest}`
-}
-
-/**
- * One Member's capability standing as a row renders it: a pending state means
- * the live surface is behind the stored configuration, and a warning means the
- * stored list is ahead of what the Member can actually hold. Both are silent
- * divergences the manager would otherwise read as a clean apply.
- */
-function managerCapabilityParts(member: {
-  readonly capabilityState: string
-  readonly capabilityWarnings?: readonly { readonly name: string; readonly knownNames?: readonly string[] | undefined }[] | undefined
-}): string[] {
-  const parts: string[] = []
-  if (member.capabilityState !== 'applied') parts.push(`capabilities ${member.capabilityState}`)
-  for (const warning of member.capabilityWarnings ?? []) parts.push(`capability warning: ${managerCapabilityWarningText(warning)}`)
-  return parts
-}
-
-/**
- * The manager overview's structured answer. A Project's `state` is kept as a
- * fact rather than pruned: every entry the Host emits is already active, since
- * an archived Project is invisible to any projection.
- */
-const MANAGER_OVERVIEW_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  workspaces: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-    workspaceId: { type: 'string', required: true }, title: { type: 'string' }, path: { type: 'string' },
-    projectCount: { type: 'number', required: true }, memberCount: { type: 'number', required: true },
-  } } },
-  projects: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-    workspaceId: { type: 'string', required: true }, projectRef: { type: 'string', required: true },
-    name: { type: 'string', required: true }, description: { type: 'string', required: true }, state: { type: 'string', required: true },
-    owners: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-      memberRef: { type: 'string', required: true }, handle: { type: 'string', required: true }, responsibility: { type: 'string' },
-    } } },
-    subscriptions: { type: 'object', additionalProperties: false, required: true, properties: {
-      active: { type: 'number', required: true }, paused: { type: 'number', required: true },
-    } },
-    board: { type: 'object', additionalProperties: false, required: true, properties: {
-      open: { type: 'number', required: true }, inReview: { type: 'number', required: true },
-    } },
-  } } },
-  members: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-    memberRef: { type: 'string', required: true }, handle: { type: 'string', required: true },
-    description: { type: 'string', required: true },
-    workspaceIds: { type: 'array', required: true, items: { type: 'string' } },
-    availability: { type: 'string', required: true }, presence: { type: 'string', required: true },
-    diagnostic: { type: 'object', additionalProperties: false, properties: {
-      class: { type: 'string', required: true }, detail: { type: 'string', required: true },
-      location: { type: 'object', additionalProperties: false, properties: { kind: { type: 'string', required: true }, path: { type: 'string', required: true } } },
-      sessionId: { type: 'string' }, source: { type: 'string' }, occurredAt: { type: 'string' },
-    } },
-    model: { type: 'object', additionalProperties: false, properties: {
-      provider: { type: 'string', required: true }, model: { type: 'string', required: true }, reasoningEffort: { type: 'string' },
-    } },
-    capabilityState: { type: 'string', required: true },
-    capabilityWarnings: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-      name: { type: 'string', required: true }, knownNames: { type: 'array', items: { type: 'string' } },
-    } } },
-    owns: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-      projectRef: { type: 'string', required: true }, name: { type: 'string', required: true },
-      description: { type: 'string', required: true }, state: { type: 'string', required: true },
-      responsibility: { type: 'string' },
-    } } },
-  } } },
-  switches: { type: 'object', additionalProperties: false, required: true, properties: {
-    worker: { type: 'boolean', required: true },
-  } },
-  truncated: { type: 'object', additionalProperties: false, required: true, properties: {
-    workspaces: { type: 'boolean', required: true }, projects: { type: 'boolean', required: true }, members: { type: 'boolean', required: true },
-  } },
-  member: { type: 'object', additionalProperties: false, properties: {
-    memberRef: { type: 'string', required: true }, handle: { type: 'string', required: true },
-    description: { type: 'string', required: true },
-    privateMemoryPath: { type: 'string', required: true },
-    owns: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-      projectRef: { type: 'string', required: true }, name: { type: 'string', required: true },
-      description: { type: 'string', required: true }, state: { type: 'string', required: true },
-      responsibility: { type: 'string' },
-    } } },
-    sessionEvidence: { type: 'object', additionalProperties: false, required: true, properties: {
-      sessionId: { type: 'string', required: true },
-      state: { type: 'string', required: true, enum: ['stored', 'pending', 'missing', 'unreadable'] },
-      location: { type: 'object', additionalProperties: false, properties: {
-        kind: { type: 'string', required: true }, path: { type: 'string', required: true },
-      } },
-      reader: { type: 'object', additionalProperties: false, required: true, properties: {
-        script: { type: 'string', required: true }, anchor: { type: 'string' },
-      } },
-      failure: { type: 'object', additionalProperties: false, properties: {
-        kind: { type: 'string', required: true }, detail: { type: 'string', required: true },
-        location: { type: 'object', additionalProperties: false, properties: {
-          kind: { type: 'string', required: true }, path: { type: 'string', required: true },
-        } },
-      } },
-    } },
-  } },
-} } as const
-
-/** The Session locator the member detail renders; mirrors the schema. */
-interface ManagerSessionLocatorView {
-  readonly sessionId: string
-  readonly state: 'stored' | 'pending' | 'missing' | 'unreadable'
-  readonly location?: { readonly kind: string; readonly path: string }
-  readonly reader: { readonly script: string; readonly anchor?: string }
-  readonly failure?: { readonly kind: string; readonly detail: string; readonly location?: { readonly kind: string; readonly path: string } }
-}
-
-/**
- * The Session locator lines a memberRef read adds. The locator is where the
- * evidence is, not the evidence: the manager runs the shipped reader for a
- * bounded index and window, and never opens the log path by hand.
- */
-function managerSessionLocatorLines(locator: ManagerSessionLocatorView): string[] {
-  const lines = [`Session evidence: session ${locator.sessionId} · ${locator.state}`]
-  if (locator.location !== undefined) lines.push(`Stored log: ${locator.location.kind} · ${locator.location.path} (backend-resolved provenance; never open it directly)`)
-  if (locator.state === 'missing') lines.push('No durable log yet: the Session may be live and not flushed, so this is not evidence that the Member did no work.')
-  if (locator.state === 'pending') lines.push('The Session exists but has no materialized log yet.')
-  if (locator.failure !== undefined) {
-    lines.push(`Unreadable: ${locator.failure.kind} — ${locator.failure.detail}${locator.failure.location === undefined ? '' : ` (${locator.failure.location.kind} · ${locator.failure.location.path})`}`)
-  }
-  lines.push(`Reader: node ${locator.reader.script}${locator.reader.anchor === undefined ? '' : ` --anchor ${locator.reader.anchor}`} — load the manager-session-evidence skill for the bounded index and window commands.`)
-  return lines
-}
-
 /**
  * The Team manager's read of the whole Team. It is not `team_view` for the
  * manager: the manager holds no Member identity, so participation, Project
@@ -1795,53 +746,7 @@ const teamOverview = defineTool({
     memberRef: { type: 'string', description: "Full branded Member ref exactly as returned by Team tools, including the 'member:' prefix. Reading one adds its full standing, its private directory path, its owned Projects, and the locator for its current Session." },
     limit: { type: 'number', description: 'Maximum entries per collection — Workspaces, Projects and Members are each bounded separately — as an integer from 1 to 100; the default is 50. A collection the bound cuts is reported in `truncated`, so raise this or narrow the scope instead of assuming the Team is that small.' },
   },
-  output: { schema: MANAGER_OVERVIEW_SCHEMA,
-    render: (_args, value) => {
-      const lines: string[] = ['Team overview — every Workspace in this installation']
-      lines.push('', 'Workspaces')
-      if (value.workspaces.length === 0) lines.push('No Workspaces in the Host directory.')
-      else lines.push(...value.workspaces.map(workspace => `${workspace.workspaceId}${workspace.title === undefined ? '' : ` · ${workspace.title}`} · ${workspace.path ?? 'no checkout path'} · ${workspace.projectCount} Project(s), ${workspace.memberCount} Member(s)`))
-      lines.push('', 'Projects')
-      if (value.projects.length === 0) lines.push('No Projects.')
-      else lines.push(...value.projects.map(project => {
-        const owners = project.owners.length === 0 ? 'owners: the Human only'
-          : `owners ${project.owners.map(owner => `@${owner.handle}${managerResponsibilityText(owner.responsibility)}`).join(', ')}`
-        const subscriptions = project.subscriptions.active === 0 && project.subscriptions.paused === 0
-          ? ' · subscriptions 0'
-          : ` · subscriptions ${project.subscriptions.active === 0 ? '' : `${project.subscriptions.active} active`}${project.subscriptions.active > 0 && project.subscriptions.paused > 0 ? ', ' : ''}${project.subscriptions.paused === 0 ? '' : `${project.subscriptions.paused} paused`}`
-        return `${project.projectRef} · ${project.name}${project.description === '' ? '' : ` — ${boundedSubject(project.description)}`} · ${owners} · ${managerBoardText(project.board)}${subscriptions}`
-      }))
-      lines.push('', 'Members')
-      if (value.members.length === 0) lines.push('No Members.')
-      else lines.push(...value.members.map(member => {
-        // The standing is what the manager wrote when it created or edited the
-        // Member, so it is the one fact that lets the manager check its own
-        // design instead of guessing what each Member is for.
-        const standing = member.description === '' ? '' : ` — ${boundedSubject(member.description)}`
-        const capability = managerCapabilityParts(member)
-        // The route is a design decision the manager made or inherited, so it
-        // reads back beside the runtime state instead of only in the editor. It
-        // is the stored selection: a failed live apply leaves the running route
-        // behind it, which is why the row names it as configured.
-        const model = member.model === undefined
-          ? 'configured model: the deployment default'
-          : `configured model: ${member.model.provider}/${member.model.model}${member.model.reasoningEffort === undefined ? '' : ` · effort ${member.model.reasoningEffort}`}`
-        return `${member.memberRef} · @${member.handle}${standing} · ${managerStandingText(member)} · ${model}${capability.length === 0 ? '' : ` · ${capability.join(' · ')}`} · Workspaces ${member.workspaceIds.join(', ') || 'none'}${member.owns.length === 0 ? '' : ` · owns ${member.owns.map(owned => `${owned.projectRef}${managerResponsibilityText(owned.responsibility)}`).join(', ')}`}`
-      }))
-      lines.push('', `Switches — Worker delegation ${value.switches.worker ? 'on' : 'off'}`)
-      const cut = [value.truncated.workspaces ? 'Workspaces' : '', value.truncated.projects ? 'Projects' : '', value.truncated.members ? 'Members' : ''].filter(part => part !== '')
-      if (cut.length > 0) lines.push(`Truncated: ${cut.join(', ')} — narrow the scope or raise limit; nothing was dropped silently.`)
-      if (value.member !== undefined) {
-        lines.push('', `Member detail — ${value.member.memberRef} · @${value.member.handle}`,
-          `Standing: ${value.member.description === '' ? '(none recorded)' : value.member.description}`,
-          `Private directory: ${value.member.privateMemoryPath} — its path only; contents, credentials and Session bodies are not read.`,
-          value.member.owns.length === 0 ? 'Owns no Project.' : `Owns ${value.member.owns.map(owned => `${owned.projectRef}${managerResponsibilityText(owned.responsibility)}`).join(', ')}.`,
-          ...managerSessionLocatorLines(value.member.sessionEvidence))
-      }
-      lines.push('', 'Creating a Member, a Project, or an owner grant rides member_create, project_create and project_owner; Thread and Task detail stays team_thread read and team_task board.')
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: teamOverviewOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, ['workspaceId', 'projectRef', 'memberRef', 'limit'])
     const agent = exec.agent
@@ -1926,28 +831,6 @@ function managerSessionEvidence(locator: AgentTeamManagerSessionEvidenceLocator)
   }
 }
 
-const MANAGER_MODELS_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  default: { type: 'object', additionalProperties: false, required: true, properties: {
-    provider: { type: 'string', required: true }, model: { type: 'string', required: true }, reasoningEffort: { type: 'string' },
-  } },
-  routableProviders: { type: 'array', required: true, items: { type: 'string' } },
-  groups: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-    id: { type: 'string', required: true }, name: { type: 'string', required: true },
-    models: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-      id: { type: 'string', required: true }, name: { type: 'string', required: true }, description: { type: 'string' },
-      reasoning: { type: 'object', additionalProperties: false, properties: {
-        efforts: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-          id: { type: 'string', required: true }, name: { type: 'string', required: true },
-        } } },
-      } },
-    } } },
-  } } },
-  failures: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-    id: { type: 'string', required: true }, name: { type: 'string', required: true }, message: { type: 'string', required: true },
-  } } },
-  memberPresets: { type: 'array', required: true, items: { type: 'string' } },
-} } as const
-
 /**
  * The model routes a Member may run. This reads the Session controller's own
  * catalog rather than restating it, so the manager can never offer a route the
@@ -1958,24 +841,7 @@ const teamModels = defineTool({
   name: 'team_models',
   description: 'List the model routes a Team Member may run: every provider group with its models, each model\'s own description and reasoning efforts, the deployment default, and the providers whose catalog lookup failed. This is the same catalog the Web member editor offers, so a route named here is selectable there. A failed provider is reported in `failures` and is never read as an empty catalog. `memberPresets` names the one preset a Member may compose; the manager\'s own preset is deliberately not member-selectable and never appears here.',
   parameters: {},
-  output: { schema: MANAGER_MODELS_SCHEMA,
-    render: (_args, value) => {
-      const lines: string[] = ['Model catalog — what a Member may run',
-        `Default: ${value.default.provider}/${value.default.model}${value.default.reasoningEffort === undefined ? '' : ` · effort ${value.default.reasoningEffort}`}`]
-      if (value.groups.length === 0 && value.failures.length === 0) lines.push('', 'No provider returned a model.')
-      for (const group of value.groups) {
-        lines.push('', `${group.name} (${group.id})`)
-        if (group.models.length === 0) lines.push('  no model available')
-        else lines.push(...group.models.map(model => `  ${model.id} · ${model.name}${model.description === undefined || model.description === '' ? '' : ` — ${boundedSubject(model.description)}`}${model.reasoning?.efforts === undefined || model.reasoning.efforts.length === 0 ? '' : ` · efforts ${model.reasoning.efforts.map(effort => effort.id).join(', ')}`}`))
-      }
-      if (value.failures.length > 0) {
-        lines.push('', 'Failures — providers whose catalog could not be read; a failure, never an empty list:')
-        lines.push(...value.failures.map(failure => `  ${failure.id} · ${failure.name} — ${failure.message}`))
-      }
-      lines.push('', `Member presets: ${value.memberPresets.join(', ') || 'none'}`)
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: teamModelsOutput,
   async execute(_rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('team_models requires an Agent session')
@@ -2001,24 +867,6 @@ const teamModels = defineTool({
     }
   },
 })
-
-/** One committed operation's receipt, the durable handle a later read or replay addresses. */
-const MANAGER_RECEIPT_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  operationId: { type: 'string', required: true }, requestId: { type: 'string', required: true },
-  sequence: { type: 'number', required: true }, occurredAt: { type: 'string', required: true },
-} } as const
-
-/** The live standing a committed Member reads after its write: a failed activation is a committed fact with a diagnostic. */
-const MANAGER_MEMBER_STATUS_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  availability: { type: 'string', required: true }, presence: { type: 'string', required: true },
-  capabilityState: { type: 'string', required: true },
-  diagnostic: { type: 'object', additionalProperties: false, properties: {
-    class: { type: 'string', required: true }, detail: { type: 'string', required: true },
-  } },
-  capabilityWarnings: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-    name: { type: 'string', required: true }, knownNames: { type: 'array', items: { type: 'string' } },
-  } } },
-} } as const
 
 /**
  * One Member's live standing as every manager write answers it. The projection
@@ -2047,14 +895,6 @@ function managerStatusView(status: {
   }
 }
 
-const MEMBER_CREATE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
-  memberRef: { type: 'string', required: true },
-  workspaceIds: { type: 'array', required: true, items: { type: 'string' } },
-  status: { ...MANAGER_MEMBER_STATUS_SCHEMA, required: true },
-} } as const
-
 /**
  * Create one Member as the manager. The write rides the Host's own addition
  * path — the same queue, activation and receipt the Web Client uses — so the
@@ -2081,23 +921,7 @@ const memberCreate = defineTool({
     }, description: 'Optional durable capability intent; absent means the full standard surface. Unknown names drop with a warning rather than failing the write.' },
     requestId: { type: 'string', description: 'Your own idempotency key for this write. Omit it and the Host derives one per call — but then a lost answer cannot be retried by id, so read back with team_overview instead.' },
   },
-  output: { schema: MEMBER_CREATE_SCHEMA,
-    render: (_args, value) => {
-      const lines = [`Member created — ${value.memberRef}`, `Workspaces ${value.workspaceIds.join(', ') || 'none'} · receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`]
-      const diagnostic = value.status.diagnostic
-      if (diagnostic === undefined) {
-        lines.push(`Availability ${value.status.availability} · presence ${value.status.presence} · capabilities ${value.status.capabilityState}`)
-      } else {
-        lines.push(`Committed, but the Member is not live: ${diagnostic.class} — ${diagnostic.detail}`,
-          'The write stands; continue from this receipt and ref instead of creating it again.')
-      }
-      // A name the stored capability list could not hold is dropped rather than
-      // refused, so the warning is the only fact that keeps "created as asked"
-      // from being a false reading.
-      for (const warning of value.status.capabilityWarnings ?? []) lines.push(`Capability warning: ${managerCapabilityWarningText(warning)}`)
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: memberCreateOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('member_create requires an Agent session')
@@ -2122,12 +946,6 @@ const memberCreate = defineTool({
   },
 })
 
-const PROJECT_CREATE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
-  projectRef: { type: 'string', required: true },
-} } as const
-
 /**
  * Record one Project's shared goal for the manager. Creation brings no Members
  * in — Project membership gates nothing, and ownership is granted separately
@@ -2142,14 +960,7 @@ const projectCreate = defineTool({
     description: { type: 'string', required: true, description: "The Project's shared goal — the continuing result its owners answer for. Required here; an empty goal is refused." },
     requestId: { type: 'string', description: 'Your own idempotency key for this write, with the same replay rule as member_create.' },
   },
-  output: { schema: PROJECT_CREATE_SCHEMA,
-    render: (_args, value) => [
-      { type: 'text', text: [
-        `Project created — ${value.projectRef}`,
-        `receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`,
-      ].join('\n') },
-    ],
-  },
+  output: projectCreateOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('project_create requires an Agent session')
@@ -2169,19 +980,6 @@ const projectCreate = defineTool({
   },
 })
 
-const PROJECT_OWNER_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, action: { type: 'string', required: true }, outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
-  projectRef: { type: 'string', required: true },
-  memberRef: { type: 'string', required: true },
-  responsibility: { type: 'string' },
-} } as const
-
-/** What one ownership change answered, in the model's own words. */
-function projectOwnerHead(action: string): string {
-  return action === 'add' ? 'Owner granted' : action === 'update' ? 'Responsibility updated' : 'Owner withdrawn'
-}
-
 /**
  * Grant, re-describe, or withdraw one Agent Member's ownership of one Project.
  * Eligibility is the ledger's own rule and the grant itself is the Member's
@@ -2200,18 +998,7 @@ const projectOwner = defineTool({
     clearResponsibility: { type: 'boolean', description: "update only: record that this owner's responsibility is unspecified, exactly as the Web entry does when it is left empty. Refused together with a non-empty responsibility, and refused on add or remove." },
     requestId: { type: 'string', description: 'Your own idempotency key for this write, with the same replay rule as member_create.' },
   },
-  output: { schema: PROJECT_OWNER_SCHEMA,
-    render: (_args, value) => {
-      const lines = [`${projectOwnerHead(value.action)} — ${value.memberRef} ${value.action === 'remove' ? 'no longer owns' : 'owns'} ${value.projectRef}`]
-      if (value.responsibility !== undefined) {
-        lines.push(`Responsibility: ${value.responsibility === '' ? 'unspecified' : value.responsibility}`)
-      }
-      if (value.action === 'add') lines.push('The grant itself is this Member\'s Project participation')
-      if (value.action === 'remove') lines.push('A Member that still participates in this Project in another way keeps its Task responsibility')
-      lines.push(`Receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`)
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: projectOwnerOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('project_owner requires an Agent session')
@@ -2252,14 +1039,6 @@ const projectOwner = defineTool({
   },
 })
 
-const PROJECT_UPDATE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, action: { type: 'string', required: true }, outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
-  projectRef: { type: 'string', required: true },
-  name: { type: 'string', required: true }, description: { type: 'string', required: true }, state: { type: 'string', required: true },
-  releasedClaims: { type: 'number' }, subscriptionsCleared: { type: 'number' }, cleanupWarning: { type: 'string' },
-} } as const
-
 /**
  * Edit one Project's display facts or archive it. The update is a patch: a
  * field the call leaves out keeps the value stored when the ledger's serialized
@@ -2277,28 +1056,7 @@ const projectUpdate = defineTool({
     description: { type: 'string', description: "update only: the shared goal, which may be an explicit empty string. Omit to keep the stored one; refused on archive." },
     requestId: { type: 'string', description: 'Your own idempotency key for this write, with the same replay rule as member_create.' },
   },
-  output: { schema: PROJECT_UPDATE_SCHEMA,
-    render: (_args, value) => {
-      if (value.action === 'update') {
-        return [{ type: 'text', text: [
-          `Project updated — ${value.projectRef}`,
-          `Name: ${value.name}`,
-          `Shared goal: ${value.description === '' ? '(none recorded)' : value.description}`,
-          `Receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`,
-        ].join('\n') }]
-      }
-      const lines = [
-        `Project archived — ${value.projectRef} (${value.name})`,
-        `${value.releasedClaims ?? 0} active Claim(s) released · ${value.subscriptionsCleared ?? 0} subscription(s) stopped and cleared`,
-        'History is kept and the Project is hidden from every Team surface; nothing was deleted.',
-        `Receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`,
-      ]
-      if (value.cleanupWarning !== undefined) {
-        lines.push(`Cleanup warning: the archival is durable, but clearing subscription state failed — ${value.cleanupWarning}`)
-      }
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: projectUpdateOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('project_update requires an Agent session')
@@ -2332,14 +1090,6 @@ const projectUpdate = defineTool({
   },
 })
 
-const MEMBER_UPDATE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
-  memberRef: { type: 'string', required: true },
-  effect: { type: 'string', required: true },
-  status: { ...MANAGER_MEMBER_STATUS_SCHEMA, required: true },
-} } as const
-
 /**
  * Edit one Member's mutable facts as the manager. The write is a patch: every
  * field the call leaves out keeps the value stored when the ledger's serialized
@@ -2365,28 +1115,7 @@ const memberUpdate = defineTool({
     clearCapabilities: { type: 'boolean', description: 'Explicitly restore the full standard surface by clearing the stored capability override. Refused together with capabilities; omit (or false) to keep the override.' },
     requestId: { type: 'string', description: 'Your own idempotency key for this write. Omit it and the Host derives one per call — but then a lost answer cannot be retried by id, so read back with team_overview instead.' },
   },
-  output: { schema: MEMBER_UPDATE_SCHEMA,
-    render: (_args, value) => {
-      const lines = [`Member updated — ${value.memberRef} · receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`]
-      const diagnostic = value.status.diagnostic
-      // The literal effect token is part of the contract the description names,
-      // and the render is the only channel a model reads it through.
-      const effect = `Runtime effect: ${value.effect} — ${memberEffectText(value.effect)}.`
-      if (value.effect === 'failed:capability-apply') {
-        lines.push(`Saved, but the capability restriction could not be applied: ${diagnostic?.detail ?? 'the live runtime refused it'}`,
-          'The stored configuration stands; the next activation retries it.', effect)
-      } else if (value.effect === 'failed:model-apply') {
-        lines.push(`Saved, but the model route could not be applied: ${diagnostic?.detail ?? 'the live runtime refused it'}`,
-          'The stored route stands; replaying this request retries it, and the next activation applies it.', effect)
-      } else if (diagnostic !== undefined) {
-        lines.push(`Committed, but the Member is not live: ${diagnostic.class} — ${diagnostic.detail}`, effect)
-      } else {
-        lines.push(`Availability ${value.status.availability} · presence ${value.status.presence} · capabilities ${value.status.capabilityState}`, effect)
-      }
-      for (const warning of value.status.capabilityWarnings ?? []) lines.push(`Capability warning: ${managerCapabilityWarningText(warning)}`)
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: memberUpdateOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('member_update requires an Agent session')
@@ -2413,28 +1142,6 @@ const memberUpdate = defineTool({
   },
 })
 
-/** One runtime effect in the model's own words; the enum stays the Host's contract. */
-function memberEffectText(effect: string): string {
-  switch (effect) {
-    case 'applied': return 'the live runtime picked up the new configuration'
-    case 'already-applied': return 'no runtime change was needed'
-    case 'deferred:no-live-handle': return 'stored; it takes effect at the next activation'
-    case 'deferred:generation-changed': return 'stored; the Member changed generation before it could apply'
-    case 'failed:model-apply': return 'stored, but the live model route apply failed'
-    case 'failed:capability-apply': return 'stored, but the live capability apply failed'
-    default: return effect
-  }
-}
-
-const MEMBER_STATE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, action: { type: 'string', required: true },
-  outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA },
-  memberRef: { type: 'string', required: true },
-  status: { ...MANAGER_MEMBER_STATUS_SCHEMA, required: true },
-  releasedClaims: { type: 'number' }, removedAttention: { type: 'number' },
-} } as const
-
 /**
  * Move one Member through its lifecycle as the manager. The three durable
  * actions ride the Host's own ledger operations; `recover` is the runtime
@@ -2449,33 +1156,7 @@ const memberState = defineTool({
     workspaceId: { type: 'string', description: "recover only: the Workspace id the Member must participate in, exactly as team_overview listed it. Refused on the other actions, which address the Member alone." },
     requestId: { type: 'string', description: 'Your own idempotency key for a durable action, with the same replay rule as member_create. Ignored by recover, which writes no ledger record.' },
   },
-  output: { schema: MEMBER_STATE_SCHEMA,
-    render: (_args, value) => {
-      const head = value.action === 'suspend' ? `Member suspended — ${value.memberRef}`
-        : value.action === 'resume' ? `Member resumed — ${value.memberRef}`
-        : value.action === 'archive' ? `Member archived — ${value.memberRef}`
-        : `Member recovery — ${value.memberRef}`
-      const lines = [head]
-      if (value.action === 'recover') {
-        lines.push('Runtime-only: no ledger record was written.')
-        const diagnostic = value.status.diagnostic
-        lines.push(diagnostic === undefined
-          ? `Availability ${value.status.availability} · presence ${value.status.presence}`
-          : `Still not live: ${diagnostic.class} — ${diagnostic.detail}`)
-        return [{ type: 'text', text: lines.join('\n') }]
-      }
-      lines.push(`Receipt ${value.receipt!.operationId} (sequence ${value.receipt!.sequence}) · availability ${value.status.availability} · presence ${value.status.presence}`)
-      if (value.action === 'archive') {
-        lines.push(`${value.releasedClaims ?? 0} active Claim(s) released · ${value.removedAttention ?? 0} Attention row(s) cleared`,
-          'Private memory and the Session log stay on disk; nothing was deleted.')
-      }
-      if (value.status.diagnostic !== undefined) {
-        lines.push(`Diagnostic: ${value.status.diagnostic.class} — ${value.status.diagnostic.detail}`)
-      }
-      for (const warning of value.status.capabilityWarnings ?? []) lines.push(`Capability warning: ${managerCapabilityWarningText(warning)}`)
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: memberStateOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('member_state requires an Agent session')
@@ -2505,14 +1186,6 @@ const memberState = defineTool({
   },
 })
 
-const MEMBER_WORKSPACE_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  requestId: { type: 'string', required: true }, outcome: { type: 'string', required: true },
-  receipt: { ...MANAGER_RECEIPT_SCHEMA, required: true },
-  memberRef: { type: 'string', required: true }, workspaceId: { type: 'string', required: true },
-  workspaceIds: { type: 'array', required: true, items: { type: 'string' } },
-  releasedClaims: { type: 'number' }, removedAttention: { type: 'number' },
-} } as const
-
 /**
  * Change one Member's Workspace participation as the manager. Joining is the
  * same pure relation the Web Client grants — no Session is created or moved —
@@ -2528,19 +1201,7 @@ const memberWorkspace = defineTool({
     memberRef: { type: 'string', required: true, description: "Full branded Member ref exactly as team_overview returned it, including the 'member:' prefix." },
     requestId: { type: 'string', description: 'Your own idempotency key for this write, with the same replay rule as member_create.' },
   },
-  output: { schema: MEMBER_WORKSPACE_SCHEMA,
-    render: (_args, value) => {
-      const lines = [value.workspaceIds.length === 0
-        ? `Member ${value.memberRef} now participates in no Workspace`
-        : `Member ${value.memberRef} participates in ${value.workspaceIds.join(', ')}`]
-      lines.push(`Receipt ${value.receipt.operationId} (sequence ${value.receipt.sequence})`)
-      if (value.releasedClaims !== undefined || value.removedAttention !== undefined) {
-        lines.push(`${value.releasedClaims ?? 0} active Claim(s) released · ${value.removedAttention ?? 0} Attention row(s) cleared in ${value.workspaceId}`)
-      }
-      lines.push('Its Session did not move: participation is a ledger relation, not a Session copy.')
-      return [{ type: 'text', text: lines.join('\n') }]
-    },
-  },
+  output: memberWorkspaceOutput,
   async execute(rawArgs, exec) {
     const agent = exec.agent
     if (agent === undefined) throw new Error('member_workspace requires an Agent session')
@@ -2562,13 +1223,6 @@ const memberWorkspace = defineTool({
   },
 })
 
-
-const REMINDER_VIEW_SCHEMA = { type: 'object', additionalProperties: false, properties: {
-  reminderRef: { type: 'string', required: true }, state: { type: 'string', required: true },
-  schedule: { type: 'string', required: true }, note: { type: 'string', required: true }, createdAt: { type: 'string', required: true },
-  lastOccurrenceAt: { type: 'string' }, pendingOccurrenceAt: { type: 'string' }, nextOccurrenceAt: { type: 'string' },
-} } as const
-
 /**
  * A Member reminder is a time promise the Member makes to itself. It is the one
  * Team surface with no other audience: creation is self-only by construction, and
@@ -2588,31 +1242,7 @@ const teamReminder = defineTool({
     reminderRef: { type: 'string', description: "cancel only: the full branded ref of one of your own reminders, exactly as list or a create returned it (for example reminder:0f0a…)." },
     workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      action: { type: 'string', required: true }, workspaceId: { type: 'string', required: true },
-      created: { type: 'boolean', required: true }, cancelled: { type: 'boolean', required: true },
-      activeCount: { type: 'number', required: true },
-      reminders: { type: 'array', required: true, items: REMINDER_VIEW_SCHEMA },
-    } },
-    render: (_args, value) => {
-      const head = `Reminders — ${value.action} · ${value.activeCount} active`
-      const rows = value.reminders.map(reminder => [
-        `${reminder.reminderRef} · ${reminder.state} · ${reminder.schedule}`,
-        `Note: ${reminder.note}`,
-        `Created at: ${formatTeamTimestamp(reminder.createdAt)}`,
-        ...(reminder.lastOccurrenceAt === undefined ? [] : [`Last occurrence: ${formatTeamTimestamp(reminder.lastOccurrenceAt)}`]),
-        ...(reminder.pendingOccurrenceAt === undefined ? [] : [`Waiting to be read since: ${formatTeamTimestamp(reminder.pendingOccurrenceAt)}`]),
-        ...(reminder.nextOccurrenceAt === undefined ? [] : [`Next occurrence: ${formatTeamTimestamp(reminder.nextOccurrenceAt)}`]),
-      ].join('\n'))
-      const tail = value.action === 'create'
-        ? `Reminder created for you alone; it reaches your Team Inbox when it comes due. ${value.activeCount} of at most 50 active.`
-        : value.action === 'cancel'
-          ? 'Reminder cancelled; no further occurrence will fire for it.'
-          : 'These are your own reminders. Create one with team_reminder create, or cancel one by reminderRef.'
-      return [{ type: 'text', text: [head, ...rows, tail].join('\n') }]
-    },
-  },
+  output: teamReminderOutput,
   async execute(rawArgs, exec) {
     // `note` is content, but an empty one names nothing: on create it must reach the
     // "needs note" refusal, and on list or cancel it must not read as a create's note.
@@ -2675,110 +1305,6 @@ function reminderResult(action: 'create' | 'list' | 'cancel', workspaceId: strin
   }
 }
 
-/**
- * What a stop call can honestly say about the run it addressed: only a
- * confirmed stop reports cleanup, an ending the run already had is reported as
- * that ending, and the Host's own diagnostic rides along when it has one.
- */
-function stopReceipt(state: string, diagnostic: string | undefined): string {
-  const caveat = diagnostic === undefined ? [] : [diagnostic]
-  if (state === 'stopped') {
-    return ['The engine confirmed this run\'s cleanup, so it is no longer running. '
-      + 'Its ending appears in the Thread it reports into, if it has one.', ...caveat].join('\n')
-  }
-  if (state === 'completed' || state === 'failed') {
-    return [`The run ended as ${state}; this stop did not change its ending.`, ...caveat].join('\n')
-  }
-  return [`The run is ${state}.`, ...caveat].join('\n')
-}
-
-/**
- * What a steer call can honestly say: the native session accepted the input for
- * this execution, or a linked execution started by resuming that same native
- * session. Neither receipt claims the model has read it.
- */
-function steerReceipt(value: { readonly state: string; readonly workerRef: string; readonly landed?: string | undefined
-  readonly turnId?: string | undefined
-  readonly continuedFrom?: string | undefined; readonly runState?: string | undefined }): string {
-  if (value.state === 'started') {
-    return [
-      `The previous execution ${value.continuedFrom ?? ''} had ended, so this instruction started a new execution in the same native session.`,
-      `New Worker: ${value.workerRef}`,
-      ...(value.runState === undefined
-        ? [`The receipt does not record the run state; inspect Worker ${value.workerRef} for its current ending.`]
-        : [`When this receipt was written, that run was ${value.runState}.`]),
-      'The instruction is submitted, not confirmed read.',
-    ].join('\n')
-  }
-  return [
-    'The native session accepted the instruction into this execution. It may join the running turn or be queued for its next turn in the same native session.',
-    ...(value.landed === undefined ? [] : [`Delivery: ${value.landed}.`]),
-    ...(value.turnId === undefined ? [] : [`Turn: ${value.turnId}`]),
-    'It is submitted, not confirmed read: the receipt does not promise which model request consumes it.',
-    ...(value.runState === undefined || value.runState === 'running' ? []
-      : [`By the time this answer was written the run was ${value.runState}, so the instruction may never have been read.`]),
-  ].join('\n')
-}
-
-/** Keep native identities whole while bounding their share of the diagnostic. */
-function workerIdentityList(ids: readonly string[]): string {
-  const shown: string[] = []
-  let length = 0
-  for (const id of ids) {
-    const next = length + id.length + (shown.length === 0 ? 0 : 2)
-    if (next > 2_048) break
-    shown.push(id)
-    length = next
-  }
-  const omitted = ids.length - shown.length
-  return shown.join(', ') + (omitted === 0 ? '' : ` … (${omitted} retained ids omitted)`)
-}
-
-/**
- * One run's diagnostic as its initiator reads it: the summary the Thread already
- * carries, the native identities the Host recorded, and the bounded fragments the
- * engine's own record still answers — or the reason it cannot.
- */
-function inspectionReport(value: {
-  readonly workerRef: string; readonly state: string; readonly engine?: string | undefined
-  readonly projectRef?: string | undefined; readonly threadRef?: string | undefined
-  readonly startedAt?: string | undefined; readonly settledAt?: string | undefined
-  readonly summary?: string | undefined; readonly stage?: string | undefined
-  readonly nativeThreadId?: string | undefined; readonly nativeTurnId?: string | undefined
-  readonly nativeTurnIds?: readonly string[] | undefined; readonly nativeInputIds?: readonly string[] | undefined
-  readonly nativeStorage?: string | undefined; readonly nativeRecord?: string | undefined
-  readonly nativeReason?: string | undefined; readonly nativeWithheld?: number | undefined
-  readonly nativeTruncated?: boolean | undefined
-  readonly nativeFragments?: readonly { readonly kind: string; readonly text: string }[] | undefined
-}): string {
-  const lines = [
-    `Worker ${value.workerRef} · ${value.engine ?? 'Worker'} · ${value.state}`,
-    ...(value.projectRef === undefined ? [] : [`Project: ${value.projectRef}`]),
-    ...(value.threadRef === undefined ? [] : [`Thread: ${value.threadRef}`]),
-    ...(value.startedAt === undefined ? [] : [`Started at: ${formatTeamTimestamp(value.startedAt)}`]),
-    ...(value.settledAt === undefined ? [] : [`Ended at: ${formatTeamTimestamp(value.settledAt)}`]),
-    `Summary: ${value.summary ?? 'none recorded'}`,
-    ...(value.stage === undefined ? [] : [`Failed at: ${value.stage}`]),
-    ...(value.nativeThreadId === undefined ? [] : [`Native thread: ${value.nativeThreadId}`]),
-    ...(value.nativeTurnId === undefined ? [] : [`Native turn: ${value.nativeTurnId}`]),
-    ...(value.nativeTurnIds === undefined ? [] : [`Native turns: ${workerIdentityList(value.nativeTurnIds)}`]),
-    ...(value.nativeInputIds === undefined ? [] : [`Native inputs: ${workerIdentityList(value.nativeInputIds)}`]),
-    ...(value.nativeStorage === undefined ? [] : [`Native record: ${value.nativeStorage}`]),
-  ]
-  if (value.nativeRecord !== 'read') {
-    lines.push(`No native fragment to show: ${value.nativeReason ?? 'the engine named no record this Team reads.'}`)
-    return lines.join('\n')
-  }
-  const fragments = value.nativeFragments ?? []
-  lines.push(fragments.length === 0
-    ? 'The engine\'s record holds nothing this Team reads for that turn.'
-    : 'The engine\'s own record:')
-  for (const fragment of fragments) lines.push(`- ${fragment.kind}: ${fragment.text}`)
-  if (value.nativeWithheld !== undefined) lines.push(`(${value.nativeWithheld} fragment(s) withheld: their text looks like a credential.)`)
-  if (value.nativeTruncated === true) lines.push('(The native-history read or its fragment limit omitted content.)')
-  return lines.join('\n')
-}
-
 /** Empty selectors must disappear before choosing a Worker action; real values still conflict. */
 const WORKER_BLANK_KEYS = [...OPTIONAL_ADDRESS_KEYS, 'task', 'stop', 'inspect', 'steer', 'instruction', 'cwd', 'requestId'] as const
 
@@ -2810,44 +1336,7 @@ const teamWorker = defineTool({
     requestId: { type: 'string', description: 'Optional idempotency key for a start or steer: resending the same value with the same request returns the execution or receipt the first call produced, even when both calls arrive at once. A changed instruction, or a resend from another Member, is refused rather than applied to a run it did not ask for.' },
     workspace: workspaceParam,
   },
-  output: {
-    schema: { type: 'object', additionalProperties: false, properties: {
-      workerRef: { type: 'string', required: true }, state: { type: 'string', required: true },
-      continuedFrom: { type: 'string' },
-      landed: { type: 'string' },
-      mode: { type: 'string' },
-      projectRef: { type: 'string' }, engine: { type: 'string' },
-      cwd: { type: 'string' }, startedAt: { type: 'string' }, settledAt: { type: 'string' },
-      threadRef: { type: 'string' }, diagnostic: { type: 'string' },
-      summary: { type: 'string' }, stage: { type: 'string' },
-      nativeThreadId: { type: 'string' }, nativeTurnId: { type: 'string' },
-      nativeTurnIds: { type: 'array', items: { type: 'string' } },
-      nativeInputIds: { type: 'array', items: { type: 'string' } },
-      nativeStorage: { type: 'string' },
-      nativeRecord: { type: 'string' }, nativeReason: { type: 'string' },
-      turnId: { type: 'string' }, runState: { type: 'string' },
-      nativeWithheld: { type: 'number' }, nativeTruncated: { type: 'boolean' },
-      nativeFragments: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-        kind: { type: 'string', required: true }, text: { type: 'string', required: true } } } },
-    } },
-    render: (_args, value) => [{
-      type: 'text',
-      text: value.mode === 'inspect' ? inspectionReport(value)
-        : value.mode === 'steer' ? steerReceipt(value) : [
-        `Worker ${value.workerRef} · ${value.engine ?? 'Worker'} · ${value.state}`,
-        ...(value.projectRef === undefined ? [] : [`Project: ${value.projectRef}`]),
-        ...(value.threadRef === undefined ? [] : [`Thread: ${value.threadRef} — the run's start, ending, and answer report there`]),
-        ...(value.cwd === undefined ? [] : [`Working directory: ${value.cwd}`]),
-        ...(value.startedAt === undefined ? [] : [`Started at: ${formatTeamTimestamp(value.startedAt)}`]),
-        ...(value.settledAt === undefined ? [] : [`Ended at: ${formatTeamTimestamp(value.settledAt)}`]),
-        value.startedAt === undefined
-          ? stopReceipt(value.state, value.diagnostic)
-          : value.threadRef === undefined
-            ? 'The execution runs in the background and reports back to this session when it ends. Keep working; there is nothing to poll.'
-            : 'The execution runs in the background. Its ending appears in that Thread and its answer reaches your Inbox; keep working, there is nothing to poll.',
-      ].join('\n'),
-    }],
-  },
+  output: teamWorkerOutput,
   async execute(rawArgs, exec) {
     const args = blankToAbsent(rawArgs, WORKER_BLANK_KEYS)
     const agent = exec.agent
