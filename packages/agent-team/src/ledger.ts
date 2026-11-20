@@ -4683,11 +4683,13 @@ export class AgentTeamLedger {
     }
     const selected: AgentTeamThreadFact[] = []
     let hasMore = false
-    // limit counts matching facts, not just Messages. After limit matches,
-    // include the first overflow match and its contiguous matching sequence
-    // run, even if it differs from the last selected sequence. hasMore records
-    // that overflow, not whether another page will be nonempty. Sequence-only
-    // cursors cannot recover facts left behind in a split same-sequence run.
+    // One operation can append two facts under one sequence (a Task's anchor
+    // Message and its promote activity), and a cursor addresses sequences, so
+    // a page must not end inside such a run: the next page would skip the
+    // facts left behind. Once `limit` facts match, the next match and the rest
+    // of its same-sequence run are absorbed as well; when that match starts a
+    // new sequence the page just carries one extra run. `hasMore` reports that
+    // absorption, not that the next page is nonempty.
     const step = direction === 'before' ? -1 : 1
     const start = direction === 'before' ? this.state.orderedFacts.length - 1 : 0
     for (let index = start; index >= 0 && index < this.state.orderedFacts.length; index += step) {
