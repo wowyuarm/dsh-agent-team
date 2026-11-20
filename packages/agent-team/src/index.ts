@@ -4464,6 +4464,8 @@ export default class AgentTeam extends TypertRemoteService {
       if (stale !== undefined) {
         this.handles.delete(memberId)
         this.memberRuntime.forgetMember(memberId)
+        // The composition-loss diagnostic this heal answers is stale once the
+        // rebuild starts; a later activation must not resurface it.
         this.emitMemberPresenceChanged(member)
         await this.disposeWithWakeGuard(stale)
       }
@@ -4505,6 +4507,11 @@ export default class AgentTeam extends TypertRemoteService {
     if (missing.length > 0) throw new Error(`team-enabled preset is missing tools: ${missing.join(', ')}`)
   }
 
+  /**
+   * The states with no live surface at all. Each reports a literal `pending`
+   * capability: no apply can be in force there, and a literal cannot inherit a
+   * stale applied-record left behind by a torn-down surface.
+   */
   private memberStatus(member: AgentTeamAgentMember): AgentTeamAgentMemberStatus {
     if (member.state !== 'enabled') {
       return Object.freeze({ member, availability: member.state, presence: 'unavailable', capabilityState: 'pending' })
