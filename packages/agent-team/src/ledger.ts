@@ -5008,16 +5008,154 @@ export class AgentTeamLedger {
     return this.projectionVersion
   }
 
-  /** Scopes whose projections one committed operation invalidates; undefined wakes every waiter. */
+  /** Scopes invalidated by a commit: undefined wakes every waiter; [] wakes none. */
   changeScopesOf(operation: AgentTeamOperation): readonly AgentTeamChangeScope[] | undefined {
     switch (operation.kind) {
       case 'team/initialized':
         return undefined
       case 'team/project-created':
+      case 'team/project-updated':
+      case 'team/project-member-added':
+      case 'team/project-member-removed':
+      case 'team/project-archived':
+      case 'team/project-owner-added':
+      case 'team/project-owner-responsibility-updated':
+      case 'team/project-owner-removed':
+        return this.projectChangeScopes(operation)
+      case 'team/member-added':
+      case 'team/member-suspended':
+      case 'team/member-resumed':
+      case 'team/member-session-restarted':
+      case 'team/member-context-cleared':
+      case 'team/member-session-renewed':
+      case 'team/member-session-rolled-over':
+      case 'team/member-session-recycled':
+      case 'team/member-updated':
+      case 'team/member-removed':
+      case 'team/member-archived':
+      case 'team/member-workspace-joined':
+      case 'team/member-workspace-left':
+        return this.memberChangeScopes(operation)
+      case 'team/message-sent':
+      case 'team/thread-replied':
+      case 'team/thread-started':
+      case 'team/thread-promoted':
+      case 'team/claim-created':
+      case 'team/claim-done':
+      case 'team/claim-released':
+      case 'team/task-changed':
+      case 'team/task-accountable-changed':
+      case 'team/thread-attention-changed':
+      case 'team/thread-read':
+        return this.threadChangeScopes(operation)
+      case 'team/main-message-posted':
+      case 'team/main-stream-read':
+      case 'team/main-attention-changed':
+        return this.mainChangeScopes(operation)
+      case 'team/reminder-raised':
+      case 'team/member-reminder-created':
+      case 'team/member-reminder-raised':
+      case 'team/member-reminder-consumed':
+      case 'team/member-reminder-cancelled':
+        return this.reminderChangeScopes(operation)
+      case 'team/worker-started':
+      case 'team/worker-settled':
+      case 'team/worker-steer-admitted':
+      case 'team/worker-steer-recorded':
+        return this.workerChangeScopes(operation)
+      case 'team/subscription-created':
+      case 'team/subscription-updated':
+      case 'team/subscription-paused':
+      case 'team/subscription-resumed':
+      case 'team/subscription-deleted':
+      case 'team/subscription-webhook-reset':
+      case 'team/subscription-baseline':
+      case 'team/subscription-events-accepted':
+      case 'team/subscription-event-published':
+        return this.subscriptionChangeScopes(operation)
+      case 'team/dm-sent':
+      case 'team/rules-version-adopted':
+        return []
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private projectChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/project-created'
+      | 'team/project-updated'
+      | 'team/project-member-added'
+      | 'team/project-member-removed'
+      | 'team/project-archived'
+      | 'team/project-owner-added'
+      | 'team/project-owner-responsibility-updated'
+      | 'team/project-owner-removed'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
+      case 'team/project-created':
         return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }]
       case 'team/project-updated':
         // The rename is visible in the sidebar list and any open Project/Thread header.
         return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.project.projectRef }]
+      case 'team/project-member-added':
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }]
+      case 'team/project-member-removed':
+        return this.withReleasedActivityScopes(
+          [
+            { kind: 'workspace', workspaceId: operation.data.workspaceId },
+            { kind: 'project', projectRef: operation.data.projectRef },
+          ],
+          operation.data.tasks,
+          operation.data.activities,
+        )
+      case 'team/project-archived': {
+        const scopes: AgentTeamChangeScope[] = [
+          { kind: 'workspace', workspaceId: operation.data.workspaceId },
+          { kind: 'project', projectRef: operation.data.project.projectRef },
+        ]
+        for (const activity of operation.data.activities) scopes.push({ kind: 'thread', threadRef: activity.threadRef })
+        return scopes
+      }
+      case 'team/project-owner-added':
+        // Ownership shows on the Project rows and widens who sees the Project.
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }]
+      case 'team/project-owner-responsibility-updated':
+        // The replacement text shows on the same Project rows and in the new
+        // owner's context, and it appends a Main stream Activity.
+        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }]
+      case 'team/project-owner-removed':
+        // Removal also appends transfer facts on the Tasks it returns, so an
+        // open Thread re-renders its new responsibility line.
+        return this.withReleasedActivityScopes(
+          [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }],
+          operation.data.tasks,
+          operation.data.transfers,
+        )
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private memberChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/member-added'
+      | 'team/member-suspended'
+      | 'team/member-resumed'
+      | 'team/member-session-restarted'
+      | 'team/member-context-cleared'
+      | 'team/member-session-renewed'
+      | 'team/member-session-rolled-over'
+      | 'team/member-session-recycled'
+      | 'team/member-updated'
+      | 'team/member-removed'
+      | 'team/member-archived'
+      | 'team/member-workspace-joined'
+      | 'team/member-workspace-left'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
       case 'team/member-added':
       case 'team/member-suspended':
       case 'team/member-resumed':
@@ -5043,35 +5181,32 @@ export class AgentTeamLedger {
           operation.data.tasks,
           operation.data.activities,
         )
-      case 'team/project-member-added':
-        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }]
-      case 'team/project-member-removed':
-        return this.withReleasedActivityScopes(
-          [
-            { kind: 'workspace', workspaceId: operation.data.workspaceId },
-            { kind: 'project', projectRef: operation.data.projectRef },
-          ],
-          operation.data.tasks,
-          operation.data.activities,
-        )
-      case 'team/project-archived': {
-        const scopes: AgentTeamChangeScope[] = [
-          { kind: 'workspace', workspaceId: operation.data.workspaceId },
-          { kind: 'project', projectRef: operation.data.project.projectRef },
-        ]
-        for (const activity of operation.data.activities) scopes.push({ kind: 'thread', threadRef: activity.threadRef })
-        return scopes
-      }
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private threadChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/message-sent'
+      | 'team/thread-replied'
+      | 'team/thread-started'
+      | 'team/thread-promoted'
+      | 'team/claim-created'
+      | 'team/claim-done'
+      | 'team/claim-released'
+      | 'team/task-changed'
+      | 'team/task-accountable-changed'
+      | 'team/thread-attention-changed'
+      | 'team/thread-read'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
       case 'team/message-sent':
       case 'team/thread-replied':
         return [{ kind: 'project', projectRef: operation.data.message.projectRef }, { kind: 'thread', threadRef: operation.data.message.threadRef }]
       case 'team/thread-started':
         return [{ kind: 'project', projectRef: operation.data.projectRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
-      case 'team/main-message-posted':
-        return [{ kind: 'project', projectRef: operation.data.message.projectRef }]
-      case 'team/main-stream-read':
-        // Private read progress, like a Thread read: nobody else has anything to refetch.
-        return []
       case 'team/thread-promoted':
         return [{ kind: 'project', projectRef: operation.data.task.projectRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/claim-created':
@@ -5082,8 +5217,42 @@ export class AgentTeamLedger {
         return [{ kind: 'project', projectRef: operation.data.task.projectRef }, { kind: 'thread', threadRef: operation.data.thread.threadRef }]
       case 'team/thread-attention-changed':
         return [{ kind: 'thread', threadRef: operation.data.thread.threadRef }]
+      case 'team/thread-read':
+        return []
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private mainChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/main-message-posted'
+      | 'team/main-stream-read'
+      | 'team/main-attention-changed'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
+      case 'team/main-message-posted':
+        return [{ kind: 'project', projectRef: operation.data.message.projectRef }]
+      case 'team/main-stream-read':
+        return []
       case 'team/main-attention-changed':
         return [{ kind: 'project', projectRef: operation.data.project.projectRef }]
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private reminderChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/reminder-raised'
+      | 'team/member-reminder-created'
+      | 'team/member-reminder-raised'
+      | 'team/member-reminder-consumed'
+      | 'team/member-reminder-cancelled'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
       case 'team/reminder-raised': {
         const task = this.state.tasks.get(operation.data.taskRef)
         return task === undefined ? [] : [{ kind: 'thread', threadRef: task.threadRef }]
@@ -5095,17 +5264,20 @@ export class AgentTeamLedger {
         // A Member reminder belongs to no Thread and no Project, but the Human's
         // Member detail renders it, so the whole Workspace catalog refetches.
         return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }]
-      case 'team/thread-read':
-        // A read advances only the reader's private watermark; no projection
-        // visible to other participants changes, so nobody is woken.
-        return []
-      case 'team/dm-sent':
-        // A DM changes no shared projection: delivery is a session-level
-        // runtime effect, so no change waiter has anything to refetch.
-        return []
-      case 'team/rules-version-adopted':
-        // Later records validate differently; no projection anybody reads changes.
-        return []
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private workerChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/worker-started'
+      | 'team/worker-settled'
+      | 'team/worker-steer-admitted'
+      | 'team/worker-steer-recorded'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
       case 'team/worker-started':
       case 'team/worker-settled':
         // A Thread-bound run writes one public fact into that Thread, so an open
@@ -5118,32 +5290,36 @@ export class AgentTeamLedger {
         // A steer receipt is the private answer to the caller that already has
         // the execution ref. It writes no Thread fact, revision, or Worker row.
         return []
-      case 'team/project-owner-added':
-        // Ownership shows on the Project rows and widens who sees the Project.
-        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }]
-      case 'team/project-owner-responsibility-updated':
-        // The replacement text shows on the same Project rows and in the new
-        // owner's context, and it appends a Main stream Activity.
-        return [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }]
-      case 'team/project-owner-removed':
-        // Removal also appends transfer facts on the Tasks it returns, so an
-        // open Thread re-renders its new responsibility line.
-        return this.withReleasedActivityScopes(
-          [{ kind: 'workspace', workspaceId: operation.data.workspaceId }, { kind: 'project', projectRef: operation.data.projectRef }],
-          operation.data.tasks,
-          operation.data.transfers,
-        )
+      default:
+        return assertUnhandledKind(operation)
+    }
+  }
+
+  private subscriptionChangeScopes(
+    operation: Extract<AgentTeamOperation, { kind:
+      'team/subscription-created'
+      | 'team/subscription-updated'
+      | 'team/subscription-paused'
+      | 'team/subscription-resumed'
+      | 'team/subscription-deleted'
+      | 'team/subscription-webhook-reset'
+      | 'team/subscription-baseline'
+      | 'team/subscription-events-accepted'
+      | 'team/subscription-event-published'
+    }>,
+  ): readonly AgentTeamChangeScope[] {
+    switch (operation.kind) {
       case 'team/subscription-created':
       case 'team/subscription-updated':
       case 'team/subscription-paused':
       case 'team/subscription-resumed':
       case 'team/subscription-deleted':
       case 'team/subscription-webhook-reset':
-        // Subscription state shows in the Project's Main stream and the list.
         return [{ kind: 'project', projectRef: operation.data.subscription.projectRef }]
       case 'team/subscription-baseline':
       case 'team/subscription-events-accepted':
-        // Accept only moves the pending count; a baseline moves nothing a reader shows.
+        // Baselines change the Project's subscription deduplication waterline,
+        // not a Thread fact; acceptance changes its pending events.
         return [{ kind: 'project', projectRef: operation.data.projectRef }]
       case 'team/subscription-event-published':
         return [{ kind: 'project', projectRef: operation.data.projectRef }]

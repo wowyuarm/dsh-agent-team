@@ -183,10 +183,18 @@ describe('the deduplication waterline', () => {
   it('appends a re-baseline without clearing earlier ids or refusing an already accepted event', async () => {
     const team = await seed()
     const subscriptionRef = subscriptionRefOf(await team.create(team.owner.actor, { baselineIds: ['a'] }))
-    await team.ledger.acceptSubscriptionEvents({ requestId: requestId('accept'), actor: host, workspaceId: alpha,
+    const accepted = await team.ledger.acceptSubscriptionEvents({ requestId: requestId('accept'), actor: host, workspaceId: alpha,
       projectRef: team.projectRef, subscriptionRef, subscriptionRevision: 1, scriptHash: team.scriptHash, events: [{ id: 'b', title: 'B' }] })
-    await team.ledger.baselineSubscription({ requestId: requestId('baseline'), actor: team.owner.actor, workspaceId: alpha,
+    const history = team.ledger.mainStreamHistory(team.owner.actor, { workspaceId: alpha, projectRef: team.projectRef }).entries
+    const baseline = await team.ledger.baselineSubscription({ requestId: requestId('baseline'), actor: team.owner.actor, workspaceId: alpha,
       projectRef: team.projectRef, subscriptionRef, ids: ['c', 'd'] })
+    for (const receipt of [accepted.value.receipt, baseline.value]) {
+      const operation = team.ledger.getOperation(receipt.operationId)
+      expect(operation).toBeDefined()
+      expect(team.ledger.changeScopesOf(operation!)).toEqual([{ kind: 'project', projectRef: team.projectRef }])
+    }
+    expect(team.ledger.projectionSequence()).toBe(baseline.value.sequence)
+    expect(team.ledger.mainStreamHistory(team.owner.actor, { workspaceId: alpha, projectRef: team.projectRef }).entries).toEqual(history)
     expect([...team.ledger.subscriptionKnownIds(subscriptionRef)].sort()).toEqual(['a', 'b', 'c', 'd'])
     // The accepted, unpublished event survives the re-baseline and still publishes.
     expect(team.ledger.pendingSubscriptionEvents(subscriptionRef).map(entry => entry.event.id)).toEqual(['b'])
