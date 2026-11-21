@@ -12,7 +12,7 @@ import type {
   AgentTeamView,
 } from '@contexera/dsh-agent-team/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { Button, IconChevronLeftOutlineRegular, Modal, Pill, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronLeftOutlineRegular, Pill, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamConversationProps } from './slots.ts'
 import type { TeamDraftStore } from './drafts.ts'
 import { TeamComposer } from './TeamComposer.tsx'
@@ -22,6 +22,7 @@ import { firstSentence, formatActivity, formatRiskClass, formatTaskStatus, plain
 import { TeamStateDot } from './TeamStateDot.tsx'
 import { TeamOwnerSeat } from './TeamOwnerSeat.tsx'
 import { TeamThreadCard } from './TeamThreadCard.tsx'
+import { TeamTaskEarlyAcceptDialog, TeamTaskTransferDialog } from './TeamTaskDialogs.tsx'
 import type { TeamAvatarHuman } from './TeamAvatarStack.tsx'
 import { daySeparatorLabel, localDateKey } from './team-separators.ts'
 import { useTaskTransfer, useThreadFollow } from './thread-actions.ts'
@@ -82,8 +83,6 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
   const threadRequest = { threadRef, ...(taskRef === undefined ? {} : { taskRef }) }
   const [projectView, setProjectView] = useState<AgentTeamView>()
   const [members, setMembers] = useState<readonly AgentTeamClientMemberStatus[]>([])
-  // Early acceptance: the Human may accept while Claims are still open; the
-  // confirm dialog lists exactly what will be completed with the Task.
   const [confirmingAccept, setConfirmingAccept] = useState(false)
   const [openCard, setOpenCard] = useState<AgentTeamMessageRef>()
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
@@ -555,52 +554,27 @@ export function TeamThreadPage(props: TeamThreadPageProps) {
           <span title={full}><strong className={threadCss.riskClass}>{label}</strong> · {t(sentenceKey, { member: status.member.handle })} — {reason}</span>
         </p>)}
       </section>}
-      {/* The handover dialog: this Thread's enabled followers, one row each, and an empty state that says why
-          nobody is offered. A candidate is a button, so the list is reachable and dismissable by keyboard alone;
-          the write stays on the page's own hook, which keeps the Task's current accountable on screen until the
-          Host commits, and closes the dialog on that commit rather than on the click. */}
-      {task !== undefined && <Modal
+      {task !== undefined && <TeamTaskTransferDialog
         open={transferDialogOpen}
-        onClose={() => { if (!transfer.pending) setTransferDialogOpen(false) }}
-        title={t('transferTitle')}
-        closeLabel={t('cancel')}
-        footer={<Button variant="outline" disabled={transfer.pending} onClick={() => { setTransferDialogOpen(false) }}>{t('cancel')}</Button>}
-      >
-        <p className={css.confirmBody}>{t('transferBody')}</p>
-        {transferCandidates.length === 0
-          ? <p className={css.transferEmpty} role="status">{t('transferEmpty')}</p>
-          : <ul className={css.transferList}>
-              {transferCandidates.map(memberId => <li key={memberId}>
-                <button type="button" className={css.transferCandidate} disabled={transfer.pending}
-                  onClick={() => { void transfer.transfer(memberId) }}>
-                  {memberId === projectView?.humanMemberId ? t('transferTargetYou') : t('transferTargetLabel', { name: memberName(memberId) })}
-                </button>
-              </li>)}
-            </ul>}
-        {/* A failure is stated where the reader pressed, and never twice: while the dialog is open it is the
-            dialog's own line, because the band's line sits behind the modal. */}
-        {transferFailure !== undefined && <p className={css.actionError} role="alert">{transferFailure}</p>}
-      </Modal>}
-      {task !== undefined && thread !== undefined && (() => {
-        const activeClaims = activeProjection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []
-        return <Modal
-          open={confirmingAccept}
-          onClose={() => { if (!pending) setConfirmingAccept(false) }}
-          title={t('acceptEarlyTitle')}
-          closeLabel={t('cancel')}
-          footer={<>
-            <Button variant="outline" disabled={pending} onClick={() => { setConfirmingAccept(false) }}>{t('cancel')}</Button>
-            <Button variant="primary" disabled={pending} onClick={() => { void mutateTask('accept') }}>{pendingAction === 'task:accept' ? t('acceptingTask') : t('acceptTask')}</Button>
-          </>}
-        >
-          <p className={css.confirmBody}>{t('acceptEarlyBody', { count: activeClaims.length })}</p>
-          <ul className={css.confirmList}>
-            {activeClaims.map(claim => (
-              <li key={claim.claimRef}>{memberName(claim.owner)} · {claim.direction}</li>
-            ))}
-          </ul>
-        </Modal>
-      })()}
+        pending={transfer.pending}
+        candidates={transferCandidates}
+        memberName={memberName}
+        humanMemberId={projectView?.humanMemberId}
+        failure={transferFailure}
+        onClose={() => { setTransferDialogOpen(false) }}
+        onTransfer={memberId => { void transfer.transfer(memberId) }}
+        t={t}
+      />}
+      {task !== undefined && thread !== undefined && <TeamTaskEarlyAcceptDialog
+        open={confirmingAccept}
+        pending={pending}
+        accepting={pendingAction === 'task:accept'}
+        claims={activeProjection?.claims.filter(claim => claim.taskRef === task.taskRef && claim.state === 'active') ?? []}
+        memberName={memberName}
+        onClose={() => { setConfirmingAccept(false) }}
+        onConfirm={() => { void mutateTask('accept') }}
+        t={t}
+      />}
     </div>
 
     <section ref={timelineRef} onScroll={onTimelineScroll} className={css.timeline} aria-label={t('timelineLabel')}>
