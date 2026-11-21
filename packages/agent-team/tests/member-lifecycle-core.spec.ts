@@ -786,6 +786,25 @@ describe('Agent Team Member lifecycle', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
+  it('does not restore an ownership-blocked Member suspended before its Session owner is disposed', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('blocked-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', projectRefs: [], model: { provider: 'mock', model: 'mock' }})
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    await teamFiber.dispose()
+    const foreign = await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions: { provider: 'mock', model: 'mock' } })
+    await ctx.plugin(AgentTeam)
+    await waitFor(() => ctx.agentTeam['sessionOwnershipBlocked'].has(memberId) ? true : undefined, 20_000)
+    await ctx.agentTeam.suspendMember({ requestId: requestId('blocked-suspend'), memberId })
+    await foreign.dispose()
+    await waitFor(() => !ctx.agentTeam['sessionOwnershipBlocked'].has(memberId)
+      && !ctx.agentTeam['memberLifecycleTails'].has(memberId) ? true : undefined, 20_000)
+    expect(ctx.agentTeam['handles'].has(memberId)).toBe(false)
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+    expect(ctx.agentTeam.members().find(status => status.member.memberId === memberId)?.availability).toBe('suspended')
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('resumes a suspended Member without consulting the persistence tree walk', async () => {
     const { ctx, workspaceId } = await realHarness()
     const added = await ctx.agentTeam.addMember({ requestId: requestId('resume-add'), workspaceId, handle: 'restorer', description: 'Restores the exact session', presetId: 'team-member', projectRefs: [], model: { provider: 'mock', model: 'mock' }})
