@@ -36,7 +36,10 @@
   - manager 的 root 随包交付六份引导 skill（`team-management-guide`、`team-operations`、`team-event-loops`、`manager-domain-model`、`manager-memory`、`manager-session-evidence`），门禁容许它为空，因为内容不是构建依赖。
 - `npm run check:boundaries`：检查[包之间的依赖边界](generated-and-seams.zh.md)。`packages/*/src/` 下的文件不得用相对 specifier 跨越自己所在的 package 目录，去引用另一个 package。`import type` 豁免。运行时已被擦除。测试文件不在范围内：它们本就要把目录接起来。跨接缝的正确方式是用声明的 subpath，例如 `@contexera/dsh-agent-team/remote`。
 - `npm run check:versions`：把已认证版本一致性变成机械检查。CI tag、setup tag、开发指南、README、架构文档、兼容性基线、bug 报告占位符必须声明同一个 DSH 基线，双语都要。该基线必须是每个 `@deepseek-ai/dsh-*` peer 区间的下界。它只断言互相一致，从不写死版本号。在任何 release lane 上都不用改门。动过任何版本字符串后单独跑它。
-- `npm run check:comments`：把一条注释规则变成机械检查，范围是 `packages/*/src` 与 `scripts/`，排除 `vendor/`：注释不得引用 `.scratch/`、工作项编号或验收标准，因为发布包的读者打不开它们，且工作历史不是权威。裸的 `issue #<n>` 可以保留，它指向真实的 GitHub issue；`Task #<n>` 也一样，它是已文档化的 Team 实体。这里刻意不设行数预算：一条注释是否值得保留，是数行数判不了的，注释质量靠定期阅读注释来审查。`node scripts/check-comments.mjs --budgets` 只打印每个 scope 的注释水位表，不做判定。
+- `npm run check:comments`：检查 `packages/*/src` 与 `scripts/`，排除 `vendor/`。注释不得引用发布包读者无法解析的 `.scratch/`、工作项编号或验收标准；裸的 `issue #<n>` 和已文档化的 Team 实体 `Task #<n>` 可以保留。
+  - 源码及 `packages/*/tests` 的注释不得包含大写待办标记或被注释掉的代码语句。Lint 抑制须带 ` -- <reason>`；禁止 `@ts-ignore` 和 `@ts-nocheck`，`@ts-expect-error` 须附解释。
+  - 仅对源码：独立单行注释去除停用词后若剩一至五个词，不得只是重复下一行的词，包括 camelCase 标识符和复数。
+  - 刻意不设行数预算：注释是否值得保留靠定期阅读审查。`node scripts/check-comments.mjs --budgets` 只打印每个 scope 的注释水位表，不做判定。
 - `npm run check:scratch`：把归档工作区的规则变成机械检查。索引与工作项目录一致、每个工作项有入口 README、归档 README 里的链接可解析、已封存的票只有带 `> 已归档` 说明时才允许保留进行中状态、月份总览覆盖该月全部工作项。归档 spec 与 materials 里的历史代码引用不在范围内；不需要相邻 Harness 检出。CI 的 `checks` job 在每次 PR 与 push 上运行它；需要 Harness 的 lane 仍跳过工作历史。
 - `npm run check:facades`：只比不写。按相邻 Harness checkout 重算 path facades。已提交的 `tsconfig*.json` 或 `.generated-harness` 标记只要与生成结果不同就报错。给 `scripts/sync-paths.mjs` 加了 subpath，就不可能不带上重新生成的 facades。它由 `npm test` 捆绑执行。全新 clone 必须先重新生成 facades，见 [`environments-and-install.zh.md`](./environments-and-install.zh.md)。
 - `npm test`：先生成 Typert、跑 `check:facades`、`check:docs`、`check:e2e-docs`、`check:core-skills`、`check:boundaries`、`check:versions`、`check:comments` 与 `check:scratch`，再运行全部 Vitest project。
