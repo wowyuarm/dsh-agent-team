@@ -568,58 +568,51 @@ export default class AgentTeam extends TypertRemoteService {
     'sessionProjections',
   ]
 
+  // Boot/storage handles are process-local, not durable authority; shutdown fences work before closing their stores.
   private backend?: SqliteStorageBackend
   private domain?: Domain<typeof agentTeamDomainSpec>
   private ledger?: AgentTeamLedger
-  /** The manager pointer lives beside, never inside, the Team ledger. */
   private managerRuntime?: ManagerSessionRuntime
-  /** The scheduler's private state: deleting it changes no domain fact, so it is not part of the ledger. */
+  private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
+  private readonly humanUpdateCheck = createHumanUpdateChecker({ currentVersion: HUMAN_PROFILE_VERSION })
+  private readonly humanProfileHostFence = randomUUID()
+  private readonly shutdown = (() => {
+    let resolve!: () => void
+    const promise = new Promise<void>(finish => { resolve = finish })
+    return Object.freeze({ promise, resolve })
+  })()
+  private readonly shutdownController = new AbortController()
+  private accepting = true
+  private legacyAdoptionStarted = false
+  private presenceEpoch = 0
+  private readonly changeWaiters = new Set<ChangeWaiter>()
+  private workerExposure: boolean
+
+  // Subscription runtime handles and caches are process-local, not durable; private tables retain the restart obligations.
   private subscriptionDomain?: Domain<typeof subscriptionDomainSpec>
   private subscriptionTable?: KvTable<AgentTeamSubscriptionRef, SubscriptionCheckpoint>
-  /** The last fifty runs of every subscription, keyed by subscription then start instant. */
   private subscriptionRunsTable?: KvTable<string, SubscriptionRunRecord>
-  /** The deliveries whose automatic retries were spent, waiting for an owner. */
   private subscriptionDeliveriesTable?: KvTable<string, SubscriptionDeliveryRecord>
-  /** The answer each replay request already got, keyed by subscription then request id. */
   private subscriptionReplaysTable?: KvTable<string, SubscriptionReplayRecord>
-  /** The deliveries still owing work: one row per admission. */
   private subscriptionAdmissionsTable?: KvTable<string, SubscriptionAdmissionRecord>
-  /** The pass that runs due webhook deliveries; it stops with the Host. */
   private admissionPumpTimer?: ReturnType<typeof setInterval> | undefined
-  /** The running pass Host shutdown waits for; a second request joins it. */
   private admissionPumpTail?: Promise<void> | undefined
   private subscriptionScheduler?: SubscriptionScheduler
   private readonly subscriptionCheckpoints = new Map<AgentTeamSubscriptionRef, SubscriptionCheckpoint>()
-  /**
-   * One subscription's private read-modify-write steps, serialized. Two webhook
-   * deliveries that arrive together must not both add one to the same old
-   * failure count, or three spent retries would pause later than the third.
-   */
   private readonly subscriptionWriteTails = new Map<AgentTeamSubscriptionRef, Promise<void>>()
-  /** The probe once it answers with a family, cached for the composition's lifetime; a refusal is retried. */
   private subscriptionShellProbe: Promise<ShellFamilyProbe> | undefined
+
+  // Member Session bindings and diagnostics are process-local, not durable; the ledger owns which generations should exist.
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
-  /** Members whose latest activation found the bound Session's write handle owned by another live Agent. */
   private readonly sessionOwnershipBlocked = new Set<AgentTeamMemberId>()
-  /** Reader of the awaited context-projection registration; unloading Team releases it. */
   private contextProjection: ProjectionHandle<TeamContextProjectionState> | undefined
-  /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
   private readonly memberRuntime = new MemberRuntime({
     ctx: this.ctx,
     liveMemberContext: memberId => this.liveContextFor(memberId),
     runningAgents: this.runningAgents,
   })
-  /**
-   * The single seam for every per-Session stored read: handle lifecycle and failure normalization live here,
-   * and consumers choose policy by failure category instead of matching error text.
-   */
   private readonly sessionReader = new StoredSessionReader(this.ctx)
-  /**
-   * Why one Member shows error presence, per failure source. Reads prefer activation, then runtime, then compaction;
-   * slots clear independently, so a recovered runtime error re-reveals an outstanding compaction failure.
-   * Keyed by Member rather than Session so a restarted Session cannot leak stale keys.
-   */
   private readonly memberFailures = new Map<AgentTeamMemberId, {
     activation?: AgentTeamMemberDiagnostic
     runtime?: string
@@ -629,10 +622,6 @@ export default class AgentTeam extends TypertRemoteService {
     capabilityApply?: AgentTeamMemberDiagnostic
     modelApply?: AgentTeamMemberDiagnostic
   }>()
-  /**
-   * The Workers this Host started. Team owns the execution record and the refusal
-   * rules; the Harness subagent service owns admission and the parent notice.
-   */
   private readonly workerRegistry = new WorkerRegistry(this.ctx, {
     config: () => this.config.worker.get(),
     projectExists: projectRef => this.requireLedger().hasProject(projectRef),
@@ -663,45 +652,19 @@ export default class AgentTeam extends TypertRemoteService {
     workerResumeAnchors: workerRef => this.requireLedger().workerResumeAnchors(workerRef),
     warn: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
   })
-  /** Team notice ids waiting for a turn boundary, keyed by the live Agent message id. */
-  private readonly pendingTeamWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly sessionId: SessionId }>()
-  /** Agents that already spent their one acceptance boundary; cleared when the Agent settles. */
-  private readonly acceptanceBoundaries = new WeakSet<Agent>()
-  /** Notice removals initiated by Team itself, which are normal replacement/disposal operations. */
-  private readonly expectedInboxDiscards = new Set<string>()
-  /**
-   * Per-Member Inbox notice delivery: the unread facts the last attempt covered and the attempts they have spent.
-   * A retry after a failed wake spends the next attempt over the same durable facts, never a second operation.
-   */
-  private readonly inboxNoticeDeliveries = new Map<AgentTeamMemberId, InboxNoticeDelivery>()
-  /**
-   * Queued Team notices that carry Member reminders, keyed by message id. The
-   * claim of a message is the only evidence that its reminders reached a turn,
-   * and each entry names the occurrences that message actually rendered, so a
-   * claim consumes exactly those and nothing newer.
-   */
-  private readonly memberReminderWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly reminders: readonly InboxMemberReminder[] }>()
-  /**
-   * Consecutive Member-reminder consumption writes that failed for one Member.
-   * Process-local like the notice coverage it bounds: a restart starts over, and
-   * a successful write clears it.
-   */
-  private readonly memberReminderConsumeFailures = new Map<AgentTeamMemberId, number>()
-  /** The timer armed for the next Member-reminder occurrence, rearmed after every raise. */
-  private memberReminderTimer?: ReturnType<typeof setTimeout> | undefined
-  private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
-  /**
-   * New-release check behind the settings footnote. Memory-only and background-refreshed,
-   * so the profile read path never waits on the network and every failure settles as "no update known".
-   */
-  private readonly humanUpdateCheck = createHumanUpdateChecker({ currentVersion: HUMAN_PROFILE_VERSION })
-  /** Opaque process fence kept out of the Client's interpretation and combined with the Harness revision on every profile write. */
-  private readonly humanProfileHostFence = randomUUID()
+  private readonly retiringAgents = new WeakSet<Agent>()
 
+  // Wake/notice delivery state is process-local, not durable; failed or interrupted delivery rederives from unread ledger facts.
+  private readonly pendingTeamWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly sessionId: SessionId }>()
+  private readonly acceptanceBoundaries = new WeakSet<Agent>()
+  private readonly expectedInboxDiscards = new Set<string>()
+  private readonly inboxNoticeDeliveries = new Map<AgentTeamMemberId, InboxNoticeDelivery>()
+  private readonly memberReminderWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly reminders: readonly InboxMemberReminder[] }>()
+  private readonly memberReminderConsumeFailures = new Map<AgentTeamMemberId, number>()
+  private memberReminderTimer?: ReturnType<typeof setTimeout> | undefined
   private readonly memberIdle = new MemberIdleTracker()
   private reminderEvaluationTail: Promise<void> = Promise.resolve()
   private reminderEvaluationRequested = false
-
   private readonly recovery = new RecoveryCoordinator({
     wake: memberId => { this.injectRecovery(memberId) },
     report: fact => { this.reportRecovery(fact) },
@@ -719,46 +682,13 @@ export default class AgentTeam extends TypertRemoteService {
     },
     log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
   })
-  /**
-   * Per-Member lifecycle chains: one Member's long waits (turn boundary, idle) hold only that Member's later operations.
-   * Order within a chain is submission order; cross-Member commits stay ordered by the ledger's single writer queue.
-   */
+
+  // Lifecycle serialization is process-local, not durable; unrelated Members must not wait behind another Member’s turn.
   private readonly memberLifecycleTails = new Map<AgentTeamMemberId, Promise<void>>()
-  private readonly retiringAgents = new WeakSet<Agent>()
   private readonly enteredMemberChains = new AsyncLocalStorage<ReadonlySet<AgentTeamMemberId>>()
   private readonly enteredAdditionChains = new AsyncLocalStorage<ReadonlySet<AgentTeamRequestId>>()
-  /**
-   * addMember chains by request id: the Member id does not exist until the
-   * commit answers, and concurrent duplicates of one request must serialize
-   * so exactly one of them activates the replayed id.
-   */
   private readonly additionLifecycleTails = new Map<AgentTeamRequestId, Promise<void>>()
-  /** Deferred notification effects leave durable writes and Client invalidation on the caller's path; each Member keeps its own effect chain. */
   private readonly notificationEffectTails = new Map<AgentTeamMemberId, Promise<void>>()
-  /** Resolves when Host teardown starts: in-chain idle waits release on it instead of outliving the Host. */
-  private readonly shutdown = (() => {
-    let resolve!: () => void
-    const promise = new Promise<void>(finish => { resolve = finish })
-    return Object.freeze({ promise, resolve })
-  })()
-  /** Aborts every Host-owned background operation that would otherwise outlive teardown. */
-  private readonly shutdownController = new AbortController()
-  private accepting = true
-  /** One adoption attempt per boot: the two readiness edges fire once each, and this keeps their attempt single. */
-  private legacyAdoptionStarted = false
-  /**
-   * Presence wake epoch: Agent running/idle/failure has no durable fact behind it, so the presence scope counts those edge wakes in process.
-   * It never takes part in a projection waiter's comparison.
-   */
-  private presenceEpoch = 0
-  private readonly changeWaiters = new Set<ChangeWaiter>()
-  /**
-   * The Worker switch the live Member surfaces currently reflect. The Host row
-   * is the only switch: it decides whether `team_worker` is declared, and the
-   * registry still refuses a start while it is off, so a stale surface can never
-   * become an execution path.
-   */
-  private workerExposure: boolean
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'agentTeam')
@@ -2217,16 +2147,14 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /**
-   * Cache GC: uploads referenced by a Message survive 72h from upload; orphans (never sent) go after 24h.
-   * Runs at startup and then daily, in-process only because the cache is transient.
-   */
+  /** Restart sweeps missed periods because attachments are a transient cache, not an archive. */
   private startAttachmentGc(ledger: AgentTeamLedger): void {
     const sweep = async (): Promise<void> => {
       let references: { readonly sequence: number; readonly ids: ReadonlySet<AgentTeamAttachmentId> } | undefined
       try {
         await sweepAttachmentCache(attachmentsRoot(), id => {
           const sequence = ledger.projectionSequence()
+          // A sweep can overlap commits; reuse references only while their projection is current.
           if (references?.sequence !== sequence) references = { sequence, ids: ledger.referencedAttachmentIds() }
           return references.ids.has(id)
         }, Date.now())
@@ -4621,12 +4549,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   // ── Project subscriptions ────────────────────────────────────────────────
 
-  /**
-   * Open the scheduler's private store and give every timer subscription its
-   * first due instant. Boot never resets a persisted due instant or a
-   * publication window: a Host that was away catches up once instead of
-   * restarting the window.
-   */
+  /** Boot preserves due instants and publication windows so downtime catches up once instead of resetting the budget. */
   private async startSubscriptionRuntime(domain: Domain<typeof subscriptionDomainSpec>): Promise<void> {
     this.subscriptionDomain = domain
     const table = domain.table('checkpoints')
@@ -4796,7 +4719,6 @@ export default class AgentTeam extends TypertRemoteService {
     return [...table.keys()].filter(key => key === subscriptionRef || key.startsWith(prefix))
   }
 
-  /** The private tables a subscription owns, each with the word a failed delete logs it as. */
   private subscriptionPrivateTables(): readonly (readonly [{ keys(): Iterable<string>; delete(key: string): Promise<boolean> } | undefined, string])[] {
     return [
       [this.subscriptionTable, 'checkpoint'],
@@ -5651,7 +5573,6 @@ export default class AgentTeam extends TypertRemoteService {
     return next
   }
 
-  /** Every admission one subscription still owes work for, in no particular order. */
   private admissionRecordsOf(subscriptionRef: AgentTeamSubscriptionRef): readonly SubscriptionAdmissionRecord[] {
     const table = this.subscriptionAdmissionsTable
     if (table === undefined) return []
@@ -5765,7 +5686,6 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /** One due delivery: run it, then settle its row from what the run reported. */
   private async runWebhookAdmission(subscription: AgentTeamSubscription, record: SubscriptionAdmissionRecord): Promise<void> {
     const live = this.writableSubscription(subscription.subscriptionRef)
     if (live === undefined) {
@@ -5787,7 +5707,7 @@ export default class AgentTeam extends TypertRemoteService {
       await this.enqueueHeldAdmission(record, requestId)
       return
     }
-    // The definition the payload arrived under, not the one that stands now.
+    // Editing a subscription must not change the script bytes owed to an already-admitted payload.
     const source = this.replaySource(live, record, 'received')
     const execute = async () => {
       // A queued run can get its slot after a resume committed but failed to
@@ -5896,8 +5816,6 @@ export default class AgentTeam extends TypertRemoteService {
       }
       // These tables cannot commit together. Keep the decision on the admission
       // until the replay record is durable, so recovery does not run the script again.
-      // Both state-only fields come off here: the record that becomes `exhausted`
-      // keeps neither a retry instant nor a held batch, as its type and schema say.
       const { nextAttemptAt: _due, heldEvents: _held, ...spent } = record
       const earlier = this.deliveryRecordForSettlement(
         this.subscriptionDeliveriesTable?.get(deliveryKey(record.subscriptionRef, record.deliveryRef)), record.admissionRef)
@@ -6836,13 +6754,13 @@ export default class AgentTeam extends TypertRemoteService {
     return this.reminderEvaluationTail
   }
 
-  /** Arm one timer for the soonest pending occurrence; nothing pending disarms it. */
   private armMemberReminderTimer(nowMs: number): void {
     if (this.memberReminderTimer !== undefined) clearTimeout(this.memberReminderTimer)
     this.memberReminderTimer = undefined
     if (!this.accepting || this.ledger === undefined) return
     const at = this.requireLedger().nextMemberReminderWakeAt(nowMs)
     if (at === undefined) return
+    // Long intervals must not overflow Node's timer limit into an immediate retry loop.
     const delay = Math.min(Math.max(0, at - Date.now()), MEMBER_REMINDER_TIMER_MAX_DELAY_MS)
     this.memberReminderTimer = setTimeout(() => {
       this.memberReminderTimer = undefined
@@ -6862,7 +6780,6 @@ export default class AgentTeam extends TypertRemoteService {
 
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
     // Nothing after the ledger append may turn a committed operation into a failed Remote call; effects that run third-party code go through `afterCommit`.
-    // Order: listeners, Client invalidation, participation notice, wakes.
     this.afterCommit('commit listener dispatch', () => this.ctx.emit('agent-team/committed', { receipt }))
     const operation = this.ledger?.getOperation(receipt.operationId)
     if (operation === undefined) {
@@ -6936,7 +6853,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Run one effect that follows the ledger append. The operation is durable by now, so a delivery or listener failure degrades to a log line;
-   * a failed Inbox wake clears its own signature so the next commit retries the same durable facts without a second operation.
+   * a failed Inbox wake drops coverage so the next commit retries the same durable facts without a second operation.
    * Synchronous invariant divergence is re-raised on the caller's frame; deferred notification effects report it at error level because the commit has already returned.
    */
   private afterCommit(label: string, effect: () => void, deferNotification = false, notificationMemberId?: AgentTeamMemberId): void {
@@ -7206,7 +7123,6 @@ export default class AgentTeam extends TypertRemoteService {
     this.pendingTeamWakes.set(message.id, { memberId: member.memberId, sessionId: agent.id })
   }
 
-  /** Remove a Team notice that Host code is replacing or disposing on purpose. */
   private removeExpectedTeamWake(agent: Agent, message: UserMessage): void {
     this.expectedInboxDiscards.add(message.id)
     // The occurrences this message carried were never read, so nothing may
