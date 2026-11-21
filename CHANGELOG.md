@@ -44,6 +44,7 @@ All notable changes to this project are documented in this file. The format foll
 
 **Fixed**
 
+- A fresh Thread reply uses the revision returned by the previous committed reply or Task action, even before another read succeeds. This applies to both the Task page and discussion panel; uncertain retries still replay their original request.
 - The README no longer says the Team has no timer: a Member's own reminder and a Project subscription's polling interval run on schedule, while a Team with neither and no event still does not wake itself.
 - A replayed Member lifecycle write no longer drives the runtime from the record it wrote at its own commit: `suspendMember`, `resumeMember`, and `archiveMember` read the Member row as it stands after the write and converge the runtime to that state. A late retry of a suspend therefore cannot dispose the generation a resume activated, a replayed resume cannot revive a Member a later suspend stopped, and a replayed suspend after archival answers the archived row; the receipt stays the original one.
 - A committed Member edit whose live model-route apply failed is now reported as `failed:model-apply` with a `model-apply` diagnostic, instead of being folded into the capability failure, and replaying the same request retries the effect the stored route still owes instead of skipping it because the record already names the new route. The effect is derived from what the live generation runs, so a route a later edit replaced is never put back.

@@ -555,8 +555,12 @@ export function useTeamThreadController(options: TeamThreadControllerOptions): T
   const applyTaskCommit = async (committed: CommittedTaskWrite): Promise<void> => {
     const generation = activeGenerationRef.current
     if (generation === undefined) return
-    setProjection(current => current === undefined ? current
-      : { ...current, task: committed.task, thread: committed.thread, ...(committed.claims === undefined ? {} : { claims: committed.claims }) })
+    setProjection(current => {
+      const next = current === undefined ? current
+        : { ...current, task: committed.task, thread: committed.thread, ...(committed.claims === undefined ? {} : { claims: committed.claims }) }
+      projectionRef.current = next
+      return next
+    })
     // The Host's own activity row, merged exactly as an accept or close merges its own.
     setCurrentFacts(current => {
       const merged = mergeFacts(current, [{ kind: 'activity', sequence: committed.activity.sequence, activity: committed.activity, occurredAt: committed.receipt.occurredAt }])
@@ -597,9 +601,13 @@ export function useTeamThreadController(options: TeamThreadControllerOptions): T
           currentFactsRef.current = merged
           return merged
         })
-        setProjection(current => current === undefined || committed.thread.revision < current.thread.revision
-          ? current
-          : { ...current, ...(committed.task === undefined ? {} : { task: committed.task }), thread: committed.thread })
+        setProjection(current => {
+          const next = current === undefined || committed.thread.revision < current.thread.revision
+            ? current
+            : { ...current, ...(committed.task === undefined ? {} : { task: committed.task }), thread: committed.thread }
+          projectionRef.current = next
+          return next
+        })
         if (settled.clearedDraft && drafts.getSnapshot(draftKey).draft === '') clearReplySelection()
         await options.afterWrite?.()
       } else if (result.value.kind === 'unread_required') {
