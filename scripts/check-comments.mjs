@@ -107,7 +107,7 @@ const scopes = [
 const budgetsOnly = process.argv.includes('--budgets')
 const testScopes = (await readdir(join(root, 'packages'), { withFileTypes: true }))
   .filter(entry => entry.isDirectory())
-  .flatMap(entry => [`packages/${entry.name}/tests`])
+  .map(entry => `packages/${entry.name}/tests`)
 const existingTests = []
 for (const scope of testScopes) {
   try {
