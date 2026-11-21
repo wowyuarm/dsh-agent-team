@@ -53,11 +53,6 @@ function managerCapabilityParts(member: {
   return parts
 }
 
-/**
- * The manager overview's structured answer. A Project's `state` is kept as a
- * fact rather than pruned: every entry the Host emits is already active, since
- * an archived Project is invisible to any projection.
- */
 const MANAGER_OVERVIEW_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   workspaces: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
     workspaceId: { type: 'string', required: true }, title: { type: 'string' }, path: { type: 'string' },
@@ -180,7 +175,6 @@ const MANAGER_MODELS_SCHEMA = { type: 'object', additionalProperties: false, pro
   memberPresets: { type: 'array', required: true, items: { type: 'string' } },
 } } as const
 
-/** One committed operation's receipt, the durable handle a later read or replay addresses. */
 const MANAGER_RECEIPT_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   operationId: { type: 'string', required: true }, requestId: { type: 'string', required: true },
   sequence: { type: 'number', required: true }, occurredAt: { type: 'string', required: true },
@@ -240,7 +234,6 @@ const MEMBER_UPDATE_SCHEMA = { type: 'object', additionalProperties: false, prop
   status: { ...MANAGER_MEMBER_STATUS_SCHEMA, required: true },
 } } as const
 
-/** One runtime effect in the model's own words; the enum stays the Host's contract. */
 function memberEffectText(effect: string): string {
   switch (effect) {
     case 'applied': return 'the live runtime picked up the new configuration'

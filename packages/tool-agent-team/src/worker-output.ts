@@ -60,11 +60,6 @@ function workerIdentityList(ids: readonly string[]): string {
   return shown.join(', ') + (omitted === 0 ? '' : ` … (${omitted} retained ids omitted)`)
 }
 
-/**
- * One run's diagnostic as its initiator reads it: the summary the Thread already
- * carries, the native identities the Host recorded, and the bounded fragments the
- * engine's own record still answers — or the reason it cannot.
- */
 function inspectionReport(value: {
   readonly workerRef: string; readonly state: string; readonly engine?: string | undefined
   readonly projectRef?: string | undefined; readonly threadRef?: string | undefined

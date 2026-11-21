@@ -173,7 +173,6 @@ function boardLines(open: readonly BoardItemView[], finished: readonly BoardItem
     'Read a Task\'s Thread with team_thread read before you claim or reply.']
 }
 
-/** One schedule as the result renders it: the stored form, with cron naming the zone it is read in. */
 export function reminderScheduleText(schedule: AgentTeamReminderSchedule): string {
   if (schedule.kind === 'once') return `once at ${formatTeamTimestamp(schedule.at)}`
   if (schedule.kind === 'every') return `every ${schedule.minutes} minutes`
@@ -241,10 +240,6 @@ export const teamAttentionOutput = {
       : value.kind === 'unfollow'
         ? 'Ordinary updates will no longer interrupt you. Mentions, replies and responsibility events still will; follow again to resume.'
         : 'Ordinary updates do not interrupt you. Mentions, replies and responsibility events still will; follow to resume them.'
-    // Why the reader follows, stated only once the standing is there to support
-    // it: a Member that never followed has no cause to name, and a row the
-    // ledger cannot attribute is reported as the reader's own choice rather
-    // than guessed at.
     const cause = value.following === false ? '' : causeOf(value.source)
     if (value.kind === 'follow' || value.kind === 'unfollow') {
       return [{ type: 'text', text: `${source}\nAttention changed — ${value.following ? 'now following' : 'no longer following'} ${subject}${standing === '' ? '' : ` · ${standing}`}${cause}.\n${consequence}` }]
@@ -409,10 +404,7 @@ export const teamTaskOutput = {
 const TEAM_VIEW_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   projects: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
     projectRef: { type: 'string', required: true }, name: { type: 'string', required: true },
-    // Present only once the ledger has Project owners (rules version 2).
     owners: { type: 'array', items: { type: 'string' } },
-    // What each Agent owner answers for here; `unspecified` is a neutral
-    // statement about the grant, not a fault to report.
     ownerResponsibilities: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
       handle: { type: 'string', required: true }, responsibility: { type: 'string', required: true },
     } } },
