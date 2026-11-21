@@ -3868,7 +3868,6 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /** One Member's standing for the manager overview: runtime state from the Host, ownership from the ledger. */
   private managerMemberEntry(ledger: AgentTeamLedger, memberId: AgentTeamMemberId): AgentTeamManagerMemberEntry {
     const member = ledger.requireMember(memberId)
     const status = this.memberStatus(member)
@@ -3900,10 +3899,9 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /**
-   * The one authorization a manager tool performs itself. The tool policy already
-   * denies every other Session at execution; this is the handler's own check, so
-   * a tool reached through any other path still refuses. `ownsSession` cannot
-   * serve here: it answers lineage, which a replaced generation still satisfies.
+   * Tool admission does not protect direct Host calls or writes queued across
+   * manager replacement. Check live identity, not lineage; commit paths recheck
+   * it inside serialization because a queued caller can lose authority.
    */
   private requireManagerAgent(agent: Agent): void {
     if (this.managerRuntime === undefined || !this.managerRuntime.isCurrentManagerAgent(agent)) {
@@ -4566,10 +4564,6 @@ export default class AgentTeam extends TypertRemoteService {
     this.memberFailures.set(memberId, failures)
   }
 
-  /**
-   * Route one activation failure to its diagnostic class: preset composition failures by error class, session failures by the seam's typed classification,
-   * everything else as an unclassified activation failure.
-   */
   private activationDiagnosticOf(error: unknown, sessionId: SessionId): AgentTeamMemberDiagnostic {
     if (error instanceof PresetCompositionError) return { class: 'preset-composition' as const, detail: error.message }
     const failure = error instanceof StoredSessionReadError ? error.failure : sessionFailureOf(error, sessionId)
