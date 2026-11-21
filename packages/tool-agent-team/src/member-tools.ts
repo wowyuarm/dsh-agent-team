@@ -163,7 +163,7 @@ export const teamThread = defineTool({
       const resolved = host.resolveTaskRefs({ workspaceId: base.workspaceId, taskRefs: [task.taskRef] }).resolved[0]
       return resolved === undefined ? {} : { taskNumber: resolved.taskNumber }
     }
-        // `messageRef` belongs to the `message` action alone. The parameter schema is implicitly open, so nothing refuses it elsewhere and a silent drop would tell the model nothing. One guard before the branches covers every other action, including future read actions.
+    // The shared schema can't enforce action-specific fields; ignoring messageRef could return the whole Thread instead.
     if (args.action !== 'message' && args.messageRef !== undefined) {
       throw new Error(recoveryFor('action_only_arguments').sentence({ action: args.action, parameter: 'messageRef', owner: 'message' }))
     }
@@ -176,7 +176,6 @@ export const teamThread = defineTool({
     }
     if (args.action === 'message') {
       if (args.messageRef === undefined) throw new Error(recoveryFor('missing_message_ref').sentence({ refused: 'for action message' }))
-            // Reading one Message requires threadRef; taskRef alone cannot address it. The orientation lookup below still checks that both refs agree.
       if (args.threadRef === undefined) throw new Error(`message needs threadRef — ${recoveryFor('missing_thread_identity').sentence({})}`)
       if (args.beforeSequence !== undefined || args.limit !== undefined) throw new Error(recoveryFor('history_only_arguments').sentence({ action: 'message' }))
       const readBack = host.readMessageForAgent(agent, {
@@ -184,7 +183,7 @@ export const teamThread = defineTool({
         threadRef: args.threadRef as AgentTeamThreadRef,
         messageRef: args.messageRef as AgentTeamMessageRef,
       })
-            // The ordinary orientation is still returned so every action answers with one shape; the Message read back rides alongside.
+      // Fetch Thread standing without paging older facts into a single-Message read.
       const snapshot = host.threadHistoryForAgent(agent, { ...base, beforeSequence: 1, limit: 1 })
       const status = host.attentionStatusForAgent(agent, base)
       const value = threadResult('message', base.workspaceId, snapshot, status.attention, [], {
@@ -193,7 +192,7 @@ export const teamThread = defineTool({
       })
       return budgetReading(agent, value, (candidate): string => teamThread.output.render(args, candidate as never).map((part: { type: string; text?: string }) => part.type === 'text' ? part.text : '').join('\n'), capacity).value
     }
-        // `read` is the one action that returns a bounded batch by design — its Host request carries neither paging field, so a page size here cannot be honored. Refusing the whole call taught the model nothing: one real session retried the identical arguments twice. The batch it did get names what remains, which is the route to more.
+    // A Thread read ignores paging slots: its preview and acknowledgement must use the same bounded batch.
     if (args.action !== 'read' && (args.beforeSequence !== undefined || args.limit !== undefined)) {
       throw new Error(recoveryFor('history_only_arguments').sentence({ action: args.action }))
     }
@@ -207,6 +206,7 @@ export const teamThread = defineTool({
         ...(read.earlierFactCount === undefined ? {} : { earlierFactCount: read.earlierFactCount }), taskCards: cards, ...taskNumberOf(read.task) })
     }
     let selected: ReturnType<typeof view> | undefined
+    // The Host advances only through facts that fit the same render we'll return to the model.
     const read = await host.readThreadForAgent(agent, { requestId: requestId(agent.id, exec.callId), ...base }, preview => {
       const budget = budgetReading(agent, view(preview), value => teamThread.output.render(args, value as never).map(part => part.type === 'text' ? part.text : '').join('\n'), capacity)
       selected = budget.value
@@ -344,10 +344,9 @@ export const teamMessage = markAgentTeamPreset(defineTool({
     const paths = attachmentPaths !== undefined && attachmentPaths.length > 0 ? { attachmentPaths } : {}
     if (typeof args.body !== 'string' || args.body.trim() === '') throw new Error(`team_message needs the message text in its body parameter — a blank or missing body is usually the text landing in the reply channel instead. Put the full message in body and resend.`)
     if (args.action === 'post') {
-      // `post` is a plain Main stream message, so `kind`, `sourceThreadRefs`, and `accountable` belong to `start` alone. A model that fills every optional slot declares `kind: 'discussion'` on a post that is a discussion by definition; dropping those here, rather than refusing, is what keeps a post from costing a retry — the same reason a read ignores its page size.
+      // A filled-in kind doesn't change a post; an owner or source signals a misaddressed start.
       if (args.projectRef === undefined || args.taskRef !== undefined || args.threadRef !== undefined || args.baseRevision !== undefined) throw new Error(`post requires projectRef and does not accept threadRef, taskRef, or baseRevision — ${recoveryFor('post_requires_project').sentence({})}`)
       if (args.accountable !== undefined) throw new Error(recoveryFor('action_only_arguments').sentence({ action: 'post', parameter: 'accountable', owner: 'start' }))
-      // An empty `sourceThreadRefs` names no source, exactly as `attachments: []` names no file: the parameter carries nothing to honor, so it is not a mis-sent `start` argument.
       if (args.sourceThreadRefs !== undefined && args.sourceThreadRefs.length > 0) throw new Error(recoveryFor('action_only_arguments').sentence({ action: 'post', parameter: 'sourceThreadRefs', owner: 'start' }))
       const result = await host.postMainMessageForAgent(agent, { requestId: requestId(agent.id, exec.callId), workspaceId: workspaceOf(args, agent),
         projectRef: projectRefOf(args.projectRef) as never,
@@ -616,10 +615,7 @@ export const teamView = defineTool({
           : participating ? (self !== undefined && ownerIds.includes(self.memberId) ? 'owner' : 'member') : 'directory only'
         return { projectRef: project.projectRef, name: project.name, subscriptions,
           owners: [host.humanHandle(), ...ownerIds.map(memberId => handles.get(memberId) ?? memberId)],
-          // Only when at least one owner recorded text: a Project whose every grant
-          // is unspecified adds no field and no token, and a pre-version-8 ledger
-          // answers exactly as it did before the field existed. Once it appears, an
-          // owner without text reads `unspecified` rather than being left out.
+          // Keep projects with no recorded responsibilities compact; when shown, account for every grant.
           ...(projectOwners.every(owner => owner.responsibility === undefined) ? {} : { ownerResponsibilities: projectOwners
             .map(owner => ({ handle: handles.get(owner.memberId) ?? owner.memberId, responsibility: owner.responsibility ?? 'unspecified' })) }),
           role }

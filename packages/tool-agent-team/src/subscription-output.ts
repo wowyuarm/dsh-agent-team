@@ -52,12 +52,10 @@ const OUTPUT_SCHEMA = {
 
 export type SubscriptionResult = InferValue<typeof OUTPUT_SCHEMA>
 
-/** Who an event wakes: the addressed set, or that nobody is woken and the timeline alone keeps it. */
 function notifyLine(notify: readonly string[]): string {
   return notify.length === 0 ? 'notify: nobody (published to the timeline only)' : `notify: ${notify.join(', ')}`
 }
 
-/** Which of the two triggers a subscription carries: either one alone is a complete subscription. */
 function triggersOf(subscription: { readonly intervalMinutes?: number | undefined; readonly webhook?: boolean | undefined }): string {
   const timer = subscription.intervalMinutes === undefined ? '' : `every ${subscription.intervalMinutes} min`
   if (!subscription.webhook) return timer
@@ -68,8 +66,6 @@ type RenderedRun = NonNullable<SubscriptionResult['runs']>[number]
 
 function runLine(run: RenderedRun): string {
   const exit = run.timedOut ? ' · timed out' : run.exitCode === undefined ? '' : ` · exit ${run.exitCode}`
-  // The identity a run is explained by: which revision it pinned, and which
-  // delivery (and which attempt of it) asked for it when a webhook started it.
   const delivery = run.deliveryRef === undefined ? '' : ` · ${run.deliveryRef} attempt ${run.attempt ?? 0}`
   return `${run.startedAt} · ${run.trigger} · ${run.category} · ${run.eventCount} event${run.eventCount === 1 ? '' : 's'} · r${run.subscriptionRevision}${delivery} · ${run.durationMs} ms${exit}`
 }
@@ -78,13 +74,8 @@ function outcomeLine(run: RenderedRun): string {
   return run.succeeded ? run.category : `${run.category}: ${run.reason ?? 'no reason recorded'}`
 }
 
-/**
- * The tails an owner's read carries. A passing run has them too: "the script
- * printed nothing useful" is exactly what an owner reads the output to find out,
- * and hiding it on success makes a green run undebuggable. A summary-only read
- * carries no tail at all, so this renders nothing for it.
- */
 function outputLines(run: RenderedRun): string {
+  // Distinguish a summary-only response from an owner-visible run that printed nothing.
   if (run.stdoutTail === undefined) return ''
   return `\n  stdout tail:\n${run.stdoutTail || '(empty)'}\n  stderr tail:\n${run.stderrTail || '(empty)'}`
 }

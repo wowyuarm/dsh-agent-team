@@ -114,7 +114,6 @@ function factMarkers(fact: FactView): string {
   return ''
 }
 
-/** One complete Activity fact's line; the Host's shared formatter is the only Activity rendering. */
 function activityLine(fact: ActivityFactView): string {
   const complete = activityFromView(fact)
   if (complete === undefined) throw new Error(`Activity view at sequence ${fact.sequence} lacks its immutable identity`)
@@ -178,7 +177,6 @@ function factTimelineLines(facts: readonly FactView[], cards: readonly TaskCardV
   return lines
 }
 
-/** The one model-facing schema for a Thread fact, shared by the read result and by the facts a rejected write carries back. */
 export const FACT_SCHEMA = {
   type: 'object', additionalProperties: false, properties: {
     sequence: { type: 'number', required: true }, kind: { type: 'string', required: true }, messageRef: { type: 'string' }, body: { type: 'string' }, bodyOmitted: { type: 'boolean' }, sender: { type: 'string' }, occurredAt: { type: 'string' }, mentions: { type: 'array', items: { type: 'string' } }, replyToMessageRef: { type: 'string' }, replyTo: { type: 'object', additionalProperties: false, properties: { sender: { type: 'string', required: true }, excerpt: { type: 'string', required: true } } }, activity: { type: 'string' }, activityRef: { type: 'string' }, actor: { type: 'string' }, taskRef: { type: 'string' }, threadRef: { type: 'string' }, projectRef: { type: 'string' }, workerRef: { type: 'string' }, engine: { type: 'string' }, state: { type: 'string' }, reason: { type: 'string' }, claimRef: { type: 'string' }, claimRefs: { type: 'array', items: { type: 'string' } }, completedClaimRefs: { type: 'array', items: { type: 'string' } }, acceptedClaimRefs: { type: 'array', items: { type: 'string' } }, releasedClaimRefs: { type: 'array', items: { type: 'string' } }, from: { type: 'string' }, to: { type: 'string' }, refollowedMembers: { type: 'array', items: { type: 'string' } }, unread: { type: 'boolean' }, direct: { type: 'boolean' }, activityOmitted: { type: 'boolean' },
@@ -235,8 +233,6 @@ export function mainStreamLines(action: string, value: {
   readonly message?: { readonly messageRef: string; readonly sender: string; readonly sequence: number; readonly occurredAt?: string | undefined; readonly body: string; readonly bodyOmitted?: boolean } | undefined
 }): string[] {
   const source = `Workspace: ${value.workspaceId} · Project: ${value.projectRef} · Main stream`
-  // The standing names the reader's own Attention, which is the one fact this
-  // read cannot show: reading is not following, and neither changes the other.
   const attention = value.standing === undefined ? [] : [value.standing.following
     ? 'Attention: following — ordinary updates here will interrupt you.'
     : 'Attention: not following — ordinary updates here will not interrupt you. team_attention follow with projectRef starts them.']
@@ -282,7 +278,6 @@ function repliesToClause(replyToMessageRef: string | undefined, replyTo: ReplyCo
     : ` (replies to @${replyTo.sender} — "${replyTo.excerpt}")`
 }
 
-/** The one Host-read-fact → view projection, shared by a Thread read and by the facts a rejected write carries back, so the two surfaces cannot drift. */
 export function readFactView(entry: {
   readonly fact: AgentTeamThreadFact
   readonly unread: boolean
