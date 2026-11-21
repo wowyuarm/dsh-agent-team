@@ -280,7 +280,7 @@ describe('planMemberReminders decides what is due now', () => {
       schedule: { kind: 'once', at: new Date(NOW).toISOString() } })
     const later = reminder({ reminderRef: 'next', schedule: { kind: 'once', at: new Date(next).toISOString() } })
     const inactive = { ...suspendedDue, memberState: 'inactive' as const }
-    const invalid = reminder({ schedule: { kind: 'once', at: 'not an instant' } })
+    const invalid = reminder({ reminderRef: 'invalid', schedule: { kind: 'once', at: 'not an instant' } })
     expect(nextReminderWakeAt([invalid, later, suspendedDue], NOW - 1)).toBe(NOW)
     expect(nextReminderWakeAt([later, suspendedDue], NOW)).toBeUndefined()
     expect(plan([later, suspendedDue], NOW)).toEqual(['reminder:due@2026-11-03T01:30:00.000Z'])
