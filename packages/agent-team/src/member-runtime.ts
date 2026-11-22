@@ -47,6 +47,12 @@ export const AGENT_TEAM_TOOL_NAMES = Object.freeze([
   'team_worker',
 ] as const)
 
+/** The DSH tool names that hand a Member an arbitrary shell on the Host. */
+export const SHELL_TOOL_NAMES = Object.freeze(['bash', 'pwsh'] as const)
+
+/** The DSH tool names that hand a Member arbitrary file reads on the Host: the file readers, plus the shells that can read anything. */
+export const FILE_READ_TOOL_NAMES = Object.freeze(['read', 'read_image', ...SHELL_TOOL_NAMES] as const)
+
 /** Copy a Remote-supplied capability overlay into owned frozen storage. */
 export function deepCopyCapabilities(capabilities: AgentTeamMemberCapabilities): AgentTeamMemberCapabilities {
   const copyAllow = (allow: readonly string[] | undefined): { allow?: readonly string[] } =>
@@ -139,6 +145,18 @@ export class MemberRuntime {
       for (const name of bindings.keys()) names.add(name)
     }
     return names
+  }
+
+  /** Whether the restriction enforced for this Member admits a shell tool; a Member with no installed restriction has none. */
+  enforcesShellTool(memberId: AgentTeamMemberId): boolean {
+    const allow = this.enforcedToolAllow.get(memberId)
+    return allow !== undefined && SHELL_TOOL_NAMES.some(name => allow.has(name))
+  }
+
+  /** Whether the restriction enforced for this Member admits a file-reading tool; a Member with no installed restriction has none. */
+  enforcesFileReadTool(memberId: AgentTeamMemberId): boolean {
+    const allow = this.enforcedToolAllow.get(memberId)
+    return allow !== undefined && FILE_READ_TOOL_NAMES.some(name => allow.has(name))
   }
 
   /** Own-scope registrations can stay visible despite the execution guard. */
@@ -535,7 +553,7 @@ export class MemberRuntime {
     await mkdir(join(path, 'notes'), { recursive: true })
     await mkdir(join(path, 'skills'), { recursive: true })
     try {
-      await writeFile(join(path, 'memory.md'), '# Member memory\n\nBounded routing index. Writing, compaction, and demotion rules: the bundled `member-memory-manager` skill.\n\n## Identity and role\n- <scope>\n\n## Durable rules\n- <rule>\n\n## In hand\n- <work in hand>\n\n## Notes index\n- <cluster>: `notes/<cluster>/README.md`\n', { flag: 'wx' })
+      await writeFile(join(path, 'memory.md'), '# Member memory\n\nCold-start recovery index. Where knowledge belongs, writing, compaction, and demotion rules: the bundled `member-memory-manager` skill.\n\n## Durable rules\n- <rule>\n\n## On-demand notes\n- <scenario> → `notes/<cluster>/README.md`\n\n## Open local state\n- <unfinished local state> (<task, thread, or path>)\n', { flag: 'wx' })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }

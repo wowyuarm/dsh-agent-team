@@ -107,9 +107,13 @@ The split from `team_thread` is what makes the read path carry no Attention logi
 
 `team_message.start` creates a top-level Thread and defaults taskless; explicit task intent atomically creates a Task. `reply` appends to an existing Thread. Both accept absolute attachment paths; Host validates and caches all paths atomically. A committed start or reply renders one committed-verb outcome — Thread created or reply added — with the Message ref, the new Thread ref (and Task ref when taskful), and exactly one next-write token hand-off. The created Thread is immediately addressable and the next mutation has its basis.
 
+An `attachments` path names a file the Member could read itself, so a start, reply, or `post` carrying one needs a file-reading or shell tool in the Member's enforced surface — `read`, `read_image`, `bash`, or `pwsh` — and is refused with `attachment_read_required` without one. Each path must also stay inside the Member's working directory: an absolute path elsewhere, a `..` escape, or a symlink leading out is refused before any file is copied. The Human composer path keeps only the ordinary validation.
+
 Behind rules version 2 `team_message` also has `post`, which speaks in a Project's Main stream (`projectRef`, `body`, optional `replyToMessageRef` of a Main stream Message of the same Project). It needs no write token. A writer holding unread Main stream entries must instead hold every one of them complete in the current context — as a Team notice or a tool result that binds the actual rendered Message or Activity — or explicitly read with `projectRef`; otherwise it gets `main_unread_required`.
 
 `start` takes `kind: 'discussion' | 'task'` (the removed `asTask` spelling is refused with the parameter route to `kind`, never dropped), and only a Project owner may start: others get `project_owner_required`, which names `post`. A Member that does not participate in the Workspace — or is not enabled for a write — gets `not_project_member`. A Task start also takes `accountable` and `sourceThreadRefs`; both are refused on a discussion start and on `post`/`reply` rather than dropped, and the committed start reports the accountable owner it recorded.
+
+Under rules version 10 a Task start's `accountable` — and `promote`'s below — accepts exactly the targets `transfer` accepts, resolved the same way, so naming the Member who drives the Task is one write rather than a start and a transfer. The named Member starts following the Thread with `accountable` as the cause and is woken by the creation; the author still follows as `thread-author`. Omitted, the creator is accountable.
 
 `team_thread` `read`, `history` and `message` address one scope: a Thread through `threadRef` (or `taskRef`, its compatibility alias for a taskful Thread) or a Project's Main stream through `projectRef`; both scopes at once are refused. `message` must carry `threadRef` or `projectRef` — a `taskRef` alone does not read a Message back. The Main stream behavior and its acknowledgement rules are described under `team_thread` above.
 
@@ -173,7 +177,7 @@ A committed mutation names its action (Claim created, completed, or released), r
 
 `accept` belongs to the Human, to a Project owner, or to the Task's own accountable, and never to a Member that held a Claim on that Task; an Agent may accept only while it is in review. `close`, `reopen`, and `transfer` belong to the Human and the current accountable. The tool forwards the action and the write token and never re-derives that authority.
 
-`transfer` takes `target` — any enabled Project member's memberRef, `@Handle`, or a unique memberRef prefix, or `human` — and moves responsibility only, leaving Claims with their owners; the new accountable takes part in the Thread from there and is woken with what the Task now asks of it.
+`transfer` takes `target` — the memberRef, `@Handle`, or unique memberRef prefix of any enabled Member of the Task's Workspace, or `human` — and moves responsibility only, leaving Claims with their owners; the new accountable takes part in the Thread from there and is woken with what the Task now asks of it.
 
 A committed resolution names the action, the resulting status and resolution, the accountable owner, and the Claims it completed or released. A `self_acceptance_forbidden` or `accountable_owner_required` refusal names its way out from the Host's recovery registry and gains the Task's current state and accountable owner, which only the caller can read after the refusal.
 
@@ -182,6 +186,10 @@ A committed resolution names the action, the resulting status and resolution, th
 `team_subscription` creates and maintains a Project's subscription: a script the Host runs with no Session, as that Project, on a timer, on an incoming webhook, or on both. Its actions are `list`, `create`, `update`, `test`, `pause`, `resume`, `delete`, `baseline`, `logs`, `deliveries`, `replay`, and `reset_webhook`.
 
 Only the Project's owners may change one, test one, or replay a delivery (`project_owner_required` otherwise). Any Workspace Member may use `list` for Agent-facing metadata that omits scripts, credential references, and webhook arms; run history remains Project-member-only, with owner-only output as described below.
+
+`create`, `update`, `test`, `resume`, and `replay` make the Host run a script on its shell and hand the output back, so an Agent owner also needs a shell tool (`bash` or `pwsh`) in its own enforced tool surface; without one the call is refused with `subscription_shell_required` before any script is read or run.
+
+A `scriptPath` must stay inside the caller's working directory: a relative path resolves against it, and an absolute path, a `..` escape, or a symlink whose target lies outside is refused. The Human path is unaffected and always pastes the content.
 
 Empty `workspace`, `scriptPath`, and `scriptContent` slots are absent; two nonempty script sources still conflict, and no script is still an error. Zero `intervalMinutes` or `limit` uses omission semantics. This never drops `notify: []`, `credentials: []`, `webhook: false`, or an `expectedRevision`: clearing recipients, removing credentials, disarming a webhook, and revision checks remain real instructions.
 
@@ -213,9 +221,9 @@ Events are the script's stdout: one JSON object per line with `id`, `title`, and
 
 New events are accepted into the ledger and published to the Project's Main stream at most 20 per minute per subscription. Up to 500 accepted events may wait unpublished, and a batch that would cross that ceiling is refused as one failure rather than silently trimmed. A trial run never counts as a failure and never clears the count; three failed runs in a row pause the subscription and are recorded as such.
 
-`create` and `update` take `notify`: the Members whose Inbox the published events reach, each named as a `memberRef`, an `@Handle`, a unique 6+ hex prefix, or `human`. Any current member of the Project may be named, owners or not, and the Human when named; omitting it addresses the events to the Creating Member alone on a create, and keeps the stored set on an update, while an empty list is a real choice — the events still reach the Main stream and nobody is woken.
+`create` and `update` take `notify`: the Members whose Inbox the published events reach, each named as a `memberRef`, an `@Handle`, a unique 6+ hex prefix, or `human`. Any enabled or suspended Member of the Project's Workspace may be named, owners or not, and the Human when named; omitting it addresses the events to the Creating Member alone on a create, and keeps the stored set on an update, while an empty list is a real choice — the events still reach the Main stream and nobody is woken.
 
-The publish commit drops a recipient who has left the Project rather than substituting an owner, and a record written before the field existed reads back as its Creating Member alone.
+The publish commit drops a recipient who no longer reads the Project — archived, or no longer in its Workspace — rather than substituting an owner; a suspended recipient stays on the list and is reached again once resumed, and a record written before the field existed reads back as its Creating Member alone.
 
 The result names the subscription, its state, its revision, and its interval, and any refused trial renders the reason with the last of each stream. What a script prints is data, never instructions: an event on the Main stream is marked as untrusted text and its title, link, and detail never become a mention. Project subscriptions run unattended — a restricted Member gains this execution path, the Main stream records every change, and the Human can pause the subscription at any time.
 
