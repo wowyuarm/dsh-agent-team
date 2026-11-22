@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service, type Events } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import { installModelSelection, type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type LlmFailure, type UserMessage } from '@deepseek-ai/dsh-llm'
@@ -1153,194 +1153,18 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   protected async [Service.init](): Promise<void> {
-    // Registered once per Host: the framework keeps one unit per projection key and drives it for every Session, so the fold is session-agnostic.
-    // The registration rides this plugin's fiber, so unloading Team releases the key and its cached cells; one owner, never a second disposer.
+    // The plugin's fiber releases the projection key and cached cells on unload.
     this.contextProjection = await this.ctx.sessionProjections.register(createTeamContextProjectionDefinition())
-    this.ctx.on('agent/error', ({ agent, error }) => {
-      const member = this.memberForAgent(agent)
-      if (member === undefined) return
-      const message = error instanceof Error ? error.message : String(error)
-      this.setMemberFailure(member.memberId, 'runtime', message)
-      // Every occurrence is classified here, including verdicts the coordinator reports no state change for;
-      // those are logged at diagnostic level to explain why no automatic recovery was scheduled.
-      const kind = classifyRecoverableError(error)
-      this.ctx.logger.debug(`agent-team: ${this.memberScope(member.memberId, agent.id)} reported an error classified as ${kind === undefined ? 'not automatically recoverable' : `recoverable ${kind}`}: ${message}`)
-      this.recovery.onError(member.memberId, error)
-      this.emitMemberPresenceChanged(member)
-    })
-    this.ctx.on('agent/status', ({ agent, status }) => {
-      const member = this.memberForAgent(agent)
-      if (status === 'running') this.runningAgents.add(agent.id)
-      else this.runningAgents.delete(agent.id)
-      if (member !== undefined) this.memberIdle.status(member.memberId, status, Date.now())
-      if (status === 'running' && member !== undefined) {
-        const recovered = this.clearMemberFailure(member.memberId, 'runtime')
-        const preTurnRecovered = this.clearMemberFailure(member.memberId, 'preTurnCancellation')
-        if (recovered || preTurnRecovered) this.dropInboxCoverage(member.memberId)
-        this.emitMemberPresenceChanged(member)
-        // A transition in flight delivers its own sequenced rederived Inbox
-        // after any carried input; a status-driven steer would leapfrog it.
-        if (!this.contextManagement.isTransitioning(member.memberId)) this.notifyMember(agent, { kind: 'running' })
-      }
-      // A turn that ends without an error closes any automatic recovery episode.
-      // The idle transition is presence-affecting (working → available), so it wakes presence watchers like the running transition; otherwise cached Client rows keep showing the Member as working.
-      if (status === 'idle' && member !== undefined) {
-        this.acceptanceBoundaries.delete(agent)
-        if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
-          this.recovery.onCleanTurnEnd(member.memberId)
-        }
-        this.emitMemberPresenceChanged(member)
-      }
-    })
-    // A Team notice can be removed before the Agent opens `turn/start`.
-    // `agent/inbox/spliced` deliberately carries no cancellation owner, so a
-    // claimed notice is a normal consumed wake, while a discarded one the Host
-    // did not itself retire is the narrowest Team-owned signal of a drop.
-    this.ctx.on('agent/inbox/claimed', ({ message }) => {
-      this.pendingTeamWakes.delete(message.id)
-      // The notice reached a turn: that is the moment a Member reminder stops
-      // being owed. A Host that dies before this write leaves the marker
-      // unconsumed, so the next wake redelivers the same occurrence.
-      const carried = this.memberReminderWakes.get(message.id)
-      if (carried === undefined) return
-      this.memberReminderWakes.delete(message.id)
-      this.consumeMemberReminders(carried)
-    })
-    this.ctx.on('agent/disposed', ({ agent }) => {
-      if (!this.accepting) return
-      // The Agent's write handle is closed before this event, but its Session
-      // registry detach runs just after it. Let that synchronous teardown end
-      // before the lifecycle queue tries to publish the replacement.
-      queueMicrotask(() => {
-        if (!this.accepting) return
-        for (const memberId of this.sessionOwnershipBlocked) {
-          const member = this.ledger?.getMember(memberId)
-          if (member?.sessionId === agent.id) this.restoreAfterSessionRelease(memberId, agent.id)
-        }
-      })
-    })
-    this.ctx.on('agent/inbox/discarded', ({ agent, message }) => {
-      // A discard this Host itself initiated is expected whatever tracked it: the
-      // acceptance reminder is not in `pendingTeamWakes`, so this check must not
-      // sit behind that lookup or the id would be retained forever.
-      if (this.expectedInboxDiscards.delete(message.id)) return
-      const pending = this.pendingTeamWakes.get(message.id)
-      if (pending === undefined) return
-      this.pendingTeamWakes.delete(message.id)
-      this.memberReminderWakes.delete(message.id)
-      const member = this.memberForAgent(agent)
-      if (member === undefined || member.state !== 'enabled' || agent.id !== pending.sessionId) return
-      this.setPreTurnCancellation(member.memberId, pending.sessionId)
-      this.emitMemberPresenceChanged(member)
-    })
+    this.installAgentEventHandlers()
     const storageDomain = this.openTeamStorage()
     const domain = await storageDomain.open(agentTeamDomainSpec)
     const subscriptionDomain = await storageDomain.open(subscriptionDomainSpec)
-    // A damaged manager pointer must not fail Host boot. Keep the failure as
-    // the store's read diagnostic; the Team ledger and Members still start.
-    let managerDomain: Domain<typeof managerSessionDomainSpec> | undefined
-    let managerStoreFailure: unknown
-    try {
-      managerDomain = await storageDomain.open(managerSessionDomainSpec)
-    } catch (error) {
-      managerStoreFailure = error
-      this.ctx.logger.warn(`agent-team: manager pointer store could not open: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    this.ctx.effect(() => async () => {
-      this.accepting = false
-      // Stop admitting runs before anything they write stops being served, and
-      // wait for the ones already executing: a late result must never reach a
-      // store this shutdown is about to close.
-      await this.subscriptionScheduler?.stop()
-      // `accepting` already blocks a new pass. Stop the interval after the
-      // scheduler has settled queued callers, then drain writes already in one.
-      if (this.admissionPumpTimer !== undefined) clearInterval(this.admissionPumpTimer)
-      this.admissionPumpTimer = undefined
-      await this.admissionPumpTail
-      // Host shutdown must not depend on a turn that may never end: release
-      // every wait (in-chain idle waits through the gate, boundary waits
-      // through the runtime), so the chains below can drain to zero first.
-      this.shutdown.resolve()
-      this.shutdownController.abort({ kind: 'disposed' })
-      // Abort manager restoration before its bounded disposal drain. The
-      // runtime chain also owns the handle disposal performed below.
-      const managerDisposal = this.managerRuntime?.dispose()
-      void managerDisposal?.catch((error: unknown) => {
-        this.ctx.logger.warn(`agent-team: manager runtime disposal failed: ${error instanceof Error ? error.message : String(error)}`)
-      })
-      this.memberRuntime.releaseTurnWaits()
-      this.recovery.dispose()
-      this.contextManagement.dispose()
-      await this.workerRegistry.dispose()
-      if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
-      this.attachmentGcTimer = undefined
-      if (this.memberReminderTimer !== undefined) clearTimeout(this.memberReminderTimer)
-      this.memberReminderTimer = undefined
-      this.memberReminderWakes.clear()
-      this.memberReminderConsumeFailures.clear()
-      this.emitChanged()
-      // Every lifecycle operation enqueued before `accepting` flipped is in
-      // one of the two maps (new ones reject at enqueue), so this snapshot
-      // drains them all.
-      await Promise.all([...this.memberLifecycleTails.values(), ...this.additionLifecycleTails.values()])
-      // Member startup effects self-cancel and fence late handles. Only the
-      // manager chain needs a drain window to release its current handle.
-      if (managerDisposal !== undefined) await this.settleManagerWithinShutdownGrace(managerDisposal)
-      await this.reminderEvaluationTail
-      await Promise.all([...this.handles.values()].map(handle => this.disposeWithWakeGuard(handle)))
-      this.handles.clear()
-      this.memberRuntime.disposeAll()
-      this.runningAgents.clear()
-      // Manager restoration was aborted before the bounded drain above. Late
-      // completions dispose their candidates instead of publishing into a
-      // runtime whose pointer domain and shared SQLite backend are closing.
-      try {
-        await managerDomain?.close()
-      } catch (error) {
-        this.ctx.logger.warn(
-          `agent-team: manager pointer domain close failed: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
-      await domain.close()
-      await subscriptionDomain.close()
-      await this.backend?.close()
-    }, 'agentTeam.dispose')
+    const { managerDomain, createRuntime } = await this.prepareManagerRuntime(storageDomain)
+    this.ctx.effect(() => () => this.disposeHost({ domain, subscriptionDomain, managerDomain }), 'agentTeam.dispose')
     this.domain = domain
-    const ledger = new AgentTeamLedger(domain.table('operations'), {
-      areFactsVisible: surfaceVisibilityProbe(memberId => this.handles.get(memberId)?.agent),
-      areMainEntriesVisible: (memberId, entries, projectRef) => {
-        const agent = this.handles.get(memberId)?.agent
-        if (agent === undefined) return false
-        const surface = visibleTeamSurface(agent)
-        return entries.every(entry => isMainEntryOnSurface(surface, entry, projectRef))
-      },
-    })
+    const ledger = this.createLedger(domain)
     this.ledger = ledger
-    const managerStore = managerDomain === undefined
-      ? {
-          read: (): never => { throw managerStoreFailure ?? new Error('Team manager pointer store is unavailable') },
-          ownedSessionIds: (): readonly SessionId[] => {
-            throw managerStoreFailure ?? new Error('Team manager pointer store is unavailable')
-          },
-          writeIfExpected: async (): Promise<never> => {
-            throw managerStoreFailure ?? new Error('Team manager pointer store is unavailable')
-          },
-        }
-      : new ManagerSessionStore(managerDomain.table('pointer'))
-    this.managerRuntime = new ManagerSessionRuntime({
-      ctx: this.ctx,
-      store: managerStore,
-      reader: this.sessionReader,
-      managerPrivateRoot: dshHomePath('agent-team', 'manager'),
-      managerBundledSkillsRoot: MANAGER_BUNDLED_SKILLS_DIRECTORY,
-      defaultAgentOptions: () => ({ ...this.ctx.agentDefaultModel.currentSelection() }),
-      initializeDefaultWorkspace: async signal => {
-        const value = await this.ctx.get('workspaceController')?.initializeDefault(signal)
-        return value === undefined
-          ? undefined
-          : { workspaceId: value.workspace.workspaceId, path: value.workspace.path }
-      },
-    })
+    this.managerRuntime = createRuntime()
     // A live Config edit in the constructor's window may have arrived before
     // the ledger existed; sync once here so @ matching starts from the stored
     // name.
@@ -1361,11 +1185,214 @@ export default class AgentTeam extends TypertRemoteService {
     const startupMembers = ledger.listMembers()
     const startupRecovery = this.restoreAfterBoot(ledger, startupMembers)
     void startupRecovery.catch(error => {
-      if (this.accepting) this.ctx.logger.warn(`agent-team: startup recovery stopped unexpectedly: ${error instanceof Error ? error.message : String(error)}`)
+      if (this.accepting) this.ctx.logger.warn(`agent-team: startup recovery stopped unexpectedly: ${errorMessage(error)}`)
     })
   }
 
-  /** Give manager disposal one bounded drain window; uncooperative restoration I/O cannot hold Host teardown. */
+  private installAgentEventHandlers(): void {
+    this.ctx.on('agent/error', event => { this.onAgentError(event) })
+    this.ctx.on('agent/status', event => { this.onAgentStatus(event) })
+    this.ctx.on('agent/inbox/claimed', event => { this.onInboxClaimed(event) })
+    this.ctx.on('agent/disposed', event => { this.onAgentDisposed(event) })
+    this.ctx.on('agent/inbox/discarded', event => { this.onInboxDiscarded(event) })
+  }
+
+  private onAgentError({ agent, error }: Parameters<Events['agent/error']>[0]): void {
+    const member = this.memberForAgent(agent)
+    if (member === undefined) return
+    const message = errorMessage(error)
+    this.setMemberFailure(member.memberId, 'runtime', message)
+    // Every occurrence is classified here, including verdicts the coordinator reports no state change for;
+    // those are logged at diagnostic level to explain why no automatic recovery was scheduled.
+    const kind = classifyRecoverableError(error)
+    this.ctx.logger.debug(`agent-team: ${this.memberScope(member.memberId, agent.id)} reported an error classified as ${kind === undefined ? 'not automatically recoverable' : `recoverable ${kind}`}: ${message}`)
+    this.recovery.onError(member.memberId, error)
+    this.emitMemberPresenceChanged(member)
+  }
+
+  private onAgentStatus({ agent, status }: Parameters<Events['agent/status']>[0]): void {
+    const member = this.memberForAgent(agent)
+    if (status === 'running') this.runningAgents.add(agent.id)
+    else this.runningAgents.delete(agent.id)
+    if (member !== undefined) this.memberIdle.status(member.memberId, status, Date.now())
+    if (status === 'running' && member !== undefined) {
+      const recovered = this.clearMemberFailure(member.memberId, 'runtime')
+      const preTurnRecovered = this.clearMemberFailure(member.memberId, 'preTurnCancellation')
+      if (recovered || preTurnRecovered) this.dropInboxCoverage(member.memberId)
+      this.emitMemberPresenceChanged(member)
+      // A transition in flight delivers its own sequenced rederived Inbox
+      // after any carried input; a status-driven steer would leapfrog it.
+      if (!this.contextManagement.isTransitioning(member.memberId)) this.notifyMember(agent, { kind: 'running' })
+    }
+    // Idle must wake presence watchers too, or cached Client rows keep showing working.
+    if (status === 'idle' && member !== undefined) {
+      this.acceptanceBoundaries.delete(agent)
+      if (this.memberFailures.get(member.memberId)?.runtime === undefined) {
+        this.recovery.onCleanTurnEnd(member.memberId)
+      }
+      this.emitMemberPresenceChanged(member)
+    }
+  }
+
+  private onInboxClaimed({ message }: Parameters<Events['agent/inbox/claimed']>[0]): void {
+    this.pendingTeamWakes.delete(message.id)
+    // The notice reached a turn: that is the moment a Member reminder stops
+    // being owed. A Host that dies before this write leaves the marker
+    // unconsumed, so the next wake redelivers the same occurrence.
+    const carried = this.memberReminderWakes.get(message.id)
+    if (carried === undefined) return
+    this.memberReminderWakes.delete(message.id)
+    this.consumeMemberReminders(carried)
+  }
+
+  private onAgentDisposed({ agent }: Parameters<Events['agent/disposed']>[0]): void {
+    if (!this.accepting) return
+    // The Agent's write handle is closed before this event, but its Session
+    // registry detach runs just after it. Let that synchronous teardown end
+    // before the lifecycle queue tries to publish the replacement.
+    queueMicrotask(() => {
+      if (!this.accepting) return
+      for (const memberId of this.sessionOwnershipBlocked) {
+        const member = this.ledger?.getMember(memberId)
+        if (member?.sessionId === agent.id) this.restoreAfterSessionRelease(memberId, agent.id)
+      }
+    })
+  }
+
+  private onInboxDiscarded({ agent, message }: Parameters<Events['agent/inbox/discarded']>[0]): void {
+    // `agent/inbox/spliced` carries no cancellation owner; an unexpected discard
+    // is the narrowest Team-owned signal that a notice never reached turn/start.
+    // A discard this Host itself initiated is expected whatever tracked it: the
+    // acceptance reminder is not in `pendingTeamWakes`, so this check must not
+    // sit behind that lookup or the id would be retained forever.
+    if (this.expectedInboxDiscards.delete(message.id)) return
+    const pending = this.pendingTeamWakes.get(message.id)
+    if (pending === undefined) return
+    this.pendingTeamWakes.delete(message.id)
+    this.memberReminderWakes.delete(message.id)
+    const member = this.memberForAgent(agent)
+    if (member === undefined || member.state !== 'enabled' || agent.id !== pending.sessionId) return
+    this.setPreTurnCancellation(member.memberId, pending.sessionId)
+    this.emitMemberPresenceChanged(member)
+  }
+
+  private async prepareManagerRuntime(storageDomain: DomainFacility): Promise<{
+    readonly managerDomain: Domain<typeof managerSessionDomainSpec> | undefined
+    readonly createRuntime: () => ManagerSessionRuntime
+  }> {
+    // A damaged manager pointer must not fail Host boot. Keep the failure as
+    // the store's read diagnostic; the Team ledger and Members still start.
+    let managerDomain: Domain<typeof managerSessionDomainSpec> | undefined
+    let managerStoreFailure: unknown
+    try {
+      managerDomain = await storageDomain.open(managerSessionDomainSpec)
+    } catch (error) {
+      managerStoreFailure = error
+      this.ctx.logger.warn(`agent-team: manager pointer store could not open: ${errorMessage(error)}`)
+    }
+    // Defer construction until the ledger and teardown are installed.
+    const createRuntime = (): ManagerSessionRuntime => {
+      const unavailable = (): never => { throw managerStoreFailure ?? new Error('Team manager pointer store is unavailable') }
+      const managerStore = managerDomain === undefined
+        ? {
+            read: unavailable,
+            ownedSessionIds: unavailable,
+            writeIfExpected: async (): Promise<never> => unavailable(),
+          }
+        : new ManagerSessionStore(managerDomain.table('pointer'))
+      return new ManagerSessionRuntime({
+        ctx: this.ctx,
+        store: managerStore,
+        reader: this.sessionReader,
+        managerPrivateRoot: dshHomePath('agent-team', 'manager'),
+        managerBundledSkillsRoot: MANAGER_BUNDLED_SKILLS_DIRECTORY,
+        defaultAgentOptions: () => ({ ...this.ctx.agentDefaultModel.currentSelection() }),
+        initializeDefaultWorkspace: async signal => {
+          const value = await this.ctx.get('workspaceController')?.initializeDefault(signal)
+          return value === undefined
+            ? undefined
+            : { workspaceId: value.workspace.workspaceId, path: value.workspace.path }
+        },
+      })
+    }
+    return { managerDomain, createRuntime }
+  }
+
+  private createLedger(domain: Domain<typeof agentTeamDomainSpec>): AgentTeamLedger {
+    return new AgentTeamLedger(domain.table('operations'), {
+      areFactsVisible: surfaceVisibilityProbe(memberId => this.handles.get(memberId)?.agent),
+      areMainEntriesVisible: (memberId, entries, projectRef) => {
+        const agent = this.handles.get(memberId)?.agent
+        if (agent === undefined) return false
+        const surface = visibleTeamSurface(agent)
+        return entries.every(entry => isMainEntryOnSurface(surface, entry, projectRef))
+      },
+    })
+  }
+
+  private async disposeHost({ domain, subscriptionDomain, managerDomain }: {
+    readonly domain: Domain<typeof agentTeamDomainSpec>
+    readonly subscriptionDomain: Domain<typeof subscriptionDomainSpec>
+    readonly managerDomain: Domain<typeof managerSessionDomainSpec> | undefined
+  }): Promise<void> {
+    this.accepting = false
+    // Stop admitting runs before anything they write stops being served, and
+    // wait for the ones already executing: a late result must never reach a
+    // store this shutdown is about to close.
+    await this.subscriptionScheduler?.stop()
+    // Queued scheduler callers must settle before draining admission writes.
+    if (this.admissionPumpTimer !== undefined) clearInterval(this.admissionPumpTimer)
+    this.admissionPumpTimer = undefined
+    await this.admissionPumpTail
+    // Host shutdown must not depend on a turn that may never end: release
+    // every wait (in-chain idle waits through the gate, boundary waits
+    // through the runtime), so the chains below can drain to zero first.
+    this.shutdown.resolve()
+    this.shutdownController.abort({ kind: 'disposed' })
+    // Abort manager restoration before its bounded disposal drain.
+    const managerDisposal = this.managerRuntime?.dispose()
+    void managerDisposal?.catch((error: unknown) => {
+      this.ctx.logger.warn(`agent-team: manager runtime disposal failed: ${errorMessage(error)}`)
+    })
+    this.memberRuntime.releaseTurnWaits()
+    this.recovery.dispose()
+    this.contextManagement.dispose()
+    await this.workerRegistry.dispose()
+    if (this.attachmentGcTimer !== undefined) clearInterval(this.attachmentGcTimer)
+    this.attachmentGcTimer = undefined
+    if (this.memberReminderTimer !== undefined) clearTimeout(this.memberReminderTimer)
+    this.memberReminderTimer = undefined
+    this.memberReminderWakes.clear()
+    this.memberReminderConsumeFailures.clear()
+    this.emitChanged()
+    // Every lifecycle operation enqueued before `accepting` flipped is in
+    // one of the two maps (new ones reject at enqueue), so this snapshot
+    // drains them all.
+    await Promise.all([...this.memberLifecycleTails.values(), ...this.additionLifecycleTails.values()])
+    // Member startup effects self-cancel and fence late handles. Only the
+    // manager chain needs a drain window to release its current handle.
+    if (managerDisposal !== undefined) await this.settleManagerWithinShutdownGrace(managerDisposal)
+    await this.reminderEvaluationTail
+    await Promise.all([...this.handles.values()].map(handle => this.disposeWithWakeGuard(handle)))
+    this.handles.clear()
+    this.memberRuntime.disposeAll()
+    this.runningAgents.clear()
+    // Manager restoration was aborted before the bounded drain above. Late
+    // completions dispose their candidates instead of publishing into a
+    // runtime whose pointer domain and shared SQLite backend are closing.
+    try {
+      await managerDomain?.close()
+    } catch (error) {
+      this.ctx.logger.warn(
+        `agent-team: manager pointer domain close failed: ${errorMessage(error)}`,
+      )
+    }
+    await domain.close()
+    await subscriptionDomain.close()
+    await this.backend?.close()
+  }
+
+  /** Uncooperative manager restoration I/O must not hold Host teardown. */
   private async settleManagerWithinShutdownGrace(pending: Promise<unknown>): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const grace = new Promise<void>(resolve => { timer = setTimeout(resolve, MANAGER_SHUTDOWN_GRACE_MS) })
@@ -1376,7 +1403,6 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /** Restore durable Member and manager effects after the Host has become usable. */
   private async restoreAfterBoot(ledger: AgentTeamLedger, startupMembers: readonly AgentTeamAgentMember[]): Promise<void> {
     let persistedSessions: ReadonlySet<SessionId> | undefined
     try {
@@ -1385,7 +1411,7 @@ export default class AgentTeam extends TypertRemoteService {
       // its own Session and reports its own diagnostic.
       persistedSessions = new Set((await this.persistedSessionHeaders(this.shutdownController.signal)).map(snapshot => snapshot.header.id))
     } catch (error) {
-      if (this.accepting) this.ctx.logger.warn(`agent-team: startup Session listing failed; Members will inspect their own Sessions: ${error instanceof Error ? error.message : String(error)}`)
+      if (this.accepting) this.ctx.logger.warn(`agent-team: startup Session listing failed; Members will inspect their own Sessions: ${errorMessage(error)}`)
     }
     if (!this.accepting) return
     await this.sweepWorkspaceParticipations(ledger)
@@ -1399,7 +1425,7 @@ export default class AgentTeam extends TypertRemoteService {
         this.ctx.logger.warn(`agent-team: manager Session pre-restore failed: ${restored.diagnostic.class}: ${restored.diagnostic.detail}`)
       }
     } catch (error) {
-      if (this.accepting) this.ctx.logger.warn(`agent-team: manager Session pre-restore failed: ${error instanceof Error ? error.message : String(error)}`)
+      if (this.accepting) this.ctx.logger.warn(`agent-team: manager Session pre-restore failed: ${errorMessage(error)}`)
     }
     await membersRestored
   }
@@ -1410,41 +1436,46 @@ export default class AgentTeam extends TypertRemoteService {
         const current = this.requireLedger().getMember(member.memberId)
         if (current === undefined) return
         if (current.state === 'enabled') {
-          // A swap that committed but never finished leaves no live handle to
-          // reveal it. Derive the outstanding effects from the ledger.
-          try {
-            await this.finishMemberTransition(current.memberId, {
-              ...(knownSessions === undefined ? {} : { knownSessions }),
-              signal: this.shutdownController.signal,
-              skipColdRecycle: true,
-            })
-          } catch (error) {
-            this.ctx.logger.warn(`agent-team: could not finish the recorded Session transition for member '${current.handle}': ${error instanceof Error ? error.message : String(error)}`)
-          }
-          // Activation reads the binding as it stands now because finishing
-          // the transition above may have moved the Member to its successor.
-          const latest = this.requireLedger().getMember(current.memberId)
-          if (latest !== undefined && latest.state === 'enabled' && !this.handles.has(latest.memberId)) {
-            await this.activateMember(latest, {
-              ...(knownSessions === undefined ? {} : { knownSessions }),
-              signal: this.shutdownController.signal,
-              skipColdRecycle: true,
-            })
-          }
+          await this.finishTransitionAndActivate(current, {
+            ...(knownSessions === undefined ? {} : { knownSessions }),
+            signal: this.shutdownController.signal,
+            skipColdRecycle: true,
+          }, error => {
+            this.ctx.logger.warn(`agent-team: could not finish the recorded Session transition for member '${current.handle}': ${errorMessage(error)}`)
+          })
         } else {
           // One Member's fault must not prevent the other Members from
           // converging after boot.
           try {
             await this.convergeMemberEffects(current)
           } catch (error) {
-            this.ctx.logger.warn(`agent-team: could not converge member '${current.handle}' to its '${current.state}' state: ${error instanceof Error ? error.message : String(error)}`)
+            this.ctx.logger.warn(`agent-team: could not converge member '${current.handle}' to its '${current.state}' state: ${errorMessage(error)}`)
           }
         }
       })
     } catch (error) {
       if (this.accepting) {
-        this.ctx.logger.warn(`agent-team: startup recovery for member '${member.handle}' was not admitted: ${error instanceof Error ? error.message : String(error)}`)
+        this.ctx.logger.warn(`agent-team: startup recovery for member '${member.handle}' was not admitted: ${errorMessage(error)}`)
       }
+    }
+  }
+
+  private async finishTransitionAndActivate(
+    member: AgentTeamAgentMember,
+    options: MemberActivationOptions,
+    onTransitionError?: (error: unknown) => void,
+  ): Promise<void> {
+    // A committed swap can have unfinished effects even without a live handle.
+    try {
+      await this.finishMemberTransition(member.memberId, options)
+    } catch (error) {
+      if (onTransitionError === undefined) throw error
+      onTransitionError(error)
+    }
+    // Finishing a transition may have moved the binding to its successor.
+    const latest = this.requireLedger().getMember(member.memberId)
+    if (latest !== undefined && latest.state === 'enabled' && !this.handles.has(latest.memberId)) {
+      await this.activateMember(latest, options)
     }
   }
 
@@ -1458,25 +1489,18 @@ export default class AgentTeam extends TypertRemoteService {
     void this.enqueueLifecycle(memberId, async () => {
       const current = this.requireLedger().getMember(memberId)
       if (current === undefined || current.state !== 'enabled' || current.sessionId !== releasedSessionId || this.handles.has(memberId)) return
-      await this.finishMemberTransition(memberId, {
+      await this.finishTransitionAndActivate(current, {
         signal: this.shutdownController.signal,
         skipColdRecycle: true,
       })
-      const latest = this.requireLedger().getMember(memberId)
-      if (latest !== undefined && latest.state === 'enabled' && !this.handles.has(memberId)) {
-        await this.activateMember(latest, {
-          signal: this.shutdownController.signal,
-          skipColdRecycle: true,
-        })
-      }
     }).catch((error: unknown) => {
       if (this.accepting) this.ctx.logger.warn(`agent-team: post-release activation failed for member '${this.memberLabel(memberId)}': ${failureDetail(error)}`)
     })
   }
 
   /**
-   * Lazy Workspace-deletion handling: deletion is detectable only through the registry (no event).
-   * A dead non-default participation is withdrawn through the normal leave path; a dead default Workspace is left alone and the Member surfaces as unavailable.
+   * Workspace deletion has no event, so boot checks the registry. A missing
+   * default Workspace must leave its Member unavailable, not withdraw it.
    */
   private async sweepWorkspaceParticipations(ledger: AgentTeamLedger): Promise<void> {
     for (const member of ledger.listMembers()) {
@@ -1488,7 +1512,7 @@ export default class AgentTeam extends TypertRemoteService {
         try {
           await ledger.leaveWorkspace({ requestId: randomUUID() as AgentTeamRequestId, workspaceId, memberId: member.memberId, actor: agentTeamHumanActor() })
         } catch (error) {
-          this.ctx.logger.warn(`agent-team: failed to withdraw member '${member.handle}' from deleted workspace '${workspaceId}': ${error instanceof Error ? error.message : String(error)}`)
+          this.ctx.logger.warn(`agent-team: failed to withdraw member '${member.handle}' from deleted workspace '${workspaceId}': ${errorMessage(error)}`)
         }
       }
     }
@@ -3332,7 +3356,7 @@ export default class AgentTeam extends TypertRemoteService {
       // follow-up queued behind another one waits for a whole extra turn.
       recipientAgent.steer(message)
     } catch (error) {
-      throw new AgentTeamDmDeliveryError(recipient.memberId, recipient.handle, `DM recorded but not delivered: ${error instanceof Error ? error.message : String(error)}`)
+      throw new AgentTeamDmDeliveryError(recipient.memberId, recipient.handle, `DM recorded but not delivered: ${errorMessage(error)}`)
     }
     return result.value
   }
@@ -4818,7 +4842,7 @@ export default class AgentTeam extends TypertRemoteService {
         try {
           await table.delete(key)
         } catch (error) {
-          this.ctx.logger.warn(`agent-team: could not drop a ${label} record: ${error instanceof Error ? error.message : String(error)}`)
+          this.ctx.logger.warn(`agent-team: could not drop a ${label} record: ${errorMessage(error)}`)
         }
       }
     }
@@ -4843,7 +4867,7 @@ export default class AgentTeam extends TypertRemoteService {
         try {
           await table.delete(key)
         } catch (error) {
-          this.ctx.logger.warn(`agent-team: could not drop the stale ${label} record of '${subscriptionRef}': ${error instanceof Error ? error.message : String(error)}`)
+          this.ctx.logger.warn(`agent-team: could not drop the stale ${label} record of '${subscriptionRef}': ${errorMessage(error)}`)
         }
       }
     }
@@ -5059,7 +5083,7 @@ export default class AgentTeam extends TypertRemoteService {
     } catch (error) {
       // A subscription deleted, or a Project archived, while the script ran
       // is a terminal barrier rather than a failure of the script.
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       if (!message.includes('subscription_deleted') && !message.includes('archived')) throw error
       this.ctx.logger.warn(`agent-team: subscription '${subscriptionRef}' finished after it stopped being live; the output was dropped`)
       return Object.freeze({ outcome: 'dropped' as const })
@@ -5707,7 +5731,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (!this.accepting || this.ledger === undefined) return Promise.resolve()
     if (this.admissionPumpTail !== undefined) return this.admissionPumpTail
     const pass = this.runWebhookAdmissionPass().catch((error: unknown) => {
-      this.ctx.logger.warn(`agent-team: the webhook queue pass stopped: ${error instanceof Error ? error.message : String(error)}`)
+      this.ctx.logger.warn(`agent-team: the webhook queue pass stopped: ${errorMessage(error)}`)
     })
     this.admissionPumpTail = pass
     void pass.then(() => {
@@ -5742,7 +5766,7 @@ export default class AgentTeam extends TypertRemoteService {
           if (due !== undefined) await this.runWebhookAdmission(subscription, due)
         }
       } catch (error) {
-        this.ctx.logger.warn(`agent-team: the webhook queue pass for '${subscription.subscriptionRef}' stopped: ${error instanceof Error ? error.message : String(error)}`)
+        this.ctx.logger.warn(`agent-team: the webhook queue pass for '${subscription.subscriptionRef}' stopped: ${errorMessage(error)}`)
       }
     }
   }
@@ -6334,7 +6358,7 @@ export default class AgentTeam extends TypertRemoteService {
     if (cwd === undefined) throw new Error('this Session has no working directory, so a script path cannot be resolved')
     const lexical = isAbsolute(scriptPath) ? scriptPath : join(cwd, scriptPath)
     const unreadable = (error: unknown): never => {
-      throw new Error(`cannot read '${scriptPath}': ${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`cannot read '${scriptPath}': ${errorMessage(error)}`)
     }
     // Containment is checked lexically and again after symlinks resolve: the
     // path names a script in the Member's checkout, never another Host file.
@@ -6959,7 +6983,7 @@ export default class AgentTeam extends TypertRemoteService {
             // invariant divergence is reported at the level the synchronous
             // path reserves for it instead of folding into the retry warn.
             if (error instanceof AgentTeamInvariantError) this.ctx.logger.error(`agent-team: post-commit ${label} violated an invariant: ${error.message}`)
-            else this.ctx.logger.warn(`agent-team: post-commit ${label} failed: ${error instanceof Error ? error.message : String(error)}`)
+            else this.ctx.logger.warn(`agent-team: post-commit ${label} failed: ${errorMessage(error)}`)
           } finally {
             resolve()
           }
@@ -6976,7 +7000,7 @@ export default class AgentTeam extends TypertRemoteService {
       effect()
     } catch (error) {
       if (error instanceof AgentTeamInvariantError) throw error
-      this.ctx.logger.warn(`agent-team: post-commit ${label} failed: ${error instanceof Error ? error.message : String(error)}`)
+      this.ctx.logger.warn(`agent-team: post-commit ${label} failed: ${errorMessage(error)}`)
     }
   }
 
