@@ -45,8 +45,8 @@ export interface TeamThreadControllerOptions {
   readonly reply: TeamConversationProps['reply']
   readonly drafts: TeamDraftStore
   readonly putAttachment: TeamConversationProps['putAttachment']
-  /** The Project's roster at send time, for the optimistic mention chips a committed reply merges before the Host's own facts land. */
-  readonly projectMembers: () => readonly AgentTeamClientMemberStatus[]
+  /** The Workspace roster at send time, for the optimistic mention chips a committed reply merges before the Host's own facts land — under rules version 9 a mention can land on any enabled Workspace Member. */
+  readonly workspaceMembers: () => readonly AgentTeamClientMemberStatus[]
   /** One Member's display name, for the composer's quote banner. */
   readonly memberName: (memberId: AgentTeamMemberId) => string
   readonly t: TeamConversationProps['t']

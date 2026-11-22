@@ -32,7 +32,9 @@ A Message's files render as one strip under its body: a wrapping row at a 6px ga
 
 A file that is not an image is a chip: the name, then its byte size. An image starts as the same chip stating its own state — `Loading image`, `File expired and cleaned up` on a confirmed cache miss, `Image unavailable` after a read or decode failure with a retry control beside it — and becomes a thumbnail that opens the large view once its bytes decode.
 
-A chip is also the open target for its verified cache entry. A document chip opens in the serving desktop's default application on click or Enter; an inline-code mention of its name resolves to the same action; and the context menu offers **Open with** from the Host's registered handlers and **Show in folder**. An image keeps thumbnail-to-large-view on click and exposes the same menu by right click. A Host with no desktop opener answers `opened: false`, which the row states as a failure instead of a silent no-op.
+A chip is also the open target for its verified cache entry. A document chip opens in the serving desktop's default application on click or Enter; an inline-code mention of its name resolves to the same action; the context menu — right click or the keyboard gesture (ContextMenu, Shift+F10) — offers **Open with** and **Show in folder**.
+
+An image keeps thumbnail-to-large-view on click and exposes the same menu by right click or key. A Host with no desktop opener answers `opened: false`, which the row states as a failure instead of a silent no-op.
 
 While it waits, that chip is a polite live region, so the state change is announced rather than only painted. The name ellipsizes inside the chip: the chip's automatic minimum would otherwise win over its cap, so the chip sets `min-width: 0` and the name keeps `nowrap` with an ellipsis, and a long name shortens in place instead of widening the row.
 
@@ -201,7 +203,7 @@ The seat is one component on every face that names a Task's responsibility — a
 
 The cards and the band resolve the person from the roster (`rosterAccountableOwner`, the resolution every other person ref on those surfaces uses), and an id the roster cannot answer for stays the id rather than being invented. The board reads the Host's own `accountableOwner`, because the cross-Workspace board holds no roster.
 
-A `待你验收` badge rides the cards the reader may accept.
+A `待验收` badge rides the cards the reader may accept.
 
 A Task started from the composer switches the Project to the board, and the keyboard focus lands on that Task's own new card rather than the `看板` tab. The composer unmounts with the switch, so focus has to move somewhere; the card the reader just created is that place, and Enter on it opens the Task. A pointer-driven send focuses the card without a visible ring, and the landing takes the same `:focus-visible` ring every board card draws — the tab is not rung.
 
@@ -331,7 +333,9 @@ The transfer control opens a dialog rather than a menu, because the offer is a l
 
 Before it offers anyone, the dialog states what taking the Task on means: a transfer moves responsibility only, and responsibility includes accepting the Task as a party that did not do the work. A reader handing work away decides who will verify it, so that meaning belongs in the dialog rather than in the hover hint — the hint states the consequence of the verb, the dialog the consequence of the choice.
 
-The candidates are every enabled Member of the Workspace plus the Human — under rules version 9 the Host's transfer authority reaches any of them, and the dialog mirrors it rather than narrowing to this Thread's followers.
+The candidates are every enabled Member of the Workspace plus the Human — under rules version 9 the Host's transfer authority reaches any of them, and the dialog mirrors it rather than narrowing to this Thread's followers. One quiet line above the list names the current accountable, because the transfer the dialog proposes is theirs to lose.
+
+Each row draws the roster's own identity — the 34px avatar with its presence badge, the handle, and the Member's description — so the offer reads as people rather than one repeated verb, and the Human's seat stays pinned last where the return-to-you move always sits.
 
 The current accountable is never offered to itself, a departed or disabled member is filtered out, and with no candidate left the body states that in place of the list instead of drawing buttons that would fail. Focus enters the dialog, Tab walks the candidates, Escape closes it, and at 390×844 the list scrolls inside the card rather than pushing the footer out of reach.
 

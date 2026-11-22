@@ -120,7 +120,7 @@ export function useThreadWritePhase({
       if (result.value.kind === 'committed') {
         const committed = result.value
         // Hand-typed `@Handle` delivers directly; committed facts replace this row on arrival.
-        const optimisticMentions = mentionedMemberIds(draft, options.projectMembers())
+        const optimisticMentions = mentionedMemberIds(draft, options.workspaceMembers())
         setCurrentFacts(current => mergeFacts(current, [{ kind: 'message', sequence: committed.message.sequence, message: committed.message, mentions: optimisticMentions, occurredAt: committed.receipt.occurredAt }]))
         setProjection(current => current === undefined || committed.thread.revision < current.thread.revision
           ? current

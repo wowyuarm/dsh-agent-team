@@ -12,9 +12,10 @@ export function mentionSurfaceOf(draftKey: TeamDraftKey): MentionSurface {
 /**
  * How a candidate relates to what is being written. `owner` is a Project owner
  * (the Members who decide and can start work, so they lead the list); `thread`
- * is a follower of this Thread; `project` a Member taking part in this Project;
- * `other` a Workspace peer the Project does not yet carry — picking one enrolls
- * it into the Project, because a mention is a Project-membership fact.
+ * is a follower of this Thread; `project` a Member the Workspace roster shows —
+ * under rules version 9 a Project's catalog roster is the Workspace, not a
+ * per-Project membership; `other` anything the roster still lists outside it.
+ * A mention enrolls nobody, it only delivers one direct marker.
  */
 export type MentionGroupKey = 'owner' | 'thread' | 'project' | 'other'
 
@@ -89,14 +90,4 @@ export function buildMentionGroups(members: readonly AgentTeamClientMemberStatus
     groups.push({ key, options: Object.freeze([...bucket].sort(compareRows)) })
   }
   return groups
-}
-
-/**
- * Members a pick would enroll: notified, yet not already taking part in the
- * Project. Empty when the roster is unknown (an empty set) rather than claiming
- * everyone is new.
- */
-export function enrollmentIds(notified: readonly AgentTeamMemberId[], projectMembers: ReadonlySet<AgentTeamMemberId> | undefined): readonly AgentTeamMemberId[] {
-  if (projectMembers === undefined || projectMembers.size === 0) return []
-  return notified.filter(memberId => !projectMembers.has(memberId))
 }
