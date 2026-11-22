@@ -54,7 +54,7 @@ import { surfaceVisibilityProbe, teamMessageSurface, visibleTeamSurface, isFactO
 export { teamMessageSurface, visibleTeamSurface, missingMessageRange } from './surface-visibility.ts'
 export { activityFact, activityText, type ActivityFact } from './activity-facts.ts'
 import { carriedInputOf, createTeamContextProjectionDefinition, foldTeamContextProjection, isAcceptanceNotice, TEAM_INBOX_NOTICE_SUMMARY, TEAM_RECOVERY_NOTICE_SUMMARY, type TeamContextProjectionState } from './context-projection.ts'
-import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
+import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor, type AgentTeamLedgerResult, type AgentTeamThreadReadOutcome } from './ledger.ts'
 import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, FILE_READ_TOOL_NAMES, isExtraToolGrantCandidate, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime, SHELL_TOOL_NAMES, type TurnBoundary } from './member-runtime.ts'
 import {
   EXTRA_TOOL_GRANTS_FIELD, extraToolGrantsFrom, sanitizeExtraToolGrants,
@@ -2485,24 +2485,15 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /** Human-only Task resolution. Business fences are returned as typed outcomes. */
   @Remote('changeTask')
   async changeTask(request: AgentTeamTaskRequest): Promise<AgentTeamTaskResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().changeTask({ ...request, actor: agentTeamHumanActor() })
-    this.emitCommittedOutcome(result)
+    const result = await this.changeTaskAs(this.humanCall(request.workspaceId), request)
     return result.value
   }
 
-  /** Human-only promotion of a taskless Thread into a real Task plus public Message. */
   @Remote('promoteThread')
   async promoteThread(request: AgentTeamPromoteThreadRequest): Promise<AgentTeamPromoteThreadResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().promoteThread({ ...request, actor: agentTeamHumanActor() })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.promoteThreadAs(this.humanCall(request.workspaceId), request)
   }
 
   /**
@@ -2514,11 +2505,7 @@ export default class AgentTeam extends TypertRemoteService {
    */
   @Remote('transferTask')
   async transferTask(request: AgentTeamTransferTaskRequest): Promise<AgentTeamTransferTaskResult> {
-    this.requireAccepting()
-    this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().transferTask({ ...request, actor: agentTeamHumanActor() })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.transferTaskAs(this.humanCall(request.workspaceId), request)
   }
 
   /** Human-only Workspace participation grant; a pure relation — no Session moves. */
@@ -2535,8 +2522,7 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.humanCall(request.workspaceId)
     const result = await this.requireLedger().joinWorkspace({ ...request, actor },
       options.authorize === undefined ? {} : { authorize: options.authorize })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.committedValue(result)
   }
 
   /** Human-only Workspace participation withdrawal and Workspace-scoped cleanup. */
@@ -2553,8 +2539,7 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.humanCall(request.workspaceId)
     const result = await this.requireLedger().leaveWorkspace({ ...request, actor },
       options.authorize === undefined ? {} : { authorize: options.authorize })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.committedValue(result)
   }
 
   /** Human top-level start of a discussion or Task Thread. */
@@ -2579,7 +2564,7 @@ export default class AgentTeam extends TypertRemoteService {
   @Remote('mainStreamHistory')
   mainStreamHistory(request: AgentTeamMainStreamHistoryRequest): AgentTeamMainStreamHistory {
     this.requireWorkspace(request.workspaceId)
-    return this.requireLedger().mainStreamHistory(agentTeamHumanActor(), request)
+    return this.mainStreamHistoryAs(agentTeamHumanActor(), request)
   }
 
   /**
@@ -2911,7 +2896,6 @@ export default class AgentTeam extends TypertRemoteService {
     return Object.freeze({ lists: readableSidebarOrders({ ...this.config.sidebarOrder.get().lists, [request.key]: refs }) })
   }
 
-  /** Human existing-Thread reply; unread and revision conflicts are business outcomes. */
   @Remote('reply')
   async reply(request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.humanCall(request.workspaceId), request)
@@ -2926,9 +2910,7 @@ export default class AgentTeam extends TypertRemoteService {
   @Remote('changeAttention')
   async changeAttention(request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult | AgentTeamMainAttentionResult> {
     const actor = this.humanCall(request.workspaceId)
-    const result = await this.requireLedger().changeAttention({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.changeAttentionAs(actor, request)
   }
 
   /** Human Inbox projection; the Web Client consumes the direct-only slice as its mention queue. */
@@ -2936,23 +2918,20 @@ export default class AgentTeam extends TypertRemoteService {
   inbox(request: AgentTeamInboxRequest): AgentTeamInbox {
     this.requireWorkspace(request.workspaceId)
     this.scheduleTaskReminderEvaluation()
-    return this.requireLedger().inbox(agentTeamHumanActor(), request)
+    return this.inboxAs(agentTeamHumanActor(), request)
   }
 
   @Remote('taskBoard')
   taskBoard(request: AgentTeamTaskBoardRequest): AgentTeamTaskBoard {
     this.requireWorkspace(request.workspaceId)
-    return this.requireLedger().taskBoard(agentTeamHumanActor(), request)
+    return this.taskBoardAs(agentTeamHumanActor(), request)
   }
 
   /** Human's durable, atomically acknowledged Thread read. */
   @Remote('readThread')
   async readThread(request: AgentTeamThreadReadRequest): Promise<AgentTeamThreadReadResult> {
     const actor = this.humanCall(request.workspaceId)
-    const result = await this.requireLedger().readThread({ ...request, actor })
-    // A read that made no progress commits no operation and carries no receipt.
-    const receipt = result.committed ? result.value.receipt : undefined
-    if (receipt !== undefined) this.emitCommitted(receipt)
+    const result = await this.readThreadAs(actor, request)
     return this.withWorkerStates(result.value)
   }
 
@@ -2967,7 +2946,7 @@ export default class AgentTeam extends TypertRemoteService {
   @Remote('threadHistory')
   threadHistory(request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
     this.requireWorkspace(request.workspaceId)
-    return this.withWorkerStates(this.requireLedger().threadHistory(agentTeamHumanActor(), request))
+    return this.threadHistoryAs(agentTeamHumanActor(), request)
   }
 
   /** Return the existing bounded public Workspace discovery projection. */
@@ -2992,10 +2971,9 @@ export default class AgentTeam extends TypertRemoteService {
     select?: (read: AgentTeamMainStreamReadResult & { readonly visibleMessageRefs: readonly AgentTeamMessageRef[]; readonly visibleActivityRefs: readonly AgentTeamActivityRef[] }) => number,
   ): Promise<AgentTeamMainStreamReadResult & { readonly visibleMessageRefs: readonly AgentTeamMessageRef[]; readonly visibleActivityRefs: readonly AgentTeamActivityRef[] }> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().readMainStream({ ...request, actor }, select === undefined ? undefined
+    const read = await this.readMainStreamAs(actor, request, select === undefined ? undefined
       : preview => select(this.mainReadContext(agent, actor, request, preview)))
-    if (result.committed && result.value.receipt !== undefined) this.emitCommitted(result.value.receipt)
-    return this.mainReadContext(agent, actor, request, result.value)
+    return this.mainReadContext(agent, actor, request, read)
   }
 
   private mainReadContext(agent: Agent, actor: AgentTeamMemberActor, request: AgentTeamMainStreamReadRequest, read: AgentTeamMainStreamReadResult) {
@@ -3022,12 +3000,10 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   mainStreamHistoryForAgent(agent: Agent, request: AgentTeamMainStreamHistoryRequest): AgentTeamMainStreamHistory {
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
-    return this.requireLedger().mainStreamHistory(actor, request)
+    const actor = this.memberReadActor(agent, request.workspaceId)
+    return this.mainStreamHistoryAs(actor, request)
   }
 
-  /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
     return this.replyAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
@@ -3037,24 +3013,19 @@ export default class AgentTeam extends TypertRemoteService {
     return this.readMessageAs(this.memberCall(agent, request.workspaceId), request)
   }
 
-  /** Agent-only personal Attention change. */
   async changeAttentionForAgent(agent: Agent, request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult | AgentTeamMainAttentionResult> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().changeAttention({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.changeAttentionAs(actor, request)
   }
 
   attentionStatusForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; threadRef?: AgentTeamThreadAttentionRequest['threadRef'] | undefined; taskRef?: AgentTeamTask['taskRef'] | undefined }): AgentTeamThreadAttentionStatus {
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
+    const actor = this.memberReadActor(agent, request.workspaceId)
     return this.requireLedger().attentionStatus(actor, request)
   }
 
   /** The Agent's own Main stream Attention on one Project, answered without writing. */
   mainAttentionStatusForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; projectRef: AgentTeamProjectRef }): AgentTeamMainAttentionStatus {
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
+    const actor = this.memberReadActor(agent, request.workspaceId)
     return this.requireLedger().mainAttentionStatus(actor, request)
   }
 
@@ -3067,23 +3038,19 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   listClaimsForAgent(agent: Agent, request: { workspaceId: AgentTeamViewRequest['workspaceId']; taskRef: AgentTeamTask['taskRef'] }): AgentTeamClaimList {
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
+    const actor = this.memberReadActor(agent, request.workspaceId)
     return this.requireLedger().listClaims(actor, request)
   }
 
   async promoteThreadForAgent(agent: Agent, request: AgentTeamPromoteThreadRequest): Promise<AgentTeamPromoteThreadResult> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().promoteThread({ ...request, actor })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.promoteThreadAs(actor, request)
   }
 
   /** Agent-only Task resolution: accept (in_review, never self-executed), close, reopen. */
   async changeTaskForAgent(agent: Agent, request: AgentTeamTaskRequest): Promise<AgentTeamTaskResult> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().changeTask({ ...request, actor })
-    this.emitCommittedOutcome(result)
+    const result = await this.changeTaskAs(actor, request)
     // The verifier never holds a Claim on the Task it accepts, so the read-side
     // boundary cannot reach it: its own accept is the only boundary it gets.
     if (result.committed && request.action === 'accept') this.deliverAcceptanceBoundary(agent, actor.memberId, 'verifier')
@@ -3093,16 +3060,14 @@ export default class AgentTeam extends TypertRemoteService {
   /** Agent-only accountability transfer to another enabled Member of the Project's Workspace or the Human. */
   async transferTaskForAgent(agent: Agent, request: AgentTeamTransferTaskRequest): Promise<AgentTeamTransferTaskResult> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().transferTask({ ...request, actor })
-    this.emitCommittedOutcome(result)
-    return result.value
+    return this.transferTaskAs(actor, request)
   }
 
   taskBoardForAgent(agent: Agent, request: Omit<AgentTeamTaskBoardRequest, 'workspaceId'> & { readonly workspaceId?: WorkspaceId }): AgentTeamTaskBoard {
     const actor = this.memberActor(agent)
     if (request.workspaceId === undefined) return this.requireLedger().memberTaskBoard(actor, request)
     this.requireAgentWorkspace(actor, request.workspaceId)
-    return this.requireLedger().taskBoard(actor, { ...request, workspaceId: request.workspaceId })
+    return this.taskBoardAs(actor, { ...request, workspaceId: request.workspaceId })
   }
 
   /**
@@ -3120,16 +3085,13 @@ export default class AgentTeam extends TypertRemoteService {
   async createMemberReminderForAgent(agent: Agent, request: Omit<AgentTeamMemberReminderCreateRequest, 'actor'>): Promise<AgentTeamMemberReminderCreateResult> {
     const actor = this.memberCall(agent, request.workspaceId)
     const result = await this.requireLedger().createMemberReminder({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.committedValue(result)
   }
 
   /** Agent-only withdrawal of one of the caller's own reminders. */
   async cancelMemberReminderForAgent(agent: Agent, request: Omit<AgentTeamMemberReminderCancelRequest, 'actor'>): Promise<AgentTeamMemberReminderCancelResult> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().cancelMemberReminder({ ...request, actor })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.cancelMemberReminderAs(actor, request)
   }
 
   /** Human read of one Member's reminders, for Member detail. */
@@ -3146,10 +3108,9 @@ export default class AgentTeam extends TypertRemoteService {
   /** Human withdrawal of one Member's reminder, for Member detail; the Human may withdraw any. */
   @Remote('cancelMemberReminder')
   async cancelMemberReminderForClient(request: Omit<AgentTeamMemberReminderCancelRequest, 'actor'>): Promise<AgentTeamMemberReminderCancelResult> {
+    // Human reminder withdrawal remains available without the Member write fence.
     this.requireWorkspace(request.workspaceId)
-    const result = await this.requireLedger().cancelMemberReminder({ ...request, actor: agentTeamHumanActor() })
-    if (result.committed) this.emitCommitted(result.value.receipt)
-    return result.value
+    return this.cancelMemberReminderAs(agentTeamHumanActor(), request)
   }
 
   inboxForAgent(agent: Agent, request: { readonly workspaceId?: WorkspaceId; readonly limit?: number }): AgentTeamInbox {
@@ -3157,17 +3118,16 @@ export default class AgentTeam extends TypertRemoteService {
     const actor = this.memberActor(agent)
     if (request.workspaceId === undefined) return this.requireLedger().memberInbox(actor, request)
     this.requireAgentWorkspace(actor, request.workspaceId)
-    return this.requireLedger().inbox(actor, { ...request, workspaceId: request.workspaceId })
+    return this.inboxAs(actor, { ...request, workspaceId: request.workspaceId })
   }
 
   async readThreadForAgent(agent: Agent, request: AgentTeamThreadReadRequest,
     select?: (read: AgentTeamThreadReadResult & { readonly visibleMessageRefs: readonly AgentTeamMessageRef[]; readonly visibleActivityRefs: readonly AgentTeamActivityRef[] }) => number,
   ): Promise<AgentTeamThreadReadResult & { readonly visibleMessageRefs: readonly AgentTeamMessageRef[]; readonly visibleActivityRefs: readonly AgentTeamActivityRef[] }> {
     const actor = this.memberCall(agent, request.workspaceId)
-    const result = await this.requireLedger().readThread({ ...request, actor }, select === undefined ? undefined
+    const result = await this.readThreadAs(actor, request, select === undefined ? undefined
       : preview => select(this.threadReadContext(agent, actor, request, preview)))
     const receipt = result.committed ? result.value.receipt : undefined
-    if (receipt !== undefined) this.emitCommitted(receipt)
     const read = this.withWorkerStates(this.threadReadContext(agent, actor, request,
       result.committed ? result.value : { ...result.value, reminders: [] }))
     if (receipt !== undefined) this.afterAcceptanceRead(agent, actor.memberId, read)
@@ -3371,9 +3331,8 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   threadHistoryForAgent(agent: Agent, request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
-    const actor = this.memberActor(agent)
-    this.requireAgentWorkspace(actor, request.workspaceId)
-    const history = this.withWorkerStates(this.requireLedger().threadHistory(actor, request))
+    const actor = this.memberReadActor(agent, request.workspaceId)
+    const history = this.threadHistoryAs(actor, request)
     // Paging back to answer something is exactly when the target may sit
     // outside the window, so a history page carries the same context a read does.
     const contexts = this.replyContextsFor(history.facts, request.workspaceId)
@@ -3404,7 +3363,6 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  /** Live participation addresses; paths remain owned by the Harness registry. */
   /** Active Projects the Agent's Member owns, for the per-step Member context; undefined while the ledger predates Project owners. */
   ownedProjectsForAgent(agent: Agent): readonly AgentTeamOwnedProject[] | undefined {
     const member = this.memberForAgent(agent)
@@ -4007,6 +3965,65 @@ export default class AgentTeam extends TypertRemoteService {
       .map((job: { id: string; label: string }) => `${job.label} (${job.id})`)
   }
 
+  private async changeAttentionAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamThreadAttentionRequest): Promise<AgentTeamThreadAttentionResult | AgentTeamMainAttentionResult> {
+    const result = await this.requireLedger().changeAttention({ ...request, actor })
+    return this.committedValue(result)
+  }
+
+  private async promoteThreadAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamPromoteThreadRequest): Promise<AgentTeamPromoteThreadResult> {
+    const result = await this.requireLedger().promoteThread({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  private async transferTaskAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamTransferTaskRequest): Promise<AgentTeamTransferTaskResult> {
+    const result = await this.requireLedger().transferTask({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result.value
+  }
+
+  private async cancelMemberReminderAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: Omit<AgentTeamMemberReminderCancelRequest, 'actor'>): Promise<AgentTeamMemberReminderCancelResult> {
+    const result = await this.requireLedger().cancelMemberReminder({ ...request, actor })
+    return this.committedValue(result)
+  }
+
+  private mainStreamHistoryAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamMainStreamHistoryRequest): AgentTeamMainStreamHistory {
+    return this.requireLedger().mainStreamHistory(actor, request)
+  }
+
+  private taskBoardAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamTaskBoardRequest): AgentTeamTaskBoard {
+    return this.requireLedger().taskBoard(actor, request)
+  }
+
+  private inboxAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamInboxRequest): AgentTeamInbox {
+    return this.requireLedger().inbox(actor, request)
+  }
+
+  private threadHistoryAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamThreadHistoryRequest): AgentTeamThreadHistory {
+    return this.withWorkerStates(this.requireLedger().threadHistory(actor, request))
+  }
+
+  private async changeTaskAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamTaskRequest): Promise<AgentTeamLedgerResult<AgentTeamTaskResult>> {
+    const result = await this.requireLedger().changeTask({ ...request, actor })
+    this.emitCommittedOutcome(result)
+    return result
+  }
+
+  private async readThreadAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamThreadReadRequest,
+    select?: (read: AgentTeamThreadReadResult) => number,
+  ): Promise<AgentTeamThreadReadOutcome> {
+    const result = await this.requireLedger().readThread({ ...request, actor }, select)
+    this.committedValue(result)
+    return result
+  }
+
+  private committedValue<T extends { readonly receipt?: AgentTeamOperationReceipt }>(
+    result: { readonly committed: boolean; readonly value: T },
+  ): T {
+    if (result.committed && result.value.receipt !== undefined) this.emitCommitted(result.value.receipt)
+    return result.value
+  }
+
   private emitCommittedOutcome<T extends { readonly kind: string; readonly receipt?: AgentTeamOperationReceipt }>(
     result: { readonly committed: boolean; readonly value: T },
   ): void {
@@ -4051,11 +4068,11 @@ export default class AgentTeam extends TypertRemoteService {
     return this.commitMessageAs(actor, request, authorized => this.requireLedger().postMainMessage(authorized), agent)
   }
 
-  private async readMainStreamAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamMainStreamReadRequest): Promise<AgentTeamMainStreamReadResult> {
-    const result = await this.requireLedger().readMainStream({ ...request, actor })
-    // A read that made no progress commits no operation and carries no receipt.
-    if (result.committed && result.value.receipt !== undefined) this.emitCommitted(result.value.receipt)
-    return result.value
+  private async readMainStreamAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamMainStreamReadRequest,
+    select?: (read: AgentTeamMainStreamReadResult) => number,
+  ): Promise<AgentTeamMainStreamReadResult> {
+    const result = await this.requireLedger().readMainStream({ ...request, actor }, select)
+    return this.committedValue(result)
   }
 
   /** Read one Message back verbatim, whoever is asking. */
@@ -4091,17 +4108,20 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /** Fence one Human Remote call: accepting Host, known Workspace, Human actor. */
   private humanCall(workspaceId: AgentTeamViewRequest['workspaceId']): AgentTeamHumanActor {
     this.requireAccepting()
     this.requireWorkspace(workspaceId)
     return agentTeamHumanActor()
   }
 
-  /** Fence one Member call: accepting Host, live Member binding, matching Workspace participation. */
   private memberCall(agent: Agent, workspaceId: AgentTeamViewRequest['workspaceId']): AgentTeamMemberActor {
     this.requireAccepting()
     this.requireWorkspace(workspaceId)
+    return this.memberReadActor(agent, workspaceId)
+  }
+
+  // Projection reads intentionally omit the write-side accepting and registry fences.
+  private memberReadActor(agent: Agent, workspaceId: WorkspaceId): AgentTeamMemberActor {
     const actor = this.memberActor(agent)
     this.requireAgentWorkspace(actor, workspaceId)
     return actor
