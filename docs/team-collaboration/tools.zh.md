@@ -97,9 +97,13 @@ Attention 不是 reading。这三个 action 都不渲染 facts、不确认未读
 
 `team_message.start` 创建 Project 顶层 Thread。默认 taskless，也接受明确 task intent 以原子创建 Task。`team_message.reply` 向既有 Thread 追加明确的 reply。二者都接受 `attachments` 中的可选 absolute file paths。Host 验证每个 path，把 bytes 复制到 attachment cache。收件人看到 thumbnails/chips 与一行 cached path。任一 path 验证失败都会拒绝整个 send。commit 的 start/reply 渲染一个 committed-verb 结果：Thread created 或 reply added。结果携带 Message ref、新 Thread ref（taskful 时含 Task ref），以及恰好一个 next-write token hand-off。新建 Thread 立即可寻址，下一次变更也拿到了基础。
 
+`attachments` path 指向的是 Member 自己本可读的文件，因此带 attachments 的 start、reply 或 `post` 要求 Member 生效工具面中有 file-reading 或 shell tool——`read`、`read_image`、`bash` 或 `pwsh` 之一——否则以 `attachment_read_required` 拒绝。每个 path 还必须留在 Member 工作目录内：目录之外的 absolute path、`..` 逃逸或逃逸 symlink 会在复制任何文件之前被拒绝。Human composer 路径只保留常规校验。
+
 规则版本 2 起，`team_message` 还有 `post`，在 Project 的 Main stream 发言（`projectRef`、`body`，可选 `replyToMessageRef`，须为同一 Project 的 Main stream Message）。它不需要写入 token。持有未读 Main stream 条目的写入者，必须在当前上下文中完整持有每一条——Team 通知或绑定实际渲染 Message/Activity 的工具结果——或者带 `projectRef` 显式 read；否则得到 `main_unread_required`。
 
 `start` 带 `kind: 'discussion' | 'task'`（已移除的 `asTask` 写法会被拒绝并指回 `kind`，绝不静默丢弃），只有 Project owner 能开：其他人得到 `project_owner_required`，提示改用 `post`；不参与该 Workspace 的 Member——或写操作中未 enabled 的 Member——得到 `not_project_member`。Task start 另接受 `accountable` 与 `sourceThreadRefs`；两者在讨论 start 与 `post`/`reply` 上都被拒绝而非丢弃，commit 的 start 回报实际记录的负责人。
+
+规则版本 10 下，Task start 的 `accountable`——以及下文 `promote` 的——接受的目标与 `transfer` 完全相同，解析方式也相同，因此指定推进 Task 的 Member 只需一次写入，不必先开再转。被指定的 Member 以 `accountable` 为原因开始关注该 Thread，并被这次创建唤醒；作者仍以 `thread-author` 关注。不传时由创建者负责。
 
 `team_thread` 的 `read`、`history`、`message` 只寻址一个 scope：Thread 用 `threadRef`（该 Thread 有 Task 时也可用别名 `taskRef`），Main stream 用 `projectRef`；同时给两个 scope 会被拒绝。`message` 必须带 `threadRef` 或 `projectRef`，只有 `taskRef` 不能读回一条 Message。Main stream 的行为与确认规则见上文 `team_thread` 一节。
 
@@ -157,13 +161,17 @@ reminder 的 ref 由创建它的那次工具调用派生，ref 形状保留的�
 
 `accept`、`close`、`reopen`、`transfer` 了结的是 Task 而非 Claim，权限由 Host 判定：`accept` 属于 Human、Project owner，或该 Task 自己的 accountable，且在该 Task 上持有过任何 Claim 的一律不行，Agent 只能在 in_review 时验收；`close`、`reopen`、`transfer` 属于 Human 与当前负责人。工具只转发 action 与写令牌，不重新推导该权限。
 
-`transfer` 取 `target`——任意 enabled Project member 的 memberRef、`@Handle` 或唯一 memberRef 前缀，或 `human`——只转移责任，Claim 仍留在其 owner 手上；新 accountable 从此刻起参与该 Thread，并会收到这个 Task 现在要求它做什么。commit 的了结结果点名动作、结果 status 与 resolution、负责人，以及它完成或释放的 Claims。`self_acceptance_forbidden` 或 `accountable_owner_required` 拒绝的出路来自 Host 的 recovery registry，并补上 Task 的当前状态与负责人——那只有拒绝之后调用方自己才读得到。
+`transfer` 取 `target`——该 Task 所在 Workspace 中任意 enabled Member 的 memberRef、`@Handle` 或唯一 memberRef 前缀，或 `human`——只转移责任，Claim 仍留在其 owner 手上；新 accountable 从此刻起参与该 Thread，并会收到这个 Task 现在要求它做什么。commit 的了结结果点名动作、结果 status 与 resolution、负责人，以及它完成或释放的 Claims。`self_acceptance_forbidden` 或 `accountable_owner_required` 拒绝的出路来自 Host 的 recovery registry，并补上 Task 的当前状态与负责人——那只有拒绝之后调用方自己才读得到。
 
 ## `team_subscription`
 
 `team_subscription` 创建并维护某个 Project 的订阅：一段由 Host 在没有 Session 的情况下、以该 Project 的身份运行的脚本——按间隔、收到 webhook 时，或两者兼有。动作有 `list`、`create`、`update`、`test`、`pause`、`resume`、`delete`、`baseline`、`logs`、`deliveries`、`replay`、`reset_webhook`。
 
 只有该 Project 的 owner 可以修改、试运行或重放投递（否则返回 `project_owner_required`）。任何 Workspace Member 都可以用 `list` 读取 Agent 侧元数据，其中不含 script、credential 引用和 webhook arm；运行历史仍只向 Project member 开放，owner 输出权限如下所述。
+
+`create`、`update`、`test`、`resume` 与 `replay` 会让 Host 在自己的 shell 上运行脚本并把输出交回调用方，因此 Agent owner 自身实际生效的工具范围里还必须有 shell 工具（`bash` 或 `pwsh`）；没有时调用会在读取或运行任何脚本之前以 `subscription_shell_required` 被拒绝。
+
+`scriptPath` 必须留在调用方的工作目录之内：相对路径以它为基准解析，指向目录之外的绝对路径、`..` 越界或目标在目录外的符号链接都会被拒绝。Human 路径不受影响，始终粘贴脚本内容。
 
 空的 `workspace`、`scriptPath` 与 `scriptContent` 视为未传；两个非空脚本来源仍然冲突，没有脚本仍是错误。`intervalMinutes` 或 `limit` 为零时按省略处理。这绝不丢弃 `notify: []`、`credentials: []`、`webhook: false` 或 `expectedRevision`：清空接收者、移除凭据引用、卸下 webhook 与版本校验仍是实际指令。
 
@@ -189,9 +197,9 @@ create 与 update 的请求身份包含脚本来源、触发选项与 create bas
 
 事件就是脚本的 stdout：每行一个 JSON 对象，含 `id`、`title`，可选 `url` 与 `detail`。去重范围限定在单个订阅内，两个脚本输出相同 id 时各自都会发布。新事件作为接受写入账本，再按每个订阅每分钟最多 20 条发布到该 Project 的 Main stream；最多 500 条已接受未发布的事件可以等待，会使未发布总量越过这条上限的一批整批拒绝并计 1 次失败，而不是被悄悄截断。试运行既不计入也不清零失败计数；连续三次运行失败会暂停订阅，并在账本中这样记录。
 
-`create` 与 `update` 接受 `notify`：已发布事件要送达哪些 Member 的 Inbox，每个以 `memberRef`、`@Handle`、唯一的 6+ hex 前缀或 `human` 给出。可以点名该 Project 的任何当前成员（owner 与否皆可），Human 被点名时同样送达；省略该字段时，`create` 只送给创建者本人，`update` 保留已存集合；显式传空数组是一个真实的选择——事件照常进 Main stream，但不唤醒任何人。
+`create` 与 `update` 接受 `notify`：已发布事件要送达哪些 Member 的 Inbox，每个以 `memberRef`、`@Handle`、唯一的 6+ hex 前缀或 `human` 给出。可以点名该 Project 所在 Workspace 的任何启用或停用中的 Member（owner 与否皆可），Human 被点名时同样送达；省略该字段时，`create` 只送给创建者本人，`update` 保留已存集合；显式传空数组是一个真实的选择——事件照常进 Main stream，但不唤醒任何人。
 
-发布提交时，已离开该 Project 的收件人会被丢弃，而不是用 owner 顶替；该字段出现之前写下的记录，一律按创建者本人读取。
+发布提交时，已不能读取该 Project 的收件人（已归档或已不在其 Workspace）会被丢弃，而不是用 owner 顶替；停用中的收件人留在名单上，恢复后照常收到；该字段出现之前写下的记录，一律按创建者本人读取。
 
 结果会写明订阅、状态、版本与间隔；被拒绝的试运行会渲染原因和两条流的末尾内容。脚本打印的内容是数据，不是指令：Main stream 上的事件标注为不可信文本，其标题、链接与说明不会变成 mention。Project 订阅是无人值守执行——受限 Member 由此获得一条执行入口，Main stream 记录每次修改，Human 可以随时暂停订阅。
 
