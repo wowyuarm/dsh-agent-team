@@ -18,7 +18,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 // chains past the default per-test budget. Every test here boots a real
 // Host harness and waits on asynchronous session transitions, so both this
 // per-test budget and the waitFor deadline below (kept equal) need headroom.
-import { LlmError } from '@deepseek-ai/dsh-llm'
+import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
+import { CONTEXT_WINDOW_EXCEEDED_CODE, createAssistantMessage, LlmError } from '@deepseek-ai/dsh-llm'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
@@ -26,11 +27,12 @@ import AgentTeam from '../src/index.ts'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { EmptyAdapter, GatedAdapter, realHarness, ScriptedAdapter, textResponse, toolCallResponse, waitFor, waitForArchive, waitForIdle, requestId, persistenceRaceError } from './helpers/member-harness.ts'
+import { changeBaseline, nextChange } from './helpers/change-stream.ts'
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, basename, sep } from 'node:path'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { canonicalHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, teamPresetScopeMismatchMessage } from '../src/index.ts'
@@ -263,7 +265,7 @@ describe('Agent Team Member lifecycle', () => {
   })
 
   it('every argument-shape rejection names the next action', async () => {
-    const { ctx, workspaceId } = await realHarness()
+    const { ctx, workspaceId } = await realHarness(new EmptyAdapter(), 'jsonl', undefined, false, undefined, 'memory', { memberReadTool: 'read' })
     const project = await ctx.agentTeam.createProject({ requestId: requestId('shape-project'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const added = await ctx.agentTeam.addMember({ requestId: requestId('shape-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', projectRefs: [project.project.projectRef], model: { provider: 'mock', model: 'mock' }})
     const agent = ctx.agents.get(added.status.member.sessionId)!
@@ -572,14 +574,16 @@ describe('Agent Team Member lifecycle', () => {
     const added = await ctx.agentTeam.addMember({ requestId: requestId('add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', projectRefs: [project.project.projectRef], model: { provider: 'mock', model: 'mock' }})
     expect(added.status.availability).toBe('active')
     expect(added.status.member.privateMemoryPath).toBe(join(root, 'dsh-home', 'agent-team', 'members', added.status.member.memberId.replaceAll(':', '-')))
-    // The first-run scaffold states the index's four sections and routes the
-    // writing rules to the bundled skill instead of restating them.
+    // The first-run scaffold states the recovery index's three sections and
+    // routes the writing rules to the bundled skill instead of restating them;
+    // identity and responsibility are injected, so it carries no section for them.
     const scaffold = await readFile(join(added.status.member.privateMemoryPath, 'memory.md'), 'utf8')
     expect(scaffold).toContain('# Member memory')
-    expect(scaffold).toContain('## Identity and role')
     expect(scaffold).toContain('## Durable rules')
-    expect(scaffold).toContain('## In hand')
-    expect(scaffold).toContain('## Notes index')
+    expect(scaffold).toContain('## On-demand notes')
+    expect(scaffold).toContain('## Open local state')
+    expect(scaffold).not.toContain('## Identity and role')
+    expect(scaffold).not.toContain('## In hand')
     expect(scaffold).toContain('the bundled `member-memory-manager` skill')
     await expect(access(join(added.status.member.privateMemoryPath, 'notes'))).resolves.toBeUndefined()
     const live = ctx.agents.get(added.status.member.sessionId)
@@ -734,6 +738,63 @@ describe('Agent Team Member lifecycle', () => {
     expect(after?.diagnostic?.detail).toContain('401')
   })
 
+  it('surfaces a Member error after three provider overflows on a paused summary route and clears it when a response lands', async () => {
+    // The escalation is Host-owned: the Member reads as error only while a real
+    // compaction engine names the committed route paused and the provider keeps
+    // refusing the oversized request. The flow spec proves the counting; this
+    // proves the count reaches the operator surface and leaves it again.
+    const { ctx, workspaceId } = await realHarness(new EmptyAdapter(), 'jsonl', undefined, true)
+    const project = await ctx.agentTeam.createProject({ requestId: requestId('unreachable-project'), workspaceId, name: 'engineering', description: '' })
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('unreachable-add'), workspaceId, handle: 'builder', description: 'Builds the implementation', presetId: 'team-member', projectRefs: [project.project.projectRef], model: { provider: 'mock', model: 'mock' }})
+    const memberId = added.status.member.memberId
+    const agent = ctx.agents.get(added.status.member.sessionId)!
+    const status = () => ctx.agentTeam.members().find(item => item.member.memberId === memberId)
+
+    const route = { provider: 'mock', model: 'mock' }
+    agent.session.append('request/header', {
+      header: canonicalHeader({ config: { ...route }, tools: [] }), reason: 'initial',
+    })
+    // The same circuit entry the engine's own summarize writes after a bounded
+    // failure; the private method is reached through the per-agent service.
+    const engine = ctx.agentPresets.serviceFor(agent, 'compaction') as unknown as {
+      recordFailure(agent: Agent, route: { provider: string; model: string }): void
+    }
+    engine.recordFailure(agent, route)
+
+    const requestError = () => agentEvents(ctx, agent).waterfall('agent/request-error', {
+      turn: 1, step: 1, provider: route.provider,
+      failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE, message: 'upstream refused the oversized request' },
+      retryPolicy: undefined, signal: new AbortController().signal,
+    }, () => Promise.resolve(undefined))
+
+    await requestError()
+    await requestError()
+    expect(status()?.presence).not.toBe('error')
+    // Escalation publishes a presence wake: the Agents panel refreshes the row
+    // off this edge, not off a periodic read.
+    const presenceBaseline = await changeBaseline(ctx.agentTeam, { kind: 'presence', workspaceId })
+    const escalateWake = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId }, AbortSignal.timeout(4_000))
+    await requestError()
+    expect((await escalateWake).version).toBeGreaterThan(presenceBaseline.version)
+    const escalated = status()
+    expect(escalated?.presence).toBe('error')
+    expect(escalated?.diagnostic).toMatchObject({ class: 'runtime' })
+    expect(escalated?.diagnostic?.source).toContain('upstream refused the oversized request')
+    expect(escalated?.diagnostic?.detail).toContain('change the model route')
+    // The dead route re-runs the same refused summary, so the diagnostic must
+    // not send the operator to /compact.
+    expect(escalated?.diagnostic?.detail).not.toContain('/compact')
+
+    const clearedWake = nextChange(ctx.agentTeam, { kind: 'presence', workspaceId }, AbortSignal.timeout(4_000))
+    agent.session.append('assistant/message', {
+      turn: 1, step: 1, stream: [],
+      message: createAssistantMessage({ content: [{ type: 'text', text: 'recovered' }], source: { provider: 'mock', model: 'mock' } }),
+    } as never, { surfaceOp: 'append' })
+    expect((await clearedWake).version).toBeGreaterThan(presenceBaseline.version)
+    expect(status()?.presence).toBe('available')
+    expect(status()?.diagnostic).toBeUndefined()
+  })
+
   it('reports an unexpected Team wake cancellation before turn start without blaming ordinary notice replacement', async () => {
     const adapter = new EmptyAdapter()
     const { ctx, workspaceId } = await realHarness(adapter)
@@ -834,6 +895,25 @@ describe('Agent Team Member lifecycle', () => {
     expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
   })
 
+  it('does not restore an ownership-blocked Member suspended before its Session owner is disposed', async () => {
+    const { ctx, workspaceId, teamFiber } = await realHarness()
+    const added = await ctx.agentTeam.addMember({ requestId: requestId('blocked-add'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', projectRefs: [], model: { provider: 'mock', model: 'mock' }})
+    const memberId = added.status.member.memberId
+    const sessionId = added.status.member.sessionId
+    await teamFiber.dispose()
+    const foreign = await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions: { provider: 'mock', model: 'mock' } })
+    await ctx.plugin(AgentTeam)
+    await waitFor(() => ctx.agentTeam['sessionOwnershipBlocked'].has(memberId) ? true : undefined, 20_000)
+    await ctx.agentTeam.suspendMember({ requestId: requestId('blocked-suspend'), memberId })
+    await foreign.dispose()
+    await waitFor(() => !ctx.agentTeam['sessionOwnershipBlocked'].has(memberId)
+      && !ctx.agentTeam['memberLifecycleTails'].has(memberId) ? true : undefined, 20_000)
+    expect(ctx.agentTeam['handles'].has(memberId)).toBe(false)
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+    expect(ctx.agentTeam.members().find(status => status.member.memberId === memberId)?.availability).toBe('suspended')
+    expect(() => ctx.agentTeam.validateLedger()).not.toThrow()
+  })
+
   it('resumes a suspended Member without consulting the persistence tree walk', async () => {
     const { ctx, workspaceId } = await realHarness()
     const added = await ctx.agentTeam.addMember({ requestId: requestId('resume-add'), workspaceId, handle: 'restorer', description: 'Restores the exact session', presetId: 'team-member', projectRefs: [], model: { provider: 'mock', model: 'mock' }})
@@ -920,7 +1000,7 @@ describe('Agent Team Member lifecycle', () => {
   })
 
   it('runs the five-tool pull protocol through one live Team Member', async () => {
-    const { ctx, workspaceId } = await realHarness()
+    const { ctx, workspaceId, checkout } = await realHarness(new EmptyAdapter(), 'jsonl', undefined, false, undefined, 'memory', { memberReadTool: 'read' })
     const project = await ctx.agentTeam.createProject({ requestId: requestId('protocol-project'), workspaceId, name: 'engineering', description: 'Engineering work' })
     const builder = await ctx.agentTeam.addMember({ requestId: requestId('protocol-builder'), workspaceId, handle: 'builder', description: 'Builds changes', presetId: 'team-member', projectRefs: [project.project.projectRef], model: { provider: 'mock', model: 'mock' }})
     const reviewer = await ctx.agentTeam.addMember({ requestId: requestId('protocol-reviewer'), workspaceId, handle: 'reviewer', description: 'Reviews changes', presetId: 'team-member', projectRefs: [project.project.projectRef], model: { provider: 'mock', model: 'mock' }})
@@ -990,7 +1070,7 @@ describe('Agent Team Member lifecycle', () => {
     // team_message attachments: the tool passes absolute paths, the Host
     // validates and copies them into the cache, and the committed message
     // carries the same metadata and prompt lines as a manual upload.
-    const shotPath = join(process.env.DSH_HOME!, 'protocol-shot.png')
+    const shotPath = join(checkout, 'protocol-shot.png')
     await writeFile(shotPath, Buffer.from('png-bytes'))
     const shotMessage = await call('team_message', { action: 'start', projectRef: project.project.projectRef,
       body: 'Agent-created task with a screenshot', attachments: [shotPath] })

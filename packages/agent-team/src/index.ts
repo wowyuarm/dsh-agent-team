@@ -9,12 +9,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import { installModelSelection, type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type LlmFailure, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -35,7 +35,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { DomainFacility, type Domain, type KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, pathAttachmentId, readAttachment, removeAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, withMessageAttachmentEntries, writeRequestScopedAttachment } from './attachments.ts'
+import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, outside, pathAttachmentId, readAttachment, removeAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, withMessageAttachmentEntries, writeRequestScopedAttachment } from './attachments.ts'
 import { reportEnvironment } from './environment-check.ts'
 import { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName, parseLegacyHumanProfile, parseRowHumanProfile, type LegacyHumanProfileFields } from './human-profile.ts'
 import { TEAM_HOST_ROW_SETTINGS_SCHEMA, planHostRowWrite, type Config, type HostRowWrite } from './host-row-settings.ts'
@@ -55,7 +55,7 @@ export { teamMessageSurface, visibleTeamSurface, missingMessageRange } from './s
 export { activityFact, activityText, type ActivityFact } from './activity-facts.ts'
 import { carriedInputOf, createTeamContextProjectionDefinition, foldTeamContextProjection, isAcceptanceNotice, TEAM_INBOX_NOTICE_SUMMARY, TEAM_RECOVERY_NOTICE_SUMMARY, type TeamContextProjectionState } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor, type AgentTeamLedgerResult, type AgentTeamThreadReadOutcome } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, isExtraToolGrantCandidate, memberMemoryDirectoryName, MemberRuntime, type TurnBoundary } from './member-runtime.ts'
+import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, FILE_READ_TOOL_NAMES, isExtraToolGrantCandidate, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime, SHELL_TOOL_NAMES, type TurnBoundary } from './member-runtime.ts'
 import {
   EXTRA_TOOL_GRANTS_FIELD, extraToolGrantsFrom, sanitizeExtraToolGrants,
 } from './member-tool-grants.ts'
@@ -72,6 +72,7 @@ import { subscriptionDomainSpec } from './subscription-store.ts'
 import { ManagerSessionStore, managerSessionDomainSpec } from './manager-session-store.ts'
 import { MANAGER_BUNDLED_SKILLS_DIRECTORY, ManagerSessionRuntime } from './manager-session.ts'
 import type { ManagerPrivateMemory } from './manager-context.ts'
+import { workspaceRulesFile, type WorkspaceRulesScope } from './workspace-rules-context.ts'
 import { MANAGER_SESSION_PRESET_ID, MEMBER_SESSION_PRESET_ID } from './manager-tool-policy.ts'
 import { INITIAL_CHECKPOINT, SubscriptionScheduler, type SubscriptionCheckpoint, type SubscriptionRunOutcome } from './subscription-runtime.ts'
 import { baselineIdsOf, failureCategory, failureTail, missingCredentials, probeShellFamily, runSubscriptionScript, type ShellFamilyProbe, type SubscriptionCredentials, type SubscriptionRunCategory, type SubscriptionRunReport, type SubscriptionShellExecutor } from './subscription-runner.ts'
@@ -552,7 +553,7 @@ interface MemberActivationOptions {
   readonly skipColdRecycle?: boolean
 }
 
-const ACTIVATION_SUCCESS_FAILURE_SLOTS = ['activation', 'preTurnCancellation', 'capabilityApply', 'modelApply'] as const
+const ACTIVATION_SUCCESS_FAILURE_SLOTS = ['activation', 'compaction', 'preTurnCancellation', 'capabilityApply', 'modelApply'] as const
 
 export default class AgentTeam extends TypertRemoteService {
   static Config = TEAM_HOST_ROW_SETTINGS_SCHEMA
@@ -568,71 +569,62 @@ export default class AgentTeam extends TypertRemoteService {
     'sessionProjections',
   ]
 
+  // Boot/storage handles are process-local, not durable authority; shutdown fences work before closing their stores.
   private backend?: SqliteStorageBackend
   private domain?: Domain<typeof agentTeamDomainSpec>
   private ledger?: AgentTeamLedger
-  /** The manager pointer lives beside, never inside, the Team ledger. */
   private managerRuntime?: ManagerSessionRuntime
-  /** The scheduler's private state: deleting it changes no domain fact, so it is not part of the ledger. */
+  private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
+  private readonly humanUpdateCheck = createHumanUpdateChecker({ currentVersion: HUMAN_PROFILE_VERSION })
+  private readonly humanProfileHostFence = randomUUID()
+  private readonly shutdown = (() => {
+    let resolve!: () => void
+    const promise = new Promise<void>(finish => { resolve = finish })
+    return Object.freeze({ promise, resolve })
+  })()
+  private readonly shutdownController = new AbortController()
+  private accepting = true
+  private legacyAdoptionStarted = false
+  private presenceEpoch = 0
+  private readonly changeWaiters = new Set<ChangeWaiter>()
+  private workerExposure: boolean
+
+  // Subscription runtime handles and caches are process-local, not durable; private tables retain the restart obligations.
   private subscriptionDomain?: Domain<typeof subscriptionDomainSpec>
   private subscriptionTable?: KvTable<AgentTeamSubscriptionRef, SubscriptionCheckpoint>
-  /** The last fifty runs of every subscription, keyed by subscription then start instant. */
   private subscriptionRunsTable?: KvTable<string, SubscriptionRunRecord>
-  /** The deliveries whose automatic retries were spent, waiting for an owner. */
   private subscriptionDeliveriesTable?: KvTable<string, SubscriptionDeliveryRecord>
-  /** The answer each replay request already got, keyed by subscription then request id. */
   private subscriptionReplaysTable?: KvTable<string, SubscriptionReplayRecord>
-  /** The deliveries still owing work: one row per admission. */
   private subscriptionAdmissionsTable?: KvTable<string, SubscriptionAdmissionRecord>
-  /** The pass that runs due webhook deliveries; it stops with the Host. */
   private admissionPumpTimer?: ReturnType<typeof setInterval> | undefined
-  /** The running pass Host shutdown waits for; a second request joins it. */
   private admissionPumpTail?: Promise<void> | undefined
   private subscriptionScheduler?: SubscriptionScheduler
   private readonly subscriptionCheckpoints = new Map<AgentTeamSubscriptionRef, SubscriptionCheckpoint>()
-  /**
-   * One subscription's private read-modify-write steps, serialized. Two webhook
-   * deliveries that arrive together must not both add one to the same old
-   * failure count, or three spent retries would pause later than the third.
-   */
   private readonly subscriptionWriteTails = new Map<AgentTeamSubscriptionRef, Promise<void>>()
-  /** The probe once it answers with a family, cached for the composition's lifetime; a refusal is retried. */
   private subscriptionShellProbe: Promise<ShellFamilyProbe> | undefined
+
+  // Member Session bindings and diagnostics are process-local, not durable; the ledger owns which generations should exist.
   private readonly handles = new Map<AgentTeamMemberId, AgentHandle>()
-  /** Members whose latest activation found the bound Session's write handle owned by another live Agent. */
   private readonly sessionOwnershipBlocked = new Set<AgentTeamMemberId>()
-  /** Reader of the awaited context-projection registration; unloading Team releases it. */
   private contextProjection: ProjectionHandle<TeamContextProjectionState> | undefined
-  /** Agent ids with a turn in flight; restarts must wait for the boundary. */
   private readonly runningAgents = new Set<SessionId>()
   private readonly memberRuntime = new MemberRuntime({
     ctx: this.ctx,
     liveMemberContext: memberId => this.liveContextFor(memberId),
     runningAgents: this.runningAgents,
   })
-  /**
-   * The single seam for every per-Session stored read: handle lifecycle and failure normalization live here,
-   * and consumers choose policy by failure category instead of matching error text.
-   */
   private readonly sessionReader = new StoredSessionReader(this.ctx)
-  /**
-   * Why one Member shows error presence, per failure source. Reads prefer activation, then runtime, then compaction;
-   * slots clear independently, so a recovered runtime error re-reveals an outstanding compaction failure.
-   * Keyed by Member rather than Session so a restarted Session cannot leak stale keys.
-   */
   private readonly memberFailures = new Map<AgentTeamMemberId, {
     activation?: AgentTeamMemberDiagnostic
     runtime?: string
+    /** Summaries stay paused while the provider keeps refusing the oversized request: compaction on that route is unreachable. */
+    compaction?: AgentTeamMemberDiagnostic
     /** A Team wake was discarded before the Agent opened its turn boundary. */
     preTurnCancellation?: AgentTeamMemberDiagnostic
     /** The post-commit configuration apply failed; the stored row is ahead of the live surface. */
     capabilityApply?: AgentTeamMemberDiagnostic
     modelApply?: AgentTeamMemberDiagnostic
   }>()
-  /**
-   * The Workers this Host started. Team owns the execution record and the refusal
-   * rules; the Harness subagent service owns admission and the parent notice.
-   */
   private readonly workerRegistry = new WorkerRegistry(this.ctx, {
     config: () => this.config.worker.get(),
     projectExists: projectRef => this.requireLedger().hasProject(projectRef),
@@ -663,45 +655,19 @@ export default class AgentTeam extends TypertRemoteService {
     workerResumeAnchors: workerRef => this.requireLedger().workerResumeAnchors(workerRef),
     warn: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
   })
-  /** Team notice ids waiting for a turn boundary, keyed by the live Agent message id. */
-  private readonly pendingTeamWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly sessionId: SessionId }>()
-  /** Agents that already spent their one acceptance boundary; cleared when the Agent settles. */
-  private readonly acceptanceBoundaries = new WeakSet<Agent>()
-  /** Notice removals initiated by Team itself, which are normal replacement/disposal operations. */
-  private readonly expectedInboxDiscards = new Set<string>()
-  /**
-   * Per-Member Inbox notice delivery: the unread facts the last attempt covered and the attempts they have spent.
-   * A retry after a failed wake spends the next attempt over the same durable facts, never a second operation.
-   */
-  private readonly inboxNoticeDeliveries = new Map<AgentTeamMemberId, InboxNoticeDelivery>()
-  /**
-   * Queued Team notices that carry Member reminders, keyed by message id. The
-   * claim of a message is the only evidence that its reminders reached a turn,
-   * and each entry names the occurrences that message actually rendered, so a
-   * claim consumes exactly those and nothing newer.
-   */
-  private readonly memberReminderWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly reminders: readonly InboxMemberReminder[] }>()
-  /**
-   * Consecutive Member-reminder consumption writes that failed for one Member.
-   * Process-local like the notice coverage it bounds: a restart starts over, and
-   * a successful write clears it.
-   */
-  private readonly memberReminderConsumeFailures = new Map<AgentTeamMemberId, number>()
-  /** The timer armed for the next Member-reminder occurrence, rearmed after every raise. */
-  private memberReminderTimer?: ReturnType<typeof setTimeout> | undefined
-  private attachmentGcTimer?: ReturnType<typeof setInterval> | undefined
-  /**
-   * New-release check behind the settings footnote. Memory-only and background-refreshed,
-   * so the profile read path never waits on the network and every failure settles as "no update known".
-   */
-  private readonly humanUpdateCheck = createHumanUpdateChecker({ currentVersion: HUMAN_PROFILE_VERSION })
-  /** Opaque process fence kept out of the Client's interpretation and combined with the Harness revision on every profile write. */
-  private readonly humanProfileHostFence = randomUUID()
+  private readonly retiringAgents = new WeakSet<Agent>()
 
+  // Wake/notice delivery state is process-local, not durable; failed or interrupted delivery rederives from unread ledger facts.
+  private readonly pendingTeamWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly sessionId: SessionId }>()
+  private readonly acceptanceBoundaries = new WeakSet<Agent>()
+  private readonly expectedInboxDiscards = new Set<string>()
+  private readonly inboxNoticeDeliveries = new Map<AgentTeamMemberId, InboxNoticeDelivery>()
+  private readonly memberReminderWakes = new Map<string, { readonly memberId: AgentTeamMemberId; readonly reminders: readonly InboxMemberReminder[] }>()
+  private readonly memberReminderConsumeFailures = new Map<AgentTeamMemberId, number>()
+  private memberReminderTimer?: ReturnType<typeof setTimeout> | undefined
   private readonly memberIdle = new MemberIdleTracker()
   private reminderEvaluationTail: Promise<void> = Promise.resolve()
   private reminderEvaluationRequested = false
-
   private readonly recovery = new RecoveryCoordinator({
     wake: memberId => { this.injectRecovery(memberId) },
     report: fact => { this.reportRecovery(fact) },
@@ -719,46 +685,13 @@ export default class AgentTeam extends TypertRemoteService {
     },
     log: message => { this.ctx.logger.warn(`agent-team: ${message}`) },
   })
-  /**
-   * Per-Member lifecycle chains: one Member's long waits (turn boundary, idle) hold only that Member's later operations.
-   * Order within a chain is submission order; cross-Member commits stay ordered by the ledger's single writer queue.
-   */
+
+  // Lifecycle serialization is process-local, not durable; unrelated Members must not wait behind another Member’s turn.
   private readonly memberLifecycleTails = new Map<AgentTeamMemberId, Promise<void>>()
-  private readonly retiringAgents = new WeakSet<Agent>()
   private readonly enteredMemberChains = new AsyncLocalStorage<ReadonlySet<AgentTeamMemberId>>()
   private readonly enteredAdditionChains = new AsyncLocalStorage<ReadonlySet<AgentTeamRequestId>>()
-  /**
-   * addMember chains by request id: the Member id does not exist until the
-   * commit answers, and concurrent duplicates of one request must serialize
-   * so exactly one of them activates the replayed id.
-   */
   private readonly additionLifecycleTails = new Map<AgentTeamRequestId, Promise<void>>()
-  /** Deferred notification effects leave durable writes and Client invalidation on the caller's path; each Member keeps its own effect chain. */
   private readonly notificationEffectTails = new Map<AgentTeamMemberId, Promise<void>>()
-  /** Resolves when Host teardown starts: in-chain idle waits release on it instead of outliving the Host. */
-  private readonly shutdown = (() => {
-    let resolve!: () => void
-    const promise = new Promise<void>(finish => { resolve = finish })
-    return Object.freeze({ promise, resolve })
-  })()
-  /** Aborts every Host-owned background operation that would otherwise outlive teardown. */
-  private readonly shutdownController = new AbortController()
-  private accepting = true
-  /** One adoption attempt per boot: the two readiness edges fire once each, and this keeps their attempt single. */
-  private legacyAdoptionStarted = false
-  /**
-   * Presence wake epoch: Agent running/idle/failure has no durable fact behind it, so the presence scope counts those edge wakes in process.
-   * It never takes part in a projection waiter's comparison.
-   */
-  private presenceEpoch = 0
-  private readonly changeWaiters = new Set<ChangeWaiter>()
-  /**
-   * The Worker switch the live Member surfaces currently reflect. The Host row
-   * is the only switch: it decides whether `team_worker` is declared, and the
-   * registry still refuses a start while it is off, so a stale surface can never
-   * become an execution path.
-   */
-  private workerExposure: boolean
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'agentTeam')
@@ -928,6 +861,11 @@ export default class AgentTeam extends TypertRemoteService {
     if (live === undefined || live.provider !== config.provider || live.model !== config.model) return
     const running = member.model ?? this.ctx.agentDefaultModel.currentSelection()
     if (running.provider === config.provider && running.model === config.model) return
+    // A request that sent on a different route is the switch made real: the
+    // old route's paused-summary escalation no longer names this generation.
+    if (this.clearUnreachableCompaction(memberId)) {
+      this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} left its paused-summary route; the unreachable-compaction diagnostic is retired`)
+    }
     // The route alone: the effort belongs to the Session log, where activation re-reads it for the same route. Writing it
     // here would turn an inherited tier into a permanent one that later edits cannot lower.
     const model: AgentTeamModelSelection = Object.freeze({ provider: config.provider, model: config.model })
@@ -1583,6 +1521,28 @@ export default class AgentTeam extends TypertRemoteService {
     return Object.freeze({ root: dshHomePath('agent-team', 'manager'), cwd: agent.session.header.cwd })
   }
 
+  /**
+   * Which Workspace rules files this Agent reads, or `undefined` for an
+   * ordinary Session or fork. A Member reads the Workspaces it participates in
+   * now; the manager, which curates them, reads every registered Workspace.
+   * The paths are the Host's own: no caller names a Workspace or a file.
+   */
+  workspaceRulesForAgent(agent: Agent): WorkspaceRulesScope | undefined {
+    const home = dshHomePath('agent-team')
+    const target = (workspaceId: WorkspaceId) => Object.freeze({
+      workspaceId,
+      title: this.ctx.workspaceRegistry.get(workspaceId)?.title,
+      file: workspaceRulesFile(home, workspaceId),
+    })
+    if (this.managerRuntime?.isCurrentManagerAgent(agent) === true) {
+      const ids = this.ctx.workspaceRegistry.list().map(workspace => workspace.id).sort()
+      return Object.freeze({ reader: 'manager', workspaces: Object.freeze(ids.map(target)) })
+    }
+    const member = this.memberForAgent(agent)
+    if (member === undefined) return undefined
+    return Object.freeze({ reader: 'member', workspaces: Object.freeze(this.requireLedger().workspacesOf(member.memberId).map(target)) })
+  }
+
   members(): readonly AgentTeamAgentMemberStatus[] {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
   }
@@ -2109,6 +2069,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.handles.delete(memberId)
     this.memberRuntime.forgetMember(memberId)
     this.clearMemberFailure(memberId, 'activation')
+    this.clearMemberFailure(memberId, 'compaction')
     this.dropInboxCoverage(memberId)
     // The previous log survives on disk; archiving hides it from every
     // grouping surface so one Member keeps exactly one visible Session.
@@ -2217,16 +2178,14 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /**
-   * Cache GC: uploads referenced by a Message survive 72h from upload; orphans (never sent) go after 24h.
-   * Runs at startup and then daily, in-process only because the cache is transient.
-   */
+  /** Restart sweeps missed periods because attachments are a transient cache, not an archive. */
   private startAttachmentGc(ledger: AgentTeamLedger): void {
     const sweep = async (): Promise<void> => {
       let references: { readonly sequence: number; readonly ids: ReadonlySet<AgentTeamAttachmentId> } | undefined
       try {
         await sweepAttachmentCache(attachmentsRoot(), id => {
           const sequence = ledger.projectionSequence()
+          // A sweep can overlap commits; reuse references only while their projection is current.
           if (references?.sequence !== sequence) references = { sequence, ids: ledger.referencedAttachmentIds() }
           return references.ids.has(id)
         }, Date.now())
@@ -2382,6 +2341,9 @@ export default class AgentTeam extends TypertRemoteService {
         this.recordApplyFailure(current.memberId, 'model-apply', active, receipt, requestId, error)
         throw new MemberModelApplyError(error)
       }
+      // The stored route just became the live one: an escalation pinned to the
+      // old route's paused summaries no longer names this generation.
+      this.clearUnreachableCompaction(memberId)
       effect = 'applied'
     }
     // The live route now runs the stored one, so a failure recorded by an
@@ -2584,13 +2546,30 @@ export default class AgentTeam extends TypertRemoteService {
   /**
    * Resolve uploaded ids and agent-supplied absolute paths into one attachment metadata list. All paths are validated before anything is copied,
    * so one rejection leaves the cache untouched; each copy takes a request-derived id, so a retry converges instead of writing an orphan.
+   * An Agent caller names files only inside its own working directory and only while its enforced tools include a file reader:
+   * a Member without one may not hand the Host an arbitrary file read it does not hold itself.
    */
-  private async resolveMessageAttachments(request: { readonly requestId: AgentTeamRequestId; readonly attachments?: readonly AgentTeamAttachmentId[] | undefined; readonly attachmentPaths?: readonly string[] | undefined }): Promise<readonly AgentTeamMessageAttachment[]> {
+  private async resolveMessageAttachments(
+    request: { readonly requestId: AgentTeamRequestId; readonly attachments?: readonly AgentTeamAttachmentId[] | undefined; readonly attachmentPaths?: readonly string[] | undefined },
+    actor: AgentTeamHumanActor | AgentTeamMemberActor,
+    agent: Agent | undefined,
+  ): Promise<readonly AgentTeamMessageAttachment[]> {
     const fromPaths: AgentTeamMessageAttachment[] = []
     if (request.attachmentPaths !== undefined && request.attachmentPaths.length > 0) {
-      for (const absolutePath of request.attachmentPaths) await validatePathAttachment(absolutePath)
+      let cwd: string | undefined
+      if (actor.kind === 'member') {
+        if (!this.memberRuntime.enforcesFileReadTool(actor.memberId)) {
+          const allowed = `${FILE_READ_TOOL_NAMES.slice(0, -1).join(', ')}, or ${FILE_READ_TOOL_NAMES.at(-1)}`
+          throw new Error(`reading a file into an attachment runs the Host's file access, and this Member has no ${allowed} tool (attachment_read_required); drop the attachments parameter or send it through the Human Web Client`)
+        }
+        const workingDirectory = agent?.ctx.get('workingDirectory') as { get(session: Agent['session']): string | undefined } | undefined
+        cwd = agent === undefined ? undefined : workingDirectory?.get(agent.session)
+        if (cwd === undefined) throw new Error('this Session has no working directory, so an attachment path cannot be resolved')
+      }
+      const resolved: string[] = []
+      for (const absolutePath of request.attachmentPaths) resolved.push(await validatePathAttachment(absolutePath, cwd))
       for (const [index, absolutePath] of request.attachmentPaths.entries()) {
-        fromPaths.push(Object.freeze(await copyPathAttachment(attachmentsRoot(), absolutePath, pathAttachmentId(request.requestId, index), request.requestId)))
+        fromPaths.push(Object.freeze(await copyPathAttachment(attachmentsRoot(), absolutePath, pathAttachmentId(request.requestId, index), request.requestId, resolved[index]!)))
       }
     }
     return [...fromPaths, ...await this.prepareAttachments(request.attachments)]
@@ -2955,12 +2934,12 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only start of a discussion or Task Thread; Project owners only. */
   async startThreadForAgent(agent: Agent, request: AgentTeamStartThreadRequest): Promise<AgentTeamStartThreadResult> {
-    return this.startThreadAs(this.memberCall(agent, request.workspaceId), request)
+    return this.startThreadAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Agent-only Main stream Message. */
   async postMainMessageForAgent(agent: Agent, request: AgentTeamPostMainMessageRequest): Promise<AgentTeamPostMainMessageResult> {
-    return this.postMainMessageAs(this.memberCall(agent, request.workspaceId), request)
+    return this.postMainMessageAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Agent-only Main stream read; a read with nothing to acknowledge commits nothing. */
@@ -3002,7 +2981,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
-    return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+    return this.replyAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Read one Message back verbatim, for the reader that has to answer it. */
@@ -3054,7 +3033,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Agent-only accountability transfer to another enabled Project member or the Human. */
+  /** Agent-only accountability transfer to another enabled Member of the Project's Workspace or the Human. */
   async transferTaskForAgent(agent: Agent, request: AgentTeamTransferTaskRequest): Promise<AgentTeamTransferTaskResult> {
     const actor = this.memberCall(agent, request.workspaceId)
     return this.transferTaskAs(actor, request)
@@ -3277,6 +3256,8 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     this.ctx.logger.info(`agent-team: compacted ${this.memberScope(memberId, agent.id)} at its acceptance boundary: ${result.shadowedSeqs.length} history item(s), ~${result.shadowedTokenCount} tokens`)
+    // A written checkpoint disproves the unreachable-compaction escalation too.
+    this.clearUnreachableCompaction(memberId)
   }
 
   /**
@@ -3851,7 +3832,9 @@ export default class AgentTeam extends TypertRemoteService {
       memberRef: member.memberId,
       handle: member.handle,
       description: member.description,
-      privateMemoryPath: member.privateMemoryPath,
+      // The recorded path may carry a legacy colon segment; the live directory
+      // is always the sanitized spelling member-context also answers with.
+      privateMemoryPath: memberMemoryDirectoryPath(member),
       owns: ledger.ownedProjects(memberId),
     })
   }
@@ -4034,10 +4017,11 @@ export default class AgentTeam extends TypertRemoteService {
     actor: AgentTeamHumanActor | AgentTeamMemberActor,
     request: Req,
     commit: (authorized: Req & { readonly actor: AgentTeamHumanActor | AgentTeamMemberActor; readonly body: string; readonly resolvedAttachments?: readonly AgentTeamMessageAttachment[] }) => Promise<{ readonly committed: boolean; readonly value: Res }>,
+    agent?: Agent,
   ): Promise<Res> {
     return withMessageAttachmentEntries(attachmentsRoot(), request, async () => {
       try {
-        const metadata = await this.resolveMessageAttachments(request)
+        const metadata = await this.resolveMessageAttachments(request, actor, agent)
         const result = await commit({
           ...request, body: this.appendAttachmentLines(request.body, metadata),
           ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
@@ -4052,12 +4036,12 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  private startThreadAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamStartThreadRequest): Promise<AgentTeamStartThreadResult> {
-    return this.commitMessageAs(actor, request, authorized => this.requireLedger().startThread(authorized))
+  private startThreadAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamStartThreadRequest, agent?: Agent): Promise<AgentTeamStartThreadResult> {
+    return this.commitMessageAs(actor, request, authorized => this.requireLedger().startThread(authorized), agent)
   }
 
-  private postMainMessageAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamPostMainMessageRequest): Promise<AgentTeamPostMainMessageResult> {
-    return this.commitMessageAs(actor, request, authorized => this.requireLedger().postMainMessage(authorized))
+  private postMainMessageAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamPostMainMessageRequest, agent?: Agent): Promise<AgentTeamPostMainMessageResult> {
+    return this.commitMessageAs(actor, request, authorized => this.requireLedger().postMainMessage(authorized), agent)
   }
 
   private async readMainStreamAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamMainStreamReadRequest,
@@ -4072,8 +4056,8 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().readMessage(actor, request)
   }
 
-  private replyAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
-    return this.commitMessageAs(actor, request, authorized => this.requireLedger().reply(authorized))
+  private replyAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReplyRequest, agent?: Agent): Promise<AgentTeamReplyResult> {
+    return this.commitMessageAs(actor, request, authorized => this.requireLedger().reply(authorized), agent)
   }
 
   /**
@@ -4338,6 +4322,10 @@ export default class AgentTeam extends TypertRemoteService {
       installMemberCompaction(
         agentCtx, agent, () => this.memberCompactionConfig(),
         () => this.compactionEngineFor(agent), () => this.retiringAgents.has(agent),
+        {
+          escalate: failure => this.escalateUnreachableCompaction(member.memberId, failure),
+          clear: () => this.clearUnreachableCompaction(member.memberId),
+        },
       )
       agentCtx.on('agent/pre-step', async ({ agent }, next) => {
         // The original inbox insertion is the durable replay source even if
@@ -4551,6 +4539,7 @@ export default class AgentTeam extends TypertRemoteService {
       return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'preset-composition' as const, detail: ORPHANED_MEMBER_DIAGNOSTIC } })
     }
     if (failures?.runtime !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'runtime' as const, detail: failures.runtime } })
+    if (failures?.compaction !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: failures.compaction })
     if (failures?.preTurnCancellation !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: failures.preTurnCancellation })
     // A failed apply outranks the plain success row but not a live runtime
     // error: the Member runs, yet its stored configuration is ahead of the
@@ -4594,7 +4583,7 @@ export default class AgentTeam extends TypertRemoteService {
     return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
   }
 
-  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'preTurnCancellation' | 'capabilityApply' | 'modelApply'): boolean {
+  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'preTurnCancellation' | 'capabilityApply' | 'modelApply'): boolean {
     const failures = this.memberFailures.get(memberId)
     if (failures === undefined || failures[slot] === undefined) return false
     if (Object.keys(failures).length === 1) this.memberFailures.delete(memberId)
@@ -4641,12 +4630,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   // ── Project subscriptions ────────────────────────────────────────────────
 
-  /**
-   * Open the scheduler's private store and give every timer subscription its
-   * first due instant. Boot never resets a persisted due instant or a
-   * publication window: a Host that was away catches up once instead of
-   * restarting the window.
-   */
+  /** Boot preserves due instants and publication windows so downtime catches up once instead of resetting the budget. */
   private async startSubscriptionRuntime(domain: Domain<typeof subscriptionDomainSpec>): Promise<void> {
     this.subscriptionDomain = domain
     const table = domain.table('checkpoints')
@@ -4816,7 +4800,6 @@ export default class AgentTeam extends TypertRemoteService {
     return [...table.keys()].filter(key => key === subscriptionRef || key.startsWith(prefix))
   }
 
-  /** The private tables a subscription owns, each with the word a failed delete logs it as. */
   private subscriptionPrivateTables(): readonly (readonly [{ keys(): Iterable<string>; delete(key: string): Promise<boolean> } | undefined, string])[] {
     return [
       [this.subscriptionTable, 'checkpoint'],
@@ -5671,7 +5654,6 @@ export default class AgentTeam extends TypertRemoteService {
     return next
   }
 
-  /** Every admission one subscription still owes work for, in no particular order. */
   private admissionRecordsOf(subscriptionRef: AgentTeamSubscriptionRef): readonly SubscriptionAdmissionRecord[] {
     const table = this.subscriptionAdmissionsTable
     if (table === undefined) return []
@@ -5785,7 +5767,6 @@ export default class AgentTeam extends TypertRemoteService {
     }
   }
 
-  /** One due delivery: run it, then settle its row from what the run reported. */
   private async runWebhookAdmission(subscription: AgentTeamSubscription, record: SubscriptionAdmissionRecord): Promise<void> {
     const live = this.writableSubscription(subscription.subscriptionRef)
     if (live === undefined) {
@@ -5807,7 +5788,7 @@ export default class AgentTeam extends TypertRemoteService {
       await this.enqueueHeldAdmission(record, requestId)
       return
     }
-    // The definition the payload arrived under, not the one that stands now.
+    // Editing a subscription must not change the script bytes owed to an already-admitted payload.
     const source = this.replaySource(live, record, 'received')
     const execute = async () => {
       // A queued run can get its slot after a resume committed but failed to
@@ -5916,8 +5897,6 @@ export default class AgentTeam extends TypertRemoteService {
       }
       // These tables cannot commit together. Keep the decision on the admission
       // until the replay record is durable, so recovery does not run the script again.
-      // Both state-only fields come off here: the record that becomes `exhausted`
-      // keeps neither a retry instant nor a held batch, as its type and schema say.
       const { nextAttemptAt: _due, heldEvents: _held, ...spent } = record
       const earlier = this.deliveryRecordForSettlement(
         this.subscriptionDeliveriesTable?.get(deliveryKey(record.subscriptionRef, record.deliveryRef)), record.admissionRef)
@@ -6179,6 +6158,7 @@ export default class AgentTeam extends TypertRemoteService {
     return scheduler === undefined ? execute() : scheduler.runAdmitted(subscription, 'run', execute)
   }
 
+  /** Sequencing contract: docs/architecture/host-authority.md#replay-execution-order. */
   private async replayLocked(subscription: AgentTeamSubscription, request: AgentTeamSubscriptionReplayRequest,
     version: AgentTeamSubscriptionReplayVersion): Promise<AgentTeamSubscriptionReplayResult> {
     // Admission re-reads the ledger, but this reads it once more for the run
@@ -6186,34 +6166,39 @@ export default class AgentTeam extends TypertRemoteService {
     // snapshot the entry queued with.
     const live = this.runTarget(request.subscriptionRef, request.projectRef)
     const intent = this.replayRecordOf(live.subscriptionRef, request.requestId)
-    if (intent !== undefined) {
-      // One request id names one intent, and the record is written before the
-      // script runs. Naming a different delivery or version under it is a
-      // collision, not a second run — even when no answer survived to say so.
-      if (intent.deliveryRef !== request.deliveryRef || intent.version !== version) {
-        throw new Error(`request '${request.requestId}' already replayed delivery '${intent.deliveryRef}' (${intent.version}); one request id cannot name a second replay (replay_request_conflict)`)
-      }
-      if (intent.state === 'settled') return this.replayResultOf(intent)
-      // The run may have started and never recorded its answer. An accept the
-      // ledger holds under this request id is the answer that survived; without
-      // one there is nothing to stand on, and running the script again would be
-      // guessing at what the first attempt did.
-      const accepted = this.acceptedRequestEvents(live.subscriptionRef, request.requestId)
-      if (accepted === undefined) {
-        const delivery = this.deliveryRecordOf(live.subscriptionRef, intent.deliveryRef)
-        if (delivery === undefined) throw new Error(`delivery '${intent.deliveryRef}' is unknown or has expired`)
-        return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(delivery), eventCount: 0,
-          reason: 'an earlier attempt for this request started and never recorded its answer, so it was not run again; replay the delivery under a new request id' })
-      }
-      const delivery = this.deliveryRecordOf(live.subscriptionRef, intent.deliveryRef)
-      if (delivery === undefined) throw new Error(`delivery '${intent.deliveryRef}' is unknown or has expired`)
-      // The output is in the ledger: settle the answer that was lost, then say
-      // what the run did.
-      await this.settleReplayIntent(delivery, Object.freeze({ ...intent, state: 'settled', succeeded: true,
-        eventCount: accepted, ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) }))
-      return Object.freeze({ kind: 'replayed', delivery: deliveryEntryOf(delivery), eventCount: accepted,
-        ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) })
+    return intent === undefined
+      ? this.runFreshReplay(live, request, version)
+      : this.answerReplayIntent(live, request, version, intent)
+  }
+
+  private async answerReplayIntent(live: AgentTeamSubscription, request: AgentTeamSubscriptionReplayRequest,
+    version: AgentTeamSubscriptionReplayVersion, intent: SubscriptionReplayRecord): Promise<AgentTeamSubscriptionReplayResult> {
+    // One request id names one intent, and the record is written before the
+    // script runs. Naming a different delivery or version under it is a
+    // collision, not a second run — even when no answer survived to say so.
+    if (intent.deliveryRef !== request.deliveryRef || intent.version !== version) {
+      throw new Error(`request '${request.requestId}' already replayed delivery '${intent.deliveryRef}' (${intent.version}); one request id cannot name a second replay (replay_request_conflict)`)
     }
+    if (intent.state === 'settled') return this.replayResultOf(intent)
+    // The run may have started and never recorded its answer. An accept the
+    // ledger holds under this request id is the answer that survived; without
+    // one there is nothing to stand on, and running the script again would be
+    // guessing at what the first attempt did.
+    const accepted = this.acceptedRequestEvents(live.subscriptionRef, request.requestId)
+    const delivery = this.deliveryRecordOf(live.subscriptionRef, intent.deliveryRef)
+    if (delivery === undefined) throw new Error(`delivery '${intent.deliveryRef}' is unknown or has expired`)
+    if (accepted === undefined) {
+      return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(delivery), eventCount: 0,
+        reason: 'an earlier attempt for this request started and never recorded its answer, so it was not run again; replay the delivery under a new request id' })
+    }
+    await this.settleReplayIntent(delivery, Object.freeze({ ...intent, state: 'settled', succeeded: true,
+      eventCount: accepted, ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) }))
+    return Object.freeze({ kind: 'replayed', delivery: deliveryEntryOf(delivery), eventCount: accepted,
+      ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) })
+  }
+
+  private async runFreshReplay(live: AgentTeamSubscription, request: AgentTeamSubscriptionReplayRequest,
+    version: AgentTeamSubscriptionReplayVersion): Promise<AgentTeamSubscriptionReplayResult> {
     const record = this.deliveryRecordOf(live.subscriptionRef, request.deliveryRef)
     if (record === undefined) throw new Error(`delivery '${request.deliveryRef}' is unknown or has expired`)
     // A replay that delivered took the delivery off the failed list; a second,
@@ -6233,8 +6218,7 @@ export default class AgentTeam extends TypertRemoteService {
       { stdin: record.body, delivery: { deliveryRef: record.deliveryRef, attempt: record.attempts }, requestId: request.requestId,
         ...(record.admissionRef === undefined ? {} : { scriptDeliveryId: record.admissionRef }) })
     if (run === undefined) {
-      return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(record), eventCount: 0,
-        reason: 'the replay finished after the subscription stopped being live, so nothing was delivered' })
+      return this.stoppedReplayResult(record)
     }
     const succeeded = run.outcome === 'accepted' || run.outcome === 'empty'
     const reason = run.report.ok
@@ -6256,12 +6240,16 @@ export default class AgentTeam extends TypertRemoteService {
     // printed nothing new has no such record to stand on, so a deletion that
     // landed first leaves it with nothing to claim.
     if (!kept && run.outcome !== 'accepted') {
-      return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(record), eventCount: 0,
-        reason: 'the replay finished after the subscription stopped being live, so nothing was delivered' })
+      return this.stoppedReplayResult(record)
     }
     return Object.freeze({ kind: succeeded ? 'replayed' : 'replay-failed', delivery: deliveryEntryOf(record), eventCount: run.eventCount,
       runRef: run.runRef, ...(reason === undefined ? {} : { reason }),
       ...(succeeded ? {} : { stdoutTail: failureTail(run.report.stdout), stderrTail: failureTail(run.report.stderr) }) })
+  }
+
+  private stoppedReplayResult(record: SubscriptionDeliveryRecord): AgentTeamSubscriptionReplayResult {
+    return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(record), eventCount: 0,
+      reason: 'the replay finished after the subscription stopped being live, so nothing was delivered' })
   }
 
   /**
@@ -6333,8 +6321,8 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** An Agent owner replays one failed delivery; the request id makes a retried call a no-op. */
-  replaySubscriptionDeliveryForAgent(agent: Agent, request: AgentTeamSubscriptionReplayRequest): Promise<AgentTeamSubscriptionReplayResult> {
-    return this.replaySubscriptionDelivery(this.memberCall(agent, request.workspaceId), request)
+  async replaySubscriptionDeliveryForAgent(agent: Agent, request: AgentTeamSubscriptionReplayRequest): Promise<AgentTeamSubscriptionReplayResult> {
+    return this.replaySubscriptionDelivery(this.scriptRunningMemberCall(agent, request.workspaceId), request)
   }
 
   @Remote('replaySubscriptionDelivery')
@@ -6364,10 +6352,17 @@ export default class AgentTeam extends TypertRemoteService {
     const workingDirectory = agent.ctx.get('workingDirectory') as { get(session: Agent['session']): string } | undefined
     const cwd = workingDirectory?.get(agent.session)
     if (cwd === undefined) throw new Error('this Session has no working directory, so a script path cannot be resolved')
-    const resolved = isAbsolute(scriptPath) ? scriptPath : join(cwd, scriptPath)
-    const bytes = await readFile(resolved).catch((error: unknown) => {
+    const lexical = isAbsolute(scriptPath) ? scriptPath : join(cwd, scriptPath)
+    const unreadable = (error: unknown): never => {
       throw new Error(`cannot read '${scriptPath}': ${error instanceof Error ? error.message : String(error)}`)
-    })
+    }
+    // Containment is checked lexically and again after symlinks resolve: the
+    // path names a script in the Member's checkout, never another Host file.
+    const escapes = (): Error => new Error(`'${scriptPath}' is outside your working directory; put the script inside it`)
+    if (outside(cwd, lexical)) throw escapes()
+    const [realRoot, resolved] = await Promise.all([realpath(cwd), realpath(lexical)]).catch(unreadable)
+    if (outside(realRoot, resolved)) throw escapes()
+    const bytes = await readFile(resolved).catch(unreadable)
     if (bytes.byteLength > SUBSCRIPTION_SCRIPT_MAX_BYTES) {
       throw new Error(`'${scriptPath}' is ${bytes.byteLength} bytes; the limit is ${SUBSCRIPTION_SCRIPT_MAX_BYTES}`)
     }
@@ -6504,8 +6499,21 @@ export default class AgentTeam extends TypertRemoteService {
       ...(origin === undefined ? {} : this.armedAddress(origin, result.value.webhookToken)) })
   }
 
+  /**
+   * The actor of an Agent call that makes the Host run a subscription script.
+   * The script runs on the Host's shell and its output returns to the caller,
+   * so a Member whose enforced tool surface holds no shell cannot ask for one.
+   */
+  private scriptRunningMemberCall(agent: Agent, workspaceId: AgentTeamViewRequest['workspaceId']): AgentTeamMemberActor {
+    const actor = this.memberCall(agent, workspaceId)
+    if (!this.memberRuntime.enforcesShellTool(actor.memberId)) {
+      throw new Error(`a subscription script runs on the Host's shell, and this Member has no ${SHELL_TOOL_NAMES.join(' or ')} tool (subscription_shell_required); the Human can manage this subscription from the Web Client`)
+    }
+    return actor
+  }
+
   async createSubscriptionForAgent(agent: Agent, request: AgentTeamCreateSubscriptionRequest): Promise<AgentTeamSubscriptionWriteResult> {
-    return this.createSubscriptionAs(this.memberCall(agent, request.workspaceId), request, agent)
+    return this.createSubscriptionAs(this.scriptRunningMemberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Human creation from a page: the content is pasted, because a Human has no Session working directory. */
@@ -6562,7 +6570,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async updateSubscriptionForAgent(agent: Agent, request: AgentTeamUpdateSubscriptionRequest): Promise<AgentTeamSubscriptionWriteResult> {
-    return this.updateSubscriptionAs(this.memberCall(agent, request.workspaceId), request, agent)
+    return this.updateSubscriptionAs(this.scriptRunningMemberCall(agent, request.workspaceId), request, agent)
   }
 
   @Remote('updateSubscription')
@@ -6586,8 +6594,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async testSubscriptionForAgent(agent: Agent, request: AgentTeamTestSubscriptionRequest): Promise<AgentTeamSubscriptionTrialResult> {
-    const actor = this.memberCall(agent, request.workspaceId)
-    return this.testSubscription(request, actor)
+    return this.testSubscription(request, this.scriptRunningMemberCall(agent, request.workspaceId))
   }
 
   /** A trial run never changes durable state, so the Human path can offer it before any edit. */
@@ -6659,7 +6666,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async resumeSubscriptionForAgent(agent: Agent, request: AgentTeamSubscriptionStateRequest): Promise<AgentTeamSubscriptionWriteResult> {
-    return this.resumeSubscriptionAs(this.memberCall(agent, request.workspaceId), request)
+    return this.resumeSubscriptionAs(this.scriptRunningMemberCall(agent, request.workspaceId), request)
   }
 
   @Remote('resumeSubscription')
@@ -6856,13 +6863,13 @@ export default class AgentTeam extends TypertRemoteService {
     return this.reminderEvaluationTail
   }
 
-  /** Arm one timer for the soonest pending occurrence; nothing pending disarms it. */
   private armMemberReminderTimer(nowMs: number): void {
     if (this.memberReminderTimer !== undefined) clearTimeout(this.memberReminderTimer)
     this.memberReminderTimer = undefined
     if (!this.accepting || this.ledger === undefined) return
     const at = this.requireLedger().nextMemberReminderWakeAt(nowMs)
     if (at === undefined) return
+    // Long intervals must not overflow Node's timer limit into an immediate retry loop.
     const delay = Math.min(Math.max(0, at - Date.now()), MEMBER_REMINDER_TIMER_MAX_DELAY_MS)
     this.memberReminderTimer = setTimeout(() => {
       this.memberReminderTimer = undefined
@@ -6882,7 +6889,6 @@ export default class AgentTeam extends TypertRemoteService {
 
   private emitCommitted(receipt: AgentTeamOperationReceipt): void {
     // Nothing after the ledger append may turn a committed operation into a failed Remote call; effects that run third-party code go through `afterCommit`.
-    // Order: listeners, Client invalidation, participation notice, wakes.
     this.afterCommit('commit listener dispatch', () => this.ctx.emit('agent-team/committed', { receipt }))
     const operation = this.ledger?.getOperation(receipt.operationId)
     if (operation === undefined) {
@@ -6956,7 +6962,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /**
    * Run one effect that follows the ledger append. The operation is durable by now, so a delivery or listener failure degrades to a log line;
-   * a failed Inbox wake clears its own signature so the next commit retries the same durable facts without a second operation.
+   * a failed Inbox wake drops coverage so the next commit retries the same durable facts without a second operation.
    * Synchronous invariant divergence is re-raised on the caller's frame; deferred notification effects report it at error level because the commit has already returned.
    */
   private afterCommit(label: string, effect: () => void, deferNotification = false, notificationMemberId?: AgentTeamMemberId): void {
@@ -7115,6 +7121,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.deliverInboxNotice(live, member, cause, sequenced)
   }
 
+  /** Sequencing contract: docs/architecture/host-authority.md#inbox-delivery-order. */
   private deliverInboxNotice(agent: Agent, member: AgentTeamAgentMember, cause: NotificationCause, sequenced = false): void {
     const material = this.requireLedger().notificationSnapshot(member.memberId)
     const notifications = material.threads
@@ -7145,6 +7152,16 @@ export default class AgentTeam extends TypertRemoteService {
         : `the same unread facts (${facts}) already have a delivery attempt`}`)
       return
     }
+    this.queueInboxNotice(agent, member, material, plan, previous, facts, scope, causeText, sequenced)
+  }
+
+  private queueInboxNotice(agent: Agent, member: AgentTeamAgentMember,
+    material: ReturnType<AgentTeamLedger['notificationSnapshot']>, plan: InboxDeliveryPlan,
+    previous: InboxNoticeDelivery | undefined, facts: string, scope: string, causeText: string, sequenced: boolean,
+  ): void {
+    const notifications = material.threads
+    const mainNotifications = material.main
+    const memberReminders = material.memberReminders
     const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
     // A recovery instruction owns the durable snapshot it rendered. Leave it in
     // place while later facts stay uncovered for the next rederivation.
@@ -7226,15 +7243,14 @@ export default class AgentTeam extends TypertRemoteService {
     this.pendingTeamWakes.set(message.id, { memberId: member.memberId, sessionId: agent.id })
   }
 
-  /** Remove a Team notice that Host code is replacing or disposing on purpose. */
   private removeExpectedTeamWake(agent: Agent, message: UserMessage): void {
     this.expectedInboxDiscards.add(message.id)
+    this.pendingTeamWakes.delete(message.id)
     // The occurrences this message carried were never read, so nothing may
     // consume them: its successor rederives them from the durable unread.
     this.memberReminderWakes.delete(message.id)
     if (!agent.inbox.remove(message.id)) {
       this.expectedInboxDiscards.delete(message.id)
-      this.pendingTeamWakes.delete(message.id)
     }
   }
 
@@ -7252,6 +7268,35 @@ export default class AgentTeam extends TypertRemoteService {
   private disposeWithWakeGuard(handle: AgentHandle): Promise<void> {
     this.expectPendingTeamWakes(handle.agent)
     return handle.dispose()
+  }
+
+  /**
+   * The route's summaries stay paused and the provider kept refusing the oversized request, so no compaction path on this
+   * generation can run: the Member reads as error with the last upstream failure and the actions that actually help —
+   * a route change, Member recovery, or a generation swap. `/compact` is deliberately absent: it re-runs the summary the
+   * provider already refused. One escalation per uninterrupted run of overflows; a response that lands clears it.
+   */
+  private escalateUnreachableCompaction(memberId: AgentTeamMemberId, failure: LlmFailure): void {
+    const member = this.requireLedger().getMember(memberId)
+    if (member === undefined) return
+    const failures = this.memberFailures.get(memberId) ?? {}
+    failures.compaction = Object.freeze({
+      class: 'runtime' as const,
+      detail: 'Context overflowed repeatedly while summarization was paused for this route, so no compaction can run: change the model route, run Member recovery, or wait for an idle generation swap.',
+      source: `provider failure: ${failure.message}`,
+      occurredAt: new Date().toISOString(),
+    })
+    this.memberFailures.set(memberId, failures)
+    this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId)} has no reachable compaction after consecutive context-window refusals on a paused route: ${failure.message}; recovery is a route change, Member recovery, or an idle generation swap`)
+    this.emitMemberPresenceChanged(member)
+  }
+
+  /** Retire the unreachable-compaction diagnostic: a response landed, the route moved, or a fresh generation replaced the paused one. */
+  private clearUnreachableCompaction(memberId: AgentTeamMemberId): boolean {
+    if (!this.clearMemberFailure(memberId, 'compaction')) return false
+    const member = this.requireLedger().getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+    return true
   }
 
   private setPreTurnCancellation(memberId: AgentTeamMemberId, sessionId: SessionId): void {
@@ -7299,12 +7344,14 @@ export default class AgentTeam extends TypertRemoteService {
     this.memberRuntime.forgetMember(memberId)
     this.memberIdle.forget(memberId)
     this.clearMemberFailure(memberId, 'activation')
+    this.clearMemberFailure(memberId, 'compaction')
     this.clearMemberFailure(memberId, 'preTurnCancellation')
   }
 
   private clearMemberRecoveryState(member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): void {
     this.recovery.stopTracking(member.memberId, 'session-disposed')
     this.clearMemberFailure(member.memberId, 'runtime')
+    this.clearMemberFailure(member.memberId, 'compaction')
     this.clearMemberFailure(member.memberId, 'preTurnCancellation')
     this.clearMemberNotificationState(member.memberId)
   }
