@@ -6220,6 +6220,7 @@ export default class AgentTeam extends TypertRemoteService {
     return scheduler === undefined ? execute() : scheduler.runAdmitted(subscription, 'run', execute)
   }
 
+  /** Sequencing contract: docs/architecture/host-authority.md#replay-execution-order. */
   private async replayLocked(subscription: AgentTeamSubscription, request: AgentTeamSubscriptionReplayRequest,
     version: AgentTeamSubscriptionReplayVersion): Promise<AgentTeamSubscriptionReplayResult> {
     // Admission re-reads the ledger, but this reads it once more for the run
@@ -6227,34 +6228,39 @@ export default class AgentTeam extends TypertRemoteService {
     // snapshot the entry queued with.
     const live = this.runTarget(request.subscriptionRef, request.projectRef)
     const intent = this.replayRecordOf(live.subscriptionRef, request.requestId)
-    if (intent !== undefined) {
-      // One request id names one intent, and the record is written before the
-      // script runs. Naming a different delivery or version under it is a
-      // collision, not a second run — even when no answer survived to say so.
-      if (intent.deliveryRef !== request.deliveryRef || intent.version !== version) {
-        throw new Error(`request '${request.requestId}' already replayed delivery '${intent.deliveryRef}' (${intent.version}); one request id cannot name a second replay (replay_request_conflict)`)
-      }
-      if (intent.state === 'settled') return this.replayResultOf(intent)
-      // The run may have started and never recorded its answer. An accept the
-      // ledger holds under this request id is the answer that survived; without
-      // one there is nothing to stand on, and running the script again would be
-      // guessing at what the first attempt did.
-      const accepted = this.acceptedRequestEvents(live.subscriptionRef, request.requestId)
-      if (accepted === undefined) {
-        const delivery = this.deliveryRecordOf(live.subscriptionRef, intent.deliveryRef)
-        if (delivery === undefined) throw new Error(`delivery '${intent.deliveryRef}' is unknown or has expired`)
-        return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(delivery), eventCount: 0,
-          reason: 'an earlier attempt for this request started and never recorded its answer, so it was not run again; replay the delivery under a new request id' })
-      }
-      const delivery = this.deliveryRecordOf(live.subscriptionRef, intent.deliveryRef)
-      if (delivery === undefined) throw new Error(`delivery '${intent.deliveryRef}' is unknown or has expired`)
-      // The output is in the ledger: settle the answer that was lost, then say
-      // what the run did.
-      await this.settleReplayIntent(delivery, Object.freeze({ ...intent, state: 'settled', succeeded: true,
-        eventCount: accepted, ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) }))
-      return Object.freeze({ kind: 'replayed', delivery: deliveryEntryOf(delivery), eventCount: accepted,
-        ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) })
+    return intent === undefined
+      ? this.runFreshReplay(live, request, version)
+      : this.answerReplayIntent(live, request, version, intent)
+  }
+
+  private async answerReplayIntent(live: AgentTeamSubscription, request: AgentTeamSubscriptionReplayRequest,
+    version: AgentTeamSubscriptionReplayVersion, intent: SubscriptionReplayRecord): Promise<AgentTeamSubscriptionReplayResult> {
+    // One request id names one intent, and the record is written before the
+    // script runs. Naming a different delivery or version under it is a
+    // collision, not a second run — even when no answer survived to say so.
+    if (intent.deliveryRef !== request.deliveryRef || intent.version !== version) {
+      throw new Error(`request '${request.requestId}' already replayed delivery '${intent.deliveryRef}' (${intent.version}); one request id cannot name a second replay (replay_request_conflict)`)
     }
+    if (intent.state === 'settled') return this.replayResultOf(intent)
+    // The run may have started and never recorded its answer. An accept the
+    // ledger holds under this request id is the answer that survived; without
+    // one there is nothing to stand on, and running the script again would be
+    // guessing at what the first attempt did.
+    const accepted = this.acceptedRequestEvents(live.subscriptionRef, request.requestId)
+    const delivery = this.deliveryRecordOf(live.subscriptionRef, intent.deliveryRef)
+    if (delivery === undefined) throw new Error(`delivery '${intent.deliveryRef}' is unknown or has expired`)
+    if (accepted === undefined) {
+      return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(delivery), eventCount: 0,
+        reason: 'an earlier attempt for this request started and never recorded its answer, so it was not run again; replay the delivery under a new request id' })
+    }
+    await this.settleReplayIntent(delivery, Object.freeze({ ...intent, state: 'settled', succeeded: true,
+      eventCount: accepted, ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) }))
+    return Object.freeze({ kind: 'replayed', delivery: deliveryEntryOf(delivery), eventCount: accepted,
+      ...(intent.runRef === undefined ? {} : { runRef: intent.runRef }) })
+  }
+
+  private async runFreshReplay(live: AgentTeamSubscription, request: AgentTeamSubscriptionReplayRequest,
+    version: AgentTeamSubscriptionReplayVersion): Promise<AgentTeamSubscriptionReplayResult> {
     const record = this.deliveryRecordOf(live.subscriptionRef, request.deliveryRef)
     if (record === undefined) throw new Error(`delivery '${request.deliveryRef}' is unknown or has expired`)
     // A replay that delivered took the delivery off the failed list; a second,
@@ -6274,8 +6280,7 @@ export default class AgentTeam extends TypertRemoteService {
       { stdin: record.body, delivery: { deliveryRef: record.deliveryRef, attempt: record.attempts }, requestId: request.requestId,
         ...(record.admissionRef === undefined ? {} : { scriptDeliveryId: record.admissionRef }) })
     if (run === undefined) {
-      return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(record), eventCount: 0,
-        reason: 'the replay finished after the subscription stopped being live, so nothing was delivered' })
+      return this.stoppedReplayResult(record)
     }
     const succeeded = run.outcome === 'accepted' || run.outcome === 'empty'
     const reason = run.report.ok
@@ -6297,12 +6302,16 @@ export default class AgentTeam extends TypertRemoteService {
     // printed nothing new has no such record to stand on, so a deletion that
     // landed first leaves it with nothing to claim.
     if (!kept && run.outcome !== 'accepted') {
-      return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(record), eventCount: 0,
-        reason: 'the replay finished after the subscription stopped being live, so nothing was delivered' })
+      return this.stoppedReplayResult(record)
     }
     return Object.freeze({ kind: succeeded ? 'replayed' : 'replay-failed', delivery: deliveryEntryOf(record), eventCount: run.eventCount,
       runRef: run.runRef, ...(reason === undefined ? {} : { reason }),
       ...(succeeded ? {} : { stdoutTail: failureTail(run.report.stdout), stderrTail: failureTail(run.report.stderr) }) })
+  }
+
+  private stoppedReplayResult(record: SubscriptionDeliveryRecord): AgentTeamSubscriptionReplayResult {
+    return Object.freeze({ kind: 'replay-failed', delivery: deliveryEntryOf(record), eventCount: 0,
+      reason: 'the replay finished after the subscription stopped being live, so nothing was delivered' })
   }
 
   /**
@@ -7175,6 +7184,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.deliverInboxNotice(live, member, cause, sequenced)
   }
 
+  /** Sequencing contract: docs/architecture/host-authority.md#inbox-delivery-order. */
   private deliverInboxNotice(agent: Agent, member: AgentTeamAgentMember, cause: NotificationCause, sequenced = false): void {
     const material = this.requireLedger().notificationSnapshot(member.memberId)
     const notifications = material.threads
@@ -7205,6 +7215,16 @@ export default class AgentTeam extends TypertRemoteService {
         : `the same unread facts (${facts}) already have a delivery attempt`}`)
       return
     }
+    this.queueInboxNotice(agent, member, material, plan, previous, facts, scope, causeText, sequenced)
+  }
+
+  private queueInboxNotice(agent: Agent, member: AgentTeamAgentMember,
+    material: ReturnType<AgentTeamLedger['notificationSnapshot']>, plan: InboxDeliveryPlan,
+    previous: InboxNoticeDelivery | undefined, facts: string, scope: string, causeText: string, sequenced: boolean,
+  ): void {
+    const notifications = material.threads
+    const mainNotifications = material.main
+    const memberReminders = material.memberReminders
     const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
     // A recovery instruction owns the durable snapshot it rendered. Leave it in
     // place while later facts stay uncovered for the next rederivation.
