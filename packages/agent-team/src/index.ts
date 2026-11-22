@@ -9,12 +9,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import Storage from '@deepseek-ai/dsh-storage'
 import { installModelSelection, type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type LlmFailure, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -35,7 +35,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { DomainFacility, type Domain, type KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, pathAttachmentId, readAttachment, removeAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, withMessageAttachmentEntries, writeRequestScopedAttachment } from './attachments.ts'
+import { ATTACHMENT_MAX_BYTES, attachmentPayloadPath, attachmentsRoot, copyPathAttachment, outside, pathAttachmentId, readAttachment, removeAttachment, sanitizeMediaType, sweepAttachmentCache, validatePathAttachment, withMessageAttachmentEntries, writeRequestScopedAttachment } from './attachments.ts'
 import { reportEnvironment } from './environment-check.ts'
 import { HUMAN_PROFILE_DEFAULT_NAME, HUMAN_PROFILE_REPO_URL, HUMAN_PROFILE_VERSION, assertValidHumanName, normalizeHumanName, parseLegacyHumanProfile, parseRowHumanProfile, type LegacyHumanProfileFields } from './human-profile.ts'
 import { TEAM_HOST_ROW_SETTINGS_SCHEMA, planHostRowWrite, type Config, type HostRowWrite } from './host-row-settings.ts'
@@ -55,7 +55,7 @@ export { teamMessageSurface, visibleTeamSurface, missingMessageRange } from './s
 export { activityFact, activityText, type ActivityFact } from './activity-facts.ts'
 import { carriedInputOf, createTeamContextProjectionDefinition, foldTeamContextProjection, isAcceptanceNotice, TEAM_INBOX_NOTICE_SUMMARY, TEAM_RECOVERY_NOTICE_SUMMARY, type TeamContextProjectionState } from './context-projection.ts'
 import { AGENT_TEAM_HUMAN_MEMBER_ID, AgentTeamLedger, agentTeamHostActor, agentTeamHumanActor } from './ledger.ts'
-import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, isExtraToolGrantCandidate, memberMemoryDirectoryName, MemberRuntime, type TurnBoundary } from './member-runtime.ts'
+import { AGENT_TEAM_TOOL_NAMES, deepCopyCapabilities, FILE_READ_TOOL_NAMES, isExtraToolGrantCandidate, memberMemoryDirectoryName, memberMemoryDirectoryPath, MemberRuntime, SHELL_TOOL_NAMES, type TurnBoundary } from './member-runtime.ts'
 import {
   EXTRA_TOOL_GRANTS_FIELD, extraToolGrantsFrom, sanitizeExtraToolGrants,
 } from './member-tool-grants.ts'
@@ -72,6 +72,7 @@ import { subscriptionDomainSpec } from './subscription-store.ts'
 import { ManagerSessionStore, managerSessionDomainSpec } from './manager-session-store.ts'
 import { MANAGER_BUNDLED_SKILLS_DIRECTORY, ManagerSessionRuntime } from './manager-session.ts'
 import type { ManagerPrivateMemory } from './manager-context.ts'
+import { workspaceRulesFile, type WorkspaceRulesScope } from './workspace-rules-context.ts'
 import { MANAGER_SESSION_PRESET_ID, MEMBER_SESSION_PRESET_ID } from './manager-tool-policy.ts'
 import { INITIAL_CHECKPOINT, SubscriptionScheduler, type SubscriptionCheckpoint, type SubscriptionRunOutcome } from './subscription-runtime.ts'
 import { baselineIdsOf, failureCategory, failureTail, missingCredentials, probeShellFamily, runSubscriptionScript, type ShellFamilyProbe, type SubscriptionCredentials, type SubscriptionRunCategory, type SubscriptionRunReport, type SubscriptionShellExecutor } from './subscription-runner.ts'
@@ -552,7 +553,7 @@ interface MemberActivationOptions {
   readonly skipColdRecycle?: boolean
 }
 
-const ACTIVATION_SUCCESS_FAILURE_SLOTS = ['activation', 'preTurnCancellation', 'capabilityApply', 'modelApply'] as const
+const ACTIVATION_SUCCESS_FAILURE_SLOTS = ['activation', 'compaction', 'preTurnCancellation', 'capabilityApply', 'modelApply'] as const
 
 export default class AgentTeam extends TypertRemoteService {
   static Config = TEAM_HOST_ROW_SETTINGS_SCHEMA
@@ -623,6 +624,8 @@ export default class AgentTeam extends TypertRemoteService {
   private readonly memberFailures = new Map<AgentTeamMemberId, {
     activation?: AgentTeamMemberDiagnostic
     runtime?: string
+    /** Summaries stay paused while the provider keeps refusing the oversized request: compaction on that route is unreachable. */
+    compaction?: AgentTeamMemberDiagnostic
     /** A Team wake was discarded before the Agent opened its turn boundary. */
     preTurnCancellation?: AgentTeamMemberDiagnostic
     /** The post-commit configuration apply failed; the stored row is ahead of the live surface. */
@@ -928,6 +931,11 @@ export default class AgentTeam extends TypertRemoteService {
     if (live === undefined || live.provider !== config.provider || live.model !== config.model) return
     const running = member.model ?? this.ctx.agentDefaultModel.currentSelection()
     if (running.provider === config.provider && running.model === config.model) return
+    // A request that sent on a different route is the switch made real: the
+    // old route's paused-summary escalation no longer names this generation.
+    if (this.clearUnreachableCompaction(memberId)) {
+      this.ctx.logger.info(`agent-team: ${this.memberScope(memberId)} left its paused-summary route; the unreachable-compaction diagnostic is retired`)
+    }
     // The route alone: the effort belongs to the Session log, where activation re-reads it for the same route. Writing it
     // here would turn an inherited tier into a permanent one that later edits cannot lower.
     const model: AgentTeamModelSelection = Object.freeze({ provider: config.provider, model: config.model })
@@ -1583,6 +1591,28 @@ export default class AgentTeam extends TypertRemoteService {
     return Object.freeze({ root: dshHomePath('agent-team', 'manager'), cwd: agent.session.header.cwd })
   }
 
+  /**
+   * Which Workspace rules files this Agent reads, or `undefined` for an
+   * ordinary Session or fork. A Member reads the Workspaces it participates in
+   * now; the manager, which curates them, reads every registered Workspace.
+   * The paths are the Host's own: no caller names a Workspace or a file.
+   */
+  workspaceRulesForAgent(agent: Agent): WorkspaceRulesScope | undefined {
+    const home = dshHomePath('agent-team')
+    const target = (workspaceId: WorkspaceId) => Object.freeze({
+      workspaceId,
+      title: this.ctx.workspaceRegistry.get(workspaceId)?.title,
+      file: workspaceRulesFile(home, workspaceId),
+    })
+    if (this.managerRuntime?.isCurrentManagerAgent(agent) === true) {
+      const ids = this.ctx.workspaceRegistry.list().map(workspace => workspace.id).sort()
+      return Object.freeze({ reader: 'manager', workspaces: Object.freeze(ids.map(target)) })
+    }
+    const member = this.memberForAgent(agent)
+    if (member === undefined) return undefined
+    return Object.freeze({ reader: 'member', workspaces: Object.freeze(this.requireLedger().workspacesOf(member.memberId).map(target)) })
+  }
+
   members(): readonly AgentTeamAgentMemberStatus[] {
     return this.requireLedger().listMembers().map(member => this.memberStatus(member))
   }
@@ -2109,6 +2139,7 @@ export default class AgentTeam extends TypertRemoteService {
     this.handles.delete(memberId)
     this.memberRuntime.forgetMember(memberId)
     this.clearMemberFailure(memberId, 'activation')
+    this.clearMemberFailure(memberId, 'compaction')
     this.dropInboxCoverage(memberId)
     // The previous log survives on disk; archiving hides it from every
     // grouping surface so one Member keeps exactly one visible Session.
@@ -2382,6 +2413,9 @@ export default class AgentTeam extends TypertRemoteService {
         this.recordApplyFailure(current.memberId, 'model-apply', active, receipt, requestId, error)
         throw new MemberModelApplyError(error)
       }
+      // The stored route just became the live one: an escalation pinned to the
+      // old route's paused summaries no longer names this generation.
+      this.clearUnreachableCompaction(memberId)
       effect = 'applied'
     }
     // The live route now runs the stored one, so a failure recorded by an
@@ -2599,13 +2633,30 @@ export default class AgentTeam extends TypertRemoteService {
   /**
    * Resolve uploaded ids and agent-supplied absolute paths into one attachment metadata list. All paths are validated before anything is copied,
    * so one rejection leaves the cache untouched; each copy takes a request-derived id, so a retry converges instead of writing an orphan.
+   * An Agent caller names files only inside its own working directory and only while its enforced tools include a file reader:
+   * a Member without one may not hand the Host an arbitrary file read it does not hold itself.
    */
-  private async resolveMessageAttachments(request: { readonly requestId: AgentTeamRequestId; readonly attachments?: readonly AgentTeamAttachmentId[] | undefined; readonly attachmentPaths?: readonly string[] | undefined }): Promise<readonly AgentTeamMessageAttachment[]> {
+  private async resolveMessageAttachments(
+    request: { readonly requestId: AgentTeamRequestId; readonly attachments?: readonly AgentTeamAttachmentId[] | undefined; readonly attachmentPaths?: readonly string[] | undefined },
+    actor: AgentTeamHumanActor | AgentTeamMemberActor,
+    agent: Agent | undefined,
+  ): Promise<readonly AgentTeamMessageAttachment[]> {
     const fromPaths: AgentTeamMessageAttachment[] = []
     if (request.attachmentPaths !== undefined && request.attachmentPaths.length > 0) {
-      for (const absolutePath of request.attachmentPaths) await validatePathAttachment(absolutePath)
+      let cwd: string | undefined
+      if (actor.kind === 'member') {
+        if (!this.memberRuntime.enforcesFileReadTool(actor.memberId)) {
+          const allowed = `${FILE_READ_TOOL_NAMES.slice(0, -1).join(', ')}, or ${FILE_READ_TOOL_NAMES.at(-1)}`
+          throw new Error(`reading a file into an attachment runs the Host's file access, and this Member has no ${allowed} tool (attachment_read_required); drop the attachments parameter or send it through the Human Web Client`)
+        }
+        const workingDirectory = agent?.ctx.get('workingDirectory') as { get(session: Agent['session']): string | undefined } | undefined
+        cwd = agent === undefined ? undefined : workingDirectory?.get(agent.session)
+        if (cwd === undefined) throw new Error('this Session has no working directory, so an attachment path cannot be resolved')
+      }
+      const resolved: string[] = []
+      for (const absolutePath of request.attachmentPaths) resolved.push(await validatePathAttachment(absolutePath, cwd))
       for (const [index, absolutePath] of request.attachmentPaths.entries()) {
-        fromPaths.push(Object.freeze(await copyPathAttachment(attachmentsRoot(), absolutePath, pathAttachmentId(request.requestId, index), request.requestId)))
+        fromPaths.push(Object.freeze(await copyPathAttachment(attachmentsRoot(), absolutePath, pathAttachmentId(request.requestId, index), request.requestId, resolved[index]!)))
       }
     }
     return [...fromPaths, ...await this.prepareAttachments(request.attachments)]
@@ -2976,12 +3027,12 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only start of a discussion or Task Thread; Project owners only. */
   async startThreadForAgent(agent: Agent, request: AgentTeamStartThreadRequest): Promise<AgentTeamStartThreadResult> {
-    return this.startThreadAs(this.memberCall(agent, request.workspaceId), request)
+    return this.startThreadAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Agent-only Main stream Message. */
   async postMainMessageForAgent(agent: Agent, request: AgentTeamPostMainMessageRequest): Promise<AgentTeamPostMainMessageResult> {
-    return this.postMainMessageAs(this.memberCall(agent, request.workspaceId), request)
+    return this.postMainMessageAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Agent-only Main stream read; a read with nothing to acknowledge commits nothing. */
@@ -3026,7 +3077,7 @@ export default class AgentTeam extends TypertRemoteService {
 
   /** Agent-only existing-Thread reply. */
   async replyForAgent(agent: Agent, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
-    return this.replyAs(this.memberCall(agent, request.workspaceId), request)
+    return this.replyAs(this.memberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Read one Message back verbatim, for the reader that has to answer it. */
@@ -3087,7 +3138,7 @@ export default class AgentTeam extends TypertRemoteService {
     return result.value
   }
 
-  /** Agent-only accountability transfer to another enabled Project member or the Human. */
+  /** Agent-only accountability transfer to another enabled Member of the Project's Workspace or the Human. */
   async transferTaskForAgent(agent: Agent, request: AgentTeamTransferTaskRequest): Promise<AgentTeamTransferTaskResult> {
     const actor = this.memberCall(agent, request.workspaceId)
     const result = await this.requireLedger().transferTask({ ...request, actor })
@@ -3317,6 +3368,8 @@ export default class AgentTeam extends TypertRemoteService {
       return
     }
     this.ctx.logger.info(`agent-team: compacted ${this.memberScope(memberId, agent.id)} at its acceptance boundary: ${result.shadowedSeqs.length} history item(s), ~${result.shadowedTokenCount} tokens`)
+    // A written checkpoint disproves the unreachable-compaction escalation too.
+    this.clearUnreachableCompaction(memberId)
   }
 
   /**
@@ -3893,7 +3946,9 @@ export default class AgentTeam extends TypertRemoteService {
       memberRef: member.memberId,
       handle: member.handle,
       description: member.description,
-      privateMemoryPath: member.privateMemoryPath,
+      // The recorded path may carry a legacy colon segment; the live directory
+      // is always the sanitized spelling member-context also answers with.
+      privateMemoryPath: memberMemoryDirectoryPath(member),
       owns: ledger.ownedProjects(memberId),
     })
   }
@@ -4017,10 +4072,11 @@ export default class AgentTeam extends TypertRemoteService {
     actor: AgentTeamHumanActor | AgentTeamMemberActor,
     request: Req,
     commit: (authorized: Req & { readonly actor: AgentTeamHumanActor | AgentTeamMemberActor; readonly body: string; readonly resolvedAttachments?: readonly AgentTeamMessageAttachment[] }) => Promise<{ readonly committed: boolean; readonly value: Res }>,
+    agent?: Agent,
   ): Promise<Res> {
     return withMessageAttachmentEntries(attachmentsRoot(), request, async () => {
       try {
-        const metadata = await this.resolveMessageAttachments(request)
+        const metadata = await this.resolveMessageAttachments(request, actor, agent)
         const result = await commit({
           ...request, body: this.appendAttachmentLines(request.body, metadata),
           ...(metadata.length === 0 ? {} : { resolvedAttachments: metadata }),
@@ -4035,12 +4091,12 @@ export default class AgentTeam extends TypertRemoteService {
     })
   }
 
-  private startThreadAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamStartThreadRequest): Promise<AgentTeamStartThreadResult> {
-    return this.commitMessageAs(actor, request, authorized => this.requireLedger().startThread(authorized))
+  private startThreadAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamStartThreadRequest, agent?: Agent): Promise<AgentTeamStartThreadResult> {
+    return this.commitMessageAs(actor, request, authorized => this.requireLedger().startThread(authorized), agent)
   }
 
-  private postMainMessageAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamPostMainMessageRequest): Promise<AgentTeamPostMainMessageResult> {
-    return this.commitMessageAs(actor, request, authorized => this.requireLedger().postMainMessage(authorized))
+  private postMainMessageAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamPostMainMessageRequest, agent?: Agent): Promise<AgentTeamPostMainMessageResult> {
+    return this.commitMessageAs(actor, request, authorized => this.requireLedger().postMainMessage(authorized), agent)
   }
 
   private async readMainStreamAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamMainStreamReadRequest): Promise<AgentTeamMainStreamReadResult> {
@@ -4055,8 +4111,8 @@ export default class AgentTeam extends TypertRemoteService {
     return this.requireLedger().readMessage(actor, request)
   }
 
-  private replyAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReplyRequest): Promise<AgentTeamReplyResult> {
-    return this.commitMessageAs(actor, request, authorized => this.requireLedger().reply(authorized))
+  private replyAs(actor: AgentTeamHumanActor | AgentTeamMemberActor, request: AgentTeamReplyRequest, agent?: Agent): Promise<AgentTeamReplyResult> {
+    return this.commitMessageAs(actor, request, authorized => this.requireLedger().reply(authorized), agent)
   }
 
   /**
@@ -4318,6 +4374,10 @@ export default class AgentTeam extends TypertRemoteService {
       installMemberCompaction(
         agentCtx, agent, () => this.memberCompactionConfig(),
         () => this.compactionEngineFor(agent), () => this.retiringAgents.has(agent),
+        {
+          escalate: failure => this.escalateUnreachableCompaction(member.memberId, failure),
+          clear: () => this.clearUnreachableCompaction(member.memberId),
+        },
       )
       agentCtx.on('agent/pre-step', async ({ agent }, next) => {
         // The original inbox insertion is the durable replay source even if
@@ -4531,6 +4591,7 @@ export default class AgentTeam extends TypertRemoteService {
       return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'preset-composition' as const, detail: ORPHANED_MEMBER_DIAGNOSTIC } })
     }
     if (failures?.runtime !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: { class: 'runtime' as const, detail: failures.runtime } })
+    if (failures?.compaction !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: failures.compaction })
     if (failures?.preTurnCancellation !== undefined) return Object.freeze({ member, availability: 'active', presence: 'error', capabilityState, diagnostic: failures.preTurnCancellation })
     // A failed apply outranks the plain success row but not a live runtime
     // error: the Member runs, yet its stored configuration is ahead of the
@@ -4574,7 +4635,7 @@ export default class AgentTeam extends TypertRemoteService {
     return { class: 'activation' as const, detail: error instanceof Error ? error.message : String(error) }
   }
 
-  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'preTurnCancellation' | 'capabilityApply' | 'modelApply'): boolean {
+  private clearMemberFailure(memberId: AgentTeamMemberId, slot: 'activation' | 'runtime' | 'compaction' | 'preTurnCancellation' | 'capabilityApply' | 'modelApply'): boolean {
     const failures = this.memberFailures.get(memberId)
     if (failures === undefined || failures[slot] === undefined) return false
     if (Object.keys(failures).length === 1) this.memberFailures.delete(memberId)
@@ -6313,8 +6374,8 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   /** An Agent owner replays one failed delivery; the request id makes a retried call a no-op. */
-  replaySubscriptionDeliveryForAgent(agent: Agent, request: AgentTeamSubscriptionReplayRequest): Promise<AgentTeamSubscriptionReplayResult> {
-    return this.replaySubscriptionDelivery(this.memberCall(agent, request.workspaceId), request)
+  async replaySubscriptionDeliveryForAgent(agent: Agent, request: AgentTeamSubscriptionReplayRequest): Promise<AgentTeamSubscriptionReplayResult> {
+    return this.replaySubscriptionDelivery(this.scriptRunningMemberCall(agent, request.workspaceId), request)
   }
 
   @Remote('replaySubscriptionDelivery')
@@ -6344,10 +6405,17 @@ export default class AgentTeam extends TypertRemoteService {
     const workingDirectory = agent.ctx.get('workingDirectory') as { get(session: Agent['session']): string } | undefined
     const cwd = workingDirectory?.get(agent.session)
     if (cwd === undefined) throw new Error('this Session has no working directory, so a script path cannot be resolved')
-    const resolved = isAbsolute(scriptPath) ? scriptPath : join(cwd, scriptPath)
-    const bytes = await readFile(resolved).catch((error: unknown) => {
+    const lexical = isAbsolute(scriptPath) ? scriptPath : join(cwd, scriptPath)
+    const unreadable = (error: unknown): never => {
       throw new Error(`cannot read '${scriptPath}': ${error instanceof Error ? error.message : String(error)}`)
-    })
+    }
+    // Containment is checked lexically and again after symlinks resolve: the
+    // path names a script in the Member's checkout, never another Host file.
+    const escapes = (): Error => new Error(`'${scriptPath}' is outside your working directory; put the script inside it`)
+    if (outside(cwd, lexical)) throw escapes()
+    const [realRoot, resolved] = await Promise.all([realpath(cwd), realpath(lexical)]).catch(unreadable)
+    if (outside(realRoot, resolved)) throw escapes()
+    const bytes = await readFile(resolved).catch(unreadable)
     if (bytes.byteLength > SUBSCRIPTION_SCRIPT_MAX_BYTES) {
       throw new Error(`'${scriptPath}' is ${bytes.byteLength} bytes; the limit is ${SUBSCRIPTION_SCRIPT_MAX_BYTES}`)
     }
@@ -6484,8 +6552,21 @@ export default class AgentTeam extends TypertRemoteService {
       ...(origin === undefined ? {} : this.armedAddress(origin, result.value.webhookToken)) })
   }
 
+  /**
+   * The actor of an Agent call that makes the Host run a subscription script.
+   * The script runs on the Host's shell and its output returns to the caller,
+   * so a Member whose enforced tool surface holds no shell cannot ask for one.
+   */
+  private scriptRunningMemberCall(agent: Agent, workspaceId: AgentTeamViewRequest['workspaceId']): AgentTeamMemberActor {
+    const actor = this.memberCall(agent, workspaceId)
+    if (!this.memberRuntime.enforcesShellTool(actor.memberId)) {
+      throw new Error(`a subscription script runs on the Host's shell, and this Member has no ${SHELL_TOOL_NAMES.join(' or ')} tool (subscription_shell_required); the Human can manage this subscription from the Web Client`)
+    }
+    return actor
+  }
+
   async createSubscriptionForAgent(agent: Agent, request: AgentTeamCreateSubscriptionRequest): Promise<AgentTeamSubscriptionWriteResult> {
-    return this.createSubscriptionAs(this.memberCall(agent, request.workspaceId), request, agent)
+    return this.createSubscriptionAs(this.scriptRunningMemberCall(agent, request.workspaceId), request, agent)
   }
 
   /** Human creation from a page: the content is pasted, because a Human has no Session working directory. */
@@ -6542,7 +6623,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async updateSubscriptionForAgent(agent: Agent, request: AgentTeamUpdateSubscriptionRequest): Promise<AgentTeamSubscriptionWriteResult> {
-    return this.updateSubscriptionAs(this.memberCall(agent, request.workspaceId), request, agent)
+    return this.updateSubscriptionAs(this.scriptRunningMemberCall(agent, request.workspaceId), request, agent)
   }
 
   @Remote('updateSubscription')
@@ -6566,8 +6647,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async testSubscriptionForAgent(agent: Agent, request: AgentTeamTestSubscriptionRequest): Promise<AgentTeamSubscriptionTrialResult> {
-    const actor = this.memberCall(agent, request.workspaceId)
-    return this.testSubscription(request, actor)
+    return this.testSubscription(request, this.scriptRunningMemberCall(agent, request.workspaceId))
   }
 
   /** A trial run never changes durable state, so the Human path can offer it before any edit. */
@@ -6639,7 +6719,7 @@ export default class AgentTeam extends TypertRemoteService {
   }
 
   async resumeSubscriptionForAgent(agent: Agent, request: AgentTeamSubscriptionStateRequest): Promise<AgentTeamSubscriptionWriteResult> {
-    return this.resumeSubscriptionAs(this.memberCall(agent, request.workspaceId), request)
+    return this.resumeSubscriptionAs(this.scriptRunningMemberCall(agent, request.workspaceId), request)
   }
 
   @Remote('resumeSubscription')
@@ -7234,6 +7314,35 @@ export default class AgentTeam extends TypertRemoteService {
     return handle.dispose()
   }
 
+  /**
+   * The route's summaries stay paused and the provider kept refusing the oversized request, so no compaction path on this
+   * generation can run: the Member reads as error with the last upstream failure and the actions that actually help —
+   * a route change, Member recovery, or a generation swap. `/compact` is deliberately absent: it re-runs the summary the
+   * provider already refused. One escalation per uninterrupted run of overflows; a response that lands clears it.
+   */
+  private escalateUnreachableCompaction(memberId: AgentTeamMemberId, failure: LlmFailure): void {
+    const member = this.requireLedger().getMember(memberId)
+    if (member === undefined) return
+    const failures = this.memberFailures.get(memberId) ?? {}
+    failures.compaction = Object.freeze({
+      class: 'runtime' as const,
+      detail: 'Context overflowed repeatedly while summarization was paused for this route, so no compaction can run: change the model route, run Member recovery, or wait for an idle generation swap.',
+      source: `provider failure: ${failure.message}`,
+      occurredAt: new Date().toISOString(),
+    })
+    this.memberFailures.set(memberId, failures)
+    this.ctx.logger.warn(`agent-team: ${this.memberScope(memberId)} has no reachable compaction after consecutive context-window refusals on a paused route: ${failure.message}; recovery is a route change, Member recovery, or an idle generation swap`)
+    this.emitMemberPresenceChanged(member)
+  }
+
+  /** Retire the unreachable-compaction diagnostic: a response landed, the route moved, or a fresh generation replaced the paused one. */
+  private clearUnreachableCompaction(memberId: AgentTeamMemberId): boolean {
+    if (!this.clearMemberFailure(memberId, 'compaction')) return false
+    const member = this.requireLedger().getMember(memberId)
+    if (member !== undefined) this.emitMemberPresenceChanged(member)
+    return true
+  }
+
   private setPreTurnCancellation(memberId: AgentTeamMemberId, sessionId: SessionId): void {
     const failures = this.memberFailures.get(memberId) ?? {}
     failures.preTurnCancellation = Object.freeze({
@@ -7279,12 +7388,14 @@ export default class AgentTeam extends TypertRemoteService {
     this.memberRuntime.forgetMember(memberId)
     this.memberIdle.forget(memberId)
     this.clearMemberFailure(memberId, 'activation')
+    this.clearMemberFailure(memberId, 'compaction')
     this.clearMemberFailure(memberId, 'preTurnCancellation')
   }
 
   private clearMemberRecoveryState(member: Pick<AgentTeamAgentMember, 'memberId' | 'sessionId'>): void {
     this.recovery.stopTracking(member.memberId, 'session-disposed')
     this.clearMemberFailure(member.memberId, 'runtime')
+    this.clearMemberFailure(member.memberId, 'compaction')
     this.clearMemberFailure(member.memberId, 'preTurnCancellation')
     this.clearMemberNotificationState(member.memberId)
   }

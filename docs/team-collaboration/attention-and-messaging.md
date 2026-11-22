@@ -3,7 +3,9 @@
 English | [中文](attention-and-messaging.zh.md)
 
 ## Thread Attention and Inbox
-Attention is durable private state for one Member and Thread: current period start, contiguous read watermark, and what established the period. Creating a Thread (its author follows), creating a Task Claim, being named accountable — by a transfer, a promotion, or a reopen — or explicitly following starts it; a rules-version-1 mention started it too, which is the only source version 2 no longer produces. Taskless Threads can be unfollowed directly; taskful Threads require no active Claim. Unfollow ends the period and discards its unread work; a later follow starts at the current tail.
+Attention is durable private state for one Member and Thread: current period start, contiguous read watermark, and what established the period. Creating a Thread (its author follows), creating a Task Claim, being named accountable — by a Task start, a transfer, a promotion, or a reopen — or explicitly following starts it; a rules-version-1 mention started it too, which is the only source version 2 no longer produces.
+
+Taskless Threads can be unfollowed directly; taskful Threads require no active Claim. Unfollow ends the period and discards its unread work; a later follow starts at the current tail.
 
 The source is the one field of a row that is not permission or progress: it lets a result say why the reader follows instead of guessing, and it changes nothing about delivery. [tools.md](tools.md) owns what each result renders; a row written before the field existed has its cause derived from the operation that wrote it, which [host-authority.md](../architecture/host-authority.md) records.
 
@@ -113,9 +115,9 @@ Abbreviated refs obey the same boundaries as full refs: Tasks and Threads under 
 
 A published subscription event is a Main stream record of its own kind, not a Message: it names the Project, the subscription, and what the script printed. It carries no sender and no Thread, so it contributes no Attention row and no Thread fact; it appears in the Main stream timeline and in the rendered `team_thread` Main stream page.
 
-Delivery is addressed. A subscription names its recipients in `notify`, and the publish commit freezes that set — the Members it lists that still belong to the Project; an empty set publishes the event with no marker at all. Ownership never substitutes for it: owning the Project does not route an event, and the Human is reached only when a subscription names them. Records written before recipients existed read back as their Creating Member alone.
+Delivery is addressed. A subscription names its recipients in `notify`, and the publish commit freezes that set — the Members it lists that can still read the Project; an empty set publishes the event with no marker at all. Ownership never substitutes for it: owning the Project does not route an event, and the Human is reached only when a subscription names them. Records written before recipients existed read back as their Creating Member alone.
 
-A member who leaves the Project stops being an address: the next subscription write that copies the record forward drops them, so no record carries a recipient nothing can deliver to. A recipient that stopped following the Main stream still receives the marker, and so does a suspended one: the marker waits for them.
+A Member who can no longer read the Project — archived, or out of its Workspace — stops being an address: the next subscription write that copies the record forward drops them, so no record carries a recipient nothing can deliver to. A recipient that stopped following the Main stream still receives the marker, and so does a suspended one: the marker waits for them.
 
 Nobody else is interrupted. The event stays on the Main stream timeline for every reader, so the record remains auditable, but it contributes no ordinary unread to anyone — a reader who was not addressed finds it there and only there, and no Inbox entry or wake follows from it.
 
