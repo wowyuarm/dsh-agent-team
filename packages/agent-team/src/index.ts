@@ -7225,12 +7225,12 @@ export default class AgentTeam extends TypertRemoteService {
 
   private removeExpectedTeamWake(agent: Agent, message: UserMessage): void {
     this.expectedInboxDiscards.add(message.id)
+    this.pendingTeamWakes.delete(message.id)
     // The occurrences this message carried were never read, so nothing may
     // consume them: its successor rederives them from the durable unread.
     this.memberReminderWakes.delete(message.id)
     if (!agent.inbox.remove(message.id)) {
       this.expectedInboxDiscards.delete(message.id)
-      this.pendingTeamWakes.delete(message.id)
     }
   }
 
