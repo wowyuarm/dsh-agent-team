@@ -66,7 +66,7 @@ types/requests-results.ts   公开的 request 与 result 形状
 
 必须同时改动的六个机械表面：
 
-1. **Kind 与 record。** 在 `spec.ts` 中把 operation kind 作为 `z.literal` 加进它的 record schema，并在 `types/operations.ts` 加上带类型的 record。
+1. **Kind 与 record。** 在 `spec.ts` 的 operation union 中加上该 kind 的 `operation(kind, data)` schema，并在 `types/operations.ts` 加上带类型的 record。
 2. **公开形状。** 在 `types/requests-results.ts` 加上 request 与 result 类型；`types.ts` 是公开 barrel 会自动 re-export，不需要逐 operation 编辑。
 3. **Commit。** 加上由 `operationBase(...)` 与下一个 sequence 构造 record 的 ledger 方法，以及它会唤醒的 change scope。
 4. **校验与 projection。** 扩展 ledger 的 per-kind commit 校验与校验入口，并加上把该 record 应用到 projection 的 case。replay 正确性就在这里——加载时没有应用的 projection 会与 durable table 分叉。
