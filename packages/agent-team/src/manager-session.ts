@@ -44,7 +44,7 @@ import type {
   AgentTeamManagerSessionResult,
 } from './types.ts'
 
-type RecoverStoredPointer = () => AgentTeamManagerSessionResult | undefined | Promise<AgentTeamManagerSessionResult | undefined>
+type RecoverStoredPointer<Result> = () => Result | Promise<Result>
 
 /** The default Workspace as the Host Controller resolved it. */
 export interface ManagerWorkspaceValue {
@@ -102,44 +102,24 @@ export class ManagerSessionRuntime {
    * created during boot.
    */
   preRestore(): Promise<AgentTeamManagerSessionResult | undefined> {
-    return this.enqueue(async () => {
-      try {
-        const read = this.readPointer()
-        if (!read.ok) return read.result
-        const pointer = read.pointer
-        if (pointer === undefined || this.isArchived(pointer.sessionId)) return undefined
-        const agent = this.current?.handle.agent
-        if (agent?.id === pointer.sessionId) {
-          return this.compositionIsManager(agent)
-            ? this.ready(pointer)
-            : this.unavailable(
-              'preset-composition',
-              'the live manager Agent has lost its team-manager composition',
-              pointer.sessionId,
-            )
-        }
-        // Keep the rejection inside this try: preRestore reports a classified
-        // unavailable result instead of throwing an asynchronous read failure.
-        return await this.resolveStoredPointer(pointer, {
-          archived: () => undefined,
-          missing: () => undefined,
-          outsideMessage: 'the registered manager Session is already live outside the manager runtime',
-        })
-      } catch (error) {
-        return this.unavailable('runtime', messageOf(error))
-      }
+    return this.enqueueReporting(async () => {
+      const read = this.readPointer()
+      if (!read.ok) return read.result
+      const pointer = read.pointer
+      if (pointer === undefined || this.isArchived(pointer.sessionId)) return undefined
+      const agent = this.registeredAgent(pointer)
+      if (agent !== undefined) return this.liveStatus(pointer, agent)
+      return this.resolveStoredPointer(pointer, {
+        archived: () => undefined,
+        missing: () => undefined,
+        outsideMessage: 'the registered manager Session is already live outside the manager runtime',
+      })
     })
   }
 
   /** Ensure the durable manager pointer resolves to one usable live Session. */
   open(): Promise<AgentTeamManagerSessionResult> {
-    return this.enqueue(async () => {
-      try {
-        return await this.openLocked()
-      } catch (error) {
-        return this.unavailable('runtime', messageOf(error))
-      }
-    })
+    return this.enqueueReporting(() => this.openLocked())
   }
 
   /** Replace the current Session only while it is still the caller-observed pointer. */
@@ -149,6 +129,7 @@ export class ManagerSessionRuntime {
         const read = this.readPointer()
         if (!read.ok) return read.result
         const pointer = read.pointer
+        // Unlike open and startup, the replacement request propagates async failures.
         if (pointer === undefined) return this.replaceLocked(undefined)
         if (pointer.sessionId !== expectedSessionId) return this.currentStatusLocked(pointer)
         return this.replaceLocked(pointer)
@@ -206,26 +187,46 @@ export class ManagerSessionRuntime {
     return run
   }
 
+  private enqueueReporting<T>(operation: () => Promise<T>): Promise<T | AgentTeamManagerSessionResult> {
+    return this.enqueue(async () => {
+      try {
+        return await operation()
+      } catch (error) {
+        return this.unavailable('runtime', messageOf(error))
+      }
+    })
+  }
+
+  private registeredAgent(pointer: ManagerSessionPointer): Agent | undefined {
+    const agent = this.current?.handle.agent
+    return agent?.id === pointer.sessionId ? agent : undefined
+  }
+
+  private liveStatus(pointer: ManagerSessionPointer, agent: Agent): AgentTeamManagerSessionResult {
+    return this.compositionIsManager(agent)
+      ? this.ready(pointer)
+      : this.unavailable(
+        'preset-composition',
+        'the live manager Agent has lost its team-manager composition',
+        pointer.sessionId,
+      )
+  }
+
   private async openLocked(): Promise<AgentTeamManagerSessionResult> {
     const read = this.readPointer()
     if (!read.ok) return read.result
     const pointer = read.pointer
     if (pointer === undefined) return this.replaceLocked(undefined)
-    const agent = this.current?.handle.agent
-    if (agent?.id === pointer.sessionId) {
+    const agent = this.registeredAgent(pointer)
+    if (agent !== undefined) {
       if (this.isArchived(pointer.sessionId)) return this.replaceLocked(pointer)
-      if (this.compositionIsManager(agent)) return this.ready(pointer)
-      return this.unavailable(
-        'preset-composition',
-        'the live manager Agent has lost its team-manager composition',
-        pointer.sessionId,
-      )
+      return this.liveStatus(pointer, agent)
     }
-    return (await this.resolveStoredPointer(pointer, {
+    return this.resolveStoredPointer(pointer, {
       archived: () => this.replaceLocked(pointer),
       missing: () => this.replaceLocked(pointer),
       outsideMessage: 'the registered manager Session is already live outside the manager runtime',
-    }))!
+    })
   }
 
   /**
@@ -234,20 +235,14 @@ export class ManagerSessionRuntime {
    * never silently replaced by a stale caller.
    */
   private async currentStatusLocked(pointer: ManagerSessionPointer): Promise<AgentTeamManagerSessionResult> {
-    const agent = this.current?.handle.agent
-    if (agent?.id === pointer.sessionId) {
+    const agent = this.registeredAgent(pointer)
+    if (agent !== undefined) {
       if (this.isArchived(pointer.sessionId)) {
         return this.unavailable('runtime', 'the current manager Session was archived', pointer.sessionId)
       }
-      return this.compositionIsManager(agent)
-        ? this.ready(pointer)
-        : this.unavailable(
-          'preset-composition',
-          'the live manager Agent has lost its team-manager composition',
-          pointer.sessionId,
-        )
+      return this.liveStatus(pointer, agent)
     }
-    return (await this.resolveStoredPointer(pointer, {
+    return this.resolveStoredPointer(pointer, {
       archived: () => this.unavailable('runtime', 'the current manager Session was archived', pointer.sessionId),
       missing: () => this.unavailable(
         'session-unreadable',
@@ -255,18 +250,18 @@ export class ManagerSessionRuntime {
         pointer.sessionId,
       ),
       outsideMessage: 'the current manager Session is live outside the manager runtime',
-    }))!
+    })
   }
 
   /** The caller decides whether an archived or missing pointer can be replaced. */
-  private async resolveStoredPointer(
+  private async resolveStoredPointer<Recovery extends AgentTeamManagerSessionResult | undefined>(
     pointer: ManagerSessionPointer,
     options: {
-      readonly archived: RecoverStoredPointer
-      readonly missing: RecoverStoredPointer
+      readonly archived: RecoverStoredPointer<Recovery>
+      readonly missing: RecoverStoredPointer<Recovery>
       readonly outsideMessage: string
     },
-  ): Promise<AgentTeamManagerSessionResult | undefined> {
+  ): Promise<AgentTeamManagerSessionResult | Recovery> {
     if (this.isArchived(pointer.sessionId)) return await options.archived()
     if (this.liveOutsideManager(pointer.sessionId)) {
       return this.unavailable('session-unreadable', options.outsideMessage, pointer.sessionId)
@@ -280,11 +275,11 @@ export class ManagerSessionRuntime {
     return this.resumeLocked(pointer, stored.inspection, options.archived)
   }
 
-  private async resumeLocked(
+  private async resumeLocked<Recovery extends AgentTeamManagerSessionResult | undefined>(
     pointer: ManagerSessionPointer,
     inspection: StoredSessionInspection,
-    onPointerLost: RecoverStoredPointer,
-  ): Promise<AgentTeamManagerSessionResult | undefined> {
+    onPointerLost: RecoverStoredPointer<Recovery>,
+  ): Promise<AgentTeamManagerSessionResult | Recovery> {
     if (this.isArchived(pointer.sessionId)) return onPointerLost()
     const workspace = await this.workspaceForExisting(pointer, inspection)
     if (workspace === undefined) {
