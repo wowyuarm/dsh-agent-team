@@ -178,6 +178,54 @@ describe('Team manager Session Host runtime', () => {
     expect(await second.ctx.agentTeam.openManagerSession({})).toEqual(opened)
   })
 
+  it('leaves empty and already archived manager pointers alone at startup', async () => {
+    const { ctx, workspaceId, checkout, root } = await realHarness()
+    const store = new MemoryPointerStore()
+    const read = vi.fn<StoredSessionReader['read']>()
+    const runtime = runtimeFor(ctx, { store, root, workspace: { workspaceId, path: checkout }, reader: { read } })
+    onTestFinished(() => runtime.dispose())
+
+    expect(await runtime.preRestore()).toBeUndefined()
+    const pointer = { sessionId: SessionId('archived-at-startup'), workspaceId }
+    store.pointer = pointer
+    await ctx.workspaceRegistry.archiveSession(pointer.sessionId)
+    expect(await runtime.preRestore()).toBeUndefined()
+    expect(read).not.toHaveBeenCalled()
+    expect(store.pointer).toBe(pointer)
+    expect(store.writes).toBe(0)
+    expect(managerAgents(ctx)).toEqual([])
+  })
+
+  it('preserves operation failure boundaries and drains the queue after a rejection', async () => {
+    const { ctx, workspaceId, checkout, root } = await realHarness()
+    const store = new MemoryPointerStore()
+    const pointer = { sessionId: SessionId('manager-queued-restore'), workspaceId }
+    store.pointer = pointer
+    const error = new Error('manager read rejected')
+    const read = vi.fn<StoredSessionReader['read']>()
+      .mockRejectedValueOnce(error)
+      .mockRejectedValueOnce(error)
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce(readResultOf({ kind: 'missing', sessionId: pointer.sessionId, detail: 'not stored' }))
+    const runtime = runtimeFor(ctx, { store, root, workspace: { workspaceId, path: checkout }, reader: { read } })
+    onTestFinished(() => runtime.dispose())
+
+    const reported = { status: 'unavailable', diagnostic: { class: 'runtime', detail: error.message } }
+    await expect(runtime.preRestore()).resolves.toMatchObject(reported)
+    await expect(runtime.open()).resolves.toMatchObject(reported)
+    const stale = runtime.newConversation(SessionId('stale-manager'))
+    const next = runtime.open()
+    await expect(stale).rejects.toBe(error)
+    const opened = await next
+    if (opened.status !== 'ready') throw new Error('expected open to replace the missing Session')
+    expect(opened.sessionId).not.toBe(pointer.sessionId)
+    expect(store.pointer?.sessionId).toBe(opened.sessionId)
+    expect(store.writes).toBe(1)
+
+    await runtime.dispose()
+    await expect(runtime.open()).rejects.toThrow('Team manager runtime is disposed')
+  })
+
   it('cancels an in-flight pre-restore when the manager runtime is disposed', async () => {
     const { ctx, workspaceId, checkout, root } = await realHarness()
     const store = new MemoryPointerStore()
