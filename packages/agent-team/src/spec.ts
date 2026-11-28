@@ -28,22 +28,32 @@ import type {
   AgentTeamSubscriptionRef,
 } from './types.ts'
 
-const operationIdSchema = z.string().regex(/^operation:[^:]+$/).transform(value => value as AgentTeamOperationId)
-const requestIdSchema = z.string().min(1).transform(value => value as AgentTeamRequestId)
-const memberIdSchema = z.string().regex(/^member:[^:]+$/).transform(value => value as AgentTeamMemberId)
-const workspaceIdSchema = z.string().min(1).transform(value => value as WorkspaceId)
-const sessionIdSchema = z.string().min(1).transform(value => value as SessionId)
+/** A `<prefix>:<id>` ref: the id holds no colon, so a ref never parses as another kind's ref. */
+function prefixedRef<Ref>(prefix: string) {
+  return z.string().regex(new RegExp(`^${prefix}:[^:]+$`)).transform(value => value as Ref)
+}
+
+/** A caller- or Host-minted id whose only durable promise is that it is non-empty. */
+function opaqueId<Id>() {
+  return z.string().min(1).transform(value => value as Id)
+}
+
+const operationIdSchema = prefixedRef<AgentTeamOperationId>('operation')
+const requestIdSchema = opaqueId<AgentTeamRequestId>()
+const memberIdSchema = prefixedRef<AgentTeamMemberId>('member')
+const workspaceIdSchema = opaqueId<WorkspaceId>()
+const sessionIdSchema = opaqueId<SessionId>()
 const sessionSeqSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionSeq)
 const sessionLogOffsetSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).transform(value => value as SessionLogOffset)
 const contextCheckpointRefSchema = z.string().regex(/^(context-checkpoint-[0-9a-f]{64}|team-boundary-[0-9a-f]{64})$/).transform(value => value as AgentTeamContextCheckpointRef)
 const projectRefSchema = z.string().regex(/^(project|channel):[^:]+$/).transform(value => value.replace(/^channel:/, 'project:') as AgentTeamProjectRef)
-const messageRefSchema = z.string().regex(/^message:[^:]+$/).transform(value => value as AgentTeamMessageRef)
-const taskRefSchema = z.string().regex(/^task:[^:]+$/).transform(value => value as AgentTeamTaskRef)
-const threadRefSchema = z.string().regex(/^thread:[^:]+$/).transform(value => value as AgentTeamThreadRef)
-const claimRefSchema = z.string().regex(/^claim:[^:]+$/).transform(value => value as AgentTeamClaimRef)
-const activityRefSchema = z.string().regex(/^activity:[^:]+$/).transform(value => value as AgentTeamActivityRef)
-const attachmentIdSchema = z.string().min(1).transform(value => value as AgentTeamAttachmentId)
-const workerRefSchema = z.string().regex(/^worker:[^:]+$/).transform(value => value as AgentTeamWorkerRef)
+const messageRefSchema = prefixedRef<AgentTeamMessageRef>('message')
+const taskRefSchema = prefixedRef<AgentTeamTaskRef>('task')
+const threadRefSchema = prefixedRef<AgentTeamThreadRef>('thread')
+const claimRefSchema = prefixedRef<AgentTeamClaimRef>('claim')
+const activityRefSchema = prefixedRef<AgentTeamActivityRef>('activity')
+const attachmentIdSchema = opaqueId<AgentTeamAttachmentId>()
+const workerRefSchema = prefixedRef<AgentTeamWorkerRef>('worker')
 const workerEngineSchema = z.enum(WORKER_ENGINES)
 
 const actorSchema = z.discriminatedUnion('kind', [
@@ -58,6 +68,11 @@ const operationBase = {
   requestId: requestIdSchema,
   occurredAt: z.string().datetime(),
   actor: actorSchema,
+}
+
+/** The envelope every kind but `team/initialized` shares; the replay chain check, not this schema, decides whether the link is right. */
+function operation<const Kind extends string, Data extends z.ZodType>(kind: Kind, data: Data) {
+  return z.object({ ...operationBase, previousOperationId: operationIdSchema.nullable(), kind: z.literal(kind), data }).strict()
 }
 
 const modelSelectionSchema = z.object({
@@ -250,7 +265,7 @@ const mainMessageSchema = z.object({
   occurredAt: z.string().datetime(),
 }).strict().transform(omitUndefined)
 
-const subscriptionRefSchema = z.string().regex(/^subscription:[^:]+$/).transform(value => value as AgentTeamSubscriptionRef)
+const subscriptionRefSchema = prefixedRef<AgentTeamSubscriptionRef>('subscription')
 const eventRefSchema = z.string().regex(/^event:[1-9][0-9]*$/).transform(value => value as AgentTeamSubscriptionEventRef)
 
 const subscriptionEventSchema = z.object({
@@ -528,20 +543,15 @@ const readFactSchema = z.object({
   direct: z.boolean(),
 }).strict()
 
-const claimOperation = (kind: 'team/claim-created' | 'team/claim-done' | 'team/claim-released') => z.object({
-  ...operationBase,
-  previousOperationId: operationIdSchema.nullable(),
-  kind: z.literal(kind),
-  data: z.object({
-    workspaceId: workspaceIdSchema,
-    baseRevision: z.number().int().positive(),
-    activity: claimActivitySchema,
-    claim: claimSchema,
-    task: taskSchema,
-    thread: threadSchema,
-    inbox: inboxDeltaSchema,
-  }).strict(),
-}).strict()
+const claimOperation = (kind: 'team/claim-created' | 'team/claim-done' | 'team/claim-released') => operation(kind, z.object({
+  workspaceId: workspaceIdSchema,
+  baseRevision: z.number().int().positive(),
+  activity: claimActivitySchema,
+  claim: claimSchema,
+  task: taskSchema,
+  thread: threadSchema,
+  inbox: inboxDeltaSchema,
+}).strict())
 
 /** Departure facts a releasing operation persists. Every release kind carries this snapshot once here, so a new kind cannot drop or invent a field. */
 const releaseSnapshotSchema = {
@@ -589,497 +599,237 @@ const storedAgentTeamOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('team/initialized'),
     data: z.object({ humanMemberId: memberIdSchema }).strict(),
   }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-created'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      project: projectSchema,
-      memberIds: z.array(memberIdSchema),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-added'),
-    data: z.object({ member: memberSchema, projectRefs: z.array(projectRefSchema) }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-suspended'),
-    data: z.object({ member: memberSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-resumed'),
-    data: z.object({ member: memberSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-archived'),
-    data: z.object({
-      member: memberSchema,
-      ...releaseSnapshotSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-session-restarted'),
-    data: z.object({ member: memberSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-context-cleared'),
-    data: z.object({ member: memberSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-session-renewed'),
-    data: z.object({ member: memberSchema, previousSessionId: sessionIdSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-session-rolled-over'),
-    data: z.object({
-      member: memberSchema,
-      previousSessionId: sessionIdSchema,
-      newSessionId: sessionIdSchema,
-      sourceSessionId: sessionIdSchema.optional(),
-      sourceThroughSeq: sessionSeqSchema.optional(),
-      handoffEventSeq: sessionSeqSchema,
-      checkpointRef: contextCheckpointRefSchema.optional(),
-      trigger: z.enum(['model', 'pressure']),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-session-recycled'),
-    data: z.object({
-      member: memberSchema,
-      previousSessionId: sessionIdSchema,
-      newSessionId: sessionIdSchema,
-      inputFromSeq: sessionLogOffsetSchema.optional(),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/rules-version-adopted'),
-    data: z.object({ version: z.number().int().min(2) }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-owner-added'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema,
-      responsibility: z.string().optional(), activity: mainActivitySchema, inbox: inboxDeltaSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-owner-responsibility-updated'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema,
-      responsibility: z.string(), activity: mainActivitySchema, inbox: inboxDeltaSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-owner-removed'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema,
-      activity: mainActivitySchema, inbox: inboxDeltaSchema,
-      transfers: z.array(taskActivitySchema).default([]), tasks: z.array(taskSchema).default([]), threads: z.array(threadSchema).default([]) }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-updated'),
-    data: z.object({ workspaceId: workspaceIdSchema, project: projectSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-updated'),
-    data: z.object({ member: memberSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-member-added'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-member-removed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      projectRef: projectRefSchema,
-      memberId: memberIdSchema,
-      ...releaseSnapshotSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-workspace-joined'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      memberId: memberIdSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-workspace-left'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      memberId: memberIdSchema,
-      ...releaseSnapshotSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/project-archived'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      project: projectSchema,
-      ...releaseSnapshotSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/message-sent'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      mentions: z.array(memberIdSchema),
-      message: messageSchema,
-      task: taskSchema.optional(),
-      thread: threadSchema,
-      inbox: inboxDeltaSchema,
-    }).strict().transform(omitUndefined),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/thread-replied'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      baseRevision: z.number().int().positive(),
-      mentions: z.array(memberIdSchema),
-      message: messageSchema,
-      task: taskSchema.optional(),
-      thread: threadSchema,
-      inbox: inboxDeltaSchema,
-    }).strict().transform(omitUndefined),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/main-message-posted'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      mentions: z.array(memberIdSchema),
-      message: mainMessageSchema,
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/main-stream-read'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      projectRef: projectRefSchema,
-      memberId: memberIdSchema,
-      readThroughSequence: z.number().int().nonnegative(),
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/thread-started'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      projectRef: projectRefSchema,
-      kind: z.union([z.literal('discussion'), z.literal('task')]),
-      mentions: z.array(memberIdSchema),
-      anchor: messageSchema,
-      task: taskSchema.optional(),
-      activity: taskActivitySchema.optional(),
-      thread: threadSchema,
-      inbox: inboxDeltaSchema,
-    }).strict().transform(omitUndefined),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/thread-promoted'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      baseRevision: z.number().int().positive(),
-      activity: taskActivitySchema,
-      task: taskSchema,
-      thread: threadSchema,
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
+  operation('team/project-created', z.object({
+    workspaceId: workspaceIdSchema,
+    project: projectSchema,
+    memberIds: z.array(memberIdSchema),
+  }).strict()),
+  operation('team/member-added', z.object({ member: memberSchema, projectRefs: z.array(projectRefSchema) }).strict()),
+  operation('team/member-suspended', z.object({ member: memberSchema }).strict()),
+  operation('team/member-resumed', z.object({ member: memberSchema }).strict()),
+  operation('team/member-archived', z.object({
+    member: memberSchema,
+    ...releaseSnapshotSchema,
+  }).strict()),
+  operation('team/member-session-restarted', z.object({ member: memberSchema }).strict()),
+  operation('team/member-context-cleared', z.object({ member: memberSchema }).strict()),
+  operation('team/member-session-renewed', z.object({ member: memberSchema, previousSessionId: sessionIdSchema }).strict()),
+  operation('team/member-session-rolled-over', z.object({
+    member: memberSchema,
+    previousSessionId: sessionIdSchema,
+    newSessionId: sessionIdSchema,
+    sourceSessionId: sessionIdSchema.optional(),
+    sourceThroughSeq: sessionSeqSchema.optional(),
+    handoffEventSeq: sessionSeqSchema,
+    checkpointRef: contextCheckpointRefSchema.optional(),
+    trigger: z.enum(['model', 'pressure']),
+  }).strict()),
+  operation('team/member-session-recycled', z.object({
+    member: memberSchema,
+    previousSessionId: sessionIdSchema,
+    newSessionId: sessionIdSchema,
+    inputFromSeq: sessionLogOffsetSchema.optional(),
+  }).strict()),
+  operation('team/rules-version-adopted', z.object({ version: z.number().int().min(2) }).strict()),
+  operation('team/project-owner-added', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema,
+    responsibility: z.string().optional(), activity: mainActivitySchema, inbox: inboxDeltaSchema }).strict()),
+  operation('team/project-owner-responsibility-updated', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema,
+    responsibility: z.string(), activity: mainActivitySchema, inbox: inboxDeltaSchema }).strict()),
+  operation('team/project-owner-removed', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema,
+    activity: mainActivitySchema, inbox: inboxDeltaSchema,
+    transfers: z.array(taskActivitySchema).default([]), tasks: z.array(taskSchema).default([]), threads: z.array(threadSchema).default([]) }).strict()),
+  operation('team/project-updated', z.object({ workspaceId: workspaceIdSchema, project: projectSchema }).strict()),
+  operation('team/member-updated', z.object({ member: memberSchema }).strict()),
+  operation('team/project-member-added', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, memberId: memberIdSchema }).strict()),
+  operation('team/project-member-removed', z.object({
+    workspaceId: workspaceIdSchema,
+    projectRef: projectRefSchema,
+    memberId: memberIdSchema,
+    ...releaseSnapshotSchema,
+  }).strict()),
+  operation('team/member-workspace-joined', z.object({
+    workspaceId: workspaceIdSchema,
+    memberId: memberIdSchema,
+  }).strict()),
+  operation('team/member-workspace-left', z.object({
+    workspaceId: workspaceIdSchema,
+    memberId: memberIdSchema,
+    ...releaseSnapshotSchema,
+  }).strict()),
+  operation('team/project-archived', z.object({
+    workspaceId: workspaceIdSchema,
+    project: projectSchema,
+    ...releaseSnapshotSchema,
+  }).strict()),
+  operation('team/message-sent', z.object({
+    workspaceId: workspaceIdSchema,
+    mentions: z.array(memberIdSchema),
+    message: messageSchema,
+    task: taskSchema.optional(),
+    thread: threadSchema,
+    inbox: inboxDeltaSchema,
+  }).strict().transform(omitUndefined)),
+  operation('team/thread-replied', z.object({
+    workspaceId: workspaceIdSchema,
+    baseRevision: z.number().int().positive(),
+    mentions: z.array(memberIdSchema),
+    message: messageSchema,
+    task: taskSchema.optional(),
+    thread: threadSchema,
+    inbox: inboxDeltaSchema,
+  }).strict().transform(omitUndefined)),
+  operation('team/main-message-posted', z.object({
+    workspaceId: workspaceIdSchema,
+    mentions: z.array(memberIdSchema),
+    message: mainMessageSchema,
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/main-stream-read', z.object({
+    workspaceId: workspaceIdSchema,
+    projectRef: projectRefSchema,
+    memberId: memberIdSchema,
+    readThroughSequence: z.number().int().nonnegative(),
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/thread-started', z.object({
+    workspaceId: workspaceIdSchema,
+    projectRef: projectRefSchema,
+    kind: z.union([z.literal('discussion'), z.literal('task')]),
+    mentions: z.array(memberIdSchema),
+    anchor: messageSchema,
+    task: taskSchema.optional(),
+    activity: taskActivitySchema.optional(),
+    thread: threadSchema,
+    inbox: inboxDeltaSchema,
+  }).strict().transform(omitUndefined)),
+  operation('team/thread-promoted', z.object({
+    workspaceId: workspaceIdSchema,
+    baseRevision: z.number().int().positive(),
+    activity: taskActivitySchema,
+    task: taskSchema,
+    thread: threadSchema,
+    inbox: inboxDeltaSchema,
+  }).strict()),
   claimOperation('team/claim-created'),
   claimOperation('team/claim-done'),
   claimOperation('team/claim-released'),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/task-changed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      baseRevision: z.number().int().positive(),
-      activity: taskActivitySchema,
-      task: taskSchema,
-      thread: threadSchema,
-      claims: z.array(claimSchema),
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/task-accountable-changed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      baseRevision: z.number().int().positive(),
-      activity: taskActivitySchema,
-      task: taskSchema,
-      thread: threadSchema,
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-reminder-created'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      reminder: memberReminderSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-reminder-raised'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      memberId: memberIdSchema,
-      reminderRef: reminderRefSchema,
-      scheduledAt: z.string().min(1),
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-reminder-consumed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      memberId: memberIdSchema,
-      reminderRef: reminderRefSchema,
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-reminder-cancelled'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      memberId: memberIdSchema,
-      reminderRef: reminderRefSchema,
-      reminder: memberReminderSchema,
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/reminder-raised'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      taskRef: taskRefSchema,
-      kind: z.enum(['review-backlog', 'stalled']),
-      recipient: memberIdSchema,
-      baselineSequence: z.number().int().positive(),
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/thread-attention-changed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      action: z.union([z.literal('follow'), z.literal('unfollow')]),
-      memberId: memberIdSchema,
-      task: taskSchema.optional(),
-      thread: threadSchema,
-      inbox: inboxDeltaSchema,
-    }).strict().transform(omitUndefined),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/main-attention-changed'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      action: z.union([z.literal('follow'), z.literal('unfollow')]),
-      memberId: memberIdSchema,
-      project: projectSchema,
-      inbox: inboxDeltaSchema,
-    }).strict().transform(omitUndefined),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/thread-read'),
-    data: z.union([threadReadReceiptDataSchema, threadReadSnapshotDataSchema]),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/member-removed'),
-    data: z.object({
-      member: memberSchema,
-      ...releaseSnapshotSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-created'),
-    data: z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema,
-      baselineIds: z.array(z.string().min(1).max(200)), request: createSubscriptionRequestIntentSchema.optional() }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-updated'),
-    data: z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, previousRevision: z.number().int().positive(),
-      activity: subscriptionActivitySchema, request: subscriptionRequestIntentSchema.optional() }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-paused'),
-    data: z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema,
-      inbox: inboxDeltaSchema.optional() }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-resumed'),
-    data: z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-deleted'),
-    data: z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-webhook-reset'),
-    data: z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema,
-      previousGeneration: z.number().int().positive(), activity: subscriptionActivitySchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-baseline'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, subscriptionRef: subscriptionRefSchema,
-      ids: z.array(z.string().min(1).max(200)).min(1) }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-events-accepted'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, subscriptionRef: subscriptionRefSchema,
-      subscriptionRevision: z.number().int().positive(), scriptHash: z.string().regex(/^[0-9a-f]{64}$/),
-      events: z.array(subscriptionEventSchema).min(1) }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/subscription-event-published'),
-    data: z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, subscriptionRef: subscriptionRefSchema,
-      subscriptionName: z.string().min(1), acceptedSequence: z.number().int().positive(), eventId: z.string().min(1).max(200),
-      inbox: inboxDeltaSchema }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/dm-sent'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      senderMemberId: memberIdSchema,
-      recipientMemberId: memberIdSchema,
-      body: z.string().min(1),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/worker-started'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      execution: workerStartRecordSchema,
-      activity: workerStartedActivitySchema.optional(),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/worker-settled'),
-    data: z.object({
-      workspaceId: workspaceIdSchema,
-      execution: workerSettlementSchema,
-      activity: workerSettledActivitySchema.optional(),
-      inbox: inboxDeltaSchema,
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/worker-steer-admitted'),
-    data: z.object({
-      requestId: requestIdSchema,
-      workspaceId: workspaceIdSchema,
-      workerRef: workerRefSchema,
-      instruction: z.string().min(1),
-      initiatedBy: memberIdSchema,
-      continuedFrom: workerRefSchema.optional(),
-      aliasOf: requestIdSchema.optional(),
-    }).strict(),
-  }).strict(),
-  z.object({
-    ...operationBase,
-    previousOperationId: operationIdSchema.nullable(),
-    kind: z.literal('team/worker-steer-recorded'),
-    data: z.object({
-      admissionRequestId: requestIdSchema,
-      outcome: workerSteerOutcomeSchema,
-    }).strict(),
-  }).strict(),
+  operation('team/task-changed', z.object({
+    workspaceId: workspaceIdSchema,
+    baseRevision: z.number().int().positive(),
+    activity: taskActivitySchema,
+    task: taskSchema,
+    thread: threadSchema,
+    claims: z.array(claimSchema),
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/task-accountable-changed', z.object({
+    workspaceId: workspaceIdSchema,
+    baseRevision: z.number().int().positive(),
+    activity: taskActivitySchema,
+    task: taskSchema,
+    thread: threadSchema,
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/member-reminder-created', z.object({
+    workspaceId: workspaceIdSchema,
+    reminder: memberReminderSchema,
+  }).strict()),
+  operation('team/member-reminder-raised', z.object({
+    workspaceId: workspaceIdSchema,
+    memberId: memberIdSchema,
+    reminderRef: reminderRefSchema,
+    scheduledAt: z.string().min(1),
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/member-reminder-consumed', z.object({
+    workspaceId: workspaceIdSchema,
+    memberId: memberIdSchema,
+    reminderRef: reminderRefSchema,
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/member-reminder-cancelled', z.object({
+    workspaceId: workspaceIdSchema,
+    memberId: memberIdSchema,
+    reminderRef: reminderRefSchema,
+    reminder: memberReminderSchema,
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/reminder-raised', z.object({
+    workspaceId: workspaceIdSchema,
+    taskRef: taskRefSchema,
+    kind: z.enum(['review-backlog', 'stalled']),
+    recipient: memberIdSchema,
+    baselineSequence: z.number().int().positive(),
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/thread-attention-changed', z.object({
+    workspaceId: workspaceIdSchema,
+    action: z.union([z.literal('follow'), z.literal('unfollow')]),
+    memberId: memberIdSchema,
+    task: taskSchema.optional(),
+    thread: threadSchema,
+    inbox: inboxDeltaSchema,
+  }).strict().transform(omitUndefined)),
+  operation('team/main-attention-changed', z.object({
+    workspaceId: workspaceIdSchema,
+    action: z.union([z.literal('follow'), z.literal('unfollow')]),
+    memberId: memberIdSchema,
+    project: projectSchema,
+    inbox: inboxDeltaSchema,
+  }).strict().transform(omitUndefined)),
+  operation('team/thread-read', z.union([threadReadReceiptDataSchema, threadReadSnapshotDataSchema])),
+  operation('team/member-removed', z.object({
+    member: memberSchema,
+    ...releaseSnapshotSchema,
+  }).strict()),
+  operation('team/subscription-created', z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema,
+    baselineIds: z.array(z.string().min(1).max(200)), request: createSubscriptionRequestIntentSchema.optional() }).strict()),
+  operation('team/subscription-updated', z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, previousRevision: z.number().int().positive(),
+    activity: subscriptionActivitySchema, request: subscriptionRequestIntentSchema.optional() }).strict()),
+  operation('team/subscription-paused', z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema,
+    inbox: inboxDeltaSchema.optional() }).strict()),
+  operation('team/subscription-resumed', z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema }).strict()),
+  operation('team/subscription-deleted', z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema, activity: subscriptionActivitySchema }).strict()),
+  operation('team/subscription-webhook-reset', z.object({ workspaceId: workspaceIdSchema, subscription: subscriptionSchema,
+    previousGeneration: z.number().int().positive(), activity: subscriptionActivitySchema }).strict()),
+  operation('team/subscription-baseline', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, subscriptionRef: subscriptionRefSchema,
+    ids: z.array(z.string().min(1).max(200)).min(1) }).strict()),
+  operation('team/subscription-events-accepted', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, subscriptionRef: subscriptionRefSchema,
+    subscriptionRevision: z.number().int().positive(), scriptHash: z.string().regex(/^[0-9a-f]{64}$/),
+    events: z.array(subscriptionEventSchema).min(1) }).strict()),
+  operation('team/subscription-event-published', z.object({ workspaceId: workspaceIdSchema, projectRef: projectRefSchema, subscriptionRef: subscriptionRefSchema,
+    subscriptionName: z.string().min(1), acceptedSequence: z.number().int().positive(), eventId: z.string().min(1).max(200),
+    inbox: inboxDeltaSchema }).strict()),
+  operation('team/dm-sent', z.object({
+    workspaceId: workspaceIdSchema,
+    senderMemberId: memberIdSchema,
+    recipientMemberId: memberIdSchema,
+    body: z.string().min(1),
+  }).strict()),
+  operation('team/worker-started', z.object({
+    workspaceId: workspaceIdSchema,
+    execution: workerStartRecordSchema,
+    activity: workerStartedActivitySchema.optional(),
+  }).strict()),
+  operation('team/worker-settled', z.object({
+    workspaceId: workspaceIdSchema,
+    execution: workerSettlementSchema,
+    activity: workerSettledActivitySchema.optional(),
+    inbox: inboxDeltaSchema,
+  }).strict()),
+  operation('team/worker-steer-admitted', z.object({
+    requestId: requestIdSchema,
+    workspaceId: workspaceIdSchema,
+    workerRef: workerRefSchema,
+    instruction: z.string().min(1),
+    initiatedBy: memberIdSchema,
+    continuedFrom: workerRefSchema.optional(),
+    aliasOf: requestIdSchema.optional(),
+  }).strict()),
+  operation('team/worker-steer-recorded', z.object({
+    admissionRequestId: requestIdSchema,
+    outcome: workerSteerOutcomeSchema,
+  }).strict()),
 ])
 
 /**

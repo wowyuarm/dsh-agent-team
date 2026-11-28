@@ -66,7 +66,7 @@ types/*-requests.ts   the public request and result shapes, one file per Remote 
 
 The six mechanical surfaces that must change together:
 
-1. **Kind and record.** Add the operation kind as a `z.literal` in its record schema in `spec.ts`, and its typed record in `types/operations.ts`.
+1. **Kind and record.** Add the kind's `operation(kind, data)` schema to the operation union in `spec.ts`, and its typed record in `types/operations.ts`.
 2. **Public shapes.** Add the request and result types to the `types/*-requests.ts` file of their surface; `types/requests-results.ts` and `types.ts` are barrels that re-export them, so neither needs a per-operation edit.
 3. **Commit.** Add the ledger method that builds the record from `operationBase(...)` plus the next sequence, and the change scope it wakes.
 4. **Validation and projection.** Extend the ledger's per-kind commit validation and its validation entry point, and add the case that applies the record to a projection. Replay correctness lives here — a projection that is not applied on load diverges from the durable table.
