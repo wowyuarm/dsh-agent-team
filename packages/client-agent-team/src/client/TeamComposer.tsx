@@ -11,6 +11,7 @@ import { buildMentionGroups, mentionSurfaceOf, type MentionGroupKey } from './me
 import { HUMAN_MEMBER_ID, mentionedMemberIds, plainGist } from './team-formatters.ts'
 import css from './composer.module.css'
 import { formatByteSize } from './attachment-preview.ts'
+import { DraftImagePreview } from './DraftImagePreview.tsx'
 
 interface MentionMatch {
   readonly start: number
@@ -29,24 +30,6 @@ function findMention(draft: string, caret: number): MentionMatch | undefined {
   // as text the Host would keep prose.
   if (!startsMentionAt(draft, at)) return undefined
   return { start: at, end: caret, query: beforeCaret.slice(at + 1) }
-}
-
-/** One object URL per draft file; revoked when the draft file is removed. */
-const draftPreviewUrls = new WeakMap<File, string>()
-
-function draftPreviewUrl(file: File): string | undefined {
-  if (!file.type.startsWith('image/')) return undefined
-  let url = draftPreviewUrls.get(file)
-  if (url === undefined) {
-    url = URL.createObjectURL(file)
-    draftPreviewUrls.set(file, url)
-  }
-  return url
-}
-
-function revokeDraftPreviewUrl(file: File): void {
-  const url = draftPreviewUrls.get(file)
-  if (url !== undefined) URL.revokeObjectURL(url)
 }
 
 /** The Human is never delivered to (they read the Thread directly), so quoting them, even oneself, joins no row. */
@@ -354,15 +337,12 @@ export function TeamComposer({ members, followerMemberIds, projectMemberIds, own
       {onFilesChange !== undefined && pendingFiles !== undefined && pendingFiles.length > 0 && (
         <ul className={css.fileChips} aria-label={t('attachFiles')}>
           {pendingFiles.map((file, index) => {
-            const previewUrl = draftPreviewUrl(file)
-            return <li key={`${file.name}-${index}`} className={`${css.fileChip} ${previewUrl !== undefined ? css.imageChip! : ''}`}>
-              {previewUrl !== undefined && <img src={previewUrl} alt="" className={css.imageChipPreview} />}
+            const image = file.type.startsWith('image/')
+            return <li key={`${file.name}-${index}`} className={`${css.fileChip} ${image ? css.imageChip! : ''}`}>
+              {image && <DraftImagePreview file={file} />}
               <span className={css.fileChipName} title={file.name}>{file.name}<span className={css.fileChipSize}>{formatByteSize(file.size)}</span></span>
               <button type="button" className={css.fileChipRemove} aria-label={t('removeFile', { name: file.name })} disabled={pending}
-                onClick={() => {
-                  revokeDraftPreviewUrl(file)
-                  onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index))
-                }}>×</button>
+                onClick={() => { onFilesChange(pendingFiles.filter((_, candidate) => candidate !== index)) }}>×</button>
             </li>
           })}
         </ul>
